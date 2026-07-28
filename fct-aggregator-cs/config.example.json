@@ -1,0 +1,17 @@
+{
+    "station_id": "",
+    "results_root": "D:/Results",
+    "fct_ini_path": "C:\\FTS\\Apps\\XPT\\Cfg\\FCT.ini",
+    "webhook_url": "",
+    "auto_start": false,
+    "skip_historical_scan": false,
+    "log_level": "INFO",
+    "fts": {
+        "hookspool_path": "C:\\FTS\\HookSpool",
+        "results_path": "D:/Results"
+    },
+    "api_key": "",
+    "cleanup_admin_key": "",
+    "api_host": "127.0.0.1",
+    "api_port": 8000
+}

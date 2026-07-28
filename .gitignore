@@ -1,0 +1,33 @@
+# ---- .NET 编译产物 ----
+bin/
+obj/
+publish*/
+*.user
+*.suo
+
+# ---- 打包 / 发布产物 ----
+package_v*/
+dist/
+*.zip
+*.tar.gz
+*.bak
+
+# ---- 运行期数据(含机台真实数据,不入库) ----
+data/
+logs/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# ---- 含敏感信息的本地配置(飞书 webhook token) ----
+# 只提交 config.example.json 模板,实际 config.json 由各机台本地维护
+fct-aggregator-cs/config.json
+fct-aggregator-cs/dist/config.json
+
+# ---- 编辑器 / 工具本地状态 ----
+.vs/
+.reasonix/
+.claude/settings.local.json
+Thumbs.db
+desktop.ini
