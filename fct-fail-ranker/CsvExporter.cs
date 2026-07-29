@@ -24,15 +24,21 @@ public static class CsvExporter
         public int Count;              // 该不良项出现次数
         public int AffectedUnits;      // 受影响的不同 SN 数
         public double Percent;         // 占全部失败项次数的比例
+        public string Values = "";     // 测量值汇总(多个用逗号隔开)
+        public string Limits = "";     // 规格汇总(多个用逗号隔开)
+        public string Units = "";      // 单位汇总(多个用逗号隔开)
     }
 
     public static (Summary summary, List<FailRank> ranks) Aggregate(List<XmlRecord> records)
     {
         var s = new Summary { Total = records.Count };
         var sns = new HashSet<string>();
-        // item -> (次数, 影响的SN集合)
+        // item -> (次数, 影响的SN集合, 测量值集合, 规格集合, 单位集合)
         var itemCount = new Dictionary<string, int>();
         var itemUnits = new Dictionary<string, HashSet<string>>();
+        var itemValues = new Dictionary<string, HashSet<string>>();
+        var itemLimits = new Dictionary<string, HashSet<string>>();
+        var itemUnitSet = new Dictionary<string, HashSet<string>>();
 
         foreach (var r in records)
         {
@@ -43,13 +49,33 @@ public static class CsvExporter
                 case "FAIL": s.Fail++; break;
                 case "INTERRUPTED": s.Interrupted++; break;
             }
-            foreach (var item in r.FailItems)
+            foreach (var fi in r.FailItems)
             {
+                var item = fi.Name;
                 itemCount[item] = itemCount.GetValueOrDefault(item) + 1;
                 if (!itemUnits.TryGetValue(item, out var set))
                     itemUnits[item] = set = new HashSet<string>();
                 if (!string.IsNullOrEmpty(r.Sn)) set.Add(r.Sn);
                 s.TotalFailOccurrences++;
+
+                // 收集测量值
+                if (!itemValues.ContainsKey(item))
+                    itemValues[item] = new HashSet<string>();
+                if (!string.IsNullOrEmpty(fi.Value))
+                    itemValues[item].Add(fi.Value);
+
+                // 收集规格
+                if (!itemLimits.ContainsKey(item))
+                    itemLimits[item] = new HashSet<string>();
+                var limitStr = LimitString(fi.Lolim, fi.Hilim);
+                if (!string.IsNullOrEmpty(limitStr))
+                    itemLimits[item].Add(limitStr);
+
+                // 收集单位
+                if (!itemUnitSet.ContainsKey(item))
+                    itemUnitSet[item] = new HashSet<string>();
+                if (!string.IsNullOrEmpty(fi.Unit))
+                    itemUnitSet[item].Add(fi.Unit);
             }
         }
 
@@ -65,12 +91,24 @@ public static class CsvExporter
                 AffectedUnits = itemUnits[kv.Key].Count,
                 Percent = s.TotalFailOccurrences > 0
                     ? (double)kv.Value / s.TotalFailOccurrences * 100.0 : 0,
+                Values = itemValues.TryGetValue(kv.Key, out var vals) ? string.Join(", ", vals) : "",
+                Limits = itemLimits.TryGetValue(kv.Key, out var lims) ? string.Join(", ", lims) : "",
+                Units = itemUnitSet.TryGetValue(kv.Key, out var us) ? string.Join(", ", us) : "",
             })
             .OrderByDescending(r => r.Count)
             .ThenBy(r => r.Item, StringComparer.Ordinal)
             .ToList();
 
         return (s, ranks);
+    }
+
+    /// <summary>格式化规格字符串</summary>
+    private static string LimitString(string lolim, string hilim)
+    {
+        if (string.IsNullOrEmpty(lolim) && string.IsNullOrEmpty(hilim)) return "";
+        if (string.IsNullOrEmpty(lolim)) return $"<={hilim}";
+        if (string.IsNullOrEmpty(hilim)) return $">={lolim}";
+        return $"{lolim}~{hilim}";
     }
 
     /// <summary>一组(型号/机台)的分组排名结果。</summary>
@@ -108,7 +146,7 @@ public static class CsvExporter
         List<XmlRecord> records, Summary s, List<FailRank> ranks)
     {
         var sb = new StringBuilder();
-        const int COLS = 5;   // 统一 5 列, 保证各段在 Excel 里列对齐
+        const int COLS = 8;   // 8 列: 含测量值/规格/单位
 
         void Line(params string[] cells)
         {
@@ -168,14 +206,14 @@ public static class CsvExporter
             }
         }
 
-        // ===== 明细清单 (9 列, 单独宽度) =====
+        // ===== 明细清单 (11 列) =====
         Section("明细清单");
-        sb.AppendLine("测试日期,类别,型号,SN,机台,结果,失败项数,失败项列表,文件名");
+        sb.AppendLine("测试日期,类别,型号,SN,机台,结果,失败项数,失败项列表(值/规格),文件名");
         foreach (var rec in records
             .OrderBy(r => r.TestDate, StringComparer.Ordinal)
             .ThenBy(r => r.Filename, StringComparer.Ordinal))
         {
-            var failList = string.Join(" | ", rec.FailItems);
+            var failList = string.Join(" | ", rec.FailItems.Select(f => f.ToDetail()));
             sb.AppendLine(string.Join(",",
                 Esc(rec.TestDate), Esc(rec.Category), Esc(rec.Model), Esc(rec.Sn),
                 Esc(rec.Station), Esc(rec.Result), rec.FailItems.Count.ToString(),
@@ -186,14 +224,17 @@ public static class CsvExporter
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
     }
 
-    /// <summary>写排名表的表头 + 数据行 (统一 5 列)。</summary>
+    /// <summary>写排名表的表头 + 数据行 (统一 8 列: 含测量值/规格/单位)。</summary>
     private static void WriteRankRows(Action<string[]> line, List<FailRank> ranks)
     {
-        line(new[] { "排名", "不良项名称", "出现次数", "受影响产品数", "占比(%)" });
+        line(new[] { "排名", "不良项名称", "出现次数", "受影响产品数", "占比(%)", "测量值", "规格", "单位" });
         int rank = 1;
         foreach (var r in ranks)
         {
-            line(new[] { rank.ToString(), r.Item, r.Count.ToString(), r.AffectedUnits.ToString(), r.Percent.ToString("F2") });
+            line(new[] {
+                rank.ToString(), r.Item, r.Count.ToString(), r.AffectedUnits.ToString(),
+                r.Percent.ToString("F2"), r.Values, r.Limits, r.Units
+            });
             rank++;
         }
     }
@@ -201,6 +242,7 @@ public static class CsvExporter
     /// <summary>
     /// 仅导出"不良项排名"单表 (干净表格, 便于直接贴报告/做图)。
     /// 顶部两行时间段说明, 之后就是一张按数量降序的排行表。
+    /// 含测量值/规格/单位列。
     /// </summary>
     public static void ExportRankOnly(
         string path, DateTime start, DateTime end,
@@ -209,8 +251,8 @@ public static class CsvExporter
         var sb = new StringBuilder();
         void Line(params string[] cells)
         {
-            var arr = new string[5];
-            for (int i = 0; i < 5; i++) arr[i] = i < cells.Length ? Esc(cells[i]) : "";
+            var arr = new string[8];
+            for (int i = 0; i < 8; i++) arr[i] = i < cells.Length ? Esc(cells[i]) : "";
             sb.AppendLine(string.Join(",", arr));
         }
         Line("不良项排名", $"{start:yyyy-MM-dd} ~ {end:yyyy-MM-dd}");

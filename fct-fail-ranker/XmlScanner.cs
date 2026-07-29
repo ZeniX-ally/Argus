@@ -4,6 +4,31 @@ using System.Xml;
 namespace FctFailRanker;
 
 /// <summary>
+/// 单个失败项: 名称 + 测量值 + 规格上下限
+/// </summary>
+public class FailItem
+{
+    public string Name = "";
+    public string Value = "";       // 测量值
+    public string Lolim = "";       // 下限
+    public string Hilim = "";       // 上限
+    public string Unit = "";        // 单位
+
+    public override string ToString() => Name;
+
+    /// <summary>格式化为 "名称 (值, 下限~上限 单位)"</summary>
+    public string ToDetail()
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(Value)) parts.Add($"值={Value}");
+        if (!string.IsNullOrEmpty(Lolim) || !string.IsNullOrEmpty(Hilim))
+            parts.Add($"规格={Lolim}~{Hilim}");
+        if (!string.IsNullOrEmpty(Unit)) parts.Add(Unit);
+        return parts.Count > 0 ? $"{Name} ({string.Join(", ", parts)})" : Name;
+    }
+}
+
+/// <summary>
 /// 单个 XML 的解析结果。业务规则与主项目 FCT-Aggregator 保持一致:
 /// 分类看文件名前缀 P_/F_/O_; USER==debug 跳过; 失败项排除 "Get Unit Information" 和 "UUT Status Err"。
 /// </summary>
@@ -20,7 +45,7 @@ public class XmlRecord
     public string Timestamp = "";    // BATCH.TIMESTAMP
     public string Result = "";       // PASS / FAIL / INTERRUPTED
     public bool IsDebug;
-    public List<string> FailItems = new();   // 失败项名称(已排除 Get Unit Information / UUT Status Err)
+    public List<FailItem> FailItems = new();   // 失败项(含名称/测量值/规格)
 }
 
 public static class XmlScanner
@@ -208,7 +233,14 @@ public static class XmlScanner
                             {
                                 var name = reader.GetAttribute("NAME") ?? "";
                                 if (IsIgnoredFailStep(name)) break;
-                                rec.FailItems.Add(name);
+                                rec.FailItems.Add(new FailItem
+                                {
+                                    Name = name,
+                                    Value = reader.GetAttribute("VALUE") ?? "",
+                                    Lolim = reader.GetAttribute("LOLIM") ?? "",
+                                    Hilim = reader.GetAttribute("HILIM") ?? "",
+                                    Unit = reader.GetAttribute("UNIT") ?? "",
+                                });
                             }
                             break;
                     }

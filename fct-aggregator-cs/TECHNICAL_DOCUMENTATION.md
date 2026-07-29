@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.1.0
+**当前版本**：v2.3.0
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-27
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -32,7 +32,7 @@
 
 部署在 FCT 工控机上的单机程序：监控 FCT 测试软件产出的 XML 结果文件，
 解析 → 分类 → 入 SQLite → 实时统计良率，FAIL 时推送飞书告警；
-附带设备状态查看（读 FCT.ini）、维修记录管理（含 Excel/CSV 导出）、
+附带设备状态查看（读 FCT.ini）、维修记录看板（拖拽改状态，含 Excel/CSV 导出）、
 FAIL 记录报告查看、调试工具页。
 
 ### 1.1 核心功能
@@ -45,7 +45,7 @@ FAIL 记录报告查看、调试工具页。
 | 分类统计 | PASS / FAIL / INTERRUPTED / INVALID，累计 + 当日 + 良率 |
 | 飞书告警 | FAIL 记录推交互卡片，含失败步骤名称 / 实测值 / 上下限 |
 | 设备状态 | 解析 `FCT.ini`：型号列表、固件版本、COM/USB 设备在线灯、A2L 文件 |
-| 维修记录 | 增 / 查 / 改状态 / 删 + 导出 xlsx / csv（零第三方依赖 OOXML） |
+| 维修记录 | **看板（5 列拖拽改状态）/ 列表**双视图；增 / 查 / **改（全字段编辑）** / 删 + 导出 xlsx / csv<br>**故障项目从 FAIL 记录去重后挑选**（不显示 SN），可一次建多条；维修人可下拉选历史值 |
 | FAIL 记录 | 本机全部 FAIL 列表，双击弹出报告式查看器（完整测试流程，失败项标红） |
 | 调试工具 | 推送测试 / 数据库状态 / 机台检测 / 型号发现 / 查询 / 自启开关 / 清库 |
 | 运行保障 | 单实例 Mutex、开机自启（启动文件夹快捷方式，手动开关） |
@@ -78,13 +78,18 @@ fct-aggregator-cs/
 ├── FctIni.cs                 # FCT.ini 解析 + COM 口在线检测（共享读取模式）
 ├── MainForm.cs               # 主窗口：进度条 / 页面切换 / 统计面板 / 日志窗
 ├── DeviceStatusPanel.cs      # 设备状态页
-├── MaintenancePanel.cs       # 维修记录页 + 录入表单 MaintenanceForm
-├── MaintenanceExporter.cs    # 维修记录导出 xlsx / csv（零依赖 OOXML）
+├── MaintenancePanel.cs       # 维修记录页（看板/列表切换）+ 新增/编辑表单 MaintenanceForm
+├── MaintenanceBoard.cs       # 维修记录看板：5 列 / 自绘卡片 / 拖拽改状态 / QuickResolveForm
+├── MaintenanceStatus.cs      # MaintenanceMeta：状态与严重度的中文/颜色**单一来源**
+├── FailItemPicker.cs         # 从 FAIL 记录挑故障项（去重 / 不显示 SN / 可深扫 XML）
+├── ResolverManager.cs        # ResolverUtil(多人拆合) + 名单管理 + **多选框** ResolverPickerForm
+├── MaintenanceExporter.cs    # 维修记录导出 xlsx / csv（零依赖 OOXML，12 列）
 ├── DebugPanel.cs             # 调试工具页
 ├── FailListPanel.cs          # FAIL 记录页 + XmlViewerForm 报告查看器
 ├── FctAggregator.csproj      # net8.0-windows / WinForms / SelfContained=false
 ├── config.json               # 运行配置
 ├── app_icon.ico
+├── selftest/                 # 自检工程（不属主程序，引用主项目源文件）
 ├── data/                     # SQLite 数据库（{station_id}.db）
 ├── logs/                     # app.log
 └── dist/                     # 发布产物（含 启动.bat）
@@ -215,7 +220,19 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
 - `GetExistingPaths()`：分批 500 的 `IN` 查询做去重预筛
 - `BatchInsert()`：单事务 + `INSERT OR IGNORE`（`xml_path UNIQUE` 兜底去重）
 - `FetchGlobalStats()` / `FetchDailyStats()`：按 station 过滤，返回 PASS/FAIL/INTERRUPTED/INVALID/产品数
-- 维修记录：`CreateMaintenance` / `ListMaintenance(statusFilter)` / `UpdateMaintenanceStatus` / `DeleteMaintenance`
+- 维修记录：
+  - `CreateMaintenance(m)` —— `created_at` 可手工指定，`updated_at` 跟随同一取值（往期记录不会被顶到看板最前）
+  - `ListMaintenance(statusFilter, limit = 500)` —— 取 `updated_at`；`ORDER BY updated_at DESC, id DESC`；limit 可参（列表 500 / 看板每列 120）
+  - `CountMaintenanceByStatus()` —— 单条 `GROUP BY status`，供看板列头真实计数（**不受 limit 影响**）
+  - `UpdateMaintenance(m)` —— 全字段 UPDATE（含 `created_at`），`updated_at = datetime('now','localtime')`
+  - `UpdateMaintenanceStatus(id, status)` —— 只改状态，供看板拖拽使用
+  - `FailItemSources(stationId, limit = 2000)` —— FAIL 源行（`FailItemSource`，**无 Sn 字段**），供故障项挑选
+  - `DistinctResolvers(limit = 30)` —— 历史维修人（按使用次数倒序、已去重去空）
+- 维修人员名单（v2.3.0）：`RosterResolvers()` / `ListResolvers()`（= 名单 ∪ 历史）/
+  `AddResolver(name)` / `DeleteResolver(name)` / `RenameResolver(old, new, syncRecords)` / `CountRecordsByResolver(name)`
+  —— 后三个均为**成员级**（一条记录可能多人）
+  - `DeleteMaintenance(id)` —— 同事务内把 `sqlite_sequence.seq` 回抨到 `MAX(id)`，
+    使「删空后新建回到 1 / 删最后一条后接着用」；中间空号不回填
 - FAIL 查询：`RecentFails(limit)`（Debug 页）、`AllFails(stationId)`（FAIL 记录页，时间倒序）
 - 其它：`MaxSn()`、`TotalRecords()`
 
@@ -322,17 +339,53 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 |------|------|
 | `id` | PK |
 | `station_id` | 机台 |
-| `equipment_model` / `equipment_sn` | 设备型号 / SN |
+| `equipment_model` / `equipment_sn` | 设备型号 / SN。**v2.3.0 起表单不再录入**（新记录为空），列与导出列保留以兼容历史数据 |
 | `fail_item` NOT NULL | 故障项目 |
 | `fail_reason` | 故障描述 |
 | `severity` | `critical` 严重 / `major` 一般 / `minor` 轻微（默认 major） |
-| `status` | `open` 待处理 / `in_progress` 进行中 / `resolved` 已解决 / `closed` 已关闭 |
+| `status` | `unknown` 未知问题 / `investigating` 正在排查 / `open` 未完成 / `in_progress` 进行中 / `resolved` 已完成（默认 `open`）<br>legacy：`closed` 已关闭 —— v2.2.0 起不再产生，Init() 会迁移为 `resolved` |
 | `resolver` / `resolution` / `notes` | 维修人 / 措施 / 备注 |
 | `created_at` / `updated_at` | 时间戳（创建时间可在表单手动指定） |
 
 索引：`idx_maint_status(status)`
 
-> 表结构自 v2.0.0 起未变，v2.0.0 → v2.1.0 可直接覆盖程序、原地复用 db。
+### 6.3 `resolvers`（v2.3.0 新增）
+
+| 字段 | 说明 |
+|------|------|
+| `id` | PK |
+| `name` | 维修人姓名，**`UNIQUE COLLATE NOCASE`**（大小写不敏感唯一，同一人不会出两条） |
+| `created_at` | 录入时间 |
+
+- 建表同样是 `CREATE TABLE IF NOT EXISTS`，旧库首次启动自动添上，**无需迁移、无风险**。
+#### 多人存储（无 DDL 变更）
+
+`maintenance_records.resolver` 仍是一列 TEXT，多人存成 `张三、李四`（分隔符 `、`）。
+读的时候必须用 `ResolverUtil` 按**成员**拆开：
+
+| 方法 | 用途 |
+|------|------|
+| `Split(field)` | 拆成人名列表（兼容 `、, ， / ／ ; ； \|`，去空去重保序） |
+| `Join(names)` / `Normalize(field)` | 拼回 / 规范化为顶号写法 |
+| `Contains(field, name)` | 成员级包含判定——**不能用 LIKE**，否则「张三」会误中「张三丰」 |
+| `Replace(field, old, new)` | 只换字段里的那个人，其余人与顺序不变 |
+
+⚠ 改名同步**不能**写 `UPDATE ... SET resolver=@new WHERE resolver=@old`：
+那会把「张三、李四」整行抹成「张三三」、把同事弄丢。现实现是逐行读出→成员级替换→写回。
+
+- 名单与「历史记录里用过的名字」是两回事：删名单**不会**动 `maintenance_records.resolver`；
+  只有改名时勾上「同步历史记录」才会 `UPDATE maintenance_records`。
+
+> 表结构自 v2.0.0 起未变（`status` 是 TEXT 且无 CHECK 约束，加状态值不需 DDL），
+> v2.0.0 / v2.1.0 → v2.2.0 可直接覆盖程序、原地复用 db。
+>
+> **v2.2.0 数据迁移**（`Database.MigrateClosedStatus()`，幂等）：
+> 1. `SELECT COUNT(*) WHERE status='closed'`，为 0 直接返回；
+> 2. 先备份 `{db}.bak-yyyyMMdd`（先 `SqliteConnection.ClearAllPools()` 释放句柄再 
+>    `File.Copy`；同日已有备份则视为成功）；**备份失败就跳过迁移**并记 WARNING，
+>    此时 UI 仍能靠 `MaintenanceMeta` 的 legacy 映射把 `closed` 显示为「已完成」；
+> 3. `UPDATE ... SET status='resolved' WHERE status='closed'` —— **不动 `updated_at`**，
+>    保留记录真实的最后人工更新时间。
 
 ---
 
@@ -362,11 +415,50 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 |----|------|
 | **主页** | 左：统计面板（累计 / 今日 / 良率 / 型号数 / 状态）；右：实时日志窗（可拖分隔条） |
 | **设备状态** | FCT.ini 解析结果：型号、固件版本、COM/USB 设备（在线小灯）、A2L 文件；一屏无滚动、刷新不闪烁 |
-| **维修记录** | 列表 + 新增表单 + 状态筛选 + 删除 + 导出（xlsx / csv，导当前筛选） |
+| **维修记录** | 【看板】（默认）5 列：未知问题 / 正在排查 / 未完成 / 进行中 / 已完成，列头带真实计数，**拖卡片即改状态**（拖到已完成弹补填框）；双击卡片编辑<br>【列表】表格 + 状态筛选 + 双击编辑 + 右键（编辑 / 标记为 5 个状态 / 删除），含「最后更新」列<br>【从FAIL选故障项】去重后的测试项多选 → 一次建 N 条（可合并为 1 条）<br>导出 xlsx / csv（看板导已加载全部，列表导当前筛选） |
 | **FAIL记录** | 本机全部 FAIL（SN / 首个失败项 / 型号 / 时间），双击 → `XmlViewerForm` 报告（完整测试流程，失败项标红） |
 | **调试** | 推送测试、数据库状态、机台检测、型号发现、设备状态、最近 10 条 FAIL、今日统计、最大 SN、查看配置、开机自启开关、清空数据库 |
 
 底部另有「清空日志」「退出」。窗口标题显示版本号，便于现场确认机台上的版本。
+
+### 8.1 维修记录看板实现要点（v2.2.0）
+
+```
+MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel 5 等宽列
+├─ StatusColumn : Panel            列头(中文 + 真实计数徐章) + 卡片区
+│    └─ FlowLayoutPanel            TopDown / WrapContents=false / AutoScroll / DoubleBuffered
+│         └─ MaintenanceCard       全自绘，无子控件
+└─ QuickResolveForm : Form         拖到「已完成」时的补填框
+```
+
+| 要点 | 原因 |
+|------|------|
+| 卡片用 `OnPaint` 自绘，**不放任何子控件** | ① 子 Label 会吞掉 `MouseDown`/`MouseMove`，拖拽拿不到事件（WinForms 经典坑）；② 120 张卡 × 5 Label = 600+ 窗口句柄，自绘只要 120 个 |
+| 起拖要过 `SystemInformation.DragSize` 阈值 | 否则**单击就起拖、双击编辑失灵** |
+| 每张卡也 `AllowDrop = true` 并将 `DragEnter/DragOver/DragDrop` 转发给所属列 | WinForms 里子控件 `AllowDrop=false` 时拖拽事件**不会冒泡**到父容器，光标压在卡片上就放不下去 |
+| 同列拖回 = no-op | 不打库、不刷 `updated_at` |
+| 拖到 `resolved` 先弹 `QuickResolveForm` | 【确定】走 `UpdateMaintenance`（补填维修人/措施）；【跳过】走 `UpdateMaintenanceStatus`；【取消】整个变更撒销 |
+| 落下后只重建**受影响的两列** | 避开整页重载的闪烁与滚动位置丢失 |
+| 列头计数走 `CountMaintenanceByStatus()` | 每列只加载 120 张卡，但徐章要显示**库里真实总数** |
+| 状态/严重度中文与颜色全部读 `MaintenanceMeta` | 单一来源；之前字典在 Panel 与 Exporter 各一份，加状态漏改一处就会导出英文 key |
+| 卡片右键：`MouseDown(Right)` → `ContextRequested` 逐级冒到 Panel | 自绘 Panel 不会自己弹菜单；菜单由 `MaintenancePanel.BuildRecordMenu()` 统一提供，**与列表视图共用一份** |
+| 右键按下时清 `_pressed` | 否则右键按住拖动会误入拖拽分支 |
+| 未知/legacy 状态走 `MaintenanceMeta.Normalize()` | 归并到 5 列之一（`closed`→已完成，野值→未完成），**不会丢卡片** |
+
+### 8.2 故障项挑选（v2.3.0，`FailItemPicker.cs`）
+
+| 设计 | 说明 |
+|------|------|
+| 去重口径 | 按**测试项名**（`OrdinalIgnoreCase` + 首尾空白归一），空值不入列 |
+| 不显示 SN | 从数据层就不带：`FailItemSource` **根本没有 Sn 字段**（自检用反射盯住） |
+| 两级取数 | 默认读 `fail_reason`（只有首项，秒出）；【深扫 XML】重解析 `xml_path` 拿全部失败项 |
+| 深扫不卡界面 | 后台 `Task.Run` + `CancellationToken`，进度**每 300ms** 报一次（吸取 v1.8.1 教训：每条一次 `BeginInvoke` 会把消息队列打爆） |
+| XML 丢了 | 计数并提示，该记录回退到库里的首项，不中断 |
+| 多选后建单 | `MaintenanceForm.BatchResults()`：默认每项一条（`Id=0` 交 DB 自增）；勾「合并为一条」则用 `" / "` 拼接 |
+| 维修人候选 | `ComboBox(DropDown)` + `AutoCompleteMode.SuggestAppend`，候选 = `ListResolvers()`（名单 ∪ 历史） |
+| 【选择】按钮 | 开 `ResolverPickerForm`（`CheckedListBox` 多选 + 搜索 + 全选/清空 + 底部「添加并勾选」），确定后回填 `张三、李四` |
+| 【+ 人员】按钮 | 开 `ResolverManagerForm`；关闭后若 `Changed` 则重拉候选并尽量保住当前输入 |
+| 保存时自动登记 | 先 `ResolverUtil.Normalize()` 规范化，再**逐人** `AddResolver()` 进名单（失败只记 WARNING，不阔主流程） |
 
 ---
 
@@ -377,7 +469,18 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 cd fct-aggregator-cs
 dotnet build -c Release          # 输出 bin/Release/net8.0-windows/
 dotnet publish -c Release -o dist --self-contained false
+
+# 自检（拿 dist\data\fct.db 的**副本**在临时目录里跑，不碰真实数据）
+dotnet run --project selftest\SelfTest.csproj -c Release
 ```
+
+> 自检覆盖 114 项断言：`closed` 迁移与备份、迁移幂等、五状态计数与全表对得上、
+> `updated_at` 取得到与排序、全字段更新、拖动只改状态、往期日期不顶前、
+> xlsx/csv 各 12 列且无漏译英文 key、**id 回收四种场景**、**卡片左/右键行为**、
+> **故障项去重（含拿真实库验 62 条 FAIL → 7 个项）**、**批量建单**、
+> **维修人员名单（增/删/改名/同步与不同步/建表幂等）**、
+> **多人（拆合/成员级包含与改名/候选不出组合项/多选框）**。
+> 导出产物另用 pandas/openpyxl 反向读过。
 
 ### 9.2 部署
 1. 机台安装 **.NET 8 Desktop Runtime**（一次性）
@@ -398,7 +501,7 @@ dotnet publish -c Release -o dist --self-contained false
 
 ## 10. 与 Python 版的差异
 
-| 维度 | Python v1.0.2 | C# v2.1.0 |
+| 维度 | Python v1.0.2 | C# v2.2.0 |
 |------|---------------|-----------|
 | UI | PyQt6 | WinForms |
 | 打包 | PyInstaller / Nuitka，129MB，常被查杀 | 框架依赖，1.2MB |
@@ -421,6 +524,12 @@ dotnet publish -c Release -o dist --self-contained false
 - 无日报 / 定时汇总
 - FAIL 告警逐条推送，同一失败项密集出现时会刷屏（无聚合）
 - 无 Git 版本管理，变更靠 `更新日志.md` + 本文档手工维护
+- 维修记录看板（v2.2.0）：
+  - 每列最多加载 120 张卡（列头徐章仍是真实总数）；超过的靠列表视图看
+  - 拖拽只能改**状态**，不能在列内手动排序（无优先级字段，固定按最后更新时间倒序）
+  - 无撤销：拖错了靠再拖回去（会多一次 `updated_at` 刷新）
+  - CSV 导出带三行标题块（标题/导出时间/空行）后才是表头 —— Excel 直开没问题，
+    但 pandas 之类工具 `read_csv` 需 `skiprows=3`（沿用 v2.1.0 格式，未改动）
 
 ### 11.2 候选后续工作（按现场价值排序）
 1. **机台排名 / 失败项 Pareto**：定位最差机台与头部失败项，支撑“测量系统能力”整治
@@ -428,7 +537,9 @@ dotnet publish -c Release -o dist --self-contained false
 2. **误测率统计**：同 SN 重测后 PASS → 疑似误测，统计误测率（假 fail 不扣良率但吃产能）
 3. **FAIL 聚类告警**：时间窗内同失败项 N 次 → 合并成一条飞书告警
 4. **定时日报**：良率 / FAIL TOP / 机台排名，文本卡片直推飞书（避免 xlsx 占用问题）
-5. 工程化：建 Git 仓库、加单元测试（解析 / 分类 / 良率口径）
+5. 工程化：建 Git 仓库、把自检扩到解析 / 分类 / 良率口径
+   （v2.2.0 已有 `selftest/`，目前只覆盖维修记录与导出）
+6. 维修记录看板：卡片内手动排序（需加 `sort_order` 列）、状态变更历史留痕
 
 ### 11.3 相关项目
 | 项目 | 说明 |

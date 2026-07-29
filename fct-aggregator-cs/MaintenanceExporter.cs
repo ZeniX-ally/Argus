@@ -5,23 +5,15 @@ namespace FctAggregator;
 
 /// <summary>
 /// 维修记录导出: CSV(UTF-8 BOM) 和 零依赖 XLSX(标准 OOXML)。
-/// 列: ID/故障项目/设备型号/设备SN/故障描述/严重度/状态/维修人/维修措施/备注/创建时间。
+/// 列: ID/故障项目/设备型号/设备SN/故障描述/严重度/状态/维修人/维修措施/备注/创建时间/更新时间。
+/// 状态与严重度的中文名统一取自 MaintenanceMeta(单一来源), 不在此处重复定义字典。
 /// </summary>
 public static class MaintenanceExporter
 {
     private static readonly string[] Headers =
     {
         "ID", "故障项目", "设备型号", "设备SN", "故障描述",
-        "严重度", "状态", "维修人", "维修措施", "备注", "创建时间",
-    };
-
-    private static readonly Dictionary<string, string> StatusZh = new()
-    {
-        ["open"] = "待处理", ["in_progress"] = "进行中", ["resolved"] = "已解决", ["closed"] = "已关闭",
-    };
-    private static readonly Dictionary<string, string> SeverityZh = new()
-    {
-        ["critical"] = "严重", ["major"] = "一般", ["minor"] = "轻微",
+        "严重度", "状态", "维修人", "维修措施", "备注", "创建时间", "更新时间",
     };
 
     private static string[] RowOf(MaintenanceRecord m) => new[]
@@ -31,12 +23,13 @@ public static class MaintenanceExporter
         m.EquipmentModel,
         m.EquipmentSn,
         m.FailReason,
-        SeverityZh.GetValueOrDefault(m.Severity, m.Severity),
-        StatusZh.GetValueOrDefault(m.Status, m.Status),
+        MaintenanceMeta.SeverityZhOf(m.Severity),
+        MaintenanceMeta.ZhOf(m.Status),
         m.Resolver,
         m.Resolution,
         m.Notes,
         m.CreatedAt,
+        m.UpdatedAt,
     };
 
     // ==================== CSV ====================
@@ -143,8 +136,8 @@ public static class MaintenanceExporter
         sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
         sb.Append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
 
-        // 列宽
-        double[] widths = { 6, 24, 14, 22, 30, 10, 10, 12, 30, 24, 20 };
+        // 列宽(须与 Headers 等长)
+        double[] widths = { 6, 24, 14, 22, 30, 10, 10, 12, 30, 24, 20, 20 };
         sb.Append("<cols>");
         for (int c = 0; c < widths.Length; c++)
             sb.Append($"<col min=\"{c + 1}\" max=\"{c + 1}\" width=\"{widths[c].ToString(System.Globalization.CultureInfo.InvariantCulture)}\" customWidth=\"1\"/>");

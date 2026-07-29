@@ -8,9 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>FCT-Aggregator</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
-    <Version>2.1.0</Version>
-    <AssemblyVersion>2.1.0.0</AssemblyVersion>
-    <FileVersion>2.1.0.0</FileVersion>
+    <Version>2.3.0</Version>
+    <AssemblyVersion>2.3.0.0</AssemblyVersion>
+    <FileVersion>2.3.0.0</FileVersion>
     <Company>Zenix-Ally</Company>
     <Product>FCT-Aggregator</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
@@ -19,6 +19,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- 自检工程独立编译，不属于主程序（不排除的话它的 obj\AssemblyInfo.cs 会被当成源码 -> CS0579 特性重复） -->
+    <Compile Remove="selftest\**" />
+    <None Remove="selftest\**" />
+    <EmbeddedResource Remove="selftest\**" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
   </ItemGroup>

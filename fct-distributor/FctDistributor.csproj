@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>FCT-Distributor</AssemblyName>
+    <RootNamespace>FctDistributor</RootNamespace>
+    <Version>1.9.0</Version>
+    <AssemblyVersion>1.9.0.0</AssemblyVersion>
+    <FileVersion>1.9.0.0</FileVersion>
+    <Company>Zenix-Ally</Company>
+    <Product>FCT-Distributor</Product>
+    <SelfContained>false</SelfContained>
+    <ApplicationIcon>app_icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 内置模板：模板不会变，直接编进 exe，现场无需携带/指定模板目录 -->
+    <EmbeddedResource Include="tpl\*.xml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 自检工程独立编译，不属于主程序 -->
+    <Compile Remove="selftest\**" />
+    <None Update="app_icon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

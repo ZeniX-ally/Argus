@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    自检工程：不属于主程序，独立运行。
+    直接引用主项目的源文件（只挑与维修记录相关的，不碰 Engine/Processor/UI）。
+    运行:  dotnet run –project selftest\SelfTest.csproj -c Release
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FctAggregator.SelfTest</RootNamespace>
+    <AssemblyName>FctAggregator.SelfTest</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="SelfTest.cs" />
+    <Compile Include="..\Database.cs" />
+    <Compile Include="..\MaintenanceStatus.cs" />
+    <Compile Include="..\MaintenanceExporter.cs" />
+    <Compile Include="..\Logger.cs" />
+    <Compile Include="..\TestRecord.cs" />
+    <Compile Include="..\Config.cs" />
+    <Compile Include="..\MaintenanceBoard.cs" />
+    <Compile Include="..\FailItemPicker.cs" />
+    <Compile Include="..\ResolverManager.cs" />
+    <Compile Include="..\MaintenancePanel.cs" />
+    <Compile Include="..\Engine.cs" />
+    <Compile Include="..\Processor.cs" />
+    <Compile Include="..\XmlParser.cs" />
+    <Compile Include="..\Classifier.cs" />
+    <Compile Include="..\AppState.cs" />
+    <Compile Include="..\FeishuNotifier.cs" />
+    <Compile Include="..\StationDetector.cs" />
+    <Compile Include="..\FctIni.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
+
+
+
+
+

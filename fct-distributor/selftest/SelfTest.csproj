@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    自检工程：不属于主程序，独立运行。
+    直接引用主项目的源文件（除 WinForms 的 MainForm/Program），在临时目录里
+    造出「已有目录」结构，验证「只投放到已有目录」模式的全部不变量。
+
+    运行:  dotnet run ––project selftest\SelfTest.csproj -c Release
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FctDistributor.SelfTest</RootNamespace>
+    <AssemblyName>FctDistributor.SelfTest</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="SelfTest.cs" />
+    <Compile Include="..\TemplateGenerator.cs" />
+    <Compile Include="..\NameParser.cs" />
+    <Compile Include="..\Planner.cs" />
+    <Compile Include="..\Distributor.cs" />
+    <Compile Include="..\FileTimeUtil.cs" />
+    <Compile Include="..\XmlTimeScanner.cs" />
+    <Compile Include="..\XlsxWriter.cs" />
+    <Compile Include="..\SnExporter.cs" />
+    <Compile Include="..\RestampScopeDialog.cs" />
+    <!-- 与主程序一致的内置模板资源名，使 LoadEmbedded() 在自检里也能工作 -->
+    <EmbeddedResource Include="..\tpl\*.xml" LogicalName="FctDistributor.tpl.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

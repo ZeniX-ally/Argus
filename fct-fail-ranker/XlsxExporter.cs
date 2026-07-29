@@ -47,8 +47,8 @@ public static class XlsxExporter
         public static Cell Empty() => new() { Text = "", Style = S_NORMAL };
     }
 
-    private static readonly string[] RankHeaders = { "排名", "不良项名称", "出现次数", "受影响产品数", "占比(%)" };
-    private static readonly double[] RankWidths  = { 8, 46, 12, 16, 12 };
+    private static readonly string[] RankHeaders = { "排名", "不良项名称", "出现次数", "受影响产品数", "占比(%)", "测量值", "规格", "单位" };
+    private static readonly double[] RankWidths  = { 8, 46, 12, 16, 12, 28, 24, 10 };
 
     public static void Export(
         string path, DateTime start, DateTime end,
@@ -113,7 +113,7 @@ public static class XlsxExporter
         };
         AddTitle(s4, "测试明细清单", 9);
         s4.Rows.Add(new Row());
-        string[] detHeaders = { "测试日期", "类别", "型号", "SN", "机台", "结果", "失败项数", "失败项列表", "文件名" };
+        string[] detHeaders = { "测试日期", "类别", "型号", "SN", "机台", "结果", "失败项数", "失败项列表(值/规格)", "文件名" };
         var hrow = new Row();
         foreach (var h in detHeaders) hrow.Cells.Add(Cell.T(h, S_HEADER));
         s4.Rows.Add(hrow);
@@ -133,7 +133,7 @@ public static class XlsxExporter
             row.Cells.Add(Cell.T(rec.Station, st));
             row.Cells.Add(Cell.T(rec.Result, st));
             row.Cells.Add(Cell.N(rec.FailItems.Count, sn));
-            row.Cells.Add(Cell.T(string.Join(" | ", rec.FailItems), zebra ? S_ZEBRA_T : S_NORMAL));  // 失败项列表左对齐
+            row.Cells.Add(Cell.T(string.Join(" | ", rec.FailItems.Select(f => f.ToDetail())), zebra ? S_ZEBRA_T : S_NORMAL));  // 失败项列表(含值/规格)
             row.Cells.Add(Cell.T(rec.Filename, zebra ? S_ZEBRA_T : S_NORMAL));
             s4.Rows.Add(row);
         }
@@ -220,6 +220,9 @@ public static class XlsxExporter
             row.Cells.Add(Cell.N(r.Count, nStyle));
             row.Cells.Add(Cell.N(r.AffectedUnits, nStyle));
             row.Cells.Add(Cell.N(Math.Round(r.Percent, 2), n2Style));
+            row.Cells.Add(Cell.T(r.Values, zebra ? S_ZEBRA_T : S_NORMAL));    // 测量值左对齐
+            row.Cells.Add(Cell.T(r.Limits, zebra ? S_ZEBRA_T : S_NORMAL));    // 规格左对齐
+            row.Cells.Add(Cell.T(r.Units, zebra ? S_ZEBRA_T : S_TEXT_C));     // 单位居中
             sh.Rows.Add(row);
             rank++;
         }

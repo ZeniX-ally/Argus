@@ -1,0 +1,250 @@
+{
+  "$schema_note": "本次会话（2026-07-29）在 F:/Programe/G4_9-QA 下的全部改动交接记录。新会话可直接读此文件恢复上下文。",
+  "meta": {
+    "date": "2026-07-29",
+    "workspace": "F:/Programe/G4_9-QA",
+    "agent_env": {
+      "harness": "pi",
+      "shell": "PowerShell 7 (pwsh)",
+      "shell_gotchas": [
+        "pwsh 不支持 heredoc（<<'EOF'）——复杂脚本必须先 write 成 .py/.ps1 再执行",
+        "grep/wc 等 GNU 工具在 pwsh 下时有时无，优先 rg / Select-String / Get-ChildItem",
+        "rg 的 glob 要写成 --glob \"*.cs\" .，直接写 *.cs 会报 os error 123"
+      ]
+    },
+    "projects_touched": ["fct-distributor", "fct-aggregator-cs"],
+    "other_changes": ["opencode 接入阶跃 step-explore（Anthropic 格式）"]
+  },
+
+  "project_fct_distributor": {
+    "path": "F:/Programe/G4_9-QA/fct-distributor",
+    "version_chain": "v1.5.0 → v1.6.0 → v1.7.0 → v1.8.0 → v1.8.1 → v1.9.0",
+    "current_version": "1.9.0",
+    "artifact": "FCT-Distributor-v1.9.0.zip（旧版本 zip 已删）",
+    "selftest": {
+      "cmd": "dotnet run --project selftest\\SelfTest.csproj -c Release",
+      "assertions": 67,
+      "status": "全部通过",
+      "perf_bench": "$env:FCT_BIG_N='50000' 后再跑 = 大数据量压测"
+    },
+    "build": "dotnet build -c Release → 0 警告 0 错误",
+    "requirement_evolution": [
+      "① 只投放到已有目录：绝不 mkdir，只往目标根下现成的日期目录里放",
+      "② 模板内置：tpl/*.xml 以 EmbeddedResource 编进 exe，界面去掉「模板目录」输入框",
+      "③ 只看 Offline：去掉分类下拉，Online 不扫不写",
+      "④ 写入规则改正：目录里有同 SN 就跳过、没有就加进去，**不限目录内文件总数**",
+      "⑤ 计划/成果列表按【日期+型号】合并显示「待生成 N 个文件」",
+      "⑥ 导出 xlsx：金银板 SN 台账（机台号/日期/金板SN+Golden/银板SN+Silvery）",
+      "⑦ 修时间戳可自选文件夹范围",
+      "⑧ 大数据量卡死/无法中止 → 修",
+      "⑨ SN 固定（E3002781AFV…272/274），绝不改写 → 只可能出现在 Offline\\E3002781"
+    ],
+    "files_added": [
+      "XlsxWriter.cs（零依赖 OOXML 写入器，含样式/列宽/冻结首行）",
+      "SnExporter.cs（金银板台账，SN 整串精确分金/银）",
+      "RestampScopeDialog.cs（修时间戳的文件夹范围选择框，后台扫描可停）",
+      "selftest/SelfTest.csproj + selftest/SelfTest.cs（net8.0-windows + WinForms，67 项断言）",
+      "tools/make_icon.ps1（图标生成脚本，字节级可复现）",
+      "config.example.json",
+      "启动.bat（原先只在 gitignore 掉的 dist/ 里，重发布会丢，已收回项目根）"
+    ],
+    "files_modified": [
+      "TemplateGenerator.cs（内置模板 LoadEmbedded / 只扫 Offline+固定型号 / 删除型号适配与 SN 改写 / 同 SN 跳过）",
+      "MainForm.cs（去模板目录框、去分类下拉、去适配型号勾选框、列表合并渲染、导出按钮、范围选择流程、日志批量刷新+进度限流）",
+      "Distributor.cs（NoCreateDirs、Restamp 多目录重载、Unchanged 统计、父目录冒泡止于根）",
+      "FileTimeUtil.cs（TimesMatch 跳过已正确、句柄版一次 open 设三时间）",
+      "NameParser.cs（删 CategoryMode/CategoryOf，改为常量 Category=\"Offline\"）",
+      "Planner.cs（Category 固定 Offline）",
+      "FctDistributor.csproj（EmbeddedResource tpl\\*.xml、Compile Remove selftest\\**、版本号）",
+      "README.md（大改：目录策略/内置模板/导出台账/自选范围/大数据量性能/版本历史）",
+      "app_icon.ico（换新图标，不再与 fct-fail-ranker 共用）"
+    ],
+    "key_facts": {
+      "golden_sn": "E3002781AFV75236898002K30500272（金板 Golden，对应 P_ 模板）",
+      "silvery_sn": "E3002781AFV75236898002K30500274（银板 Silvery，对应 O_ 模板）",
+      "model_fixed": "E3002781（= SN 前 8 位，唯一可落目录）",
+      "sn_never_rewritten": true,
+      "target_layout": "{目标根}\\Offline\\E3002781\\{yyyyMMdd}\\*.xml",
+      "write_rule": "目录里已有同 SN → 跳过；没有 → 加进去；不限目录内文件总数",
+      "xlsx_columns": ["机台号", "日期", "金板 SN", "标注", "银板 SN", "标注"],
+      "perf_measured": "5 万文件 3.66s（≈13,700 个/秒）；重跑 0.48s（跳过已正确）；取消 37ms 内响应"
+    },
+    "bugs_found_and_fixed_this_session": [
+      {
+        "bug": "dist/config.json 里 \"D:\\Results\" 是非法 JSON 转义，JsonDocument.Parse 抛异常被 catch 吞掉 → 现场改路径静默失效",
+        "fix": "改为 \"D:\\\\Results\"，并新增 config.example.json"
+      },
+      {
+        "bug": "RestampScopeDialog 构造期 Rebind → SetItemChecked 触发 ItemCheck → BeginInvoke，但窗口句柄还没建 → InvalidOperationException，现场一点按钮就崩",
+        "fix": "_binding 屏蔽程序化勾选 + IsHandleCreated ? BeginInvoke : 直接调用；e.Index 越界保护",
+        "how_found": "把 selftest 改成 net8.0-windows 后无 UI 构造对话框，第一次跑就炸出来"
+      },
+      {
+        "bug": "修时间戳大数据量卡死且点不到【中止】",
+        "root_cause": "每个文件一次日志 BeginInvoke + 一次进度 BeginInvoke → 10 万条 UI 消息灌满队列；且 AppendLog 用 _txtLog.Lines.Length（O(n) 分配）退化成 O(n²)",
+        "fix": "日志改队列 + Timer 每 120ms 批量 AppendText；明细上限 200 行、之后每 400ms 一行汇总；进度按百分比+80ms 限流；枚举阶段每 512 个查 token；跳过已正确的文件；句柄版一次 open；取消时返回部分报告"
+      }
+    ],
+    "traps_recorded": [
+      "主工程默认 glob 会把 selftest\\obj\\...\\AssemblyInfo.cs 当源码编 → CS0579 特性重复。必须 <Compile Remove=\"selftest\\**\" />（只有先跑过一次自检才会现，极易误判）",
+      "纯 PNG 帧的 .ico 在 System.Drawing.Icon.ToBitmap() 会抛 ArgumentOutOfRange → ≤64px 用 DIB 帧、128/256 用 PNG 帧",
+      "Windows PowerShell 5.1 读 UTF-8-no-BOM 脚本会按 GBK 解码中文，mojibake 里的反引号会把语法搞崩 → tools/make_icon.ps1 刻意全 ASCII 注释",
+      "publish 前必须 Stop-Process，否则 MSB3021 文件被占用，dist 里留旧 dll（本次撞过一次）"
+    ]
+  },
+
+  "project_fct_aggregator_cs": {
+    "path": "F:/Programe/G4_9-QA/fct-aggregator-cs",
+    "version_chain": "v2.1.0 → v2.2.0 → v2.3.0",
+    "current_version": "2.3.0",
+    "artifacts": {
+      "update_package": "FCT-Aggregator-v2.3.0-update.zip（**无 config.json、无 data/、无 logs/** —— 覆盖用，用户指定）",
+      "full_package": "FCT-Aggregator-v2.3.0.zip（含 config.json，webhook 按用户要求写死在里面）",
+      "folders": ["package_v2.3.0", "package_v2.3.0-update", "package_v2.2.0", "package_v2.2.0-update", "package_v2.1.0"],
+      "kept_for_rollback": ["FCT-Aggregator-v2.2.0.zip", "FCT-Aggregator-v2.2.0-update.zip"],
+      "deleted": ["FCT-Aggregator-CS.zip", "FCT-Aggregator-update.zip（内容是 v2.1.0、文件名无版本号，易混）"]
+    },
+    "selftest": {
+      "cmd": "dotnet run --project selftest\\SelfTest.csproj -c Release",
+      "assertions": 114,
+      "status": "全部通过",
+      "notes": "拿 dist\\data\\fct.db（真实库 184KB / 285 条 / 62 条 FAIL）的副本在临时目录跑，不碰真实数据；导出产物另用 pandas+openpyxl 反向读验证"
+    },
+    "build": "dotnet build -c Release --no-incremental → 0 警告 0 错误",
+    "v2_2_0": {
+      "theme": "维修记录页看板化",
+      "status_system": {
+        "columns": ["unknown 未知问题", "investigating 正在排查", "open 未完成", "in_progress 进行中", "resolved 已完成"],
+        "default_new": "open（用户确认：新建默认「未完成」）",
+        "legacy": "closed 已关闭 → 迁移进 resolved，仅作 legacy 映射保留"
+      },
+      "migration": "Database.Init() 幂等迁移 closed→resolved；**改写前自动备份 {db}.bak-yyyyMMdd**（用户确认要备份）；备份失败则跳过迁移（UI 靠 legacy 映射仍显示「已完成」）；只改 status 不动 updated_at；无 DDL",
+      "features": [
+        "看板 5 列 + 列头真实计数徽章（CountMaintenanceByStatus，不受每列 limit 影响）",
+        "拖卡片改状态；拖到「已完成」弹 QuickResolveForm 补填（确定/跳过/取消三条路）",
+        "卡片全自绘（子控件会吞鼠标事件、120 张卡×5 Label=600+ 句柄）",
+        "编辑功能（此前完全缺失）：双击卡片/列表行 → MaintenanceForm 编辑模式，操作 Clone 副本，取消不污染原对象",
+        "顺手修：备注输入框（DB 有列但表单从来没有输入口）、updated_at（SELECT 从没取过）、字典双份（MaintenanceStatus.cs 单一来源）、LIMIT 200 硬编码、往期日期 updated_at 取「现在」导致老记录顶到最前"
+      ],
+      "bugs_fixed_after_user_feedback": [
+        {
+          "bug": "看板卡片右键没反应",
+          "root_cause": "自绘 Panel 的 OnMouseDown 第一行就 if (e.Button != Left) return，且自绘 Panel 不会自动弹菜单",
+          "fix": "MaintenanceCard.ContextRequested → StatusColumn.CardContextRequested → MaintenanceBoard.ContextRequested → MaintenancePanel.BuildRecordMenu()（看板与列表**共用同一份菜单**）；右键按下清 _pressed 防止误入拖拽"
+        },
+        {
+          "bug": "只有一条记录，删除后新建 ID 变成 2 而不是 1",
+          "root_cause": "id INTEGER PRIMARY KEY AUTOINCREMENT → sqlite_sequence 记住用过的最大值且永不复用",
+          "fix": "DeleteMaintenance 在同一事务里把 sqlite_sequence.seq 回拨到 MAX(id)：删空→回到 1；删最后一条→接着用；删中间→不回填空号（避免与已导出报表的旧 #N 撞车）。test_records 不动"
+        }
+      ]
+    },
+    "v2_3_0": {
+      "theme": "维修记录录入方式重做（故障项来自 FAIL 记录、去 SN、维修人可选可多选）",
+      "features": [
+        "新按钮【从FAIL选故障项】(FailItemPicker.cs)：FAIL 测试项**去重**列出（出现次数/最近出现/型号/机台），**全程不显示 SN**；勾多个→默认每项建一条记录，表单可勾「合并为一条」",
+        "两级取数：默认读 test_records.fail_reason（只有首个失败项，秒出）；【深扫 XML】重解析 xml_path 拿全部失败项（后台线程、可停、进度每 300ms、XML 丢失计数并回退首项）",
+        "表单去掉「设备型号」「设备SN」两行（DB 列与导出列保留以兼容历史）；列表「设备SN」列换成「故障描述」；卡片第2行与悬停提示不再显示 SN/型号",
+        "维修人员：新表 resolvers（CREATE TABLE IF NOT EXISTS，name TEXT UNIQUE COLLATE NOCASE），下拉候选 = 名单 ∪ 历史（名单在前）",
+        "【+ 人员】按钮 → ResolverManagerForm：添加/删除/改名（改名可选「同步历史记录」，**默认不勾**；删除只删名单**不动历史记录**并提示涉及条数）",
+        "【选择】按钮 → ResolverPickerForm：**多选**维修人（CheckedListBox + 搜索 + 全选/清空 + 底部「添加并勾选」新人）；拖到已完成的 QuickResolveForm 也有【选择】",
+        "多人存储：resolver 一列存「张三、李四」（分隔符 、），无 DDL 变更；ResolverUtil 负责拆/合/成员级包含/成员级改名"
+      ],
+      "multi_person_pitfalls_handled": [
+        "DistinctResolvers 必须拆开统计，否则候选里出现「张三、李四」组合项",
+        "CountRecordsByResolver 必须成员级：整列相等会漏算多人记录；用 LIKE 则「张三」误中「张三丰」",
+        "RenameResolver(sync) 不能写 SET resolver=@new WHERE resolver=@old —— 会把「张三、李四」整行抹成「张三三」把同事弄丢；现逐行读出→成员级替换→写回",
+        "手敲多人时逐人 AddResolver 入名单，不会把整串当一个人"
+      ]
+    },
+    "files_added": [
+      "MaintenanceStatus.cs（MaintenanceMeta：状态/严重度中文与颜色**单一来源**）",
+      "MaintenanceBoard.cs（看板：StatusColumn / 自绘 MaintenanceCard / QuickResolveForm）",
+      "FailItemPicker.cs（从 FAIL 记录挑故障项，去重、不显示 SN、可深扫 XML；含静态 Aggregate 供自检）",
+      "ResolverManager.cs（ResolverUtil 多人拆合 + ResolverManagerForm 名单管理 + RenameResolverForm + ResolverPickerForm 多选框）",
+      "selftest/SelfTest.csproj + selftest/SelfTest.cs（114 项断言）"
+    ],
+    "files_modified": [
+      "Database.cs（closed 迁移+备份、MaintenanceRecord.UpdatedAt、ListMaintenance 取 updated_at+limit 参数化+按 updated_at 倒序、CountMaintenanceByStatus、UpdateMaintenance 全字段、DeleteMaintenance 回收 id、FailItemSources、resolvers 表与 5 个名单方法、DistinctResolvers/CountRecordsByResolver/RenameResolver 改成员级）",
+      "MaintenancePanel.cs（看板/列表切换、共用右键菜单 BuildRecordMenu、【从FAIL选故障项】、MaintenanceForm 重写：新增/编辑/批量三模、去型号SN、维修人 ComboBox+【选择】+【+ 人员】、保存时规范化并逐人入名单）",
+      "MaintenanceExporter.cs（读 MaintenanceMeta 单一字典、新增第 12 列「更新时间」）",
+      "MainForm.cs（标题版本号 v2.3.0）",
+      "FctAggregator.csproj（版本 2.3.0 + Compile/None/EmbeddedResource Remove selftest\\**）",
+      "更新日志.md / 版本更新说明.md / TECHNICAL_DOCUMENTATION.md（含新增 §6.3 resolvers 表、§8.1 看板要点、§8.2 故障项挑选、多人存储与三个坑）"
+    ],
+    "csv_export_note": "CSV 前 3 行是标题块（标题/导出时间/空行）后才是表头 —— Excel 直开没问题，但 pandas.read_csv 需 skiprows=3（沿用 v2.1.0 格式，未改动）",
+    "untouched": ["Engine.cs", "Processor.cs", "XmlParser.cs", "Classifier.cs", "AppState.cs", "FeishuNotifier.cs", "DebugPanel.cs", "FailListPanel.cs", "DeviceStatusPanel.cs", "StationDetector.cs", "FctIni.cs"]
+  },
+
+  "opencode_config_change": {
+    "goal": "在 opencode 里用当前模型（阶跃 step-explore，Anthropic 格式）",
+    "files": {
+      "modified": ["~/.config/opencode/opencode.json（新增 provider step-anthropic + model 默认值）", "~/.config/opencode/opencode.jsonc（只改 model 一行）"],
+      "backups": ["opencode.json.bak.20260729131936", "opencode.jsonc.bak.20260729131936"]
+    },
+    "provider": {
+      "id": "step-anthropic",
+      "npm": "@ai-sdk/anthropic",
+      "baseURL": "https://api.stepfun.com/step_plan/v1",
+      "model": "step-explore",
+      "model_flags": {
+        "temperature": false,
+        "reasoning": false,
+        "variants": "high/max 均 disabled",
+        "limit": { "context": 1000000, "output": 16384 }
+      }
+    },
+    "probed_facts": [
+      "baseURL 必须带 /v1（@ai-sdk/anthropic 只拼 /messages，而 pi 用的官方 SDK 会自己拼 /v1/messages）",
+      "接口**不接受 temperature**（哪怕 0）→ 400 input_invalid",
+      "接口**不接受 thinking 入参**（思考内置）→ 400 input_invalid，故必须 reasoning:false 且禁 high/max 变体",
+      "tools / tool_result 往返、system 块 + cache_control、stream、stop_sequences、metadata、anthropic-beta 头均正常",
+      "真实语料 21 万 input tokens 正常；~48 万仍 200；~84 万 → 400；重复垃圾文本超 1 万 tokens 会返回空响应（是内容保护不是长度限制）"
+    ],
+    "验证": "opencode run 三条：纯文本回复 / Read 工具 / Write+bash 全部通过"
+  },
+
+  "session_error_diagnosed": {
+    "symptom": "pi 里出现 {\"type\":\"error\",\"index\":0,\"usage\":{全 0}}",
+    "conclusion": "上游瞬时中断（usage 全 0 = 一个 token 都没生成），不是配置问题；重试即可",
+    "ruled_out": ["上下文超限", "多轮过多", "回传 thinking 签名", "工具往返", "大上下文+工具"],
+    "advisory_not_applied": "~/.pi/agent/models.json 里 step-explore 的 contextWindow=1000000 是占位值，实测实用区间约 20~25 万 → 建议改 262144 让 pi 及时自动压缩（**用户未确认，尚未修改**）"
+  },
+
+  "pending_decisions": [
+    {
+      "id": "git-commit",
+      "desc": "整个 G4_9-QA 仓库有大量未提交内容：fct-distributor/ 与 fct-aggregator-cs 的 4 个新 .cs + selftest/ 全是未跟踪；fct-fail-ranker 有 4 个已修改文件；另有 fct-fetcher/ fct-fetcher-cs/ 未跟踪",
+      "status": "用户尚未点头提交"
+    },
+    {
+      "id": "package_v2.1.0-real-data",
+      "desc": "package_v2.1.0\\data\\fct.db（188KB 真实数据）+ logs\\app.log（43KB）躺在交付包文件夹里，整包拷走会泄；它同时是唯一的 v2.1.0 回滚源",
+      "options": ["删掉这两个文件只留程序", "先压一个干净的 FCT-Aggregator-v2.1.0.zip 再清理"],
+      "status": "待定"
+    },
+    {
+      "id": "webhook",
+      "desc": "config.json 里飞书 webhook token 写死在完整包里",
+      "status": "用户已明确：不需要脱敏，写死即可"
+    },
+    {
+      "id": "fct-distributor-adapt-model-default",
+      "desc": "「适配目录型号」功能已按最终需求整体删除（SN 绝不改写）",
+      "status": "已定案"
+    }
+  ],
+
+  "how_to_continue": {
+    "verify_all": [
+      "cd F:/Programe/G4_9-QA/fct-distributor; dotnet build -c Release; dotnet run --project selftest\\SelfTest.csproj -c Release   # 期望 67 项全过",
+      "cd F:/Programe/G4_9-QA/fct-aggregator-cs; dotnet build -c Release --no-incremental; dotnet run --project selftest\\SelfTest.csproj -c Release   # 期望 114 项全过"
+    ],
+    "repackage_aggregator": "publish 到 dist（先 Stop-Process FCT-Aggregator）→ package_v2.3.0(-update) → Compress-Archive；更新包必须排除 config.json / data / logs / *.pdb",
+    "conventions": [
+      "每次功能改动必须：加 selftest 断言 → build 0 警告 0 错误 → 改版本号 → 写三份文档（更新日志/版本更新说明/TECHNICAL_DOCUMENTATION）→ 重新发布并打包",
+      "导出类改动一律用 pandas/openpyxl 反向读验证（手写 OOXML 最易翻车）",
+      "涉及 UI 的逻辑尽量抽成可无 UI 构造/纯函数的形式，好让 selftest 覆盖（本次靠这招抓到两个真 bug）"
+    ]
+  }
+}

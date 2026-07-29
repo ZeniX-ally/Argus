@@ -6,9 +6,11 @@ namespace FctAggregator;
 public class Database
 {
     private readonly string _connString;
+    private readonly string _dbPath;
 
     public Database(string dbPath)
     {
+        _dbPath = dbPath;
         _connString = new SqliteConnectionStringBuilder
         {
             DataSource = dbPath,
@@ -26,52 +28,132 @@ public class Database
 
     private void Init()
     {
-        using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            CREATE TABLE IF NOT EXISTS test_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                station_id TEXT NOT NULL,
-                model TEXT,
-                category TEXT,
-                test_date TEXT NOT NULL,
-                sn TEXT,
-                result TEXT,
-                xml_path TEXT UNIQUE,
-                fail_reason TEXT,
-                tester TEXT,
-                panel_status TEXT,
-                batch_timestamp TEXT,
-                has_fail_items INTEGER,
-                file_size INTEGER,
-                created_at TEXT DEFAULT (datetime('now','localtime'))
-            );
-            CREATE INDEX IF NOT EXISTS idx_date ON test_records(test_date);
-            CREATE INDEX IF NOT EXISTS idx_sn ON test_records(sn);
-            CREATE INDEX IF NOT EXISTS idx_result ON test_records(result);
-        ";
-        cmd.ExecuteNonQuery();
+        using (var conn = Open())
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS test_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    station_id TEXT NOT NULL,
+                    model TEXT,
+                    category TEXT,
+                    test_date TEXT NOT NULL,
+                    sn TEXT,
+                    result TEXT,
+                    xml_path TEXT UNIQUE,
+                    fail_reason TEXT,
+                    tester TEXT,
+                    panel_status TEXT,
+                    batch_timestamp TEXT,
+                    has_fail_items INTEGER,
+                    file_size INTEGER,
+                    created_at TEXT DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_date ON test_records(test_date);
+                CREATE INDEX IF NOT EXISTS idx_sn ON test_records(sn);
+                CREATE INDEX IF NOT EXISTS idx_result ON test_records(result);
+            ";
+            cmd.ExecuteNonQuery();
 
-        using var cmd2 = conn.CreateCommand();
-        cmd2.CommandText = @"
-            CREATE TABLE IF NOT EXISTS maintenance_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                station_id TEXT,
-                equipment_model TEXT,
-                equipment_sn TEXT,
-                fail_item TEXT NOT NULL,
-                fail_reason TEXT,
-                severity TEXT DEFAULT 'major',
-                status TEXT DEFAULT 'open',
-                resolver TEXT,
-                resolution TEXT,
-                notes TEXT,
-                created_at TEXT DEFAULT (datetime('now','localtime')),
-                updated_at TEXT DEFAULT (datetime('now','localtime'))
-            );
-            CREATE INDEX IF NOT EXISTS idx_maint_status ON maintenance_records(status);
-        ";
-        cmd2.ExecuteNonQuery();
+            using var cmd2 = conn.CreateCommand();
+            cmd2.CommandText = @"
+                CREATE TABLE IF NOT EXISTS maintenance_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    station_id TEXT,
+                    equipment_model TEXT,
+                    equipment_sn TEXT,
+                    fail_item TEXT NOT NULL,
+                    fail_reason TEXT,
+                    severity TEXT DEFAULT 'major',
+                    status TEXT DEFAULT 'open',
+                    resolver TEXT,
+                    resolution TEXT,
+                    notes TEXT,
+                    created_at TEXT DEFAULT (datetime('now','localtime')),
+                    updated_at TEXT DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_maint_status ON maintenance_records(status);
+            ";
+            cmd2.ExecuteNonQuery();
+
+            // v2.3.0: 维修人员名单。与历史记录里用过的名字共同组成下拉候选。
+            // 名字大小写不敏感唯一 -> 同一个人不会因大小写出两条
+            using var cmd3 = conn.CreateCommand();
+            cmd3.CommandText = @"
+                CREATE TABLE IF NOT EXISTS resolvers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    created_at TEXT DEFAULT (datetime('now','localtime'))
+                );
+            ";
+            cmd3.ExecuteNonQuery();
+        }
+        MigrateClosedStatus();
+    }
+
+    /// <summary>
+    /// v2.2.0 迁移: 维修记录状态体系由 4 个合并为 5 个(新增 unknown/investigating,
+    /// 取消 closed)，把库里历史的 status='closed' 一次性改写为 'resolved'。
+    /// 幂等(无 closed 行时直接返回)。改写前先备份 db 文件；备份失败则跳过迁移
+    /// —— 此时 UI 仍能通过 MaintenanceMeta 的 legacy 映射把 closed 显示为「已完成」，不影响使用。
+    /// </summary>
+    private void MigrateClosedStatus()
+    {
+        try
+        {
+            int pending;
+            using (var conn = Open())
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT COUNT(*) FROM maintenance_records WHERE status='closed'";
+                pending = Convert.ToInt32(cmd.ExecuteScalar());
+            }
+            if (pending == 0) return;
+
+            if (!BackupDbFile())
+            {
+                Logger.Warning($"[迁移] 备份未完成, 跳过 closed->resolved 迁移({pending} 条暂按「已完成」显示)");
+                return;
+            }
+
+            using (var conn = Open())
+            using (var cmd = conn.CreateCommand())
+            {
+                // 只改 status, 不动 updated_at —— 保留记录真实的最后人工更新时间
+                cmd.CommandText = "UPDATE maintenance_records SET status='resolved' WHERE status='closed'";
+                var done = cmd.ExecuteNonQuery();
+                Logger.Info($"[迁移] {done} 条维修记录状态「已关闭」-> 「已完成」(v2.2.0 状态体系合并)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[迁移] 维修记录状态迁移失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>迁移前备份 db 文件为 {db}.bak-yyyyMMdd。已存在同日备份则视为成功。</summary>
+    private bool BackupDbFile()
+    {
+        try
+        {
+            if (!File.Exists(_dbPath)) return true;
+            var bak = $"{_dbPath}.bak-{DateTime.Now:yyyyMMdd}";
+            if (File.Exists(bak))
+            {
+                Logger.Info($"[迁移] 已存在当日备份, 直接迁移: {Path.GetFileName(bak)}");
+                return true;
+            }
+            // 释放连接池持有的文件句柄, 确保 File.Copy 拿到完整快照
+            SqliteConnection.ClearAllPools();
+            File.Copy(_dbPath, bak);
+            Logger.Info($"[迁移] 数据库已备份: {Path.GetFileName(bak)}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[迁移] 数据库备份失败: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>已存在的 xml_path 集合(去重用)。</summary>
@@ -212,10 +294,13 @@ public class Database
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
+        // created_at 允许手工指定(记录日期); updated_at 跟随同一取值,
+        // 否则录入往期日期时 updated_at 会是"现在", 看板按更新时间排序会把老记录顶到最前。
         cmd.CommandText = @"
             INSERT INTO maintenance_records
-            (station_id, equipment_model, equipment_sn, fail_item, fail_reason, severity, status, resolver, resolution, notes, created_at)
+            (station_id, equipment_model, equipment_sn, fail_item, fail_reason, severity, status, resolver, resolution, notes, created_at, updated_at)
             VALUES (@st,@model,@sn,@item,@reason,@sev,@status,@resolver,@reso,@notes,
+                    COALESCE(NULLIF(@created,''), datetime('now','localtime')),
                     COALESCE(NULLIF(@created,''), datetime('now','localtime')));
             SELECT last_insert_rowid();";
         cmd.Parameters.AddWithValue("@st", (object?)m.StationId ?? "");
@@ -232,15 +317,22 @@ public class Database
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
-    public List<MaintenanceRecord> ListMaintenance(string statusFilter = "")
+    /// <summary>
+    /// 查询维修记录。statusFilter 为空表示全部。
+    /// 排序: 最后更新时间倒序(看板语义: 最近动过的置顶), updated_at 缺失时回落 created_at。
+    /// </summary>
+    public List<MaintenanceRecord> ListMaintenance(string statusFilter = "", int limit = 500)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         var where = string.IsNullOrEmpty(statusFilter) ? "" : "WHERE status = @s";
         cmd.CommandText = $@"SELECT id, station_id, equipment_model, equipment_sn, fail_item, fail_reason,
-            severity, status, resolver, resolution, notes, created_at
-            FROM maintenance_records {where} ORDER BY id DESC LIMIT 200";
+            severity, status, resolver, resolution, notes, created_at, updated_at
+            FROM maintenance_records {where}
+            ORDER BY COALESCE(NULLIF(updated_at,''), created_at, '') DESC, id DESC
+            LIMIT @lim";
         if (!string.IsNullOrEmpty(statusFilter)) cmd.Parameters.AddWithValue("@s", statusFilter);
+        cmd.Parameters.AddWithValue("@lim", limit <= 0 ? 500 : limit);
         var list = new List<MaintenanceRecord>();
         using var r = cmd.ExecuteReader();
         while (r.Read())
@@ -259,11 +351,32 @@ public class Database
                 Resolution = r.IsDBNull(9) ? "" : r.GetString(9),
                 Notes = r.IsDBNull(10) ? "" : r.GetString(10),
                 CreatedAt = r.IsDBNull(11) ? "" : r.GetString(11),
+                UpdatedAt = r.IsDBNull(12) ? "" : r.GetString(12),
             });
         }
         return list;
     }
 
+    /// <summary>
+    /// 各状态的真实总数(不受列表 LIMIT 影响), 供看板列头徽章显示。
+    /// key 为原始入库值, 调用方需用 MaintenanceMeta.Normalize 归并 legacy 'closed'。
+    /// </summary>
+    public Dictionary<string, int> CountMaintenanceByStatus()
+    {
+        var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT status, COUNT(*) FROM maintenance_records GROUP BY status";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var key = r.IsDBNull(0) ? "open" : r.GetString(0);
+            dict[key] = r.GetInt32(1);
+        }
+        return dict;
+    }
+
+    /// <summary>只改状态(看板拖放用)。</summary>
     public bool UpdateMaintenanceStatus(int id, string status)
     {
         using var conn = Open();
@@ -274,13 +387,262 @@ public class Database
         return cmd.ExecuteNonQuery() > 0;
     }
 
-    public bool DeleteMaintenance(int id)
+    /// <summary>
+    /// 全字段更新(编辑表单 / 拖到「已完成」时补填维修人与措施用)。
+    /// 含 created_at(编辑表单允许改「记录日期」); updated_at 置为当前时间。
+    /// </summary>
+    public bool UpdateMaintenance(MaintenanceRecord m)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM maintenance_records WHERE id=@id";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.CommandText = @"
+            UPDATE maintenance_records SET
+                equipment_model=@model, equipment_sn=@sn, fail_item=@item, fail_reason=@reason,
+                severity=@sev, status=@status, resolver=@resolver, resolution=@reso, notes=@notes,
+                created_at=COALESCE(NULLIF(@created,''), created_at),
+                updated_at=datetime('now','localtime')
+            WHERE id=@id";
+        cmd.Parameters.AddWithValue("@model", (object?)m.EquipmentModel ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@sn", (object?)m.EquipmentSn ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@item", m.FailItem);
+        cmd.Parameters.AddWithValue("@reason", (object?)m.FailReason ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@sev", m.Severity);
+        cmd.Parameters.AddWithValue("@status", m.Status);
+        cmd.Parameters.AddWithValue("@resolver", (object?)m.Resolver ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@reso", (object?)m.Resolution ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@notes", (object?)m.Notes ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@created", (object?)(m.CreatedAt ?? ""));
+        cmd.Parameters.AddWithValue("@id", m.Id);
         return cmd.ExecuteNonQuery() > 0;
+    }
+
+    /// <summary>
+    /// 删除维修记录，并**回收自增 id**。
+    ///
+    /// 建表用的是 `id INTEGER PRIMARY KEY AUTOINCREMENT`，SQLite 会把已用过的最大值
+    /// 记在 `sqlite_sequence` 里并**永不复用** —— 于是「就一条记录(id=1)，删了再新建变成 id=2」。
+    /// 维修记录的 id 是给人看的流水号(卡片右上角 #N、导出第一列)，不被其它表引用，
+    /// 所以删完把游标回抨到当前 MAX(id)：
+    ///   ① 删空了 -> 下次新建回到 1；
+    ///   ② 删的是最后一条 -> 下次新建接着用那个号；
+    ///   ③ 删的是中间那条 -> 不回填空号(避开与已导出报表上的旧 #N 撞车)。
+    /// </summary>
+    public bool DeleteMaintenance(int id)
+    {
+        using var conn = Open();
+        using var tx = conn.BeginTransaction();
+
+        int affected;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM maintenance_records WHERE id=@id";
+            cmd.Parameters.AddWithValue("@id", id);
+            affected = cmd.ExecuteNonQuery();
+        }
+
+        if (affected > 0)
+        {
+            using var seq = conn.CreateCommand();
+            seq.Transaction = tx;
+            // sqlite_sequence 里没这张表的行时(从未插入过) UPDATE 影响 0 行, 无害
+            seq.CommandText = @"
+                UPDATE sqlite_sequence
+                   SET seq = (SELECT COALESCE(MAX(id), 0) FROM maintenance_records)
+                 WHERE name = 'maintenance_records'";
+            seq.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return affected > 0;
+    }
+
+    // ==================== 维修人员名单 ====================
+
+    /// <summary>名单里的人（按名字排）。</summary>
+    public List<string> RosterResolvers()
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT name FROM resolvers ORDER BY name COLLATE NOCASE ASC";
+        var list = new List<string>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(r.GetString(0));
+        return list;
+    }
+
+    /// <summary>
+    /// 下拉候选 = **名单** ∪ **历史记录里用过的名字**（名单在前，大小写不敏感去重）。
+    /// 这样既能提前录班组名单，也不会丢掉已经录过的人。
+    /// </summary>
+    public List<string> ListResolvers(int historyLimit = 30)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var n in RosterResolvers())
+            if (seen.Add(n)) result.Add(n);
+        foreach (var n in DistinctResolvers(historyLimit))
+            if (seen.Add(n)) result.Add(n);
+        return result;
+    }
+
+    /// <summary>加人。已存在（不分大小写）或名字为空时返回 false。</summary>
+    public bool AddResolver(string name)
+    {
+        name = (name ?? "").Trim();
+        if (name.Length == 0) return false;
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT OR IGNORE INTO resolvers(name) VALUES(@n)";
+        cmd.Parameters.AddWithValue("@n", name);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    /// <summary>从名单里删人。**不动已有维修记录**（历史记录里的名字照旧）。</summary>
+    public bool DeleteResolver(string name)
+    {
+        name = (name ?? "").Trim();
+        if (name.Length == 0) return false;
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM resolvers WHERE name = @n COLLATE NOCASE";
+        cmd.Parameters.AddWithValue("@n", name);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    /// <summary>
+    /// 改名。syncRecords=true 时把历史维修记录里的这个名字一并改掉（治错别字）。
+    /// 返回同步改动的记录数（不同步时为 0）。
+    /// </summary>
+    public int RenameResolver(string oldName, string newName, bool syncRecords)
+    {
+        oldName = (oldName ?? "").Trim();
+        newName = (newName ?? "").Trim();
+        if (oldName.Length == 0 || newName.Length == 0) return 0;
+
+        using var conn = Open();
+        using var tx = conn.BeginTransaction();
+        int synced = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            // 目标名已在名单里 -> 先删旧名，避开 UNIQUE 冲突
+            cmd.CommandText = @"
+                DELETE FROM resolvers WHERE name = @old COLLATE NOCASE
+                  AND EXISTS(SELECT 1 FROM resolvers WHERE name = @new COLLATE NOCASE);
+                UPDATE resolvers SET name = @new WHERE name = @old COLLATE NOCASE;
+                INSERT OR IGNORE INTO resolvers(name) VALUES(@new);";
+            cmd.Parameters.AddWithValue("@old", oldName);
+            cmd.Parameters.AddWithValue("@new", newName);
+            cmd.ExecuteNonQuery();
+        }
+        if (syncRecords)
+        {
+            // 一条记录可能有多人，不能整列赋值 —— 逐行拆开、只换那个人、再拼回去
+            var todo = new List<(int Id, string NewValue)>();
+            using (var q = conn.CreateCommand())
+            {
+                q.Transaction = tx;
+                q.CommandText = @"SELECT id, resolver FROM maintenance_records
+                                   WHERE resolver IS NOT NULL AND TRIM(resolver) <> ''";
+                using var r = q.ExecuteReader();
+                while (r.Read())
+                {
+                    var field = r.GetString(1);
+                    if (!ResolverUtil.Contains(field, oldName)) continue;
+                    todo.Add((r.GetInt32(0), ResolverUtil.Replace(field, oldName, newName)));
+                }
+            }
+            foreach (var (id, val) in todo)
+            {
+                using var up = conn.CreateCommand();
+                up.Transaction = tx;
+                up.CommandText = @"UPDATE maintenance_records
+                                      SET resolver = @v, updated_at = datetime('now','localtime')
+                                    WHERE id = @id";
+                up.Parameters.AddWithValue("@v", val);
+                up.Parameters.AddWithValue("@id", id);
+                synced += up.ExecuteNonQuery();
+            }
+        }
+        tx.Commit();
+        return synced;
+    }
+
+    /// <summary>
+    /// 某个维修人在多少条维修记录里出现过（删人前提示用）。
+    /// **成员级比较** —— 不能用 LIKE，否则「张三」会误中「张三丰」。
+    /// </summary>
+    public int CountRecordsByResolver(string name)
+    {
+        name = (name ?? "").Trim();
+        if (name.Length == 0) return 0;
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT resolver FROM maintenance_records
+             WHERE resolver IS NOT NULL AND TRIM(resolver) <> ''";
+        int n = 0;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            if (ResolverUtil.Contains(r.GetString(0), name)) n++;
+        return n;
+    }
+
+    /// <summary>
+    /// 维修记录里用过的维修人（按使用次数倒序）。
+    /// 一条记录可能有**多人**（`张三、李四`），这里会拆开按**人**统计，
+    /// 否则候选里会出现「张三、李四」这种组合项。
+    /// </summary>
+    public List<string> DistinctResolvers(int limit = 30)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT resolver FROM maintenance_records
+             WHERE resolver IS NOT NULL AND TRIM(resolver) <> ''";
+        var count = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using (var r = cmd.ExecuteReader())
+            while (r.Read())
+                foreach (var who in ResolverUtil.Split(r.GetString(0)))
+                    count[who] = count.GetValueOrDefault(who) + 1;
+
+        return count.OrderByDescending(kv => kv.Value)
+                    .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(limit).Select(kv => kv.Key).ToList();
+    }
+
+    /// <summary>
+    /// FAIL 记录的「可作为维修依据」的来源行 —— **不含 SN**（维修记录不再关心 SN）。
+    /// fail_reason 只是**首个**失败项；要拿全部失败项需要再解析 xml_path（由 UI 侧按需深扫）。
+    /// </summary>
+    public List<FailItemSource> FailItemSources(string stationId = "", int limit = 2000)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE result='FAIL'";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id=@s";
+        cmd.CommandText = $@"
+            SELECT COALESCE(fail_reason,''), COALESCE(model,''), COALESCE(station_id,''),
+                   COALESCE(batch_timestamp,''), COALESCE(test_date,''), COALESCE(xml_path,'')
+              FROM test_records {where}
+             ORDER BY id DESC
+             LIMIT @lim";
+        if (!string.IsNullOrEmpty(stationId)) cmd.Parameters.AddWithValue("@s", stationId);
+        cmd.Parameters.AddWithValue("@lim", limit);
+        var list = new List<FailItemSource>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new FailItemSource
+            {
+                FirstFailItem = r.GetString(0),
+                Model = r.GetString(1),
+                StationId = r.GetString(2),
+                Timestamp = r.GetString(3),
+                TestDate = r.GetString(4),
+                XmlPath = r.GetString(5),
+            });
+        return list;
     }
 
     // ==================== Debug 查询 ====================
@@ -363,6 +725,17 @@ public class FailRecord
     public string XmlPath = "";
 }
 
+/// <summary>一条 FAIL 记录里可用于「维修依据」的信息（**故意不含 SN**）。</summary>
+public class FailItemSource
+{
+    public string FirstFailItem = "";   // test_records.fail_reason（首个失败项）
+    public string Model = "";
+    public string StationId = "";
+    public string Timestamp = "";
+    public string TestDate = "";
+    public string XmlPath = "";
+}
+
 public class MaintenanceRecord
 {
     public int Id;
@@ -372,9 +745,13 @@ public class MaintenanceRecord
     public string FailItem = "";
     public string FailReason = "";
     public string Severity = "major";   // critical/major/minor
-    public string Status = "open";       // open/in_progress/resolved/closed
+    public string Status = "open";       // unknown/investigating/open/in_progress/resolved (legacy: closed)
     public string Resolver = "";
     public string Resolution = "";
     public string Notes = "";
     public string CreatedAt = "";
+    public string UpdatedAt = "";
+
+    /// <summary>浅拷贝，供编辑对话框「取消」时不污染原对象。</summary>
+    public MaintenanceRecord Clone() => (MaintenanceRecord)MemberwiseClone();
 }

@@ -94,11 +94,14 @@ public class MainForm : Form
 
         _lvRank.Left = 384; _lvRank.Top = 190; _lvRank.Width = 572; _lvRank.Height = 324;
         _lvRank.View = View.Details; _lvRank.FullRowSelect = true; _lvRank.GridLines = true;
-        _lvRank.Columns.Add("排名", 50);
-        _lvRank.Columns.Add("不良项名称", 292);
-        _lvRank.Columns.Add("出现次数", 76);
-        _lvRank.Columns.Add("受影响产品", 76);
-        _lvRank.Columns.Add("占比%", 66);
+        _lvRank.Columns.Add("排名", 36);
+        _lvRank.Columns.Add("不良项名称", 180);
+        _lvRank.Columns.Add("出现次数", 54);
+        _lvRank.Columns.Add("受影响产品", 64);
+        _lvRank.Columns.Add("占比%", 48);
+        _lvRank.Columns.Add("测量值", 70);
+        _lvRank.Columns.Add("规格", 60);
+        _lvRank.Columns.Add("单位", 40);
         _lvRank.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
         // ---- 日志 ----
@@ -274,6 +277,9 @@ public class MainForm : Form
             item.SubItems.Add(r.Count.ToString());
             item.SubItems.Add(r.AffectedUnits.ToString());
             item.SubItems.Add($"{r.Percent:F2}");
+            item.SubItems.Add(r.Values);
+            item.SubItems.Add(r.Limits);
+            item.SubItems.Add(r.Units);
             if (rank <= 3) item.BackColor = Color.MistyRose;
             _lvRank.Items.Add(item);
             rank++;
