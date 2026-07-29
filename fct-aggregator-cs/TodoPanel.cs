@@ -92,6 +92,7 @@ public class TodoPanel : Panel
         };
 
         // ===== 列表 =====
+        _list = new ListView();
         _list.Dock = DockStyle.Fill;
         _list.View = View.Details;
         _list.FullRowSelect = true;
@@ -108,6 +109,7 @@ public class TodoPanel : Panel
         _list.SelectedIndexChanged += (_, _) => UpdateButtonState();
 
         // ===== 状态栏 =====
+        _statusLabel = new Label();
         _statusLabel.Dock = DockStyle.Bottom;
         _statusLabel.Height = 24;
         _statusLabel.ForeColor = Color.DimGray;

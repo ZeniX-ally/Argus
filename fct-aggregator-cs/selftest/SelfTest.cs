@@ -449,6 +449,106 @@ class SelfTest
               System.Reflection.BindingFlags.Instance)!.FieldType == typeof(ComboBox),
               "维修人已改为 ComboBox（可选历史值，也可直接输入）");
 
+        // ---------- 待办栏（v2.4.0） ----------
+        Console.WriteLine("\n【待办栏】聚合 / 确认 / 忽略 / 复发重现");
+
+        // 【最重要】TodoPanel 必须能无 UI 构造成功。
+        // v2.4.0 开发时正是因为自检没构造它，_list / _statusLabel 忘了 new
+        //（而且 CS0649 警告被 `= null!` 消音），导致发出的 exe 一启动就 0xC0000005 崩溃。
+        {
+            // 显式给 StationId，避开 IP 探测；Engine 构造只建库不启监控
+            var eng = new Engine(new AppConfig
+            {
+                StationId = "FCT9",
+                ResultsRoot = Path.Combine(work, "NoSuchResults"),
+                WebhookUrl = "",
+            });
+
+            TodoPanel? panel = null;
+            try
+            {
+                panel = new TodoPanel(eng);
+                Check(true, "TodoPanel 无 UI 构造成功（控件字段均已 new）");
+            }
+            catch (Exception ex)
+            {
+                Check(false, $"TodoPanel 构造失败！主程序会一启动就崩：{ex.GetType().Name} {ex.Message}");
+            }
+            if (panel != null)
+            {
+                // 逐个确认控件字段非 null（光能构造不够，漏 new 的字段可能到使用时才炸）
+                foreach (var fname in new[] { "_list", "_statusLabel", "_btnRefresh",
+                                              "_btnConfirm", "_btnDismiss", "_onlyThisStation" })
+                {
+                    var fi = typeof(TodoPanel).GetField(fname,
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    Check(fi != null && fi.GetValue(panel) != null, $"TodoPanel.{fname} 已初始化（非 null）");
+                }
+                try { panel.Reload(); Check(true, "TodoPanel.Reload() 可正常执行"); }
+                catch (Exception ex) { Check(false, $"TodoPanel.Reload() 抛异常: {ex.Message}"); }
+                panel.Dispose();
+            }
+        }
+
+        // 造一个干净库验待办的四条规则
+        {
+            var tdb = Path.Combine(work, "todo.db");
+            var t = new Database(tdb);
+            const string St = "FCT9";
+
+            void AddFail(Database db, string station, string item, string sn, string date)
+            {
+                db.InsertOne(new TestRecord
+                {
+                    StationId = station, Model = "E3002781", Category = "Offline", TestDate = date,
+                    Sn = sn, Result = "FAIL", XmlPath = $@"X:\{station}_{sn}_{item}_{date}.xml",
+                    FailReason = item, BatchTimestamp = $"{date} 10:00:00", HasFailItems = true,
+                });
+            }
+
+            AddFail(t, St, "Check_5V_Rail", "SN001", "20260728");
+            AddFail(t, St, "Check_5V_Rail", "SN002", "20260729");   // 同故障项两条 -> 聚成 1 项、次数 2
+            AddFail(t, St, "Check_CAN_Bus", "SN003", "20260729");
+
+            var pending = t.ListPendingTodos(St);
+            Check(pending.Count == 2, $"按故障项聚合：3 条 FAIL -> {pending.Count} 项待办（期望 2）");
+            var rail = pending.FirstOrDefault(x => x.FailItem == "Check_5V_Rail");
+            Check(rail != null && rail.OccurrenceCount == 2, "同故障项出现次数累计为 2");
+            Check(rail != null && rail.LastSeen.StartsWith("20260729"), "最近出现取的是较新那条");
+
+            // 确认问题 -> 建 open 记录 -> 该项从待办消失
+            var mid = t.AcknowledgeTodo("Check_5V_Rail", St, "E3002781", "张三", "major");
+            Check(mid > 0, $"确认问题已建维修记录 #{mid}");
+            var afterAck = t.ListPendingTodos(St);
+            Check(afterAck.Count == 1 && afterAck[0].FailItem == "Check_CAN_Bus",
+                  "确认后该故障项从待办消失（靠活跃维修记录拦截）");
+            var created = t.ListMaintenance("open", 10).FirstOrDefault(x => x.Id == mid);
+            Check(created != null && created.Status == "open", "新建记录状态 = open（看板「未完成」列）");
+            Check(created != null && created.Resolver == "张三", "维修人已写入");
+
+            // 拖到「已完成」后不再算活跃 -> 同故障项自动回到待办（复发重现）
+            t.UpdateMaintenanceStatus(mid, "resolved");
+            var reopened = t.ListPendingTodos(St);
+            Check(reopened.Any(x => x.FailItem == "Check_5V_Rail"),
+                  "记录标为已完成后，同故障项**自动回到待办**（复发重现）");
+
+            // 忽略 -> 不再出现，且不会建维修记录
+            var cntBeforeDismiss = t.ListMaintenance("", 500).Count;
+            t.DismissTodo("Check_5V_Rail", St, "E3002781");
+            Check(!t.ListPendingTodos(St).Any(x => x.FailItem == "Check_5V_Rail"), "忽略后不再出现在待办");
+            Check(t.ListMaintenance("", 500).Count == cntBeforeDismiss, "忽略**不**会创建维修记录");
+
+            // 建表幂等：重开库后忽略名单不丢
+            var t2 = new Database(tdb);
+            Check(!t2.ListPendingTodos(St).Any(x => x.FailItem == "Check_5V_Rail"),
+                  "重开库后忽略仍生效（dismissed_todos 建表幂等）");
+
+            // 机台隔离：其它机台的同名故障项不受本机台忽略影响
+            AddFail(t, "FCT8", "Check_5V_Rail", "SN900", "20260729");
+            Check(t.ListPendingTodos("FCT8").Any(x => x.FailItem == "Check_5V_Rail"),
+                  "忽略按机台隔离（其它机台仍会提醒）");
+        }
+
         // ---------- 导出 ----------
         var records = d.ListMaintenance("", 500);
         var xlsx = Path.Combine(work, "维修记录.xlsx");
