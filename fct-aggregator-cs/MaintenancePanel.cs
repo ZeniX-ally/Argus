@@ -11,12 +11,14 @@ public class MaintenancePanel : Panel
 
     private readonly Engine _engine;
     private MaintenanceBoard _board = null!;
+    private TodoPanel _todo = null!;
     private ListView _list = null!;
     private Panel _listHost = null!;
     private ComboBox _filter = null!;
     private Label _filterLabel = null!;
     private Button _btnBoard = null!;
     private Button _btnList = null!;
+    private Button _btnTodo = null!;
     private bool _boardMode = true;
     private List<MaintenanceRecord> _current = new();   // 列表视图当前内容(供导出)
 
@@ -41,11 +43,14 @@ public class MaintenancePanel : Panel
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(0, 4, 0, 4) };
 
         _btnBoard = new Button { Text = "看板", Width = 62, Height = 28, FlatStyle = FlatStyle.Flat };
-        _btnBoard.Click += (_, _) => SetViewMode(true);
+        _btnBoard.Click += (_, _) => SetViewMode("board");
         _btnList = new Button { Text = "列表", Width = 62, Height = 28, FlatStyle = FlatStyle.Flat };
-        _btnList.Click += (_, _) => SetViewMode(false);
+        _btnList.Click += (_, _) => SetViewMode("list");
+        _btnTodo = new Button { Text = "待办", Width = 62, Height = 28, FlatStyle = FlatStyle.Flat };
+        _btnTodo.Click += (_, _) => SetViewMode("todo");
         bar.Controls.Add(_btnBoard);
         bar.Controls.Add(_btnList);
+        bar.Controls.Add(_btnTodo);
 
         _filterLabel = new Label
         {
@@ -82,7 +87,7 @@ public class MaintenancePanel : Panel
         _board = new MaintenanceBoard(_engine) { Dock = DockStyle.Fill, Visible = true };
         _board.EditRequested += EditRecord;
         _board.ContextRequested += (m, anchor, at) => BuildRecordMenu(m).Show(anchor, at);
-        _board.Changed += () => { if (!_boardMode) RefreshList(); };
+        _board.Changed += () => { if (_viewMode == "list") RefreshList(); };
 
         // ===== 列表 =====
         _listHost = new Panel { Dock = DockStyle.Fill, Visible = false };
@@ -102,43 +107,59 @@ public class MaintenancePanel : Panel
         _list.MouseDoubleClick += List_MouseDoubleClick;
         _listHost.Controls.Add(_list);
 
+        // ===== 待办 =====
+        _todo = new TodoPanel(_engine) { Dock = DockStyle.Fill, Visible = false };
+
         Controls.Add(_board);
         Controls.Add(_listHost);
+        Controls.Add(_todo);
         Controls.Add(bar);
         Controls.Add(title);
     }
 
+    private string _viewMode = "board";
+
     // ==================== 视图切换 ====================
-    private void SetViewMode(bool board)
+    private void SetViewMode(string mode)
     {
-        if (_boardMode == board) return;
-        _boardMode = board;
+        if (_viewMode == mode) return;
+        _viewMode = mode;
         ApplyViewMode();
         Refresh2();
     }
 
     private void ApplyViewMode()
     {
-        _board.Visible = _boardMode;
-        _listHost.Visible = !_boardMode;
-        if (_boardMode) _board.BringToFront(); else _listHost.BringToFront();
+        _board.Visible = _viewMode == "board";
+        _listHost.Visible = _viewMode == "list";
+        _todo.Visible = _viewMode == "todo";
+        if (_viewMode == "board") _board.BringToFront();
+        else if (_viewMode == "list") _listHost.BringToFront();
+        else _todo.BringToFront();
 
-        // 筛选下拉只对列表视图有意义(看板本身就是按状态分列的)
-        _filter.Enabled = !_boardMode;
-        _filterLabel.Enabled = !_boardMode;
+        // 筛选下拉只对列表视图有意义
+        _filter.Enabled = _viewMode == "list";
+        _filterLabel.Enabled = _viewMode == "list";
+
+        // 待办视图下隐藏导出、从FAIL选故障项等按钮（待办有自己的操作界面）
+        // 我们不改按钮Visible，让用户自由切换
 
         var on = Color.FromArgb(26, 82, 118);
-        _btnBoard.BackColor = _boardMode ? on : SystemColors.Control;
-        _btnBoard.ForeColor = _boardMode ? Color.White : SystemColors.ControlText;
-        _btnList.BackColor = _boardMode ? SystemColors.Control : on;
-        _btnList.ForeColor = _boardMode ? SystemColors.ControlText : Color.White;
+        var off = SystemColors.Control;
+        _btnBoard.BackColor = _viewMode == "board" ? on : off;
+        _btnBoard.ForeColor = _viewMode == "board" ? Color.White : SystemColors.ControlText;
+        _btnList.BackColor = _viewMode == "list" ? on : off;
+        _btnList.ForeColor = _viewMode == "list" ? Color.White : SystemColors.ControlText;
+        _btnTodo.BackColor = _viewMode == "todo" ? on : off;
+        _btnTodo.ForeColor = _viewMode == "todo" ? Color.White : SystemColors.ControlText;
     }
 
     /// <summary>外部(MainForm 切页)调用的刷新入口。</summary>
     public void Refresh2()
     {
-        if (_boardMode) _board.Reload();
-        else RefreshList();
+             if (_viewMode == "board") _board.Reload();
+        else if (_viewMode == "list")  RefreshList();
+        else                            _todo.Reload();
     }
 
     private void RefreshList()

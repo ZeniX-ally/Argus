@@ -87,6 +87,20 @@ public class Database
                 );
             ";
             cmd3.ExecuteNonQuery();
+
+            // v2.4.0: 待办忽略名单（标记为「不是问题」的故障项，不再出现在待办列表）
+            using var cmd4 = conn.CreateCommand();
+            cmd4.CommandText = @"
+                CREATE TABLE IF NOT EXISTS dismissed_todos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fail_item TEXT NOT NULL,
+                    station_id TEXT,
+                    model TEXT,
+                    dismissed_at TEXT DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_dismissed_item ON dismissed_todos(fail_item);
+            ";
+            cmd4.ExecuteNonQuery();
         }
         MigrateClosedStatus();
     }
@@ -457,6 +471,99 @@ public class Database
         return affected > 0;
     }
 
+    // ==================== 待办（FAIL → 确认问题 → 维修记录） ====================
+
+    /// <summary>
+    /// 待办项：从 test_records 按故障项聚合，排除已有活跃维修记录或已忽略的项。
+    /// 活跃维修记录定义：status 不是 resolved/closed（即还在排查/处理中）。
+    /// </summary>
+    public List<TodoItem> ListPendingTodos(string stationId = "")
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE f.result='FAIL'";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND f.station_id=@s";
+        cmd.CommandText = $@"
+            SELECT
+                f.fail_reason,
+                f.station_id,
+                COALESCE(f.model, ''),
+                COALESCE(f.category, ''),
+                COUNT(*) AS cnt,
+                MIN(COALESCE(NULLIF(f.batch_timestamp,''), f.test_date)) AS first_seen,
+                MAX(COALESCE(NULLIF(f.batch_timestamp,''), f.test_date)) AS last_seen,
+                MIN(f.test_date) AS first_test_date,
+                MAX(f.test_date) AS last_test_date
+            FROM test_records f
+            WHERE f.result='FAIL'
+              AND f.fail_reason IS NOT NULL AND TRIM(f.fail_reason) <> ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM maintenance_records m
+                  WHERE m.fail_item = f.fail_reason
+                    AND m.station_id = f.station_id
+                    AND m.status NOT IN ('resolved','closed')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM dismissed_todos d
+                  WHERE d.fail_item = f.fail_reason
+                    AND d.station_id = f.station_id
+              )
+            GROUP BY f.fail_reason, f.station_id
+            ORDER BY last_seen DESC, cnt DESC
+            LIMIT 500";
+        if (!string.IsNullOrEmpty(stationId)) cmd.Parameters.AddWithValue("@s", stationId);
+        var list = new List<TodoItem>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new TodoItem
+            {
+                FailItem = r.IsDBNull(0) ? "" : r.GetString(0),
+                StationId = r.IsDBNull(1) ? "" : r.GetString(1),
+                Model = r.IsDBNull(2) ? "" : r.GetString(2),
+                Category = r.IsDBNull(3) ? "" : r.GetString(3),
+                OccurrenceCount = r.GetInt32(4),
+                FirstSeen = r.IsDBNull(5) ? "" : r.GetString(5),
+                LastSeen = r.IsDBNull(6) ? "" : r.GetString(6),
+                FirstTestDate = r.IsDBNull(7) ? "" : r.GetString(7),
+                LastTestDate = r.IsDBNull(8) ? "" : r.GetString(8),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>忽略某故障项（不再出现在待办列表）。已存在的维修记录不受影响。</summary>
+    public void DismissTodo(string failItem, string stationId, string model)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT OR IGNORE INTO dismissed_todos(fail_item, station_id, model)
+            VALUES (@item, @st, @model)";
+        cmd.Parameters.AddWithValue("@item", failItem);
+        cmd.Parameters.AddWithValue("@st", stationId);
+        cmd.Parameters.AddWithValue("@model", (object?)model ?? "");
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 从待办确认问题：创建一条维修记录（状态=open），并返回其 ID。
+    /// 该记录创建后待办列表自动不再显示此故障项（因为有活跃维修记录存在）。
+    /// </summary>
+    public int AcknowledgeTodo(string failItem, string stationId, string model, string resolver, string severity)
+    {
+        var rec = new MaintenanceRecord
+        {
+            StationId = stationId,
+            FailItem = failItem,
+            FailReason = $"来自 FAIL 待办 — {model}",
+            Severity = severity,
+            Status = "open",
+            Resolver = resolver,
+        };
+        return CreateMaintenance(rec);
+    }
+
     // ==================== 维修人员名单 ====================
 
     /// <summary>名单里的人（按名字排）。</summary>
@@ -734,6 +841,19 @@ public class FailItemSource
     public string Timestamp = "";
     public string TestDate = "";
     public string XmlPath = "";
+}
+
+public class TodoItem
+{
+    public string FailItem = "";
+    public string StationId = "";
+    public string Model = "";
+    public string Category = "";
+    public int OccurrenceCount;
+    public string FirstSeen = "";
+    public string LastSeen = "";
+    public string FirstTestDate = "";
+    public string LastTestDate = "";
 }
 
 public class MaintenanceRecord

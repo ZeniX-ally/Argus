@@ -45,7 +45,7 @@ FAIL 记录报告查看、调试工具页。
 | 分类统计 | PASS / FAIL / INTERRUPTED / INVALID，累计 + 当日 + 良率 |
 | 飞书告警 | FAIL 记录推交互卡片，含失败步骤名称 / 实测值 / 上下限 |
 | 设备状态 | 解析 `FCT.ini`：型号列表、固件版本、COM/USB 设备在线灯、A2L 文件 |
-| 维修记录 | **看板（5 列拖拽改状态）/ 列表**双视图；增 / 查 / **改（全字段编辑）** / 删 + 导出 xlsx / csv<br>**故障项目从 FAIL 记录去重后挑选**（不显示 SN），可一次建多条；维修人可下拉选历史值 |
+| 维修记录 | **看板（5 列拖拽改状态）/ 列表 / 待办**三视图；增 / 查 / **改（全字段编辑）** / 删 + 导出 xlsx / csv<br>**故障项目从 FAIL 记录去重后挑选**（不显示 SN），可一次建多条；维修人可下拉选历史值<br>**待办**：自动列出 FAIL 中尚未处理的故障项，确认后创建维修记录 |
 | FAIL 记录 | 本机全部 FAIL 列表，双击弹出报告式查看器（完整测试流程，失败项标红） |
 | 调试工具 | 推送测试 / 数据库状态 / 机台检测 / 型号发现 / 查询 / 自启开关 / 清库 |
 | 运行保障 | 单实例 Mutex、开机自启（启动文件夹快捷方式，手动开关） |
@@ -84,6 +84,7 @@ fct-aggregator-cs/
 ├── FailItemPicker.cs         # 从 FAIL 记录挑故障项（去重 / 不显示 SN / 可深扫 XML）
 ├── ResolverManager.cs        # ResolverUtil(多人拆合) + 名单管理 + **多选框** ResolverPickerForm
 ├── MaintenanceExporter.cs    # 维修记录导出 xlsx / csv（零依赖 OOXML，12 列）
+├── TodoPanel.cs              # 待办栏：FAIL → 确认问题 → 进入看板工作流
 ├── DebugPanel.cs             # 调试工具页
 ├── FailListPanel.cs          # FAIL 记录页 + XmlViewerForm 报告查看器
 ├── FctAggregator.csproj      # net8.0-windows / WinForms / SelfContained=false
@@ -234,6 +235,11 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
   - `DeleteMaintenance(id)` —— 同事务内把 `sqlite_sequence.seq` 回抨到 `MAX(id)`，
     使「删空后新建回到 1 / 删最后一条后接着用」；中间空号不回填
 - FAIL 查询：`RecentFails(limit)`（Debug 页）、`AllFails(stationId)`（FAIL 记录页，时间倒序）
+- 待办（v2.4.0）：
+  - `ListPendingTodos(stationId)` —— 实时聚合 `test_records` 中 FAIL 项（按 `fail_reason` 分组），
+    排除已有**活跃维修记录**（status 不在 resolved/closed）或已忽略的项
+  - `DismissTodo(failItem, stationId, model)` —— 忽略（写入 `dismissed_todos`）
+  - `AcknowledgeTodo(failItem, stationId, model, resolver, severity)` —— 确认问题，内部调 `CreateMaintenance` 建一条 `open` 记录
 - 其它：`MaxSn()`、`TotalRecords()`
 
 ### 4.9 `AppState.cs`
@@ -387,6 +393,22 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 > 3. `UPDATE ... SET status='resolved' WHERE status='closed'` —— **不动 `updated_at`**，
 >    保留记录真实的最后人工更新时间。
 
+### 6.4 `dismissed_todos`（v2.4.0 新增）
+
+| 字段 | 说明 |
+|------|------|
+| `id` | PK |
+| `fail_item` | 被忽略的故障项名（= `test_records.fail_reason`） |
+| `station_id` | 机台号（同一故障项在不同机台可分别忽略） |
+| `model` | 型号（仅作记录，不参与匹配） |
+| `dismissed_at` | 忽略时间 |
+
+索引：`idx_dismissed_item(fail_item)`
+
+- 表很小，**只记「哪些故障项不用提醒」**，不存任何业务数据。
+- 建表同样是 `CREATE TABLE IF NOT EXISTS`，旧库首次启动自动添上，**无需迁移、无风险**。
+- 忽略不影响已存在的维修记录；若需取消忽略，目前需手动删表里对应行（后续可加 UI）。
+
 ---
 
 ## 7. 配置说明
@@ -459,6 +481,26 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | 【选择】按钮 | 开 `ResolverPickerForm`（`CheckedListBox` 多选 + 搜索 + 全选/清空 + 底部「添加并勾选」），确定后回填 `张三、李四` |
 | 【+ 人员】按钮 | 开 `ResolverManagerForm`；关闭后若 `Changed` 则重拉候选并尽量保住当前输入 |
 | 保存时自动登记 | 先 `ResolverUtil.Normalize()` 规范化，再**逐人** `AddResolver()` 进名单（失败只记 WARNING，不阔主流程） |
+
+### 8.3 待办栏（v2.4.0，`TodoPanel.cs`）
+
+设计目标：**每次检测到 FAIL 都需工程师确认问题，然后解决问题**。
+
+| 设计 | 说明 |
+|------|------|
+| 数据源 | **`test_records` 实时聚合**，不建待办表 —— 避开「快照表与真实数据不一致」的经典坑 |
+| 去重口径 | `GROUP BY fail_reason, station_id` —— 同一故障项在不同机台是两条待办 |
+| 何时不显示（已确认） | `NOT EXISTS` 子查询：存在**活跃维修记录**（`status NOT IN ('resolved','closed')`）即视为有人在处理 |
+| 何时不显示（已忽略） | `NOT EXISTS` 子查询 `dismissed_todos` |
+| **复发自动重现** | 维修记录被拖到「已完成」后不再算活跃，同故障项再 FAIL 就**自动回到待办**（无需人工重开） |
+| 确认动作 | `TodoConfirmForm`（轻量：维修人 + 严重度）→ `AcknowledgeTodo()` → 建一条 `status='open'` 记录→ 看板「未完成」列 |
+| 维修人候选 | 同样读 `ListResolvers()`（名单 ∪ 历史），与主表单一致 |
+| 双击 / 右键 | 双击行 = 确认问题；右键菜单 = 确认 / 忽略 |
+| 机台过滤 | 「只看本机台」默认开（与 `FailItemPicker` 一致） |
+| 与【从FAIL选故障项】的分工 | 待办 = **被动推送**（自动列出没人管的）；那个按钮 = **主动挑选**（含已处理的、可深扫 XML、可批量合并），两者不冲突 |
+
+⚙ 实现细节：`TodoPanel` 的 6 个控件字段**不能写 `readonly`**——它们在 `BuildUi()`
+（非构造函数体）里赋值，`readonly` 会报 `CS0191`。已统一写成 `= null!`。
 
 ---
 

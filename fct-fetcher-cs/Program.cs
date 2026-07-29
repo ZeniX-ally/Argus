@@ -46,6 +46,46 @@ internal static class Program
 
     private static int RunCli(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--diag")
+        {
+            if (args.Length < 2)
+            {
+                Console.Error.WriteLine("[错误] --diag 需要一个 xml 文件或目录路径");
+                return 2;
+            }
+            var target = args[1];
+            string? diagOut = null;
+            for (int i = 2; i < args.Length; i++)
+                if (args[i] == "--out" && i + 1 < args.Length) diagOut = args[i + 1];
+
+            var dfiles = new List<string>();
+            if (Directory.Exists(target))
+                dfiles.AddRange(Directory.EnumerateFiles(target, "*.xml", SearchOption.AllDirectories));
+            else if (File.Exists(target))
+                dfiles.Add(target);
+            else
+            {
+                Console.Error.WriteLine($"[错误] 路径不存在: {target}");
+                return 2;
+            }
+
+            TextWriter dw = diagOut != null
+                ? new StreamWriter(diagOut, false, System.Text.Encoding.UTF8)
+                : Console.Out;
+            try
+            {
+                dw.WriteLine($"FCT-Fetcher 诊断报告  共 {dfiles.Count} 个文件");
+                dw.WriteLine();
+                foreach (var f in dfiles) Diagnostics.DumpFile(f, dw);
+            }
+            finally
+            {
+                if (diagOut != null) { dw.Flush(); dw.Dispose(); }
+            }
+            if (diagOut != null) Console.WriteLine($"诊断报告已写入: {diagOut}");
+            return 0;
+        }
+
         if (args.Contains("--help") || args.Contains("-h"))
         {
             Console.WriteLine(Usage);
@@ -186,5 +226,11 @@ FCT-Fetcher — 按日期区间捞取有 fail 的 XML，并同步捞取对应 SN
   --categories <列表>  要扇的分类，逗号分隔，默认 Offline（生产环境 Online 全 pass）
   --config <路径>      指定配置文件
   -h, --help           显示本帮助
+
+诊断（当“XML 里有失败项但工具没识别到”时用）:
+  FCT-Fetcher.exe --diag <文件.xml>
+  FCT-Fetcher.exe --diag <目录> --out diag.txt
+    输出元素×STATUS 分布、失败 GROUP 的层级与子节点结构、所有失败 TEST 的属性，
+    以及本工具实际识别出的项 —— 用于定位结构差异
 """;
 }

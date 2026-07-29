@@ -28,6 +28,7 @@
     <Compile Include="..\FailItemPicker.cs" />
     <Compile Include="..\ResolverManager.cs" />
     <Compile Include="..\MaintenancePanel.cs" />
+    <Compile Include="..\TodoPanel.cs" />
     <Compile Include="..\Engine.cs" />
     <Compile Include="..\Processor.cs" />
     <Compile Include="..\XmlParser.cs" />

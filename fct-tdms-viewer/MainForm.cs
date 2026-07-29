@@ -23,12 +23,14 @@ public sealed class MainForm : Form
     private readonly StatusStrip _status = new();
     private readonly ToolStripStatusLabel _statusText = new("就绪");
 
-    // 勾选的通道（跨 Group 累积）
+    // 勾选的通道（跨 Group 累积，用于多通道叠加对比）
     private readonly List<ChannelInfo> _checked = new();
+    // 当前选中的通道（未勾选任何通道时，直接显示它 —— 做到"选中即出图"）
+    private ChannelInfo? _current;
 
     public MainForm()
     {
-        Text = "FCT-TdmsViewer  v1.0.0";
+        Text = "FCT-TdmsViewer  v1.1.0";
         Width = 1280;
         Height = 820;
         MinimumSize = new Size(1000, 640);
@@ -64,7 +66,7 @@ public sealed class MainForm : Form
         // 左：搜索 + 树
         var left = new Panel { Dock = DockStyle.Fill };
         _search.Dock = DockStyle.Top;
-        _search.PlaceholderText = "搜索通道名（回车过滤，清空恢复）";
+        _search.PlaceholderText = "搜索组名或通道名（即时过滤，空格分隔多关键词）";
         _search.TextChanged += (_, _) => RebuildTree(_search.Text.Trim());
         left.Controls.Add(_search);
 
@@ -166,6 +168,7 @@ public sealed class MainForm : Form
             var sw = Stopwatch.StartNew();
             _doc = TdmsDoc.Load(path);
             sw.Stop();
+            _current = null;
 
             _search.Text = "";
             RebuildTree("");
@@ -173,7 +176,10 @@ public sealed class MainForm : Form
             _lblFile.Text = Path.GetFileName(path);
             _statusText.Text = $"{_doc.Groups.Count} 组 / {_doc.TotalChannels} 通道 / " +
                                $"{Human(_doc.FileBytes)} / 读元信息 {sw.ElapsedMilliseconds} ms";
-            Text = $"FCT-TdmsViewer  v1.0.0  —  {Path.GetFileName(path)}";
+            Text = $"FCT-TdmsViewer  v1.1.0  —  {Path.GetFileName(path)}";
+
+            // 打开即展示：自动选中第一个数值通道，不用手动勾选
+            SelectFirstNumericChannel();
         }
         catch (Exception ex)
         {
@@ -201,16 +207,35 @@ public sealed class MainForm : Form
     private void RebuildTree(string filter)
     {
         if (_doc == null) return;
+        // 空格分隔多关键词，需全部命中（AND）
+        var keys = filter.Split(' ', StringSplitOptions.RemoveEmptyEntries |
+                                     StringSplitOptions.TrimEntries);
+        bool hasFilter = keys.Length > 0;
+
+        bool Hit(string s) =>
+            keys.All(k => s.Contains(k, StringComparison.OrdinalIgnoreCase));
+
         _tree.BeginUpdate();
         _tree.Nodes.Clear();
-        bool hasFilter = filter.Length > 0;
+        int hitCount = 0;
 
         foreach (var g in _doc.Groups)
         {
-            var matched = hasFilter
-                ? g.Channels.Where(c => c.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList()
-                : g.Channels;
+            List<ChannelInfo> matched;
+            if (!hasFilter)
+            {
+                matched = g.Channels;
+            }
+            else if (Hit(g.Name))
+            {
+                matched = g.Channels;      // 组名命中 -> 保留整组
+            }
+            else
+            {
+                matched = g.Channels.Where(c => Hit(c.Name)).ToList();
+            }
             if (matched.Count == 0) continue;
+            hitCount += matched.Count;
 
             var gn = new TreeNode($"{g.Name}   [{g.Channels.Count} 通道 · {g.SampleCount} 点]")
             {
@@ -230,9 +255,29 @@ public sealed class MainForm : Form
             if (hasFilter) gn.Expand();
         }
         _tree.EndUpdate();
+
         if (hasFilter)
-            _statusText.Text = $"过滤 \"{filter}\": 命中 " +
-                               $"{_tree.Nodes.Cast<TreeNode>().Sum(n => n.Nodes.Count)} 个通道";
+            _statusText.Text = $"过滤 \"{filter}\": {_tree.Nodes.Count} 组 / {hitCount} 通道命中";
+    }
+
+    /// <summary>打开文件后自动选中第一个数值通道，使图表与表格立即有内容。</summary>
+    private void SelectFirstNumericChannel()
+    {
+        foreach (TreeNode gn in _tree.Nodes)
+        {
+            foreach (TreeNode cn in gn.Nodes)
+            {
+                if (cn.Tag is ChannelInfo ci && ci.Numeric && ci.Count > 0)
+                {
+                    gn.Expand();
+                    _tree.SelectedNode = cn;
+                    cn.EnsureVisible();
+                    return;
+                }
+            }
+        }
+        // 没有数值通道时退而选第一个组，至少表格有统计概览
+        if (_tree.Nodes.Count > 0) _tree.SelectedNode = _tree.Nodes[0];
     }
 
     private bool _suppress;
@@ -296,33 +341,40 @@ public sealed class MainForm : Form
     private void RefreshWave()
     {
         if (_doc == null) { UpdateButtons(); return; }
-        if (_checked.Count == 0)
+
+        // 显示集合 = 勾选的通道；没有勾选时用当前选中的通道
+        var show = new List<ChannelInfo>(_checked);
+        if (_current != null && _current.Numeric && !show.Contains(_current))
+            show.Insert(0, _current);
+
+        if (show.Count == 0)
         {
             _wave.Clear();
             _stat.Text = "";
             UpdateButtons();
             return;
         }
-        if (_checked.Count > MaxSeries)
-            _statusText.Text = $"已勾选 {_checked.Count} 个，波形仅显示前 {MaxSeries} 条（导出不受限制）";
+        if (show.Count > MaxSeries)
+            _statusText.Text = $"共 {show.Count} 条，波形仅显示前 {MaxSeries} 条（导出不受限制）";
 
-        var items = _checked.Take(MaxSeries)
+        var items = show.Take(MaxSeries)
             .Select(c => (name: c.Name, data: _doc!.GetData(c), inc: TdmsDoc.GetIncrement(c)))
             .ToList();
         _wave.SetSeries(items);
 
-        // 统计条：只勾一条时显示详细统计
-        if (_checked.Count == 1)
+        // 单条时给出详细统计
+        if (show.Count == 1)
         {
-            var st = TdmsDoc.Describe(_doc.GetData(_checked[0]));
+            var st = TdmsDoc.Describe(_doc.GetData(show[0]));
             _stat.Text = st == null
-                ? "无数据"
-                : $"n={st.N}   min={st.Min:G6}   max={st.Max:G6}   mean={st.Mean:G6}   " +
-                  $"std={st.Std:G6}   首={st.First:G6}   末={st.Last:G6}";
+                ? $"{show[0].Name}: 无数据"
+                : $"{show[0].Name}   n={st.N}   min={st.Min:G6}   max={st.Max:G6}   " +
+                  $"mean={st.Mean:G6}   std={st.Std:G6}   首={st.First:G6}   末={st.Last:G6}";
         }
         else
         {
-            _stat.Text = $"已勾选 {_checked.Count} 个通道";
+            _stat.Text = $"叠加显示 {Math.Min(show.Count, MaxSeries)} 条" +
+                         (_checked.Count > 0 ? $"（已勾选 {_checked.Count}）" : "");
         }
         UpdateButtons();
     }
@@ -335,12 +387,14 @@ public sealed class MainForm : Form
         _props.Items.Clear();
         if (e.Node.Tag is GroupInfo g)
         {
+            _current = null;
             foreach (var p in g.Properties)
                 _props.Items.Add(new ListViewItem(new[] { p.Key, p.Value?.ToString() ?? "" }));
             ShowGroupTable(g);
         }
         else if (e.Node.Tag is ChannelInfo c)
         {
+            _current = c;
             _props.Items.Add(new ListViewItem(new[] { "(Group)", c.GroupName }));
             _props.Items.Add(new ListViewItem(new[] { "(Channel)", c.Name }));
             _props.Items.Add(new ListViewItem(new[] { "(DataType)", c.TypeName }));
@@ -350,6 +404,8 @@ public sealed class MainForm : Form
             ShowChannelTable(c);
         }
         _props.EndUpdate();
+
+        RefreshWave();     // 选中即出图
     }
 
     private const int MaxGridRows = 5000;
@@ -451,18 +507,26 @@ public sealed class MainForm : Form
 
     private void ExportSelected()
     {
-        if (_doc == null || _checked.Count == 0) return;
+        if (_doc == null) return;
+        // 有勾选就导勾选的；否则导当前选中这一条
+        var target = _checked.Count > 0
+            ? new List<ChannelInfo>(_checked)
+            : (_current != null && _current.Numeric
+                ? new List<ChannelInfo> { _current }
+                : new List<ChannelInfo>());
+        if (target.Count == 0) return;
+
         using var d = new SaveFileDialog
         {
             Filter = "CSV 文件 (*.csv)|*.csv",
-            FileName = $"{Path.GetFileNameWithoutExtension(_doc.Path)}_{_checked.Count}ch.csv",
+            FileName = $"{Path.GetFileNameWithoutExtension(_doc.Path)}_{target.Count}ch.csv",
         };
         if (d.ShowDialog() != DialogResult.OK) return;
         try
         {
             Cursor = Cursors.WaitCursor;
-            Exporter.ExportChannels(_doc, _checked, d.FileName);
-            _statusText.Text = $"已导出 {_checked.Count} 个通道 -> {d.FileName}";
+            Exporter.ExportChannels(_doc, target, d.FileName);
+            _statusText.Text = $"已导出 {target.Count} 个通道 -> {d.FileName}";
             if (MessageBox.Show("导出完成，是否打开所在文件夹？", "完成",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                 Process.Start("explorer.exe", $"/select,\"{d.FileName}\"");
@@ -503,10 +567,12 @@ public sealed class MainForm : Form
     {
         bool open = _doc != null;
         _btnExportSum.Enabled = open;
-        _btnExportSel.Enabled = open && _checked.Count > 0;
+        int exportable = _checked.Count > 0 ? _checked.Count
+                       : (_current != null && _current.Numeric ? 1 : 0);
+        _btnExportSel.Enabled = open && exportable > 0;
         _btnClearSel.Enabled = open && _checked.Count > 0;
-        _btnExportSel.Text = _checked.Count > 0
-            ? $"导出选中通道 ({_checked.Count})"
+        _btnExportSel.Text = exportable > 0
+            ? $"导出选中通道 ({exportable})"
             : "导出选中通道";
     }
 

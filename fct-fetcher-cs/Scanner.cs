@@ -1,13 +1,18 @@
 using System.Text.RegularExpressions;
-using System.Xml;
+using System.Xml.Linq;
 
 namespace FctFetcher;
 
 public sealed class FailItem
 {
     public string Name = "", Value = "", Lolim = "", Hilim = "", Unit = "";
+    /// <summary>步骤类型: NumericLimitTest / PassFailTest / ... 便于排查识别口径</summary>
+    public string StepType = "";
+
     public override string ToString()
-        => $"{Name}={Value}[{Lolim}~{Hilim}{Unit}]";
+        => Value.Length == 0 && Lolim.Length == 0 && Hilim.Length == 0
+            ? Name                                        // 无测量值的步骤只显示名字
+            : $"{Name}={Value}[{Lolim}~{Hilim}{Unit}]";
 }
 
 public sealed class Record
@@ -150,62 +155,113 @@ public static class Scanner
         return rec;
     }
 
+    /// <summary>供诊断模式调用。</summary>
+    public static void ParseXmlPublic(Record rec, bool excludeIgnored) => ParseXml(rec, excludeIgnored);
+
     private static void ParseXml(Record rec, bool excludeIgnored)
     {
-        var settings = new XmlReaderSettings
-        {
-            DtdProcessing = DtdProcessing.Prohibit,
-            XmlResolver = null,
-            IgnoreComments = true,
-            IgnoreWhitespace = true,
-        };
+        XDocument doc;
         try
         {
-            using var reader = XmlReader.Create(rec.XmlPath, settings);
-            while (reader.Read())
-            {
-                if (reader.NodeType != XmlNodeType.Element) continue;
-                switch (reader.Name)
-                {
-                    case "BATCH":
-                        rec.Timestamp = reader.GetAttribute("TIMESTAMP") ?? "";
-                        break;
-                    case "FACTORY":
-                        rec.User = reader.GetAttribute("USER") ?? "";
-                        var tester = reader.GetAttribute("TESTER") ?? "";
-                        if (rec.Station.Length == 0 && tester.Length > 0)
-                        {
-                            var m = TesterStationRe.Match(tester);
-                            if (m.Success) rec.Station = m.Value;
-                        }
-                        break;
-                    case "DUT":
-                        // DUT/@ID 是权威 SN（文件名里的可能被截断）
-                        var id = reader.GetAttribute("ID") ?? "";
-                        if (id.Length > 0) rec.Sn = id;
-                        break;
-                    case "TEST":
-                        if (reader.GetAttribute("STATUS") == "Failed")
-                        {
-                            var name = reader.GetAttribute("NAME") ?? "";
-                            if (excludeIgnored && IsIgnored(name)) break;
-                            rec.FailItems.Add(new FailItem
-                            {
-                                Name = name,
-                                Value = reader.GetAttribute("VALUE") ?? "",
-                                Lolim = reader.GetAttribute("LOLIM") ?? "",
-                                Hilim = reader.GetAttribute("HILIM") ?? "",
-                                Unit = reader.GetAttribute("UNIT") ?? "",
-                            });
-                        }
-                        break;
-                }
-            }
+            doc = XDocument.Load(rec.XmlPath, LoadOptions.None);
         }
         catch
         {
             rec.Result = "PARSE_ERROR";
             return;
+        }
+
+        var root = doc.Root;
+        if (root == null) { rec.Result = "PARSE_ERROR"; return; }
+
+        // BATCH 可能就是根元素本身
+        var batch = root.Name.LocalName == "BATCH" ? root : root.Descendants("BATCH").FirstOrDefault();
+        if (batch != null) rec.Timestamp = batch.Attribute("TIMESTAMP")?.Value ?? "";
+
+        var fac = root.Descendants("FACTORY").FirstOrDefault();
+        if (fac != null)
+        {
+            rec.User = fac.Attribute("USER")?.Value ?? "";
+            var tester = fac.Attribute("TESTER")?.Value ?? "";
+            if (rec.Station.Length == 0 && tester.Length > 0)
+            {
+                var m = TesterStationRe.Match(tester);
+                if (m.Success) rec.Station = m.Value;
+            }
+        }
+
+        var dut = root.Descendants("DUT").FirstOrDefault();
+        var id = dut?.Attribute("ID")?.Value ?? "";
+        if (id.Length > 0) rec.Sn = id;      // DUT/@ID 是权威 SN
+
+        // ---- 失败项识别: 以「叶子失败 GROUP」为测试项主体 ----
+        // 为什么不直接遍历 TEST 节点: 若某测试项(GROUP)失败但其下没有 TEST 子节点
+        // (例如 PassFailTest / Action 型步骤)，只看 TEST 就会整条漏掉。
+        // 以 GROUP 为主体则不依赖 TEST 是否存在；TEST 仅用于补测量值。
+        foreach (var g in root.Descendants("GROUP"))
+        {
+            if ((g.Attribute("STATUS")?.Value ?? "") != "Failed") continue;
+
+            // 内含失败子 GROUP 的是容器(如 MainSequence Callback / SequenceCall)，本身不算测试项
+            bool isContainer = g.Elements("GROUP")
+                                .Any(x => (x.Attribute("STATUS")?.Value ?? "") == "Failed");
+            if (isContainer) continue;
+
+            var gname = g.Attribute("NAME")?.Value ?? "";
+            var failedTests = g.Elements("TEST")
+                               .Where(t => (t.Attribute("STATUS")?.Value ?? "") == "Failed")
+                               .ToList();
+
+            if (failedTests.Count == 0)
+            {
+                // 没有失败 TEST 子节点 —— 仍记录该测试项，测量值留空
+                var name = gname;
+                if (excludeIgnored && IsIgnored(name)) continue;
+                rec.FailItems.Add(new FailItem
+                {
+                    Name = name,
+                    StepType = g.Attribute("TYPE")?.Value ?? "",
+                });
+                continue;
+            }
+
+            foreach (var t in failedTests)
+            {
+                // TEST 的 NAME 通常与 GROUP 同名；缺失时回落到 GROUP 名
+                var name = t.Attribute("NAME")?.Value;
+                if (string.IsNullOrWhiteSpace(name)) name = gname;
+                if (excludeIgnored && IsIgnored(name)) continue;
+                rec.FailItems.Add(new FailItem
+                {
+                    Name = name,
+                    Value = t.Attribute("VALUE")?.Value ?? "",
+                    Lolim = t.Attribute("LOLIM")?.Value ?? "",
+                    Hilim = t.Attribute("HILIM")?.Value ?? "",
+                    Unit = t.Attribute("UNIT")?.Value ?? "",
+                    StepType = g.Attribute("TYPE")?.Value ?? "",
+                });
+            }
+        }
+
+        // 兜底: 若上面一条都没收到，但文件里确实存在失败的 TEST(说明 GROUP 层级结构
+        // 与预期不同)，则退回按 TEST 节点收集，避免整条漏判。
+        if (rec.FailItems.Count == 0)
+        {
+            foreach (var t in root.Descendants("TEST"))
+            {
+                if ((t.Attribute("STATUS")?.Value ?? "") != "Failed") continue;
+                var name = t.Attribute("NAME")?.Value ?? "";
+                if (excludeIgnored && IsIgnored(name)) continue;
+                rec.FailItems.Add(new FailItem
+                {
+                    Name = name,
+                    Value = t.Attribute("VALUE")?.Value ?? "",
+                    Lolim = t.Attribute("LOLIM")?.Value ?? "",
+                    Hilim = t.Attribute("HILIM")?.Value ?? "",
+                    Unit = t.Attribute("UNIT")?.Value ?? "",
+                    StepType = "(fallback:TEST)",
+                });
+            }
         }
 
         // 只看内容：有真实 fail 项即命中
