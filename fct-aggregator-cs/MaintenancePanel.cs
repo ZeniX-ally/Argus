@@ -34,16 +34,15 @@ public class MaintenancePanel : Panel
 
     private void BuildUi()
     {
-        Padding = new Padding(12);
-
-        var title = new Label
-        {
-            Text = "维修记录 / 待办", Dock = DockStyle.Top, Height = 30,
-            Font = new Font("Microsoft YaHei UI", 13F, FontStyle.Bold),
-        };
+        // 页标题由主窗口顶标统一显示（v2.8.0），面板内不再重复一个大标题
+        Padding = new Padding(Theme.Gap);
+        BackColor = Theme.Bg;
 
         // ===== 顶部工具栏 =====
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, Padding = new Padding(0, 4, 0, 4) };
+        var bar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top, Height = 42, Padding = new Padding(0, 4, 0, 4), BackColor = Theme.Bg,
+        };
 
         _btnBoard = new Button { Text = "看板", Width = 62, Height = 28, FlatStyle = FlatStyle.Flat };
         _btnBoard.Click += (_, _) => SetViewMode("board");
@@ -123,7 +122,6 @@ public class MaintenancePanel : Panel
         Controls.Add(_board);
         Controls.Add(_listHost);
         Controls.Add(bar);
-        Controls.Add(title);
     }
 
     private string _viewMode = "board";

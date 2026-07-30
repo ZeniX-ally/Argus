@@ -31,3 +31,6 @@ fct-aggregator-cs/dist/config.json
 .claude/settings.local.json
 Thumbs.db
 desktop.ini
+
+# GUI 截图产物
+.snap/

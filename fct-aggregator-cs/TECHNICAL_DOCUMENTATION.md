@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.7.1
+**当前版本**：v2.8.0
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -46,6 +46,7 @@ FAIL 记录报告查看、调试工具页。
 | 飞书告警 | FAIL 记录推交互卡片，含失败步骤名称 / 实测值 / 上下限 |
 | 设备状态 | 解析 `FCT.ini`：型号列表、固件版本、COM/USB 设备在线灯、A2L 文件 |
 | 维修记录 / 待办 | **看板（5 列拖拽改状态）/ 列表**两视图；增 / 查 / **改（全字段编辑）** / 删 + 导出 xlsx / csv<br>**故障项目从 FAIL 记录去重后挑选**（不显示 SN），可一次建多条；维修人可下拉选历史值<br>**待办（v2.5.0 起整合进看板）**：未确认的不良以 `TodoCard` 直接排在看板「待办」列顶部，双击确认 / 拖到别列 = 确认并置状态 / 右键忽略 |
+| 界面外壳 | 左侧导航（待办红色角标）+ 顶栏状态胶囊 + 总览 KPI 卡 + 底部状态栏；Ctrl+1~5 切页 / Ctrl+R 刷新 |
 | 卡片预览 | **单击**卡片弹 `CardPreviewForm`：完整故障项名 / 明细（可复制）/ **合并的 fail 项 + 各自次数**；延迟一个 DoubleClickTime 触发，避免与双击冲突 |
 | 待办登记 | 只扫近 `todo_scan_days`(默认30) 天的 FAIL，按 `TodoGrouping.KeyOf()` **同类合并成大项**，落 `todo_items` 表**永久保留**；可按时间区间查看，按 fail 次数排优先级（高/中/低） |
 | 桌面提示 | FAIL 落库即弹 **Windows 原生通知**（托盘 `NotifyIcon` + BalloonTip，无 UWP 依赖），节流合并，点通知直达待办看板 |
@@ -79,7 +80,9 @@ fct-aggregator-cs/
 ├── Logger.cs                 # 文件日志 logs/app.log + GUI 内存队列（上限 5000 行）
 ├── FeishuNotifier.cs         # 飞书群机器人卡片推送
 ├── FctIni.cs                 # FCT.ini 解析 + COM 口在线检测（共享读取模式）
-├── MainForm.cs               # 主窗口：进度条 / 页面切换 / 统计面板 / 日志窗
+├── MainForm.cs               # 主窗口外壳：侧边导航 / 顶栏胶囊 / KPI 总览 / 状态栏（v2.8.0 重构）
+├── Theme.cs                  # 视觉规范单一来源：颜色 / 字体 / 圆角 / DrawCard·DrawChip·MakeButton
+├── UiWidgets.cs              # 自绘控件：NavButton(带角标) / KpiCard / ChipBar / SectionPanel
 ├── DeviceStatusPanel.cs      # 设备状态页
 ├── MaintenancePanel.cs       # 维修记录/待办页（看板/列表切换）+ 新增/编辑表单 MaintenanceForm
 ├── MaintenanceBoard.cs       # 维修记录看板：5 列 / 自绘卡片 / 拖拽改状态 / QuickResolveForm
@@ -592,6 +595,26 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | 开关 | `config.json` 的 `desktop_notify`（缺省 true，仅显式 `false` 关闭）；托盘右键与调试页可临时切换；调试页【桌面提示测试】可验证系统未屏蔽 |
 
 ---
+
+### 8.5 GUI 布局约定（v2.8.0）
+
+`MainForm` 外壳 = 侧栏(Left) + 顶栏(Top) + 进度条(Top) + 状态栏(Bottom) + 内容区(Fill)，
+页面标题只在顶栏出现（子面板内不再重复大标题），视觉规范全部取自 `Theme`。
+
+⚠ **WinForms 停靠顺序是反的**：`Dock` 布局按 **z-order 从后往前**处理，
+也就是**最后 `Add` 的最先停靠**。所以：
+
+| 想要的效果 | 必须的 Add 位置 |
+|---|---|
+| `Dock=Fill` 吃剩余空间 | **最先 Add** |
+| 侧栏占满整列高（最外层） | **最后 Add** |
+| 侧栏里「总览」在最上面 | 在同组 `Dock=Top` 里**最后 Add** |
+
+写反了**不会报错**，只是内容区会占满整个客户区、其它栏盖在它上面（侧栏高度会短一截）。
+v2.8.0 第一版就踩了这个坑，靠自检的几何断言（量 `Left/Top/Width/Height`）才抓出来 ——
+所以 `SelfTest` 里保留了一组「GUI 布局」断言，改布局后必须跑。
+
+辅助工具：`tools/snap_gui.ps1` —— 解压完整包、灌真实库、启动后 `Ctrl+1..5` 逐页截图到 `.snap\`。
 
 ## 9. 构建与部署
 

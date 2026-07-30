@@ -16,20 +16,27 @@ public class DebugPanel : Panel
 
     private void BuildUi()
     {
-        Padding = new Padding(12);
-
-        var title = new Label { Text = "调试工具", Dock = DockStyle.Top, Height = 28, Font = new Font("Microsoft YaHei UI", 13F, FontStyle.Bold) };
+        Padding = new Padding(Theme.Gap);
+        BackColor = Theme.Bg;
 
         // 按钮工具栏(横向流式, 带分组标签)
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 74, WrapContents = true, AutoScroll = false };
+        var bar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top, Height = 78, WrapContents = true, AutoScroll = false, BackColor = Theme.Bg,
+        };
 
         void AddTag(string t)
         {
-            bar.Controls.Add(new Label { Text = t, AutoSize = true, ForeColor = Color.FromArgb(26, 82, 118), Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold), Margin = new Padding(6, 8, 2, 0) });
+            bar.Controls.Add(new Label
+            {
+                Text = t, AutoSize = true, ForeColor = Theme.Primary, Font = Theme.BodyBold,
+                Margin = new Padding(8, 9, 2, 0),
+            });
         }
         void AddBtn(string t, Action a)
         {
-            var b = new Button { Text = t, AutoSize = false, Width = 100, Height = 28, Margin = new Padding(2) };
+            var b = Theme.MakeButton(t, 104);
+            b.Margin = new Padding(2, 3, 2, 3);
             b.Click += (_, _) => { try { a(); } catch (Exception ex) { Print($"错误: {ex.Message}"); } };
             bar.Controls.Add(b);
         }
@@ -56,11 +63,15 @@ public class DebugPanel : Panel
         AddTag("数据");
         AddBtn("清空数据库", ClearDb);
 
-        _output = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, Font = new Font("Consolas", 9F), WordWrap = false };
+        _output = new TextBox
+        {
+            Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both,
+            Font = Theme.Mono, WordWrap = false, BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Theme.Surface,
+        };
 
         Controls.Add(_output);
         Controls.Add(bar);
-        Controls.Add(title);
     }
 
     private void Print(string text)

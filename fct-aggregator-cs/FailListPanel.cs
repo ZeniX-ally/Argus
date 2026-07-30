@@ -14,20 +14,24 @@ public class FailListPanel : Panel
 
     private void BuildUi()
     {
-        Padding = new Padding(12);
+        Padding = new Padding(Theme.Gap);
+        BackColor = Theme.Bg;
 
-        var title = new Label { Text = "FAIL 记录", Dock = DockStyle.Top, Height = 30, Font = new Font("Microsoft YaHei UI", 14F, FontStyle.Bold) };
-
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 36 };
-        var btnRefresh = new Button { Text = "刷新", Width = 70, Height = 28 };
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 40, BackColor = Theme.Bg };
+        var btnRefresh = Theme.MakeButton("刷新", 76);
         btnRefresh.Click += (_, _) => Refresh2();
         bar.Controls.Add(btnRefresh);
-        var hint = new Label { Text = "（双击某行可查看该 XML 详细内容）", AutoSize = true, ForeColor = Color.Gray, Margin = new Padding(8, 8, 0, 0) };
+        var hint = new Label
+        {
+            Text = "（双击某行可查看该 XML 详细内容）", AutoSize = true,
+            ForeColor = Theme.TextFaint, Font = Theme.Small, Margin = new Padding(8, 10, 0, 0),
+        };
         bar.Controls.Add(hint);
 
         _list = new ListView
         {
             Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true,
+            BorderStyle = BorderStyle.FixedSingle, BackColor = Theme.Surface, Font = Theme.Body,
         };
         _list.Columns.Add("SN", 300);
         _list.Columns.Add("失败项", 320);
@@ -37,7 +41,6 @@ public class FailListPanel : Panel
 
         Controls.Add(_list);
         Controls.Add(bar);
-        Controls.Add(title);
     }
 
     public void Refresh2()

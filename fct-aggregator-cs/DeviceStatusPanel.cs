@@ -30,16 +30,13 @@ public class DeviceStatusPanel : Panel
 
     private void BuildUi()
     {
-        Padding = new Padding(16);
+        Padding = new Padding(Theme.Gap);
+        BackColor = Theme.Bg;
 
-        // 从下往上 Dock, 保证顺序: 标题 -> ini路径 -> 型号 -> 版本 -> A2L -> 设备(填充)
-        var title = new Label
-        {
-            Text = "设备状态 / FCT.ini 信息", Dock = DockStyle.Top, Height = 32,
-            Font = new Font("Microsoft YaHei UI", 14F, FontStyle.Bold),
-        };
-        _iniLabel = new Label { Dock = DockStyle.Top, Height = 18, ForeColor = Color.Gray, Font = new Font("Microsoft YaHei UI", 8F) };
-        _errorLabel = new Label { Dock = DockStyle.Top, AutoSize = false, Height = 0, ForeColor = Color.Red, Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold), Visible = false };
+        // 页标题由主窗口顶标统一显示（v2.8.0），这里只留 ini 路径与错误提示
+        var title = new Label { Dock = DockStyle.Top, Height = 0, Visible = false };
+        _iniLabel = new Label { Dock = DockStyle.Top, Height = 20, ForeColor = Theme.TextFaint, Font = Theme.Small };
+        _errorLabel = new Label { Dock = DockStyle.Top, AutoSize = false, Height = 0, ForeColor = Theme.Danger, Font = Theme.BodyBold, Visible = false };
 
         // 型号
         var modelTitle = SectionTitle("支持的型号");

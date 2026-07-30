@@ -2,23 +2,53 @@ using System.Text;
 
 namespace FctAggregator;
 
+/// <summary>
+/// 主窗口（v2.8.0 GUI 重构）。
+///
+/// 布局从「底部一排按钮 + 一行长文字 header」改成常见的后台面板结构：
+/// <code>
+/// ┌──────────┬───────────────────────────────────────────┐
+/// │ 侧边导航 │ 顶栏：页面标题 + 状态胶囊 + 刷新           │
+/// │ (168px)  ├───────────────────────────────────────────┤
+/// │  主页    │ 扫描进度条（仅扫描时出现）                 │
+/// │  待办/维修├──────────────────────────────────────────┤
+/// │  FAIL记录│                                           │
+/// │  设备状态│            内容区（各页面）                │
+/// │  调试    │                                           │
+/// │          ├───────────────────────────────────────────┤
+/// │  退出    │ 状态栏：机台 · 型号 · 库 · 待办 · 更新时间 │
+/// └──────────┴───────────────────────────────────────────┘
+/// </code>
+/// 要点：
+///   · 导航项自绘（<see cref="NavButton"/>），带**待办角标**，红点直接提示有几条未确认不良；
+///   · 顶栏状态改成胶囊（<see cref="ChipBar"/>），比一行长文字好扫；
+///   · 主页顶部一排 KPI 卡（<see cref="KpiCard"/>），良率/不良/待办一眼可见，明细收进小卡；
+///   · 视觉规范集中在 <see cref="Theme"/>，不再各写各的颜色字号；
+///   · Ctrl+1..5 切页。
+/// </summary>
 public class MainForm : Form
 {
     private readonly Engine _engine;
     private readonly AppConfig _cfg;
 
-    // Header
-    private Label _headerLabel = null!;
-    // 进度条
+    // ===== 外壳 =====
+    private Panel _nav = null!;
+    private readonly List<NavButton> _navButtons = new();
+    private Label _pageTitle = null!;
+    private ChipBar _chips = null!;
     private Panel _progressPanel = null!;
     private Label _progressLabel = null!;
     private ProgressBar _progressBar = null!;
-    // 统计
+    private Label _statusLeft = null!;
+    private Label _statusRight = null!;
+
+    // ===== 主页 =====
+    private readonly Dictionary<string, KpiCard> _kpi = new();
     private readonly Dictionary<string, Label> _statValues = new();
-    // 日志
     private RichTextBox _logBox = null!;
     private int _logSynced = 0;
-    // 页面切换
+
+    // ===== 页面 =====
     private Panel _dashboardPage = null!;
     private DeviceStatusPanel _devicePage = null!;
     private MaintenancePanel _maintPage = null!;
@@ -26,15 +56,24 @@ public class MainForm : Form
     private FailListPanel _failPage = null!;
     private System.Windows.Forms.Timer _timer = null!;
 
+    /// <summary>页索引 → 标题（顶栏显示）。</summary>
+    private static readonly string[] PageTitles =
+        { "总览", "待办 / 维修记录", "FAIL 记录", "设备状态", "调试工具" };
+
+    private int _page = 0;
+
     public MainForm(Engine engine)
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT-Aggregator v2.7.1";
-        Width = 1200; Height = 720;
+        Text = "Zenix-Ally | FCT-Aggregator v2.8.0";
+        Width = 1280; Height = 780;
+        MinimumSize = new Size(1040, 640);
         StartPosition = FormStartPosition.CenterScreen;
+        BackColor = Theme.Bg;
         try { Icon = new Icon(Path.Combine(AppConfig.BaseDir, "app_icon.ico")); } catch { }
-        Font = new Font("Microsoft YaHei UI", 9F);
+        Font = Theme.Body;
+        KeyPreview = true;
 
         BuildUi();
 
@@ -50,47 +89,90 @@ public class MainForm : Form
         Tick();
     }
 
+    // ==================================================================
+    //  外壳
+    // ==================================================================
     private void BuildUi()
     {
-        // ===== Header 状态栏 =====
-        _headerLabel = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 46,
-            BackColor = Color.FromArgb(26, 82, 118),
-            ForeColor = Color.White,
-            Padding = new Padding(14, 0, 14, 0),
-            TextAlign = ContentAlignment.MiddleLeft,
-            Font = new Font("Microsoft YaHei UI", 10F),
-        };
-        Controls.Add(_headerLabel);
+        // ⚠ WinForms 停靠的真实规则：**按 z-order 从后往前处理，也就是最后 Add 的最先停靠**。
+        //   所以想让侧栏占满整列高（最先停靠），它必须**最后** Add；
+        //   而 Dock=Fill 的内容区要拿“剩下的”（最后停靠），它必须**最先** Add。
+        //   写反了不报错：内容区会占整个客户区、其余栏盖在它上面（自检已有几何断言盯这个）。
 
-        // ===== 进度条 =====
-        _progressPanel = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(14, 4, 14, 4) };
-        _progressLabel = new Label { Dock = DockStyle.Left, Width = 200, TextAlign = ContentAlignment.MiddleLeft, Text = "扫描准备中..." };
+        // ===== 内容区（最先 Add = 最后停靠，吃剩下的空间）=====
+        var contentHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg };
+        Controls.Add(contentHost);
+
+        // ===== 状态栏 =====
+        var statusBar = new Panel { Dock = DockStyle.Bottom, Height = Theme.StatusBarHeight, BackColor = Theme.Surface };
+        statusBar.Paint += (_, e) =>
+        {
+            using var p = new Pen(Theme.Border);
+            e.Graphics.DrawLine(p, 0, 0, statusBar.Width, 0);
+        };
+        _statusLeft = new Label
+        {
+            Dock = DockStyle.Left, Width = 760, ForeColor = Theme.TextSub, Font = Theme.Small,
+            BackColor = Theme.Surface, Padding = new Padding(14, 0, 0, 0), TextAlign = ContentAlignment.MiddleLeft,
+        };
+        _statusRight = new Label
+        {
+            Dock = DockStyle.Right, Width = 280, ForeColor = Theme.TextFaint, Font = Theme.Small,
+            BackColor = Theme.Surface, Padding = new Padding(0, 0, 14, 0), TextAlign = ContentAlignment.MiddleRight,
+        };
+        statusBar.Controls.Add(_statusLeft);
+        statusBar.Controls.Add(_statusRight);
+        Controls.Add(statusBar);
+
+        // ===== 扫描进度（细条，只在扫描时出现）=====
+        _progressPanel = new Panel
+        {
+            Dock = DockStyle.Top, Height = 28, BackColor = Theme.Surface,
+            Padding = new Padding(18, 5, 18, 5), Visible = false,
+        };
+        _progressLabel = new Label
+        {
+            Dock = DockStyle.Left, Width = 230, Text = "扫描准备中…", ForeColor = Theme.TextSub,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
         _progressBar = new ProgressBar { Dock = DockStyle.Fill, Style = ProgressBarStyle.Marquee };
         _progressPanel.Controls.Add(_progressBar);
         _progressPanel.Controls.Add(_progressLabel);
         Controls.Add(_progressPanel);
 
-        // ===== 底部按钮栏 =====
-        var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, Padding = new Padding(8, 6, 8, 6) };
-        var btnDashboard = MakeButton("主页", (_, _) => ShowPage(0));
-        var btnDevice = MakeButton("设备状态", (_, _) => ShowPage(1));
-        var btnMaint = MakeButton("待办/维修", (_, _) => ShowPage(2));
-        var btnFail = MakeButton("FAIL记录", (_, _) => ShowPage(4));
-        var btnDebug = MakeButton("调试", (_, _) => ShowPage(3));
-        var btnClearLog = MakeButton("清空日志", (_, _) => { Logger.ClearGuiLogs(); _logBox.Clear(); _logSynced = 0; });
-        var btnExit = MakeButton("退出", (_, _) => Close());
-        btnExit.BackColor = Color.FromArgb(146, 43, 33); btnExit.ForeColor = Color.White;
-        footer.Controls.AddRange(new Control[] { btnDashboard, btnDevice, btnMaint, btnFail, btnDebug, btnClearLog, btnExit });
-        Controls.Add(footer);
+        // ===== 顶栏 =====
+        var topBar = new Panel { Dock = DockStyle.Top, Height = Theme.TopBarHeight, BackColor = Theme.Surface };
+        topBar.Paint += (_, e) =>
+        {
+            using var p = new Pen(Theme.Border);
+            e.Graphics.DrawLine(p, 0, topBar.Height - 1, topBar.Width, topBar.Height - 1);
+        };
+        _pageTitle = new Label
+        {
+            Dock = DockStyle.Left, Width = 260, Text = PageTitles[0],
+            Font = Theme.PageTitle, ForeColor = Theme.TextMain, BackColor = Theme.Surface,
+            Padding = new Padding(18, 0, 0, 0), TextAlign = ContentAlignment.MiddleLeft,
+        };
+        _chips = new ChipBar { Dock = DockStyle.Fill };
+        var btnRefresh = Theme.MakeButton("刷新", 74);
+        btnRefresh.Dock = DockStyle.Fill;
+        btnRefresh.Margin = new Padding(0);
+        btnRefresh.Click += (_, _) => RefreshCurrentPage();
+        var refreshHost = new Panel
+        {
+            Dock = DockStyle.Right, Width = 92, BackColor = Theme.Surface, Padding = new Padding(9, 12, 9, 12),
+        };
+        refreshHost.Controls.Add(btnRefresh);
+        // 同理：Fill 先 Add，两侧后 Add
+        topBar.Controls.Add(_chips);
+        topBar.Controls.Add(refreshHost);
+        topBar.Controls.Add(_pageTitle);
+        Controls.Add(topBar);
 
-        // ===== 内容区(多页切换) =====
-        var contentHost = new Panel { Dock = DockStyle.Fill };
-        Controls.Add(contentHost);
-        contentHost.BringToFront();
+        // ===== 侧边导航（最后 Add = 最先停靠 → 占满整列高）=====
+        Controls.Add(BuildNav());
 
+        // ===== 页面 =====
         _dashboardPage = BuildDashboardPage();
         _devicePage = new DeviceStatusPanel(_cfg) { Dock = DockStyle.Fill, Visible = false };
         _maintPage = new MaintenancePanel(_engine) { Dock = DockStyle.Fill, Visible = false };
@@ -102,93 +184,231 @@ public class MainForm : Form
         contentHost.Controls.Add(_debugPage);
         contentHost.Controls.Add(_failPage);
         _dashboardPage.BringToFront();
+
+        KeyDown += OnShortcut;
     }
 
-    private Button MakeButton(string text, EventHandler onClick)
+    /// <summary>侧边导航：品牌块 + 5 个导航项 + 底部退出。只构造不挂，由调用方按停靠顺序 Add。</summary>
+    private Panel BuildNav()
     {
-        var b = new Button { Text = text, AutoSize = false, Width = 100, Height = 30 };
-        b.Click += onClick;
-        return b;
+        _nav = new Panel { Dock = DockStyle.Left, Width = Theme.NavWidth, BackColor = Theme.NavBg };
+
+        var brand = new Panel { Dock = DockStyle.Top, Height = Theme.TopBarHeight, BackColor = Theme.NavBg };
+        brand.Paint += (_, e) =>
+        {
+            TextRenderer.DrawText(e.Graphics, "Zenix-Ally", new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
+                new Rectangle(18, 6, brand.Width - 24, 22), Color.White,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            TextRenderer.DrawText(e.Graphics, "FCT 数据聚合", Theme.Small,
+                new Rectangle(18, 26, brand.Width - 24, 18), Theme.NavText,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+        };
+
+        var exit = new NavButton("退出程序", -1) { Dock = DockStyle.Bottom };
+        exit.Click += (_, _) => Close();
+
+        var version = new Label
+        {
+            Dock = DockStyle.Bottom, Height = 26, Text = "v2.8.0", ForeColor = Color.FromArgb(120, 134, 154),
+            Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(18, 0, 0, 0),
+        };
+
+        // 同一个规则：后 Add 的先停靠。想让“总览”在最上面，就把它最后 Add。
+        for (int i = PageTitles.Length - 1; i >= 0; i--)
+        {
+            var idx = i;
+            var b = new NavButton(NavLabel(i), i);
+            b.Click += (_, _) => ShowPage(idx);
+            _navButtons.Add(b);
+        }
+        _nav.Controls.Add(version);
+        _nav.Controls.Add(exit);
+        foreach (var b in _navButtons) _nav.Controls.Add(b);      // PageIndex 4 → 0 逐个 Add
+        _nav.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 8, BackColor = Theme.NavBg });
+        _nav.Controls.Add(brand);                                 // 最后 Add → 最先停靠 → 真的在最上面
+        _navButtons.Sort((a, b) => a.PageIndex.CompareTo(b.PageIndex));
+        SetActiveNav(0);
+        return _nav;
     }
 
-    private SplitContainer _dashSplit = null!;
+    private static string NavLabel(int i) => i switch
+    {
+        0 => "总览",
+        1 => "待办 / 维修",
+        2 => "FAIL 记录",
+        3 => "设备状态",
+        4 => "调试工具",
+        _ => "",
+    };
 
+    private void SetActiveNav(int index)
+    {
+        foreach (var b in _navButtons) b.Active = b.PageIndex == index;
+    }
+
+    // ==================================================================
+    //  主页
+    // ==================================================================
     private Panel BuildDashboardPage()
     {
-        var page = new Panel { Dock = DockStyle.Fill };
-        var split = new SplitContainer { Dock = DockStyle.Fill };
-        _dashSplit = split;
-        page.Controls.Add(split);
+        var page = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap, Theme.Gap, Theme.Gap, 0) };
 
-        // 左: 统计
-        var statBox = new GroupBox { Text = "Statistics", Dock = DockStyle.Fill, Padding = new Padding(10) };
-        var statLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true };
-        statLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
-        statLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
-
-        var rows = new (string label, string key, bool bold)[]
+        // ---- 顶部 KPI 一排 ----
+        var kpiRow = new TableLayoutPanel
         {
-            ("PASS (良品)", "pass", false),
-            ("FAIL (不良)", "fail", false),
-            ("中断", "interrupted", false),
-            ("Invalid", "invalid", false),
-            ("Parse Error", "parse_error", false),
-            ("产品总数(SN去重)", "product", true),
-            ("XML文件总数", "xml", true),
-            ("良率", "yield", true),
-            ("—— 今日 ——", "sep", true),
-            ("今日 PASS", "today_pass", false),
-            ("今日 FAIL", "today_fail", false),
-            ("今日中断", "today_interrupted", false),
-            ("今日良率", "today_yield", true),
+            Dock = DockStyle.Top, Height = 92, ColumnCount = 5, RowCount = 1, BackColor = Theme.Bg,
+        };
+        for (int i = 0; i < 5; i++) kpiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+        void AddKpi(string key, string title, Color accent, int col)
+        {
+            var c = new KpiCard(title, accent) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, 0) };
+            _kpi[key] = c;
+            kpiRow.Controls.Add(c, col, 0);
+        }
+        AddKpi("product", "产品总数（SN 去重）", Theme.Primary, 0);
+        AddKpi("pass", "PASS 良品", Theme.Success, 1);
+        AddKpi("fail", "FAIL 不良", Theme.Danger, 2);
+        AddKpi("yield", "良率", Theme.Info, 3);
+        AddKpi("todo", "待办（未确认不良）", Theme.Warning, 4);
+        // 最后一张不要右边距
+        _kpi["todo"].Margin = new Padding(0);
+
+        // ---- 今日一排 ----
+        var todayRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, Height = 76, ColumnCount = 4, RowCount = 1, BackColor = Theme.Bg,
+            Padding = new Padding(0, Theme.Gap, 0, 0),
+        };
+        for (int i = 0; i < 4; i++) todayRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        void AddToday(string key, string title, Color accent, int col)
+        {
+            var c = new KpiCard(title, accent, big: false) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, 0) };
+            _kpi[key] = c;
+            todayRow.Controls.Add(c, col, 0);
+        }
+        AddToday("today_pass", "今日 PASS", Theme.Success, 0);
+        AddToday("today_fail", "今日 FAIL", Theme.Danger, 1);
+        AddToday("today_interrupted", "今日中断", Theme.Neutral, 2);
+        AddToday("today_yield", "今日良率", Theme.Info, 3);
+        _kpi["today_yield"].Margin = new Padding(0);
+
+        // ---- 下半：左明细 + 右日志 ----
+        var lower = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(0, Theme.Gap, 0, Theme.Gap) };
+
+        var detail = new SectionPanel("统计明细") { Dock = DockStyle.Left, Width = 300, Margin = new Padding(0) };
+        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = Theme.Surface };
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
+        var rows = new (string label, string key)[]
+        {
+            ("中断 (INTERRUPTED)", "interrupted"),
+            ("Invalid", "invalid"),
+            ("解析错误", "parse_error"),
+            ("XML 文件总数", "xml"),
+            ("维修记录（未完）", "maint_open"),
+            ("待办累计次数 Top", "todo_top"),
         };
         int r = 0;
-        foreach (var (label, key, bold) in rows)
+        foreach (var (label, key) in rows)
         {
-            var name = new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 4, 3, 4) };
-            var val = new Label { Text = key == "sep" ? "" : "0", AutoSize = true, Anchor = AnchorStyles.Right, TextAlign = ContentAlignment.MiddleRight, Margin = new Padding(3, 4, 3, 4) };
-            if (bold)
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+            grid.Controls.Add(new Label
             {
-                name.Font = new Font(Font, FontStyle.Bold);
-                val.Font = new Font(Font, FontStyle.Bold);
-            }
-            statLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));   // 每行固定行高, 避免最后一行被拉开
-            statLayout.Controls.Add(name, 0, r);
-            statLayout.Controls.Add(val, 1, r);
+                Text = label, Dock = DockStyle.Fill, ForeColor = Theme.TextSub, Font = Theme.Body,
+                TextAlign = ContentAlignment.MiddleLeft,
+            }, 0, r);
+            var val = new Label
+            {
+                Text = "—", Dock = DockStyle.Fill, ForeColor = Theme.TextMain, Font = Theme.BodyBold,
+                TextAlign = ContentAlignment.MiddleRight,
+            };
+            grid.Controls.Add(val, 1, r);
             _statValues[key] = val;
             r++;
         }
-        // 末尾加一个弹性空行, 吸收剩余空间(不让“今日良率”被推开)
-        statLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        statLayout.Controls.Add(new Label { Text = "" }, 0, r);
-        statBox.Controls.Add(statLayout);
-        split.Panel1.Controls.Add(statBox);
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        grid.Controls.Add(new Label { Text = "" }, 0, r);
+        detail.Content.Controls.Add(grid);
 
-        // 右: 日志
-        var logBox = new GroupBox { Text = "Latest Logs", Dock = DockStyle.Fill, Padding = new Padding(10) };
-        _logBox = new RichTextBox { Dock = DockStyle.Fill, ReadOnly = true, BackColor = Color.White, Font = new Font("Consolas", 9F) };
-        logBox.Controls.Add(_logBox);
-        split.Panel2.Controls.Add(logBox);
+        var logs = new SectionPanel("实时日志") { Dock = DockStyle.Fill, Margin = new Padding(0) };
+        logs.Hint = "（最新在下方）";
+        _logBox = new RichTextBox
+        {
+            Dock = DockStyle.Fill, ReadOnly = true, BackColor = Theme.Surface, BorderStyle = BorderStyle.None,
+            Font = Theme.Mono, WordWrap = false, TabStop = false,
+        };
+        var logTools = new Panel { Dock = DockStyle.Bottom, Height = 36, BackColor = Theme.Surface };
+        var btnClear = Theme.MakeButton("清空日志", 88);
+        btnClear.Dock = DockStyle.Right;
+        btnClear.Click += (_, _) => { Logger.ClearGuiLogs(); _logBox.Clear(); _logSynced = 0; };
+        logTools.Controls.Add(btnClear);
+        logs.Content.Controls.Add(_logBox);
+        logs.Content.Controls.Add(logTools);
 
+        var spacer = new Panel { Dock = DockStyle.Left, Width = Theme.Gap, BackColor = Theme.Bg };
+        lower.Controls.Add(logs);
+        lower.Controls.Add(spacer);
+        lower.Controls.Add(detail);
+
+        page.Controls.Add(lower);
+        page.Controls.Add(todayRow);
+        page.Controls.Add(kpiRow);
+        lower.BringToFront();
         return page;
     }
 
+    // ==================================================================
+    //  切页 / 快捷键
+    // ==================================================================
     private void ShowPage(int index)
     {
+        if (index < 0 || index >= PageTitles.Length) return;
         CardPreviewForm.CloseCurrent();      // 切页先关掉卡片预览弹窗
+        _page = index;
         _dashboardPage.Visible = index == 0;
-        _devicePage.Visible = index == 1;
-        _maintPage.Visible = index == 2;
-        _debugPage.Visible = index == 3;
-        _failPage.Visible = index == 4;
-        if (index == 1) _devicePage.Refresh2();
-        if (index == 2) _maintPage.Refresh2();
-        if (index == 4) _failPage.Refresh2();
-        Control target = index switch { 1 => _devicePage, 2 => _maintPage, 3 => _debugPage, 4 => _failPage, _ => _dashboardPage };
+        _maintPage.Visible = index == 1;
+        _failPage.Visible = index == 2;
+        _devicePage.Visible = index == 3;
+        _debugPage.Visible = index == 4;
+
+        Control target = index switch
+        {
+            1 => _maintPage, 2 => _failPage, 3 => _devicePage, 4 => _debugPage, _ => _dashboardPage
+        };
         target.BringToFront();
+        _pageTitle.Text = PageTitles[index];
+        SetActiveNav(index);
+        RefreshCurrentPage();
     }
 
-    // (清空数据库功能已移至 Debug 页)
+    /// <summary>顶栏【刷新】/ 切页时刷新当前页数据。</summary>
+    private void RefreshCurrentPage()
+    {
+        try
+        {
+            switch (_page)
+            {
+                case 1: _maintPage.Refresh2(); break;
+                case 2: _failPage.Refresh2(); break;
+                case 3: _devicePage.Refresh2(); break;
+                default: Tick(); break;
+            }
+        }
+        catch (Exception ex) { Logger.Warning($"页面刷新失败: {ex.Message}"); }
+    }
+
+    private void OnShortcut(object? sender, KeyEventArgs e)
+    {
+        if (!e.Control) return;
+        int idx = e.KeyCode switch
+        {
+            Keys.D1 => 0, Keys.D2 => 1, Keys.D3 => 2, Keys.D4 => 3, Keys.D5 => 4,
+            _ => -1,
+        };
+        if (idx >= 0) { ShowPage(idx); e.Handled = true; }
+        else if (e.KeyCode == Keys.R) { RefreshCurrentPage(); e.Handled = true; }
+    }
 
     /// <summary>点桌面提示 / 双击托盘图标: 窗口拉到前面并直接跳到待办看板。</summary>
     private void OnNotificationClicked()
@@ -200,53 +420,51 @@ public class MainForm : Form
             Show();
             Activate();
             BringToFront();
-            ShowPage(2);
+            ShowPage(1);
         }
         catch (Exception ex) { Logger.Warning($"提示点击处理失败: {ex.Message}"); }
     }
 
-    // ==================== 定时刷新 ====================
+    // ==================================================================
+    //  定时刷新
+    // ==================================================================
     private int _lastFailSeen = -1;
+    private int _tickCount = 0;
+    private int _pendingTodo = 0;
+    private int _openMaint = 0;
+    private string _todoTop = "—";
 
     private void Tick()
     {
-        UpdateHeader();
+        _tickCount++;
+        UpdateChips();
         UpdateProgress();
-        UpdateStats();
+        UpdateKpi();
         UpdateLogs();
+        if (_tickCount % 5 == 1) UpdateTodoBadge();     // 查库的活儿 5 秒一次就够
+        UpdateStatusBar();
         AutoRefreshMaintenance();
     }
 
-    /// <summary>
-    /// FAIL 总数一变就刷待办看板 —— 新不良无需手动点刷新就会出现在「待办」列。
-    /// 只在该页可见时重载，避开后台白白查库。
-    /// </summary>
-    private void AutoRefreshMaintenance()
-    {
-        var fail = AppState.Snapshot().Fail;
-        if (_lastFailSeen < 0) { _lastFailSeen = fail; return; }
-        if (fail == _lastFailSeen) return;
-        _lastFailSeen = fail;
-        if (_maintPage.Visible)
-        {
-            try { _maintPage.Refresh2(); }
-            catch (Exception ex) { Logger.Warning($"待办看板自动刷新失败: {ex.Message}"); }
-        }
-    }
-
-    private void UpdateHeader()
+    private void UpdateChips()
     {
         var s = AppState.Snapshot();
-        var statusColor = s.Status == "running" ? "🟢" : s.Status == "error" ? "🔴" : "🟡";
-        var webhookMark = s.WebhookConfigured ? "🟢 ON" : "🔴 OFF";
-        var notifyMark = DesktopNotifier.Enabled ? "🟢 ON" : "⚪ OFF";
-        var scanMark = s.HistoricalScanComplete ? "🟢 Ready" : "🟡 Scanning...";
-        var station = string.IsNullOrEmpty(s.StationId) ? "Auto-detect" : s.StationId;
-        var text = $"Zenix-Ally     Station: {station}     Status: {statusColor} {s.Status}     " +
-                   $"Models: {s.ModelsCount}     Webhook: {webhookMark}     桌面提示: {notifyMark}     History: {scanMark}";
-        if (s.Status == "error")
-            text += "     ⚠ 结果目录不存在，数据采集未运行！";
-        if (_headerLabel.Text != text) _headerLabel.Text = text;
+        var chips = new List<(string, Color)>
+        {
+            ($"机台 {(string.IsNullOrEmpty(s.StationId) ? "自动识别" : s.StationId)}", Theme.Primary),
+            (s.Status switch
+                {
+                    "running" => "采集运行中",
+                    "error" => "结果目录异常",
+                    _ => "空闲",
+                },
+             s.Status == "running" ? Theme.Success : s.Status == "error" ? Theme.Danger : Theme.Warning),
+            ($"型号 {s.ModelsCount}", Theme.Neutral),
+            (s.HistoricalScanComplete ? "历史扫描完成" : "历史扫描中", s.HistoricalScanComplete ? Theme.Success : Theme.Warning),
+            ($"飞书 {(s.WebhookConfigured ? "已配置" : "未配置")}", s.WebhookConfigured ? Theme.Success : Theme.Neutral),
+            ($"桌面提示 {(DesktopNotifier.Enabled ? "开" : "关")}", DesktopNotifier.Enabled ? Theme.Success : Theme.Neutral),
+        };
+        _chips.SetChips(chips);
     }
 
     private void UpdateProgress()
@@ -257,7 +475,7 @@ public class MainForm : Form
             case "scanning":
                 _progressPanel.Visible = true;
                 _progressBar.Style = ProgressBarStyle.Marquee;
-                _progressLabel.Text = $"扫描中... 已发现 {total} 个文件";
+                _progressLabel.Text = $"扫描中… 已发现 {total} 个文件";
                 break;
             case "parsing":
                 _progressPanel.Visible = true;
@@ -265,31 +483,71 @@ public class MainForm : Form
                 _progressBar.Maximum = Math.Max(total, 1);
                 _progressBar.Value = Math.Min(parsed, _progressBar.Maximum);
                 var pct = total > 0 ? parsed * 100.0 / total : 0;
-                _progressLabel.Text = $"解析中... {parsed}/{total} ({pct:F1}%)";
+                _progressLabel.Text = $"解析中… {parsed}/{total}（{pct:F1}%）";
                 break;
-            case "done":
             default:
                 _progressPanel.Visible = false;
                 break;
         }
     }
 
-    private void UpdateStats()
+    private void UpdateKpi()
     {
         var s = AppState.Snapshot();
-        void Set(string k, string v) { if (_statValues.TryGetValue(k, out var l) && l.Text != v) l.Text = v; }
-        Set("pass", s.Pass.ToString());
-        Set("fail", s.Fail.ToString());
-        Set("interrupted", s.Interrupted.ToString());
-        Set("invalid", s.Invalid.ToString());
-        Set("parse_error", s.ParseError.ToString());
-        Set("product", s.ProductCount.ToString());
-        Set("xml", s.XmlCount.ToString());
-        Set("yield", $"{s.YieldRate:F1}%");
-        Set("today_pass", s.TodayPass.ToString());
-        Set("today_fail", s.TodayFail.ToString());
-        Set("today_interrupted", s.TodayInterrupted.ToString());
-        Set("today_yield", $"{s.TodayYield:F1}%");
+        void SetKpi(string k, string v, string sub = "")
+        {
+            if (_kpi.TryGetValue(k, out var c)) c.Set(v, sub);
+        }
+        void SetVal(string k, string v)
+        {
+            if (_statValues.TryGetValue(k, out var l) && l.Text != v) l.Text = v;
+        }
+
+        SetKpi("product", s.ProductCount.ToString("N0"), $"XML {s.XmlCount:N0} 个");
+        SetKpi("pass", s.Pass.ToString("N0"));
+        SetKpi("fail", s.Fail.ToString("N0"), s.Interrupted > 0 ? $"中断 {s.Interrupted}" : "");
+        SetKpi("yield", $"{s.YieldRate:F1}%");
+        SetKpi("todo", _pendingTodo.ToString("N0"), _pendingTodo > 0 ? "点左侧「待办 / 维修」处理" : "暂无待处理");
+
+        SetKpi("today_pass", s.TodayPass.ToString("N0"));
+        SetKpi("today_fail", s.TodayFail.ToString("N0"));
+        SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
+        SetKpi("today_yield", $"{s.TodayYield:F1}%");
+
+        SetVal("interrupted", s.Interrupted.ToString("N0"));
+        SetVal("invalid", s.Invalid.ToString("N0"));
+        SetVal("parse_error", s.ParseError.ToString("N0"));
+        SetVal("xml", s.XmlCount.ToString("N0"));
+        SetVal("maint_open", _openMaint.ToString("N0"));
+        SetVal("todo_top", _todoTop);
+    }
+
+    /// <summary>待办角标 / 未完成维修数 / 次数最高的待办（查库，低频）。</summary>
+    private void UpdateTodoBadge()
+    {
+        try
+        {
+            _pendingTodo = _engine.Db.CountPendingTodos();
+            var counts = _engine.Db.CountMaintenanceByStatus();
+            _openMaint = counts.Where(kv => MaintenanceMeta.Normalize(kv.Key) != MaintenanceMeta.DoneStatus)
+                               .Sum(kv => kv.Value);
+            var top = _engine.Db.ListTodoView(null, null, 1).FirstOrDefault();
+            _todoTop = top == null ? "—" : $"{top.SortCount} 次";
+            var nav = _navButtons.FirstOrDefault(b => b.PageIndex == 1);
+            if (nav != null) nav.Badge = _pendingTodo;
+        }
+        catch (Exception ex) { Logger.Warning($"待办角标刷新失败: {ex.Message}"); }
+    }
+
+    private void UpdateStatusBar()
+    {
+        var s = AppState.Snapshot();
+        var db = Path.Combine("data", $"{(string.IsNullOrEmpty(s.StationId) ? "fct" : s.StationId)}.db");
+        var left = $"结果目录: {_cfg.ResultsRoot}     库: {db}     待办 {_pendingTodo} 条     未完成维修 {_openMaint} 条";
+        if (s.Status == "error") left = "⚠ 结果目录不存在，数据采集未运行！  " + left;
+        if (_statusLeft.Text != left) _statusLeft.Text = left;
+        var right = $"更新于 {DateTime.Now:HH:mm:ss}     Ctrl+1~5 切页 / Ctrl+R 刷新";
+        _statusRight.Text = right;
     }
 
     private void UpdateLogs()
@@ -304,10 +562,10 @@ public class MainForm : Form
         _logSynced += batch.Count;
         foreach (var line in batch)
         {
-            Color color = Color.Black;
-            if (line.Contains("[ERROR]")) color = Color.FromArgb(200, 40, 40);
-            else if (line.Contains("[WARNING]")) color = Color.FromArgb(200, 120, 0);
-            else if (line.Contains("[INFO]")) color = Color.FromArgb(40, 80, 160);
+            Color color = Theme.TextMain;
+            if (line.Contains("[ERROR]")) color = Theme.Danger;
+            else if (line.Contains("[WARNING]")) color = Theme.Warning;
+            else if (line.Contains("[INFO]")) color = Theme.Primary;
             _logBox.SelectionStart = _logBox.TextLength;
             _logBox.SelectionColor = color;
             _logBox.AppendText(line + Environment.NewLine);
@@ -316,31 +574,21 @@ public class MainForm : Form
         _logBox.ScrollToCaret();
     }
 
-    protected override void OnShown(EventArgs e)
+    /// <summary>
+    /// FAIL 总数一变就刷待办看板 —— 新不良无需手动点刷新就会出现在「待办」列。
+    /// 只在该页可见时重载，避免后台白白查库。
+    /// </summary>
+    private void AutoRefreshMaintenance()
     {
-        base.OnShown(e);
-        SetSplitRatio();
-    }
-
-    protected override void OnResize(EventArgs e)
-    {
-        base.OnResize(e);
-        SetSplitRatio();
-    }
-
-    /// <summary>主页左右比例: 统计 20% / 日志 80%。</summary>
-    private void SetSplitRatio()
-    {
-        if (_dashSplit == null || _dashSplit.Width <= 0) return;
-        try
+        var fail = AppState.Snapshot().Fail;
+        if (_lastFailSeen < 0) { _lastFailSeen = fail; return; }
+        if (fail == _lastFailSeen) return;
+        _lastFailSeen = fail;
+        if (_maintPage.Visible)
         {
-            int target = (int)(_dashSplit.Width * 0.20);
-            // 限制在合法范围内
-            int min = _dashSplit.Panel1MinSize;
-            int max = _dashSplit.Width - _dashSplit.Panel2MinSize - _dashSplit.SplitterWidth;
-            if (max > min) _dashSplit.SplitterDistance = Math.Clamp(target, min, max);
+            try { _maintPage.Refresh2(); }
+            catch (Exception ex) { Logger.Warning($"待办看板自动刷新失败: {ex.Message}"); }
         }
-        catch { }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -351,7 +599,7 @@ public class MainForm : Form
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
             if (confirm != DialogResult.Yes) { e.Cancel = true; return; }
         }
-        // 托盘图标必须显式隐藏，否则退出后图标会残留到鰠标滑过才消失
+        // 托盘图标必须显式隐藏，否则退出后图标会残留到鼠标滑过才消失
         DesktopNotifier.Shutdown();
         base.OnFormClosing(e);
     }

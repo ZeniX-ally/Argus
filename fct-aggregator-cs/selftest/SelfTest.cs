@@ -819,6 +819,137 @@ class SelfTest
             Check(railBoth.Count(x => x.Title == "5V_Rail") == 2, "同故障项在两个机台各自一条待办");
         }
 
+        // ---------- GUI 布局（v2.8.0 重构）----------
+        Console.WriteLine("\n【GUI 布局】侧边导航 / 顶栏 / 状态栏 / KPI 卡不能重叠或塌掉");
+        {
+            // 停靠顺序写错（侧栏不是第一个 Add）不会报错，只会“看起来怪”，所以用真实布局数据断言。
+            var eng2 = new Engine(new AppConfig
+            {
+                StationId = "FCT9",
+                ResultsRoot = Path.Combine(work, "NoSuchResults"),
+                WebhookUrl = "",
+            });
+            MainForm? form = null;
+            try
+            {
+                form = new MainForm(eng2);
+                Check(true, "MainForm 可构造（新外壳不会一启动就崩）");
+            }
+            catch (Exception ex)
+            {
+                Check(false, $"MainForm 构造失败！{ex.GetType().Name} {ex.Message}");
+            }
+
+            if (form != null)
+            {
+                form.Size = new Size(1280, 780);
+                form.Show();
+                form.PerformLayout();
+                Application.DoEvents();
+
+                T? Field<T>(string name) where T : class
+                {
+                    var fi = typeof(MainForm).GetField(name,
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    return fi?.GetValue(form) as T;
+                }
+
+                var nav = Field<Panel>("_nav");
+                var chips = Field<ChipBar>("_chips");
+                var title = Field<Label>("_pageTitle");
+                var statusLeft = Field<Label>("_statusLeft");
+                var cw = form.ClientSize.Width;
+                var ch = form.ClientSize.Height;
+
+                Check(nav != null && nav.Dock == DockStyle.Left && nav.Width == Theme.NavWidth,
+                      $"侧边导航靠左、宽 {nav?.Width}px");
+                Check(nav != null && nav.Height == ch,
+                      $"**侧栏占满整列高**（{nav?.Height} == 客户区 {ch}）—— 证明它是最先 Add 的最外层");
+
+                var topBar = form.Controls.OfType<Panel>()
+                    .FirstOrDefault(p => p.Dock == DockStyle.Top && p.Height == Theme.TopBarHeight);
+                Check(topBar != null, "顶栏存在");
+                Check(topBar != null && topBar.Left == Theme.NavWidth && topBar.Top == 0,
+                      $"顶栏从侧栏右侧开始（left={topBar?.Left}, top={topBar?.Top}）");
+                Check(topBar != null && topBar.Width == cw - Theme.NavWidth,
+                      $"顶栏宽度 = 客户区宽 - 侧栏宽（{topBar?.Width}），没盖到侧栏上");
+                Check(title != null && title.Text.Length > 0 && chips != null && chips.Dock == DockStyle.Fill,
+                      $"顶栏已显示页标题「{title?.Text}」，右侧状态胶囊区填充");
+
+                var statusBar = statusLeft?.Parent as Panel;
+                Check(statusBar != null && statusBar.Dock == DockStyle.Bottom &&
+                      statusBar.Top + statusBar.Height == ch,
+                      $"状态栏贴底（top={statusBar?.Top} + h={statusBar?.Height} == {ch}）");
+                Check(statusLeft != null && statusLeft.Text.Contains("待办"),
+                      "状态栏已写入运行信息（含待办数）");
+
+                var content = form.Controls.OfType<Panel>().FirstOrDefault(p => p.Dock == DockStyle.Fill);
+                Check(content != null, "内容区存在（Dock=Fill）");
+                Check(content != null && content.Left >= Theme.NavWidth &&
+                      content.Top >= Theme.TopBarHeight &&
+                      content.Top + content.Height <= ch - Theme.StatusBarHeight + 1,
+                      $"**内容区不与导航/顶栏/状态栏重叠**（x={content?.Left}, y={content?.Top}, h={content?.Height}）");
+
+                var navButtons = nav!.Controls.OfType<NavButton>().Where(b => b.PageIndex >= 0)
+                                     .OrderBy(b => b.PageIndex).ToList();
+                Check(navButtons.Count == 5, $"导航有 {navButtons.Count} 项（总览/待办/FAIL/设备/调试）");
+                bool ordered = true;
+                for (int i = 1; i < navButtons.Count; i++)
+                    if (navButtons[i].Top <= navButtons[i - 1].Top) ordered = false;
+                Check(ordered, "**导航项从上到下顺序正确**（Dock=Top 是逆序显示，容易写反）");
+                Check(nav.Controls.OfType<NavButton>().Any(b => b.PageIndex == -1), "侧栏底部有退出项");
+
+                var kpi = (Dictionary<string, KpiCard>)typeof(MainForm).GetField("_kpi",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .GetValue(form)!;
+                Check(kpi.Count == 9, $"KPI 卡共 {kpi.Count} 张（5 主 + 4 今日）");
+                var main5 = new[] { "product", "pass", "fail", "yield", "todo" };
+                Check(main5.All(k => kpi.ContainsKey(k)), "主 KPI 齐全：产品数/PASS/FAIL/良率/待办");
+                Check(main5.All(k => kpi[k].Width >= 150),
+                      $"KPI 卡宽度正常（最小 {main5.Min(k => kpi[k].Width)}px，没被挤成一条）");
+
+                // 主页内部：KPI 一排 → 今日一排 → 下半（明细 + 日志），不能错位/重叠
+                var kpiRow = kpi["product"].Parent!;
+                var todayRow = kpi["today_pass"].Parent!;
+                var logBox = Field<RichTextBox>("_logBox")!;
+                int ScreenY(Control c) => c.PointToScreen(Point.Empty).Y;
+                Check(kpiRow != todayRow && ScreenY(kpiRow) < ScreenY(todayRow),
+                      $"今日卡在主 KPI 卡下方（{ScreenY(kpiRow)} < {ScreenY(todayRow)}）");
+                Check(ScreenY(todayRow) + todayRow.Height <= ScreenY(logBox) + 2,
+                      $"日志区在今日卡下方、不重叠（{ScreenY(todayRow) + todayRow.Height} <= {ScreenY(logBox)}）");
+                Check(logBox.Height > 120 && logBox.Width > 400,
+                      $"日志区有足够空间（{logBox.Width}×{logBox.Height}）");
+
+                var showPage = typeof(MainForm).GetMethod("ShowPage",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                var pageFields = new[] { "_dashboardPage", "_maintPage", "_failPage", "_devicePage", "_debugPage" };
+                bool switchOk = true;
+                var titles = new List<string>();
+                for (int i = 0; i < 5; i++)
+                {
+                    showPage.Invoke(form, new object?[] { i });
+                    Application.DoEvents();
+                    titles.Add(title!.Text);
+                    for (int j = 0; j < 5; j++)
+                    {
+                        var ctl = (Control)typeof(MainForm).GetField(pageFields[j],
+                            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                            .GetValue(form)!;
+                        if (ctl.Visible != (i == j)) switchOk = false;
+                    }
+                    if (!navButtons.First(b => b.PageIndex == i).Active) switchOk = false;
+                }
+                Check(switchOk, "切页时只有目标页可见、对应导航项高亮");
+                Check(titles.Distinct().Count() == 5, $"5 个页标题各不相同：{string.Join(" / ", titles)}");
+
+                showPage.Invoke(form, new object?[] { 0 });
+                form.Hide();
+                form.Dispose();
+            }
+            DesktopNotifier.Shutdown();     // 自检里也会建托盘图标，记得收
+            Check(true, "退出时托盘图标已回收（Shutdown 可重复调）");
+        }
+
         // ---------- 导出 ----------
         var records = d.ListMaintenance("", 500);
         var xlsx = Path.Combine(work, "维修记录.xlsx");
