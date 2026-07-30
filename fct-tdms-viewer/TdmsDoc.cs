@@ -24,6 +24,21 @@ public sealed class GroupInfo
     public IDictionary<string, object> Properties = new Dictionary<string, object>();
     public List<ChannelInfo> Channels = new();
     public long SampleCount => Channels.Count > 0 ? Channels[0].Count : 0;
+
+    /// <summary>文件中的物理顺序（TDMS 写入顺序）。</summary>
+    public int FileIndex;
+
+    /// <summary>
+    /// 从组名开头解析出的测试项编号，如 "8.11 Resolver Test" -> [8, 11]。
+    /// 用于自然排序 —— 按字符串排会得出 8.11 &lt; 8.2 的错误结果。
+    /// </summary>
+    public int[] Number = Array.Empty<int>();
+
+    /// <summary>排序后的显示序号（1 起）。</summary>
+    public int Seq;
+
+    public string NumberText => Number.Length == 0 ? "" : string.Join(".", Number);
+
     public override string ToString() => Name;
 }
 
@@ -61,7 +76,13 @@ public sealed class TdmsDoc : IDisposable
         foreach (var gkv in f.Groups)
         {
             var g = gkv.Value;
-            var gi = new GroupInfo { Name = g.Name, Properties = g.Properties };
+            var gi = new GroupInfo
+            {
+                Name = g.Name,
+                Properties = g.Properties,
+                FileIndex = doc.Groups.Count,
+                Number = ParseLeadingNumber(g.Name),
+            };
             foreach (var ckv in g.Channels)
             {
                 var c = ckv.Value;
@@ -77,7 +98,74 @@ public sealed class TdmsDoc : IDisposable
             }
             doc.Groups.Add(gi);
         }
+        doc.SortGroups(GroupOrder.ByNumber);
         return doc;
+    }
+
+    /// <summary>
+    /// 提取组名开头的点分编号："8.11 Resolver Test" -> [8,11]，"6.1 Power Test" -> [6,1]。
+    /// 开头无数字则返回空数组（排到末尾）。
+    /// </summary>
+    public static int[] ParseLeadingNumber(string name)
+    {
+        var s = name.TrimStart();
+        int i = 0;
+        var parts = new List<int>();
+        var cur = new System.Text.StringBuilder();
+        while (i < s.Length)
+        {
+            char ch = s[i];
+            if (char.IsDigit(ch)) { cur.Append(ch); i++; }
+            else if (ch == '.' && cur.Length > 0 && i + 1 < s.Length && char.IsDigit(s[i + 1]))
+            {
+                parts.Add(int.Parse(cur.ToString()));
+                cur.Clear();
+                i++;
+            }
+            else break;
+        }
+        if (cur.Length > 0) parts.Add(int.Parse(cur.ToString()));
+        return parts.ToArray();
+    }
+
+    public enum GroupOrder
+    {
+        /// <summary>按测试项编号自然排序（6.1 &lt; 7.2 &lt; 8.2 &lt; 8.10 &lt; 8.11）。</summary>
+        ByNumber,
+        /// <summary>文件物理顺序（TDMS 写入顺序）。</summary>
+        FileOrder,
+    }
+
+    public GroupOrder Order { get; private set; } = GroupOrder.ByNumber;
+
+    public void SortGroups(GroupOrder order)
+    {
+        Order = order;
+        if (order == GroupOrder.FileOrder)
+        {
+            Groups.Sort((a, b) => a.FileIndex.CompareTo(b.FileIndex));
+        }
+        else
+        {
+            Groups.Sort((a, b) =>
+            {
+                // 无编号的排最后
+                if (a.Number.Length == 0 && b.Number.Length > 0) return 1;
+                if (b.Number.Length == 0 && a.Number.Length > 0) return -1;
+                int n = Math.Min(a.Number.Length, b.Number.Length);
+                for (int i = 0; i < n; i++)
+                {
+                    int c = a.Number[i].CompareTo(b.Number[i]);
+                    if (c != 0) return c;
+                }
+                int c2 = a.Number.Length.CompareTo(b.Number.Length);
+                if (c2 != 0) return c2;
+                // 编号相同（如 8.20 ASC..._1 / _2）时按名称，再按文件顺序兜底
+                int c3 = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                return c3 != 0 ? c3 : a.FileIndex.CompareTo(b.FileIndex);
+            });
+        }
+        for (int i = 0; i < Groups.Count; i++) Groups[i].Seq = i + 1;
     }
 
     private static readonly HashSet<Type> NumericTypes = new()

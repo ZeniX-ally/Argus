@@ -49,7 +49,7 @@ internal static class Program
         }
 
         string? path = null, outPath = null, group = null, channel = null;
-        bool info = false, summary = false;
+        bool info = false, summary = false, dumpJson = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -58,6 +58,7 @@ internal static class Program
             {
                 case "--info": info = true; path = Next(); break;
                 case "--summary": summary = true; path = Next(); break;
+                case "--dump-json": dumpJson = true; path = Next(); break;
                 case "--out": outPath = Next(); break;
                 case "--group": group = Next(); break;
                 case "--channel": channel = Next(); break;
@@ -90,28 +91,40 @@ internal static class Program
             foreach (var p in doc.Properties)
                 Console.WriteLine($"  [文件属性] {p.Key} = {p.Value}");
             Console.WriteLine();
-            Console.WriteLine($"{"Group",-44} {"通道",5} {"点数",7}");
-            Console.WriteLine(new string('-', 60));
+            Console.WriteLine($"{"序",-4}{"Group",-44} {"通道",5} {"点数",7}");
+            Console.WriteLine(new string('-', 64));
             foreach (var g in doc.Groups)
-                Console.WriteLine($"{g.Name,-44} {g.Channels.Count,5} {g.SampleCount,7}");
+                Console.WriteLine($"{g.Seq,-4}{g.Name,-44} {g.Channels.Count,5} {g.SampleCount,7}");
 
             if (group != null)
             {
                 var g = doc.Groups.FirstOrDefault(x => x.Name == group);
                 if (g == null) { Console.Error.WriteLine($"[错误] 无此组: {group}"); return 1; }
                 Console.WriteLine();
-                Console.WriteLine($"=== {g.Name} ===");
-                Console.WriteLine($"{"通道",-38} {"类型",-10} {"点数",6} {"最小",12} {"最大",12} {"末值",12}");
+                Console.WriteLine($"=== [{g.Seq:00}] {g.Name} ===");
+                Console.WriteLine($"{"序",-5}{"通道",-38} {"类型",-10} {"点数",6} {"最小",12} {"最大",12} {"末值",12}");
+                int ci = 0;
                 foreach (var c in g.Channels)
                 {
+                    ci++;
                     if (channel != null &&
                         !c.Name.Contains(channel, StringComparison.OrdinalIgnoreCase)) continue;
                     var st = c.Numeric ? TdmsDoc.Describe(doc.GetData(c)) : null;
-                    Console.WriteLine($"{Trunc(c.Name, 38),-38} {c.TypeName,-10} {c.Count,6} " +
+                    Console.WriteLine($"{ci,-5}{Trunc(c.Name, 38),-38} {c.TypeName,-10} {c.Count,6} " +
                         (st == null ? "" :
                          $"{st.Min,12:G6} {st.Max,12:G6} {st.Last,12:G6}"));
                 }
             }
+            return 0;
+        }
+
+        if (dumpJson)
+        {
+            var o = outPath ?? Path.ChangeExtension(path, ".struct.json");
+            JsonDumper.Dump(doc, o);
+            Console.WriteLine($"结构快照已导出: {o}");
+            Console.WriteLine($"  {doc.Groups.Count} 组 / {doc.TotalChannels} 通道 / " +
+                              $"{doc.Groups.Sum(g => g.Channels.Sum(c => c.Count))} 个数据点");
             return 0;
         }
 

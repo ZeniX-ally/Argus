@@ -11,6 +11,7 @@ public sealed class MainForm : Form
     private readonly ToolStripButton _btnExportSel = new("导出选中通道");
     private readonly ToolStripButton _btnExportSum = new("导出结构清单");
     private readonly ToolStripButton _btnClearSel = new("清空勾选");
+    private readonly ToolStripComboBox _cboOrder = new();
     private readonly ToolStripLabel _lblFile = new("未打开文件");
 
     private readonly TextBox _search = new();
@@ -37,14 +38,29 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("微软雅黑", 9F);
         AllowDrop = true;
+        LoadAppIcon();
 
         // ---- 工具栏 ----
         _tool.GripStyle = ToolStripGripStyle.Hidden;
+        _cboOrder.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboOrder.Items.AddRange(new object[] { "按测试项编号排序", "按文件内原始顺序" });
+        _cboOrder.SelectedIndex = 0;
+        _cboOrder.Width = 150;
+        _cboOrder.SelectedIndexChanged += (_, _) =>
+        {
+            if (_doc == null) return;
+            _doc.SortGroups(_cboOrder.SelectedIndex == 0
+                ? TdmsDoc.GroupOrder.ByNumber
+                : TdmsDoc.GroupOrder.FileOrder);
+            RebuildTree(_search.Text.Trim());
+        };
         _tool.Items.AddRange(new ToolStripItem[]
         {
             _btnOpen, new ToolStripSeparator(),
             _btnExportSel, _btnExportSum, new ToolStripSeparator(),
-            _btnClearSel, new ToolStripSeparator(), _lblFile,
+            _btnClearSel, new ToolStripSeparator(),
+            new ToolStripLabel("排序:"), _cboOrder, new ToolStripSeparator(),
+            _lblFile,
         });
         _btnOpen.Click += (_, _) => PickFile();
         _btnExportSel.Click += (_, _) => ExportSelected();
@@ -194,6 +210,22 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>从嵌入资源加载图标。失败不影响使用，静默忽略。</summary>
+    private void LoadAppIcon()
+    {
+        try
+        {
+            var asm = typeof(MainForm).Assembly;
+            var name = asm.GetManifestResourceNames()
+                          .FirstOrDefault(n => n.EndsWith("app_icon.ico",
+                              StringComparison.OrdinalIgnoreCase));
+            if (name == null) return;
+            using var s = asm.GetManifestResourceStream(name);
+            if (s != null) Icon = new Icon(s);
+        }
+        catch { /* 图标缺失不影响功能 */ }
+    }
+
     private void PickFile()
     {
         using var d = new OpenFileDialog
@@ -237,15 +269,16 @@ public sealed class MainForm : Form
             if (matched.Count == 0) continue;
             hitCount += matched.Count;
 
-            var gn = new TreeNode($"{g.Name}   [{g.Channels.Count} 通道 · {g.SampleCount} 点]")
+            var gn = new TreeNode($"{g.Seq:00}  {g.Name}   [{g.Channels.Count} 通道 · {g.SampleCount} 点]")
             {
                 Tag = g,
             };
             foreach (var c in matched)
             {
+                int ci = g.Channels.IndexOf(c) + 1;
                 var label = c.Numeric
-                    ? $"{c.Name}   ({c.TypeName}, {c.Count})"
-                    : $"{c.Name}   ({c.TypeName}, {c.Count}) [非数值]";
+                    ? $"{ci:000}  {c.Name}   ({c.TypeName}, {c.Count})"
+                    : $"{ci:000}  {c.Name}   ({c.TypeName}, {c.Count}) [非数值]";
                 var cn = new TreeNode(label) { Tag = c };
                 if (_checked.Contains(c)) cn.Checked = true;
                 if (!c.Numeric) cn.ForeColor = Color.Gray;

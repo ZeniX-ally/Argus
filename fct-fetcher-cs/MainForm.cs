@@ -33,6 +33,7 @@ public sealed class MainForm : Form
         MinimumSize = new Size(900, 620);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("微软雅黑", 9F);
+        LoadAppIcon();
 
         int y = 14;
         void Lab(string t, int top) =>
@@ -178,6 +179,22 @@ public sealed class MainForm : Form
         Col("Csv", "CSV", 55, C);
         Col("TdmsCount", "TDMS", 60, C);
         Col("FailItems", "失败项", 360);
+    }
+
+    /// <summary>从嵌入资源加载图标。失败不影响使用，静默忽略。</summary>
+    private void LoadAppIcon()
+    {
+        try
+        {
+            var asm = typeof(MainForm).Assembly;
+            var name = asm.GetManifestResourceNames()
+                          .FirstOrDefault(n => n.EndsWith("app_icon.ico",
+                              StringComparison.OrdinalIgnoreCase));
+            if (name == null) return;
+            using var s = asm.GetManifestResourceStream(name);
+            if (s != null) Icon = new Icon(s);
+        }
+        catch { /* 图标缺失不影响功能 */ }
     }
 
     private void AddBrowse(int left, int top, TextBox target)

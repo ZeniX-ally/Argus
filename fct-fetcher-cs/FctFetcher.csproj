@@ -14,6 +14,12 @@
     <Company>Zenix-Ally</Company>
     <Product>FCT-Fetcher</Product>
     <SelfContained>false</SelfContained>
+    <ApplicationIcon>app_icon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 嵌入资源: 供窗口标题栏/任务栏加载高分图标 -->
+    <EmbeddedResource Include="app_icon.ico" />
+  </ItemGroup>
 
 </Project>
