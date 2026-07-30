@@ -1,8 +1,8 @@
-# 打包 FCT-Aggregator v2.4.0
-# 生成 package_v2.4.0（完整包，含 config.json）与 package_v2.4.0-update（覆盖包，无 config/data/logs/pdb）
+# 打包 FCT-Aggregator v2.5.0
+# 生成 package_v2.5.0（完整包，含 config.json）与 package_v2.5.0-update（覆盖包，无 config/data/logs/pdb）
 $ErrorActionPreference = 'Stop'
 $root = 'F:\Programe\G4_9-QA\fct-aggregator-cs'
-$ver  = '2.4.0'
+$ver  = '2.5.0'
 $dist = Join-Path $root 'dist'
 $full = Join-Path $root "package_v$ver"
 $upd  = Join-Path $root "package_v$ver-update"
@@ -38,6 +38,7 @@ New-Item -ItemType Directory -Path (Join-Path $full 'logs') -Force | Out-Null
 # --- 更新包（覆盖用）---
 foreach ($f in $progFiles) { Copy-Item (Join-Path $dist $f) $upd }
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $upd }
+Copy-Item (Join-Path $root '覆盖说明.md') $upd      # 覆盖包专属：升级步骤说明
 
 Write-Host "包目录已建好"
 Write-Host "  完整包: $((Get-ChildItem $full -Recurse -File).Count) 个文件"

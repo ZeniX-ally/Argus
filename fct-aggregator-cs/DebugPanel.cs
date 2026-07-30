@@ -36,6 +36,7 @@ public class DebugPanel : Panel
 
         AddTag("测试");
         AddBtn("推送测试", TestPush);
+        AddBtn("桌面提示测试", TestDesktopNotify);
         AddBtn("数据库状态", TestDbStatus);
         AddTag("检测");
         AddBtn("机台检测", TestStation);
@@ -47,6 +48,7 @@ public class DebugPanel : Panel
         AddBtn("最大SN", QueryMaxSn);
         AddTag("配置");
         AddBtn("查看配置", ViewConfig);
+        AddBtn("桌面提示开关", ToggleDesktopNotify);
         AddBtn("开机自启", ToggleAutoStart);
         AddTag("数据");
         AddBtn("清空数据库", ClearDb);
@@ -160,6 +162,27 @@ public class DebugPanel : Panel
         Print($"  fct_ini_path: {c.FctIniPath}");
         Print($"  webhook: {(string.IsNullOrEmpty(c.WebhookUrl) ? "未配置" : c.WebhookUrl[..Math.Min(50, c.WebhookUrl.Length)] + "...")}");
         Print($"  log_level: {c.LogLevel}");
+        Print($"  desktop_notify: {(c.DesktopNotify ? "开" : "关")}（当前运行中: {(DesktopNotifier.Enabled ? "开" : "关")}）");
+        Print($"  notify_min_interval_sec: {c.NotifyMinIntervalSec}");
+    }
+
+    /// <summary>弹一条假的不良提示，验证 Windows 通知是否被系统屏蔽。</summary>
+    private void TestDesktopNotify()
+    {
+        if (!DesktopNotifier.Enabled)
+        {
+            Print("桌面提示当前是关闭的，先点「桌面提示开关」或在 config.json 里把 desktop_notify 设为 true。");
+            return;
+        }
+        DesktopNotifier.NotifyRaw($"测试提示 · {DateTime.Now:HH:mm:ss}\n测试项 6.1.1.1 = 9.9V (下限 10V)");
+        Print("已发送一条桌面提示（若没看到：检查 Windows 设置-系统-通知 与专注助手/勿扰）。");
+        Print("注意：节流机制下两条提示至少间隔 " + DesktopNotifier.MinIntervalSeconds + " 秒。");
+    }
+
+    private void ToggleDesktopNotify()
+    {
+        DesktopNotifier.Enabled = !DesktopNotifier.Enabled;
+        Print($"桌面提示已{(DesktopNotifier.Enabled ? "开启" : "关闭")}（本次运行有效；永久生效请改 config.json 的 desktop_notify）");
     }
 
     private void ToggleAutoStart()

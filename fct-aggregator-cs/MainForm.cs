@@ -30,13 +30,20 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT-Aggregator v2.4.0";
+        Text = "Zenix-Ally | FCT-Aggregator v2.5.0";
         Width = 1200; Height = 720;
         StartPosition = FormStartPosition.CenterScreen;
         try { Icon = new Icon(Path.Combine(AppConfig.BaseDir, "app_icon.ico")); } catch { }
         Font = new Font("Microsoft YaHei UI", 9F);
 
         BuildUi();
+
+        // ===== Windows 原生桌面提示 =====
+        DesktopNotifier.Enabled = _cfg.DesktopNotify;
+        DesktopNotifier.MinIntervalSeconds = _cfg.NotifyMinIntervalSec;
+        DesktopNotifier.Activated += OnNotificationClicked;
+        DesktopNotifier.Init();
+
         _timer = new System.Windows.Forms.Timer { Interval = 1000 };
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
@@ -70,7 +77,7 @@ public class MainForm : Form
         var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, Padding = new Padding(8, 6, 8, 6) };
         var btnDashboard = MakeButton("主页", (_, _) => ShowPage(0));
         var btnDevice = MakeButton("设备状态", (_, _) => ShowPage(1));
-        var btnMaint = MakeButton("维修记录", (_, _) => ShowPage(2));
+        var btnMaint = MakeButton("待办/维修", (_, _) => ShowPage(2));
         var btnFail = MakeButton("FAIL记录", (_, _) => ShowPage(4));
         var btnDebug = MakeButton("调试", (_, _) => ShowPage(3));
         var btnClearLog = MakeButton("清空日志", (_, _) => { Logger.ClearGuiLogs(); _logBox.Clear(); _logSynced = 0; });
@@ -182,13 +189,48 @@ public class MainForm : Form
 
     // (清空数据库功能已移至 Debug 页)
 
+    /// <summary>点桌面提示 / 双击托盘图标: 窗口拉到前面并直接跳到待办看板。</summary>
+    private void OnNotificationClicked()
+    {
+        try
+        {
+            if (InvokeRequired) { BeginInvoke(OnNotificationClicked); return; }
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Show();
+            Activate();
+            BringToFront();
+            ShowPage(2);
+        }
+        catch (Exception ex) { Logger.Warning($"提示点击处理失败: {ex.Message}"); }
+    }
+
     // ==================== 定时刷新 ====================
+    private int _lastFailSeen = -1;
+
     private void Tick()
     {
         UpdateHeader();
         UpdateProgress();
         UpdateStats();
         UpdateLogs();
+        AutoRefreshMaintenance();
+    }
+
+    /// <summary>
+    /// FAIL 总数一变就刷待办看板 —— 新不良无需手动点刷新就会出现在「待办」列。
+    /// 只在该页可见时重载，避开后台白白查库。
+    /// </summary>
+    private void AutoRefreshMaintenance()
+    {
+        var fail = AppState.Snapshot().Fail;
+        if (_lastFailSeen < 0) { _lastFailSeen = fail; return; }
+        if (fail == _lastFailSeen) return;
+        _lastFailSeen = fail;
+        if (_maintPage.Visible)
+        {
+            try { _maintPage.Refresh2(); }
+            catch (Exception ex) { Logger.Warning($"待办看板自动刷新失败: {ex.Message}"); }
+        }
     }
 
     private void UpdateHeader()
@@ -196,10 +238,11 @@ public class MainForm : Form
         var s = AppState.Snapshot();
         var statusColor = s.Status == "running" ? "🟢" : s.Status == "error" ? "🔴" : "🟡";
         var webhookMark = s.WebhookConfigured ? "🟢 ON" : "🔴 OFF";
+        var notifyMark = DesktopNotifier.Enabled ? "🟢 ON" : "⚪ OFF";
         var scanMark = s.HistoricalScanComplete ? "🟢 Ready" : "🟡 Scanning...";
         var station = string.IsNullOrEmpty(s.StationId) ? "Auto-detect" : s.StationId;
         var text = $"Zenix-Ally     Station: {station}     Status: {statusColor} {s.Status}     " +
-                   $"Models: {s.ModelsCount}     Webhook: {webhookMark}     History: {scanMark}";
+                   $"Models: {s.ModelsCount}     Webhook: {webhookMark}     桌面提示: {notifyMark}     History: {scanMark}";
         if (s.Status == "error")
             text += "     ⚠ 结果目录不存在，数据采集未运行！";
         if (_headerLabel.Text != text) _headerLabel.Text = text;
@@ -307,6 +350,8 @@ public class MainForm : Form
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
             if (confirm != DialogResult.Yes) { e.Cancel = true; return; }
         }
+        // 托盘图标必须显式隐藏，否则退出后图标会残留到鰠标滑过才消失
+        DesktopNotifier.Shutdown();
         base.OnFormClosing(e);
     }
 }

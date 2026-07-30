@@ -1,9 +1,9 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.3.0
+**当前版本**：v2.5.0
 **技术栈**：C# / .NET 8 / WinForms / SQLite
-**文档更新**：2026-07-27
+**文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
 源码备份保留在 `F:\Programe\G4_9-QA\fct-aggregator-python-v1.0.2-源码备份.tar.gz`
 
@@ -45,7 +45,8 @@ FAIL 记录报告查看、调试工具页。
 | 分类统计 | PASS / FAIL / INTERRUPTED / INVALID，累计 + 当日 + 良率 |
 | 飞书告警 | FAIL 记录推交互卡片，含失败步骤名称 / 实测值 / 上下限 |
 | 设备状态 | 解析 `FCT.ini`：型号列表、固件版本、COM/USB 设备在线灯、A2L 文件 |
-| 维修记录 | **看板（5 列拖拽改状态）/ 列表 / 待办**三视图；增 / 查 / **改（全字段编辑）** / 删 + 导出 xlsx / csv<br>**故障项目从 FAIL 记录去重后挑选**（不显示 SN），可一次建多条；维修人可下拉选历史值<br>**待办**：自动列出 FAIL 中尚未处理的故障项，确认后创建维修记录 |
+| 维修记录 / 待办 | **看板（5 列拖拽改状态）/ 列表**两视图；增 / 查 / **改（全字段编辑）** / 删 + 导出 xlsx / csv<br>**故障项目从 FAIL 记录去重后挑选**（不显示 SN），可一次建多条；维修人可下拉选历史值<br>**待办（v2.5.0 起整合进看板）**：未确认的不良以 `TodoCard` 直接排在看板「待办」列顶部，双击确认 / 拖到别列 = 确认并置状态 / 右键忽略 |
+| 桌面提示 | FAIL 落库即弹 **Windows 原生通知**（托盘 `NotifyIcon` + BalloonTip，无 UWP 依赖），节流合并，点通知直达待办看板 |
 | FAIL 记录 | 本机全部 FAIL 列表，双击弹出报告式查看器（完整测试流程，失败项标红） |
 | 调试工具 | 推送测试 / 数据库状态 / 机台检测 / 型号发现 / 查询 / 自启开关 / 清库 |
 | 运行保障 | 单实例 Mutex、开机自启（启动文件夹快捷方式，手动开关） |
@@ -78,13 +79,15 @@ fct-aggregator-cs/
 ├── FctIni.cs                 # FCT.ini 解析 + COM 口在线检测（共享读取模式）
 ├── MainForm.cs               # 主窗口：进度条 / 页面切换 / 统计面板 / 日志窗
 ├── DeviceStatusPanel.cs      # 设备状态页
-├── MaintenancePanel.cs       # 维修记录页（看板/列表切换）+ 新增/编辑表单 MaintenanceForm
+├── MaintenancePanel.cs       # 维修记录/待办页（看板/列表切换）+ 新增/编辑表单 MaintenanceForm
 ├── MaintenanceBoard.cs       # 维修记录看板：5 列 / 自绘卡片 / 拖拽改状态 / QuickResolveForm
 ├── MaintenanceStatus.cs      # MaintenanceMeta：状态与严重度的中文/颜色**单一来源**
 ├── FailItemPicker.cs         # 从 FAIL 记录挑故障项（去重 / 不显示 SN / 可深扫 XML）
 ├── ResolverManager.cs        # ResolverUtil(多人拆合) + 名单管理 + **多选框** ResolverPickerForm
 ├── MaintenanceExporter.cs    # 维修记录导出 xlsx / csv（零依赖 OOXML，12 列）
-├── TodoPanel.cs              # 待办栏：FAIL → 确认问题 → 进入看板工作流
+├── BoardCard.cs              # BoardCardBase：看板卡片交互基类（hover/起拖/双击/右键 + 拖拽格式）
+├── TodoCard.cs               # 未确认不良卡（看板「待办」列）+ TodoConfirmForm 确认框
+├── DesktopNotifier.cs        # Windows 原生桌面提示（托盘 NotifyIcon + BalloonTip，节流合并）
 ├── DebugPanel.cs             # 调试工具页
 ├── FailListPanel.cs          # FAIL 记录页 + XmlViewerForm 报告查看器
 ├── FctAggregator.csproj      # net8.0-windows / WinForms / SelfContained=false
@@ -167,7 +170,8 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
 - **`BaseDir` 用 `AppContext.BaseDirectory` 而非 `Environment.ProcessPath`**：
   用 `dotnet FCT-Aggregator.dll` 启动时 ProcessPath 是 `dotnet.exe`，会导致 db/log 落错目录。
 - 字段：`station_id` / `results_root` / `fct_ini_path` / `webhook_url` /
-  `skip_historical_scan` / `log_level`（config.json 里其余字段为历史遗留，程序不读）。
+  `skip_historical_scan` / `log_level` / **`desktop_notify`** / **`notify_min_interval_sec`**
+  （config.json 里其余字段为历史遗留，程序不读）。
 
 ### 4.3 `Engine.cs`
 | 方法 | 职责 |
@@ -235,7 +239,7 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
   - `DeleteMaintenance(id)` —— 同事务内把 `sqlite_sequence.seq` 回抨到 `MAX(id)`，
     使「删空后新建回到 1 / 删最后一条后接着用」；中间空号不回填
 - FAIL 查询：`RecentFails(limit)`（Debug 页）、`AllFails(stationId)`（FAIL 记录页，时间倒序）
-- 待办（v2.4.0）：
+- 待办（v2.4.0，v2.5.0 起消费方从 TodoPanel 改为看板 `TodoCard`）：
   - `ListPendingTodos(stationId)` —— 实时聚合 `test_records` 中 FAIL 项（按 `fail_reason` 分组），
     排除已有**活跃维修记录**（status 不在 resolved/closed）或已忽略的项
   - `DismissTodo(failItem, stationId, model)` —— 忽略（写入 `dismissed_todos`）
@@ -349,7 +353,7 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 | `fail_item` NOT NULL | 故障项目 |
 | `fail_reason` | 故障描述 |
 | `severity` | `critical` 严重 / `major` 一般 / `minor` 轻微（默认 major） |
-| `status` | `unknown` 未知问题 / `investigating` 正在排查 / `open` 未完成 / `in_progress` 进行中 / `resolved` 已完成（默认 `open`）<br>legacy：`closed` 已关闭 —— v2.2.0 起不再产生，Init() 会迁移为 `resolved` |
+| `status` | `unknown` 未知问题 / `investigating` 正在排查 / `open` 待办 / `in_progress` 进行中 / `resolved` 已完成（默认 `open`）<br>legacy：`closed` 已关闭 —— v2.2.0 起不再产生，Init() 会迁移为 `resolved` |
 | `resolver` / `resolution` / `notes` | 维修人 / 措施 / 备注 |
 | `created_at` / `updated_at` | 时间戳（创建时间可在表单手动指定） |
 
@@ -423,6 +427,8 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 | `webhook_url` | `""` | 飞书群机器人；空则不推送 |
 | `skip_historical_scan` | `false` | true 则只做实时监控 |
 | `log_level` | `INFO` | DEBUG / INFO / WARNING / ERROR |
+| `desktop_notify` | `true` | Windows 原生桌面提示总开关（**只有显式写 `false` 才关**） |
+| `notify_min_interval_sec` | `15` | 两次桌面提示的最小间隔秒数，期间多条合并 |
 
 历史遗留但**当前程序不读**的键：`auto_start`、`fts.*`、`api_key`、`cleanup_admin_key`、
 `api_host`、`api_port`（HTTP API 已下线）。
@@ -437,7 +443,7 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 |----|------|
 | **主页** | 左：统计面板（累计 / 今日 / 良率 / 型号数 / 状态）；右：实时日志窗（可拖分隔条） |
 | **设备状态** | FCT.ini 解析结果：型号、固件版本、COM/USB 设备（在线小灯）、A2L 文件；一屏无滚动、刷新不闪烁 |
-| **维修记录** | 【看板】（默认）5 列：未知问题 / 正在排查 / 未完成 / 进行中 / 已完成，列头带真实计数，**拖卡片即改状态**（拖到已完成弹补填框）；双击卡片编辑<br>【列表】表格 + 状态筛选 + 双击编辑 + 右键（编辑 / 标记为 5 个状态 / 删除），含「最后更新」列<br>【从FAIL选故障项】去重后的测试项多选 → 一次建 N 条（可合并为 1 条）<br>导出 xlsx / csv（看板导已加载全部，列表导当前筛选） |
+| **维修记录** | 【看板】（默认）5 列：未知问题 / 正在排查 / 待办（含未确认不良卡）/ 进行中 / 已完成，列头带真实计数，**拖卡片即改状态**（拖到已完成弹补填框）；双击卡片编辑<br>【列表】表格 + 状态筛选 + 双击编辑 + 右键（编辑 / 标记为 5 个状态 / 删除），含「最后更新」列<br>【从FAIL选故障项】去重后的测试项多选 → 一次建 N 条（可合并为 1 条）<br>导出 xlsx / csv（看板导已加载全部，列表导当前筛选） |
 | **FAIL记录** | 本机全部 FAIL（SN / 首个失败项 / 型号 / 时间），双击 → `XmlViewerForm` 报告（完整测试流程，失败项标红） |
 | **调试** | 推送测试、数据库状态、机台检测、型号发现、设备状态、最近 10 条 FAIL、今日统计、最大 SN、查看配置、开机自启开关、清空数据库 |
 
@@ -465,7 +471,7 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | 状态/严重度中文与颜色全部读 `MaintenanceMeta` | 单一来源；之前字典在 Panel 与 Exporter 各一份，加状态漏改一处就会导出英文 key |
 | 卡片右键：`MouseDown(Right)` → `ContextRequested` 逐级冒到 Panel | 自绘 Panel 不会自己弹菜单；菜单由 `MaintenancePanel.BuildRecordMenu()` 统一提供，**与列表视图共用一份** |
 | 右键按下时清 `_pressed` | 否则右键按住拖动会误入拖拽分支 |
-| 未知/legacy 状态走 `MaintenanceMeta.Normalize()` | 归并到 5 列之一（`closed`→已完成，野值→未完成），**不会丢卡片** |
+| 未知/legacy 状态走 `MaintenanceMeta.Normalize()` | 归并到 5 列之一（`closed`→已完成，野值→待办），**不会丢卡片** |
 
 ### 8.2 故障项挑选（v2.3.0，`FailItemPicker.cs`）
 
@@ -482,9 +488,9 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | 【+ 人员】按钮 | 开 `ResolverManagerForm`；关闭后若 `Changed` 则重拉候选并尽量保住当前输入 |
 | 保存时自动登记 | 先 `ResolverUtil.Normalize()` 规范化，再**逐人** `AddResolver()` 进名单（失败只记 WARNING，不阔主流程） |
 
-### 8.3 待办栏（v2.4.0，`TodoPanel.cs`）
+### 8.3 待办（v2.4.0 起；v2.5.0 整合进看板）
 
-设计目标：**每次检测到 FAIL 都需工程师确认问题，然后解决问题**。
+设计目标：**每次检测到 FAIL 都需工程师确认问题，然后解决问题**，且不用为此多切一个页面。
 
 | 设计 | 说明 |
 |------|------|
@@ -493,14 +499,31 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | 何时不显示（已确认） | `NOT EXISTS` 子查询：存在**活跃维修记录**（`status NOT IN ('resolved','closed')`）即视为有人在处理 |
 | 何时不显示（已忽略） | `NOT EXISTS` 子查询 `dismissed_todos` |
 | **复发自动重现** | 维修记录被拖到「已完成」后不再算活跃，同故障项再 FAIL 就**自动回到待办**（无需人工重开） |
-| 确认动作 | `TodoConfirmForm`（轻量：维修人 + 严重度）→ `AcknowledgeTodo()` → 建一条 `status='open'` 记录→ 看板「未完成」列 |
-| 维修人候选 | 同样读 `ListResolvers()`（名单 ∪ 历史），与主表单一致 |
-| 双击 / 右键 | 双击行 = 确认问题；右键菜单 = 确认 / 忽略 |
-| 机台过滤 | 「只看本机台」默认开（与 `FailItemPicker` 一致） |
+| 呈现位置（v2.5.0） | 看板「待办」列（`open`）**列顶**，用 `TodoCard`（暖色底 + 虚线框 + 「未确认」红标）与记录卡区分；列头红徽章 `新 N` = 未确认数 |
+| 确认动作 | `TodoConfirmForm`（轻量：维修人 + 严重度）→ `AcknowledgeTodo()` → 建一条 `status='open'` 记录 → 看板「待办」列 |
+| 拖出待办列 | = 确认 + 落库后 `UpdateMaintenanceStatus(id, 目标列)`，一步到位（例如直接拖到「进行中」） |
+| 维修人候选 | 同样读 `ListResolvers()`（名单 ∪ 历史），手敲的新名字逐人 `AddResolver()`，与主表单一致 |
+| 机台过滤 | 不再过滤 —— 库文件本身已按机台拆分（`data\{station}.db`），再按机台过滤是重复条件 |
+| 自动出现 | `MainForm.Tick()` 监视 `AppState.Fail` 变化，页面可见时自动 `Refresh2()`，新不良无需手动刷新 |
 | 与【从FAIL选故障项】的分工 | 待办 = **被动推送**（自动列出没人管的）；那个按钮 = **主动挑选**（含已处理的、可深扫 XML、可批量合并），两者不冲突 |
 
-⚙ 实现细节：`TodoPanel` 的 6 个控件字段**不能写 `readonly`**——它们在 `BuildUi()`
-（非构造函数体）里赋值，`readonly` 会报 `CS0191`。已统一写成 `= null!`。
+⚙ 拖拽格式的坑（v2.5.0）：原来取拖拽对象用 `e.Data.GetData(typeof(MaintenanceCard))`，
+`DataObject` 按**精确类型名**查格式，一旦出现第二种卡片（`TodoCard`）就会**静默取不到**——
+拖放看起来失效但不报错。现两种卡片统一继承 `BoardCardBase`，
+拖拽数据放在自定义格式 `"FctAggregator.BoardCard"` 里，落列判定改用 `card.ColumnKey`。
+
+### 8.4 Windows 原生桌面提示（v2.5.0，`DesktopNotifier.cs`）
+
+| 设计 | 说明 |
+|------|------|
+| 技术选型 | 托盘 `NotifyIcon` + `ShowBalloonTip`。Win10/11 下即系统原生 Toast（进通知中心、跟随专注助手），**不引 `Microsoft.Toolkit.Uwp.Notifications`、不注册 AUMID** —— 车间机台零额外依赖 |
+| 线程模型 | `Init()` 在 UI 线程调用（`MainForm` 构造尾部），记住 `SynchronizationContext`；`NotifyFail()` 可从 `FileSystemWatcher` 的后台线程调用，只入队 |
+| 节流 | UI 线程上 1s 心跳 `Flush()`：距上次弹出不足 `notify_min_interval_sec`（默认 15s）就攒着；多条合并成 `⚠ FCT 不良 ×N` + 前两条摘要 |
+| 文本上限 | BalloonTip 超过约 255 字符 Windows 会**直接不显示**，故统一截到 220 字符 |
+| 点击行为 | `BalloonTipClicked` / 双击托盘 → `Activated` 事件 → `MainForm` 还原窗口 + `ShowPage(2)` 直达待办看板 |
+| 退出清理 | `OnFormClosing` 里 `Shutdown()` 显式 `Visible=false` + `Dispose()`，否则托盘图标会残留到鼠标滑过 |
+| 触发条件 | 与飞书推送一致：仅实时监控路径、历史扫描完成后、机台号非 UNKNOWN |
+| 开关 | `config.json` 的 `desktop_notify`（缺省 true，仅显式 `false` 关闭）；托盘右键与调试页可临时切换；调试页【桌面提示测试】可验证系统未屏蔽 |
 
 ---
 

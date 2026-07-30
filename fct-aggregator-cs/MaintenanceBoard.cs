@@ -3,9 +3,14 @@ using System.Drawing.Drawing2D;
 namespace FctAggregator;
 
 /// <summary>
-/// 维修记录看板视图: 5 列(未知问题 / 正在排查 / 未完成 / 进行中 / 已完成)，卡片可跨列拖动改状态。
+/// 维修记录看板视图: 5 列(未知问题 / 正在排查 / 待办 / 进行中 / 已完成)，卡片可跨列拖动改状态。
 /// 卡片全部自绘(不含子控件) —— 子控件会吞掉 MouseDown/MouseMove 导致拖拽拿不到事件，
 /// 且 5 列 × 上百张卡若每张挂 4~5 个 Label 会产生上千个窗口句柄。
+///
+/// v2.5.0：**待办不再是独立页面**。「待办」列同时装两种卡：
+///   · 上半部 <see cref="TodoCard"/> —— 新出现的不良（尚未确认，来自 test_records 聚合）
+///   · 下半部 <see cref="MaintenanceCard"/> —— 已确认待修的维修记录
+/// 待办卡双击=确认建单、拖到别列=确认并置为该状态、右键=忽略。
 /// </summary>
 public class MaintenanceBoard : Panel
 {
@@ -56,8 +61,8 @@ public class MaintenanceBoard : Panel
         {
             var col = new StatusColumn(defs[i]) { Dock = DockStyle.Fill };
             col.DropRequested += OnDropRequested;
-            col.CardEditRequested += m => EditRequested?.Invoke(m);
-            col.CardContextRequested += (m, ctl, at) => ContextRequested?.Invoke(m, ctl, at);
+            col.CardActivateRequested += OnCardActivate;
+            col.CardContextRequested += OnCardContext;
             _columns[defs[i].Key] = col;
             _grid.Controls.Add(col, i, 0);
         }
@@ -65,15 +70,21 @@ public class MaintenanceBoard : Panel
         Controls.Add(_grid);
     }
 
-    /// <summary>看板当前已加载的全部记录(供导出)。</summary>
+    /// <summary>看板当前已加载的全部记录(供导出)。待办卡不是记录，不参与导出。</summary>
     public List<MaintenanceRecord> LoadedRecords() =>
         _columns.Values.SelectMany(c => c.Records()).ToList();
+
+    /// <summary>当前「待办」列里未确认的不良数量(供外层显示角标)。</summary>
+    public int PendingTodoCount { get; private set; }
 
     /// <summary>整体重载(切页 / 手动刷新 / 新增或删除后调用)。</summary>
     public void Reload()
     {
         try
         {
+            var todos = LoadTodos();
+            PendingTodoCount = todos.Count;
+
             var counts = _engine.Db.CountMaintenanceByStatus();
             // legacy 'closed' 与任何未知状态归并到对应有效列，保证徽章总数与实际可见列一致
             var normalized = new Dictionary<string, int>();
@@ -96,12 +107,30 @@ public class MaintenanceBoard : Panel
                                    .OrderByDescending(m => string.IsNullOrEmpty(m.UpdatedAt) ? m.CreatedAt : m.UpdatedAt)
                                    .Take(PerColumnLimit).ToList();
                 }
-                col.SetCards(rows, normalized.GetValueOrDefault(def.Key));
+                // 未确认的不良只挂在「待办」列
+                var mine = def.Key == MaintenanceMeta.DefaultStatus ? todos : new List<TodoItem>();
+                col.SetCards(rows, mine, normalized.GetValueOrDefault(def.Key));
             }
         }
         catch (Exception ex)
         {
             Logger.Error($"维修看板加载失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>读未确认的不良(失败不影响看板其余部分)。</summary>
+    private List<TodoItem> LoadTodos()
+    {
+        try
+        {
+            // 库文件本身已按机台拆分(data\{station}.db)，这里不再按机台过滤
+            var list = _engine.Db.ListPendingTodos();
+            return list.Count > PerColumnLimit ? list.Take(PerColumnLimit).ToList() : list;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"待办(未确认不良)加载失败: {ex.Message}");
+            return new List<TodoItem>();
         }
     }
 
@@ -123,9 +152,105 @@ public class MaintenanceBoard : Panel
         catch (Exception ex) { Logger.Warning($"维修看板计数刷新失败: {ex.Message}"); }
     }
 
-    /// <summary>卡片被拖到某一列: 落库 + 就地搬控件(不整页重建)。</summary>
-    private void OnDropRequested(MaintenanceCard card, string targetStatus)
+    // ==================== 卡片交互(两种卡分流) ====================
+
+    private void OnCardActivate(BoardCardBase card)
     {
+        switch (card)
+        {
+            case TodoCard t: ConfirmTodo(t.Item, MaintenanceMeta.DefaultStatus); break;
+            case MaintenanceCard m: EditRequested?.Invoke(m.Record); break;
+        }
+    }
+
+    private void OnCardContext(BoardCardBase card, Control anchor, Point at)
+    {
+        switch (card)
+        {
+            case TodoCard t: BuildTodoMenu(t.Item).Show(anchor, at); break;
+            case MaintenanceCard m: ContextRequested?.Invoke(m.Record, anchor, at); break;
+        }
+    }
+
+    /// <summary>未确认不良的右键菜单(确认 / 忽略)。</summary>
+    private ContextMenuStrip BuildTodoMenu(TodoItem todo)
+    {
+        var menu = new ContextMenuStrip { Font = Font };
+        menu.Items.Add(new ToolStripMenuItem($"未确认不良 · 出现 {todo.OccurrenceCount} 次") { Enabled = false });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("确认问题（建维修记录）", null, (_, _) => ConfirmTodo(todo, MaintenanceMeta.DefaultStatus));
+        foreach (var def in MaintenanceMeta.Statuses)
+        {
+            if (def.Key == MaintenanceMeta.DefaultStatus) continue;
+            var key = def.Key;
+            menu.Items.Add($"确认并置为 {def.Zh}", null, (_, _) => ConfirmTodo(todo, key));
+        }
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("忽略（不再提醒）", null, (_, _) => DismissTodo(todo));
+        return menu;
+    }
+
+    /// <summary>确认一条未确认不良: 补填维修人/严重度 → 建维修记录(可直接落到目标列)。</summary>
+    private void ConfirmTodo(TodoItem todo, string targetStatus)
+    {
+        targetStatus = MaintenanceMeta.Normalize(targetStatus);
+        var zh = targetStatus == MaintenanceMeta.DefaultStatus ? null : MaintenanceMeta.ZhOf(targetStatus);
+        using var dlg = new TodoConfirmForm(todo, _engine.Db, zh);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            var id = _engine.Db.AcknowledgeTodo(
+                todo.FailItem, todo.StationId, todo.Model, dlg.Resolver, dlg.Severity);
+            // 手敲的新名字自动进名单(与维修表单行为一致)
+            foreach (var who in ResolverUtil.Split(dlg.Resolver))
+            {
+                try { _engine.Db.AddResolver(who); } catch { }
+            }
+            if (targetStatus != MaintenanceMeta.DefaultStatus)
+                _engine.Db.UpdateMaintenanceStatus(id, targetStatus);
+            Logger.Info($"[待办] 确认不良 -> 维修记录 #{id}（{MaintenanceMeta.ZhOf(targetStatus)}）: {todo.FailItem}");
+            Reload();
+            Changed?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[待办] 确认不良失败: {ex.Message}");
+            MessageBox.Show($"创建维修记录失败: {ex.Message}", "错误");
+        }
+    }
+
+    /// <summary>忽略一条未确认不良(不建记录，之后不再出现在待办列)。</summary>
+    private void DismissTodo(TodoItem todo)
+    {
+        if (MessageBox.Show(
+                $"确定忽略故障项「{todo.FailItem}」？\n它将不再出现在待办列，但不会创建维修记录。",
+                "忽略不良", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+        try
+        {
+            _engine.Db.DismissTodo(todo.FailItem, todo.StationId, todo.Model);
+            Logger.Info($"[待办] 已忽略: {todo.FailItem}");
+            Reload();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"忽略失败: {ex.Message}", "错误");
+            Logger.Error($"[待办] 忽略失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>卡片被拖到某一列: 落库 + 就地搬控件(不整页重建)。</summary>
+    private void OnDropRequested(BoardCardBase dragged, string targetStatus)
+    {
+        // 未确认不良拖出待办列 = 确认 + 直接置为目标状态
+        if (dragged is TodoCard todoCard)
+        {
+            ConfirmTodo(todoCard.Item, targetStatus);
+            return;
+        }
+        if (dragged is not MaintenanceCard card) return;
+
         var rec = card.Record;
         var from = MaintenanceMeta.Normalize(rec.Status);
         if (from == targetStatus) return;
@@ -192,15 +317,16 @@ public class MaintenanceBoard : Panel
     {
         public string StatusKey => _def.Key;
 
-        public event Action<MaintenanceCard, string>? DropRequested;
-        public event Action<MaintenanceRecord>? CardEditRequested;
-        public event Action<MaintenanceRecord, Control, Point>? CardContextRequested;
+        public event Action<BoardCardBase, string>? DropRequested;
+        public event Action<BoardCardBase>? CardActivateRequested;
+        public event Action<BoardCardBase, Control, Point>? CardContextRequested;
 
         private readonly MaintenanceMeta.StatusDef _def;
         private readonly Panel _head;
         private readonly BufferedFlowPanel _cards;
         private readonly Label _more;
         private int _total;
+        private int _todoCount;
         private bool _highlight;
 
         private static readonly Font HeadFont = new("Microsoft YaHei UI", 9.5F, FontStyle.Bold);
@@ -263,66 +389,72 @@ public class MaintenanceBoard : Panel
             UpdateMoreHint();
         }
 
-        public void SetCards(List<MaintenanceRecord> rows, int total)
+        public void SetCards(List<MaintenanceRecord> rows, List<TodoItem> todos, int total)
         {
             _cards.SuspendLayout();
-            foreach (var old in _cards.Controls.OfType<MaintenanceCard>().ToList())
+            foreach (var old in _cards.Controls.OfType<BoardCardBase>().ToList())
             {
                 Detach(old);
                 _cards.Controls.Remove(old);
                 old.Dispose();
             }
+            // 未确认的不良排在最上面 —— 它们才是需要马上看一眼的
+            foreach (var t in todos)
+                _cards.Controls.Add(Attach(new TodoCard(t)));
             foreach (var m in rows)
                 _cards.Controls.Add(Attach(new MaintenanceCard(m)));
             _cards.ResumeLayout();
             _total = total;
+            _todoCount = todos.Count;
             _head.Invalidate();
             ResizeCards();
             UpdateMoreHint();
             _cards.Invalidate();
         }
 
-        public void RemoveCard(MaintenanceCard card)
+        public void RemoveCard(BoardCardBase card)
         {
             _cards.Controls.Remove(card);
             UpdateMoreHint();
             _cards.Invalidate();
         }
 
-        public void InsertCardTop(MaintenanceCard card)
+        public void InsertCardTop(BoardCardBase card)
         {
             _cards.Controls.Add(card);
-            _cards.Controls.SetChildIndex(card, 0);
+            // 未确认不良固定在最上面，新落入的记录卡插在它们下面
+            var todoCount = _cards.Controls.OfType<TodoCard>().Count();
+            _cards.Controls.SetChildIndex(card, todoCount);
             ResizeCards();
             UpdateMoreHint();
             _cards.Invalidate();
         }
 
-        private MaintenanceCard Attach(MaintenanceCard c)
+        private BoardCardBase Attach(BoardCardBase c)
         {
             c.AllowDrop = true;
             c.DragEnter += OnDragEnterOver;
             c.DragOver += OnDragEnterOver;
             c.DragLeave += (_, _) => SetHighlight(false);
             c.DragDrop += OnDragDrop;
-            c.EditRequested += OnCardEdit;
+            c.ActivateRequested += OnCardActivate;
             c.ContextRequested += OnCardContext;
             return c;
         }
 
-        private void Detach(MaintenanceCard c)
+        private void Detach(BoardCardBase c)
         {
             c.DragEnter -= OnDragEnterOver;
             c.DragOver -= OnDragEnterOver;
             c.DragDrop -= OnDragDrop;
-            c.EditRequested -= OnCardEdit;
+            c.ActivateRequested -= OnCardActivate;
             c.ContextRequested -= OnCardContext;
         }
 
-        private void OnCardEdit(MaintenanceCard c) => CardEditRequested?.Invoke(c.Record);
+        private void OnCardActivate(BoardCardBase c) => CardActivateRequested?.Invoke(c);
 
-        private void OnCardContext(MaintenanceCard c, Point at) =>
-            CardContextRequested?.Invoke(c.Record, c, at);
+        private void OnCardContext(BoardCardBase c, Point at) =>
+            CardContextRequested?.Invoke(c, c, at);
 
         private void UpdateMoreHint()
         {
@@ -336,19 +468,18 @@ public class MaintenanceBoard : Panel
         {
             var w = _cards.ClientSize.Width - _cards.Padding.Horizontal - 14;
             if (w < 80) w = 80;
-            foreach (var c in _cards.Controls.OfType<MaintenanceCard>())
+            foreach (var c in _cards.Controls.OfType<BoardCardBase>())
                 if (c.Width != w) c.Width = w;
         }
 
         // ---------- 拖放 ----------
-        private static MaintenanceCard? CardOf(DragEventArgs e) =>
-            e.Data?.GetData(typeof(MaintenanceCard)) as MaintenanceCard;
+        private static BoardCardBase? CardOf(DragEventArgs e) => BoardCardBase.FromDrag(e);
 
         private void OnDragEnterOver(object? sender, DragEventArgs e)
         {
             var card = CardOf(e);
             if (card == null) { e.Effect = DragDropEffects.None; return; }
-            var same = MaintenanceMeta.Normalize(card.Record.Status) == StatusKey;
+            var same = card.ColumnKey == StatusKey;
             e.Effect = same ? DragDropEffects.None : DragDropEffects.Move;
             SetHighlight(!same);
             if (!same) AutoScrollDuringDrag(e);
@@ -372,7 +503,7 @@ public class MaintenanceBoard : Panel
             SetHighlight(false);
             var card = CardOf(e);
             if (card == null) return;
-            if (MaintenanceMeta.Normalize(card.Record.Status) == StatusKey) return;
+            if (card.ColumnKey == StatusKey) return;
             DropRequested?.Invoke(card, StatusKey);
         }
 
@@ -407,11 +538,24 @@ public class MaintenanceBoard : Panel
                 g.FillPath(b, path);
             TextRenderer.DrawText(g, badge, BadgeFont, br, Color.White,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+
+            // 未确认不良：主徐章左侧再挂一个红徐章（只有待办列会有）
+            if (_todoCount > 0)
+            {
+                var t = $"新 {_todoCount}";
+                var tw = TextRenderer.MeasureText(t, BadgeFont).Width + 12;
+                var tr = new Rectangle(br.X - tw - 4, br.Y, tw, 18);
+                using (var path = MaintenanceDraw.Rounded(tr, 9))
+                using (var b = new SolidBrush(Color.FromArgb(197, 48, 48)))
+                    g.FillPath(b, path);
+                TextRenderer.DrawText(g, t, BadgeFont, tr, Color.White,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
         }
 
         private void PaintCardsBackdrop(object? sender, PaintEventArgs e)
         {
-            if (_cards.Controls.OfType<MaintenanceCard>().Any()) return;
+            if (_cards.Controls.OfType<BoardCardBase>().Any()) return;
             var r = _cards.ClientRectangle;
             r.Inflate(-10, -10);
             if (r.Width <= 0 || r.Height <= 0) return;
@@ -435,36 +579,20 @@ public class MaintenanceBoard : Panel
 //  卡片
 // ======================================================================
 /// <summary>看板上的一张维修记录卡片。全部内容自绘，无子控件。</summary>
-public sealed class MaintenanceCard : Panel
+public sealed class MaintenanceCard : BoardCardBase
 {
     public MaintenanceRecord Record { get; }
 
-    /// <summary>双击请求编辑。</summary>
-    public event Action<MaintenanceCard>? EditRequested;
-
-    /// <summary>右键请求弹菜单（参数为卡片内坐标）。</summary>
-    public event Action<MaintenanceCard, Point>? ContextRequested;
+    /// <summary>记录卡所在列 = 它的状态。</summary>
+    public override string ColumnKey => MaintenanceMeta.Normalize(Record.Status);
 
     private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F, FontStyle.Bold);
     private static readonly Font BodyFont = new("Microsoft YaHei UI", 8.25F);
     private static readonly Font MetaFont = new("Microsoft YaHei UI", 8F);
 
-    /// <summary>全卡片共用一个 ToolTip —— 每张卡各建一个会产生上百个未释放的组件。</summary>
-    private static readonly ToolTip Tip = new() { AutoPopDelay = 15000, InitialDelay = 600, ReshowDelay = 200 };
-
-    private bool _hover;
-    private bool _pressed;
-    private Point _origin;
-
     public MaintenanceCard(MaintenanceRecord m)
     {
         Record = m;
-        Height = 80;
-        Margin = new Padding(4, 3, 4, 3);
-        DoubleBuffered = true;
-        BackColor = Color.Transparent;
-        Cursor = Cursors.Hand;
-        SetStyle(ControlStyles.ResizeRedraw, true);
         Tip.SetToolTip(this, BuildTooltip());
     }
 
@@ -491,9 +619,9 @@ public sealed class MaintenanceCard : Panel
 
         using (var path = MaintenanceDraw.Rounded(r, 5))
         {
-            using (var bg = new SolidBrush(_hover ? Color.FromArgb(252, 253, 255) : Color.White))
+            using (var bg = new SolidBrush(Hover ? Color.FromArgb(252, 253, 255) : Color.White))
                 g.FillPath(bg, path);
-            using (var pen = new Pen(_hover ? MaintenanceMeta.AccentOf(Record.Status) : Color.FromArgb(214, 220, 229)))
+            using (var pen = new Pen(Hover ? MaintenanceMeta.AccentOf(Record.Status) : Color.FromArgb(214, 220, 229)))
                 g.DrawPath(pen, path);
         }
 
@@ -529,65 +657,6 @@ public sealed class MaintenanceCard : Panel
         TextRenderer.DrawText(g, when, MetaFont,
             new Rectangle(Width - 92, 50, 86, 16),
             Color.FromArgb(150, 160, 175), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
-    }
-
-    /// <summary>时间显示: 今天只显示 HH:mm，其余显示 MM-DD HH:mm。</summary>
-    private static string ShortTime(string? ts)
-    {
-        if (string.IsNullOrWhiteSpace(ts)) return "—";
-        if (!DateTime.TryParse(ts, out var dt)) return ts.Length > 16 ? ts[..16] : ts;
-        return dt.Date == DateTime.Today ? dt.ToString("今天 HH:mm") : dt.ToString("MM-dd HH:mm");
-    }
-
-    protected override void OnMouseEnter(EventArgs e)
-    {
-        base.OnMouseEnter(e);
-        _hover = true; Invalidate();
-    }
-
-    protected override void OnMouseLeave(EventArgs e)
-    {
-        base.OnMouseLeave(e);
-        _hover = false; _pressed = false; Invalidate();
-    }
-
-    protected override void OnMouseDown(MouseEventArgs e)
-    {
-        base.OnMouseDown(e);
-        // 卡片是自绘的 Panel, 不会自己跳右键菜单; 同时右键不能走拖拽分支
-        if (e.Button == MouseButtons.Right)
-        {
-            _pressed = false;
-            Focus();
-            ContextRequested?.Invoke(this, e.Location);
-            return;
-        }
-        if (e.Button != MouseButtons.Left) return;
-        _pressed = true;
-        _origin = e.Location;
-    }
-
-    protected override void OnMouseMove(MouseEventArgs e)
-    {
-        base.OnMouseMove(e);
-        if (!_pressed || e.Button != MouseButtons.Left) return;
-        // 必须过拖动阈值才起拖, 否则单击即触发拖拽、双击编辑会失灵
-        var dz = SystemInformation.DragSize;
-        if (Math.Abs(e.X - _origin.X) < dz.Width && Math.Abs(e.Y - _origin.Y) < dz.Height) return;
-        _pressed = false;
-        DoDragDrop(this, DragDropEffects.Move);
-    }
-
-    protected override void OnMouseUp(MouseEventArgs e)
-    {
-        base.OnMouseUp(e);
-        _pressed = false;
-    }
-
-    protected override void OnMouseDoubleClick(MouseEventArgs e)
-    {
-        base.OnMouseDoubleClick(e);
-        if (e.Button == MouseButtons.Left) EditRequested?.Invoke(this);
     }
 }
 

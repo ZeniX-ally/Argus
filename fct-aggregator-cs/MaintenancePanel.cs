@@ -4,6 +4,9 @@ namespace FctAggregator;
 /// 维修记录页。两种视图:
 /// 看板(默认, 5 列可拖动改状态) / 列表(表格 + 状态筛选)。
 /// 功能: 新增 / 编辑 / 改状态 / 删除 / 导出 xlsx·csv。
+///
+/// v2.5.0：原来的「待办」独立页已取消 —— 未确认的不良直接长在看板的「待办」列里，
+/// 不用再切页就能看到/处理（参见 <see cref="TodoCard"/>）。
 /// </summary>
 public class MaintenancePanel : Panel
 {
@@ -11,15 +14,12 @@ public class MaintenancePanel : Panel
 
     private readonly Engine _engine;
     private MaintenanceBoard _board = null!;
-    private TodoPanel _todo = null!;
     private ListView _list = null!;
     private Panel _listHost = null!;
     private ComboBox _filter = null!;
     private Label _filterLabel = null!;
     private Button _btnBoard = null!;
     private Button _btnList = null!;
-    private Button _btnTodo = null!;
-    private bool _boardMode = true;
     private List<MaintenanceRecord> _current = new();   // 列表视图当前内容(供导出)
 
     public MaintenancePanel(Engine engine)
@@ -35,7 +35,7 @@ public class MaintenancePanel : Panel
 
         var title = new Label
         {
-            Text = "维修记录", Dock = DockStyle.Top, Height = 30,
+            Text = "维修记录 / 待办", Dock = DockStyle.Top, Height = 30,
             Font = new Font("Microsoft YaHei UI", 13F, FontStyle.Bold),
         };
 
@@ -46,11 +46,8 @@ public class MaintenancePanel : Panel
         _btnBoard.Click += (_, _) => SetViewMode("board");
         _btnList = new Button { Text = "列表", Width = 62, Height = 28, FlatStyle = FlatStyle.Flat };
         _btnList.Click += (_, _) => SetViewMode("list");
-        _btnTodo = new Button { Text = "待办", Width = 62, Height = 28, FlatStyle = FlatStyle.Flat };
-        _btnTodo.Click += (_, _) => SetViewMode("todo");
         bar.Controls.Add(_btnBoard);
         bar.Controls.Add(_btnList);
-        bar.Controls.Add(_btnTodo);
 
         _filterLabel = new Label
         {
@@ -61,7 +58,7 @@ public class MaintenancePanel : Panel
         _filter = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList };
         _filter.Items.AddRange(MaintenanceMeta.FilterItems());
         _filter.SelectedIndex = 0;
-        _filter.SelectedIndexChanged += (_, _) => { if (!_boardMode) RefreshList(); };
+        _filter.SelectedIndexChanged += (_, _) => { if (_viewMode == "list") RefreshList(); };
         bar.Controls.Add(_filter);
 
         var btnFromFail = new Button
@@ -107,12 +104,8 @@ public class MaintenancePanel : Panel
         _list.MouseDoubleClick += List_MouseDoubleClick;
         _listHost.Controls.Add(_list);
 
-        // ===== 待办 =====
-        _todo = new TodoPanel(_engine) { Dock = DockStyle.Fill, Visible = false };
-
         Controls.Add(_board);
         Controls.Add(_listHost);
-        Controls.Add(_todo);
         Controls.Add(bar);
         Controls.Add(title);
     }
@@ -132,17 +125,12 @@ public class MaintenancePanel : Panel
     {
         _board.Visible = _viewMode == "board";
         _listHost.Visible = _viewMode == "list";
-        _todo.Visible = _viewMode == "todo";
         if (_viewMode == "board") _board.BringToFront();
-        else if (_viewMode == "list") _listHost.BringToFront();
-        else _todo.BringToFront();
+        else _listHost.BringToFront();
 
         // 筛选下拉只对列表视图有意义
         _filter.Enabled = _viewMode == "list";
         _filterLabel.Enabled = _viewMode == "list";
-
-        // 待办视图下隐藏导出、从FAIL选故障项等按钮（待办有自己的操作界面）
-        // 我们不改按钮Visible，让用户自由切换
 
         var on = Color.FromArgb(26, 82, 118);
         var off = SystemColors.Control;
@@ -150,17 +138,17 @@ public class MaintenancePanel : Panel
         _btnBoard.ForeColor = _viewMode == "board" ? Color.White : SystemColors.ControlText;
         _btnList.BackColor = _viewMode == "list" ? on : off;
         _btnList.ForeColor = _viewMode == "list" ? Color.White : SystemColors.ControlText;
-        _btnTodo.BackColor = _viewMode == "todo" ? on : off;
-        _btnTodo.ForeColor = _viewMode == "todo" ? Color.White : SystemColors.ControlText;
     }
 
-    /// <summary>外部(MainForm 切页)调用的刷新入口。</summary>
+    /// <summary>外部(MainForm 切页 / 新不良到达)调用的刷新入口。</summary>
     public void Refresh2()
     {
-             if (_viewMode == "board") _board.Reload();
-        else if (_viewMode == "list")  RefreshList();
-        else                            _todo.Reload();
+        if (_viewMode == "board") _board.Reload();
+        else RefreshList();
     }
+
+    /// <summary>当前未确认不良数(看板已加载时才准)。</summary>
+    public int PendingTodoCount => _board.PendingTodoCount;
 
     private void RefreshList()
     {
@@ -403,7 +391,7 @@ public class MaintenancePanel : Panel
     private void DoExport(bool xlsx)
     {
         // 看板视图导出当前加载的全部记录; 列表视图导出当前筛选结果(语义与 v2.1.0 一致)
-        var records = _boardMode ? _board.LoadedRecords() : _current;
+        var records = _viewMode == "board" ? _board.LoadedRecords() : _current;
         if (records.Count == 0)
         {
             MessageBox.Show("当前没有可导出的维修记录。", "提示");

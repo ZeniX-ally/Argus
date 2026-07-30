@@ -13,18 +13,18 @@ public static class MaintenanceMeta
 
     /// <summary>
     /// 全部可选状态，顺序 = 看板列顺序 = 处理流程顺序:
-    /// 未知问题(刚发现原因不明) → 正在排查(定位原因) → 未完成(原因已知待修) → 进行中(正在修) → 已完成。
+    /// 未知问题(刚发现原因不明) → 正在排查(定位原因) → 待办(含未确认的不良 + 已确认待修) → 进行中(正在修) → 已完成。
     /// </summary>
     public static readonly StatusDef[] Statuses =
     {
         new("unknown",       "未知问题", Color.FromArgb(128, 108, 163)),
         new("investigating", "正在排查", Color.FromArgb(202, 138, 4)),
-        new("open",          "未完成",   Color.FromArgb(37, 99, 165)),
+        new("open",          "待办",     Color.FromArgb(37, 99, 165)),
         new("in_progress",   "进行中",   Color.FromArgb(13, 138, 145)),
         new("resolved",      "已完成",   Color.FromArgb(42, 128, 84)),
     };
 
-    /// <summary>新建记录的默认状态(未完成)。</summary>
+    /// <summary>新建记录的默认状态(待办)。</summary>
     public const string DefaultStatus = "open";
 
     /// <summary>「已完成」状态 key。拖放到该列时会弹出维修人/措施补填框。</summary>
@@ -80,7 +80,7 @@ public static class MaintenanceMeta
         return DefaultStatus;
     }
 
-    /// <summary>筛选下拉用: ["全部", 未知问题, 正在排查, 未完成, 进行中, 已完成]。</summary>
+    /// <summary>筛选下拉用: ["全部", 未知问题, 正在排查, 待办, 进行中, 已完成]。</summary>
     public static object[] FilterItems() =>
         new object[] { "全部" }.Concat(Statuses.Select(s => (object)s.Zh)).ToArray();
 

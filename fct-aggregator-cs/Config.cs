@@ -13,6 +13,10 @@ public class AppConfig
     public string WebhookUrl { get; set; } = "";
     public bool SkipHistoricalScan { get; set; } = false;
     public string LogLevel { get; set; } = "INFO";
+    /// <summary>Windows 原生桌面提示(不良报警)。config.json: desktop_notify。</summary>
+    public bool DesktopNotify { get; set; } = true;
+    /// <summary>两次桌面提示的最小间隔秒数。config.json: notify_min_interval_sec。</summary>
+    public int NotifyMinIntervalSec { get; set; } = 15;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -38,6 +42,11 @@ public class AppConfig
                 if (root.TryGetProperty("webhook_url", out v)) cfg.WebhookUrl = v.GetString() ?? "";
                 if (root.TryGetProperty("skip_historical_scan", out v)) cfg.SkipHistoricalScan = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("log_level", out v)) cfg.LogLevel = v.GetString() ?? "INFO";
+                // 桌面提示：缺省开，只有显式写 false 才关
+                if (root.TryGetProperty("desktop_notify", out v)) cfg.DesktopNotify = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("notify_min_interval_sec", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var sec) && sec >= 0)
+                    cfg.NotifyMinIntervalSec = sec;
                 return cfg;
             }
             else

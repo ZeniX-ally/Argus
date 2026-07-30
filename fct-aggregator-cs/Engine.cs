@@ -229,7 +229,7 @@ public class Engine
 
         RefreshStats();
 
-        // FAIL 推送(扫描中/UNKNOWN 不推)
+        // FAIL 推送 + 桌面提示(扫描中/UNKNOWN 不推)
         if (rec.Result == "FAIL")
         {
             if (rec.StationId == "UNKNOWN")
@@ -238,6 +238,9 @@ public class Engine
                 Logger.Info($"[跳过推送-扫描中] FAIL / {rec.Model} / {rec.Sn}");
             else
             {
+                // 先弹本机桌面提示（不依赖网络，就算 webhook 没配也能看到）
+                try { DesktopNotifier.NotifyFail(rec); }
+                catch (Exception ex) { Logger.Warning($"桌面提示失败: {ex.Message}"); }
                 try
                 {
                     FeishuNotifier.SendFailAlert(_cfg.WebhookUrl, rec).GetAwaiter().GetResult();

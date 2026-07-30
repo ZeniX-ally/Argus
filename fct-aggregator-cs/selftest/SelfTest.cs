@@ -251,7 +251,7 @@ class SelfTest
 
             MaintenanceRecord? got = null;
             var pt = Point.Empty;
-            card.ContextRequested += (c, at) => { got = c.Record; pt = at; };
+            card.ContextRequested += (c, at) => { got = (c as MaintenanceCard)?.Record; pt = at; };
 
             onDown.Invoke(card, new object?[] { new MouseEventArgs(MouseButtons.Right, 1, 12, 34, 0) });
             Check(got != null && got.Id == 7, "**右键卡片会触发 ContextRequested（之前右键没任何反应）**");
@@ -428,7 +428,7 @@ class SelfTest
             Check(list.Count == 2, $"批量建单：3 个选项(含1个重复) -> {list.Count} 条记录（期望 2）");
             Check(list.All(r => r.Id == 0), "批量记录的 Id 均为 0（交给 DB 自增）");
             Check(list.Select(r => r.FailItem).Distinct().Count() == 2, "每条的故障项不同");
-            Check(list.All(r => r.Status == MaintenanceMeta.DefaultStatus), "批量记录默认状态 = 未完成");
+            Check(list.All(r => r.Status == MaintenanceMeta.DefaultStatus), "批量记录默认状态 = 待办");
             Check(list.All(r => string.IsNullOrEmpty(r.EquipmentSn) && string.IsNullOrEmpty(r.EquipmentModel)),
                   "批量记录不带设备型号 / SN（表单已去掉这两项）");
 
@@ -449,11 +449,11 @@ class SelfTest
               System.Reflection.BindingFlags.Instance)!.FieldType == typeof(ComboBox),
               "维修人已改为 ComboBox（可选历史值，也可直接输入）");
 
-        // ---------- 待办栏（v2.4.0） ----------
-        Console.WriteLine("\n【待办栏】聚合 / 确认 / 忽略 / 复发重现");
+        // ---------- 待办已整合进看板（v2.5.0） ----------
+        Console.WriteLine("\n【待办→看板】聚合 / 确认 / 忽略 / 复发重现");
 
-        // 【最重要】TodoPanel 必须能无 UI 构造成功。
-        // v2.4.0 开发时正是因为自检没构造它，_list / _statusLabel 忘了 new
+        // 【最重要】看板与维修面板必须能无 UI 构造成功。
+        // v2.4.0 开发时正是因为自检没构造面板，控件字段忘了 new
         //（而且 CS0649 警告被 `= null!` 消音），导致发出的 exe 一启动就 0xC0000005 崩溃。
         {
             // 显式给 StationId，避开 IP 探测；Engine 构造只建库不启监控
@@ -464,30 +464,60 @@ class SelfTest
                 WebhookUrl = "",
             });
 
-            TodoPanel? panel = null;
+            MaintenanceBoard? board = null;
             try
             {
-                panel = new TodoPanel(eng);
-                Check(true, "TodoPanel 无 UI 构造成功（控件字段均已 new）");
+                board = new MaintenanceBoard(eng);
+                Check(true, "MaintenanceBoard 无 UI 构造成功");
             }
             catch (Exception ex)
             {
-                Check(false, $"TodoPanel 构造失败！主程序会一启动就崩：{ex.GetType().Name} {ex.Message}");
+                Check(false, $"MaintenanceBoard 构造失败！主程序会一启动就崩：{ex.GetType().Name} {ex.Message}");
             }
-            if (panel != null)
+            if (board != null)
             {
-                // 逐个确认控件字段非 null（光能构造不够，漏 new 的字段可能到使用时才炸）
-                foreach (var fname in new[] { "_list", "_statusLabel", "_btnRefresh",
-                                              "_btnConfirm", "_btnDismiss", "_onlyThisStation" })
-                {
-                    var fi = typeof(TodoPanel).GetField(fname,
-                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    Check(fi != null && fi.GetValue(panel) != null, $"TodoPanel.{fname} 已初始化（非 null）");
-                }
-                try { panel.Reload(); Check(true, "TodoPanel.Reload() 可正常执行"); }
-                catch (Exception ex) { Check(false, $"TodoPanel.Reload() 抛异常: {ex.Message}"); }
-                panel.Dispose();
+                try { board.Reload(); Check(true, "MaintenanceBoard.Reload() 可正常执行（含待办卡聚合）"); }
+                catch (Exception ex) { Check(false, $"MaintenanceBoard.Reload() 抛异常: {ex.Message}"); }
+                Check(board.PendingTodoCount >= 0, $"看板未确认不良数 = {board.PendingTodoCount}");
+                board.Dispose();
             }
+
+            MaintenancePanel? mp = null;
+            try
+            {
+                mp = new MaintenancePanel(eng);
+                Check(true, "MaintenancePanel 无 UI 构造成功（已去掉独立待办页）");
+            }
+            catch (Exception ex)
+            {
+                Check(false, $"MaintenancePanel 构造失败：{ex.GetType().Name} {ex.Message}");
+            }
+            if (mp != null)
+            {
+                var mpFields = typeof(MaintenancePanel)
+                    .GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                    .Select(f => f.Name).ToList();
+                Check(!mpFields.Contains("_todo") && !mpFields.Contains("_btnTodo"),
+                      "维修面板里已删除独立待办页的字段（_todo / _btnTodo）");
+                foreach (var fname in new[] { "_board", "_list", "_listHost", "_filter", "_filterLabel",
+                                              "_btnBoard", "_btnList" })
+                {
+                    var fi = typeof(MaintenancePanel).GetField(fname,
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    Check(fi != null && fi.GetValue(mp) != null, $"MaintenancePanel.{fname} 已初始化（非 null）");
+                }
+                try { mp.Refresh2(); Check(true, "MaintenancePanel.Refresh2() 可正常执行"); }
+                catch (Exception ex) { Check(false, $"MaintenancePanel.Refresh2() 抛异常: {ex.Message}"); }
+                mp.Dispose();
+            }
+
+            // 待办卡与记录卡共用拖拽基类，否则拖放会静默失效
+            var todoCard = new TodoCard(new TodoItem { FailItem = "Check_5V_Rail", OccurrenceCount = 3 });
+            var recCard = new MaintenanceCard(new MaintenanceRecord { Id = 1, FailItem = "X", Status = "in_progress" });
+            Check(todoCard is BoardCardBase && recCard is BoardCardBase, "两种卡片均继承 BoardCardBase（拖放格式统一）");
+            Check(todoCard.ColumnKey == MaintenanceMeta.DefaultStatus, "待办卡固定属于「待办」列");
+            Check(recCard.ColumnKey == "in_progress", "记录卡所在列 = 它的状态");
+            todoCard.Dispose(); recCard.Dispose();
         }
 
         // 造一个干净库验待办的四条规则
@@ -523,7 +553,7 @@ class SelfTest
             Check(afterAck.Count == 1 && afterAck[0].FailItem == "Check_CAN_Bus",
                   "确认后该故障项从待办消失（靠活跃维修记录拦截）");
             var created = t.ListMaintenance("open", 10).FirstOrDefault(x => x.Id == mid);
-            Check(created != null && created.Status == "open", "新建记录状态 = open（看板「未完成」列）");
+            Check(created != null && created.Status == "open", "新建记录状态 = open（看板「待办」列）");
             Check(created != null && created.Resolver == "张三", "维修人已写入");
 
             // 拖到「已完成」后不再算活跃 -> 同故障项自动回到待办（复发重现）
