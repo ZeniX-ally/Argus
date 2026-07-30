@@ -530,6 +530,111 @@ class SelfTest
             Check(todoCard is BoardCardBase && recCard is BoardCardBase, "两种卡片均继承 BoardCardBase（拖放格式统一）");
             Check(todoCard.ColumnKey == MaintenanceMeta.DefaultStatus, "待办卡固定属于「待办」列");
             Check(recCard.ColumnKey == "in_progress", "记录卡所在列 = 它的状态");
+
+            // ---------- 单击预览（v2.7.0） ----------
+            var down = typeof(BoardCardBase).GetMethod("OnMouseDown",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            var up = typeof(BoardCardBase).GetMethod("OnMouseUp",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            var dbl = typeof(BoardCardBase).GetMethod("OnMouseDoubleClick",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+            Check(typeof(BoardCardBase).GetEvent("PreviewRequested") != null,
+                  "BoardCardBase 暴露了 PreviewRequested（单击预览）");
+
+            var pv = new TodoCard(new TodoItem { Title = "P", TotalCount = 1, RangeCount = 1 }) { Width = 200 };
+            bool fired = false;
+            pv.PreviewRequested += _ => fired = true;
+
+            // 单击：不能立即弹（要等双击超时），但已排队
+            down.Invoke(pv, new object?[] { new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0) });
+            up.Invoke(pv, new object?[] { new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0) });
+            Check(!fired, "单击不会立即触发预览（先等双击间隔，否则双击会先闪一下）");
+            Check(pv.PreviewPending, "**单击已排队预览**（计时器已启动）");
+
+            // 双击：取消预览，而且双击后那下 MouseUp 不能又排上
+            bool activated = false;
+            pv.ActivateRequested += _ => activated = true;
+            dbl.Invoke(pv, new object?[] { new MouseEventArgs(MouseButtons.Left, 2, 10, 10, 0) });
+            Check(activated && !pv.PreviewPending, "双击触发 Activate 并**取消**已排队的预览");
+            up.Invoke(pv, new object?[] { new MouseEventArgs(MouseButtons.Left, 1, 10, 10, 0) });
+            Check(!pv.PreviewPending, "双击后的第二下 MouseUp 不会再排预览");
+
+            // 右键：不弹预览
+            down.Invoke(pv, new object?[] { new MouseEventArgs(MouseButtons.Right, 1, 10, 10, 0) });
+            up.Invoke(pv, new object?[] { new MouseEventArgs(MouseButtons.Right, 1, 10, 10, 0) });
+            Check(!pv.PreviewPending, "右键不弹预览（右键走菜单）");
+
+            // 拖动：过了阈值就不算单击。
+            // ⚠ 不能在自检里真调 OnMouseMove —— 它会进 DoDragDrop 的**模态拖拽消息循环**，
+            // 无鼠标输入时直接挂死（曾把自检卡到超时）。这里只验“没按下就松手不算单击”。
+            up.Invoke(pv, new object?[] { new MouseEventArgs(MouseButtons.Left, 1, 300, 300, 0) });
+            Check(!pv.PreviewPending, "没有先按下的松手不会被当成单击（拖拽落回卡上不会误弹预览）");
+            pv.Dispose();
+
+            // 预览弹窗内容：两种卡片都要能给出非空内容
+            var merged = new TodoItem
+            {
+                Id = 9, Title = "5V_Rail", GroupKey = "5v rail", StationId = "FCT9", Model = "E3002781",
+                VariantCount = 3, TotalCount = 30, RangeCount = 12,
+                FirstSeen = "2026-07-01 08:00:00", LastSeen = "2026-07-30 08:00:00",
+            };
+            merged.Variants.AddRange(new[] { "6.1.1.1 5V_Rail", "6.1.1.2 5V_Rail", "6.1.1.3 5V_Rail" });
+            var mergedCard = new TodoCard(merged) { Width = 220 };
+            var (pTitle, pSub, pRows, pFoot) = mergedCard.BuildPreview();
+            Check(pTitle == "5V_Rail" && pSub.Contains($"优先级{merged.PriorityZh}") && pRows.Count >= 8 && pFoot.Length > 0,
+                  "待办卡预览内容完整（标题/副标题/明细/页脚）");
+            Check(merged.PriorityZh == "中" && TodoGrouping.PriorityZhOf(merged.TotalCount) == "高",
+                  "优先级算的是**区间内次数**（12 次→中）而不是累计（30 次→高）");
+            Check(pRows.Any(r => r.Item2.Contains("12 次")) && pRows.Any(r => r.Item2.Contains("30 次")),
+                  "预览同时给出区间内次数与累计次数");
+            Check(pRows.Any(r => r.Item2.Contains("3 个同类测试项")), "预览里标了合并项数");
+
+            // 卡片高度：合并过的卡要更高（要在卡上列出原始项）
+            var singleCard = new TodoCard(new TodoItem { Title = "solo", VariantCount = 1, TotalCount = 1 });
+            Check(mergedCard.Height > singleCard.Height,
+                  $"合并卡比单项卡更高（{mergedCard.Height} > {singleCard.Height}）—— 卡上直接列合并项");
+            mergedCard.Dispose(); singleCard.Dispose();
+
+            // 记录卡：从备注里回读合并清单（**不查库**）
+            var noteRec = new MaintenanceRecord
+            {
+                Id = 5, FailItem = "5V_Rail", Status = "open", StationId = "FCT9",
+                Notes = TodoGrouping.BuildSourceItemsNote(new[] { "6.1.1.1 5V_Rail", "6.1.1.2 5V_Rail" }),
+            };
+            var noteCard = new MaintenanceCard(noteRec) { Width = 220 };
+            Check(noteCard.SourceItems.Count == 2, $"维修卡从备注回读到 {noteCard.SourceItems.Count} 个合并项（无需查库）");
+            Check(noteCard.Height > recCard.Height, "带合并清单的维修卡会加高一行");
+            var (rTitle, rSub, rRows, _) = noteCard.BuildPreview();
+            Check(rSub.Contains("合并 2 项"), "维修卡预览副标题标出合并项数");
+            Check(rRows.All(r => !r.Item2.Contains(TodoGrouping.SourceItemsTag)),
+                  "预览备注里不重复堆“来源测试项”那一大段（已单独成表）");
+            noteCard.Dispose();
+
+            Check(TodoGrouping.ParseSourceItems("随便写的备注").Count == 0, "普通备注不会被误读成合并清单");
+
+            // 预览弹窗本身必须能真弹出来（v2.4.0 那次就是控件构造没自检到，发出去直接崩）
+            {
+                using var host = new Form { Width = 300, Height = 200 };
+                var anchorCard = new TodoCard(merged) { Width = 200 };
+                host.Controls.Add(anchorCard);
+                host.Show();
+                try
+                {
+                    var (t2, s2, r2, f2) = anchorCard.BuildPreview();
+                    CardPreviewForm.ShowFor(anchorCard, t2, s2, Color.FromArgb(197, 48, 48), r2,
+                        merged.Variants.Select(v => (v, 3)), f2);
+                    Check(true, "CardPreviewForm 可正常弹出（含合并清单表）");
+                }
+                catch (Exception ex)
+                {
+                    Check(false, $"CardPreviewForm 弹出失败：{ex.GetType().Name} {ex.Message}");
+                }
+                CardPreviewForm.CloseCurrent();
+                Check(true, "CardPreviewForm.CloseCurrent() 可重复调用不报错");
+                CardPreviewForm.CloseCurrent();
+                host.Hide();
+            }
             todoCard.Dispose(); recCard.Dispose();
 
             // v2.5.1: 待办不可忽略/删除 —— 看板上不能再有任何忽略入口

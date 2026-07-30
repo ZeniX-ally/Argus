@@ -36,9 +36,14 @@ public sealed class TodoCard : BoardCardBase
     public TodoCard(TodoItem item)
     {
         Item = item;
-        Height = 88;                     // 比记录卡高一点：要放次数 / 合并数 / 优先级
+        // 高度随内容变：合并了多项时多留两行列出原始测试项（卡上也要看得到合并了什么）
+        Height = 88 + VariantLineCount * 16;
         Tip.SetToolTip(this, BuildTooltip());
     }
+
+    /// <summary>卡上最多列几行原始项（0/1/2）。</summary>
+    private int VariantLineCount =>
+        Item.VariantCount <= 1 ? 0 : Math.Min(2, Item.Variants.Count);
 
     private string BuildTooltip()
     {
@@ -57,7 +62,7 @@ public sealed class TodoCard : BoardCardBase
         if (!string.IsNullOrWhiteSpace(Item.Model)) sb.AppendLine($"型号: {Item.Model}");
         if (!string.IsNullOrWhiteSpace(Item.StationId)) sb.AppendLine($"机台: {Item.StationId}");
         sb.AppendLine();
-        sb.AppendLine("双击=确认问题(建维修记录) · 拖到其它列=确认并置为该状态");
+        sb.AppendLine("单击=预览详情(含合并清单、可复制) · 双击=确认问题 · 拖到其它列=确认并置为该状态");
         sb.Append("⚠ 来自真实不良，不可忽略/删除；处理完拖到「已完成」它就不在了");
         return sb.ToString();
     }
@@ -122,13 +127,50 @@ public sealed class TodoCard : BoardCardBase
             new Rectangle(left, 48, Math.Max(20, Width - left - 8), 16),
             Color.FromArgb(140, 120, 118), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-        // ---- 第 4 行: 最近出现 + 操作提示 ----
+        // ---- 合并的 fail 项（卡上直接列前两项，剩下的用 +N 提示，完整清单看单击预览）----
+        int y = 64;
+        int lines = VariantLineCount;
+        for (int i = 0; i < lines; i++)
+        {
+            var text = "· " + Item.Variants[i];
+            // 最后一行带上“还有几项”
+            if (i == lines - 1 && Item.VariantCount > lines)
+                text += $"   +{Item.VariantCount - lines} 项";
+            TextRenderer.DrawText(g, text, MetaFont,
+                new Rectangle(left + 2, y, Math.Max(20, Width - left - 10), 16),
+                Color.FromArgb(120, 96, 96), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            y += 16;
+        }
+
+        // ---- 最后一行: 最近出现 + 操作提示 ----
         TextRenderer.DrawText(g, $"最近 {ShortTime(Item.LastSeen)}", MetaFont,
-            new Rectangle(left, 66, Math.Max(20, Width - left - 96), 16),
+            new Rectangle(left, y + 2, Math.Max(20, Width - left - 96), 16),
             Color.FromArgb(150, 130, 128), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-        TextRenderer.DrawText(g, "必须确认", MetaFont,
-            new Rectangle(Width - 92, 66, 86, 16),
+        TextRenderer.DrawText(g, Hover ? "单击预览" : "必须确认", MetaFont,
+            new Rectangle(Width - 92, y + 2, 86, 16),
             Color.FromArgb(180, 120, 110), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+    }
+
+    /// <summary>预览弹窗用的内容（与卡片同一份数据，避免两处写法走歧）。</summary>
+    public (string title, string subtitle, List<(string, string)> rows, string footer) BuildPreview()
+    {
+        var rows = new List<(string, string)>
+        {
+            ("状　　态:", "未确认不良（待办）"),
+            ("优 先 级:", $"{Item.PriorityZh}（按 fail 次数：高≥{TodoGrouping.HighThreshold} / 中≥{TodoGrouping.MediumThreshold}）"),
+            ("区间内次数:", $"{Item.RangeCount} 次"),
+            ("累计次数:", $"{Item.TotalCount} 次"),
+            ("合并项数:", Item.VariantCount > 1 ? $"{Item.VariantCount} 个同类测试项" : "未合并（1 项）"),
+            ("首次出现:", string.IsNullOrEmpty(Item.FirstSeen) ? "—" : Item.FirstSeen),
+            ("最近出现:", string.IsNullOrEmpty(Item.LastSeen) ? "—" : Item.LastSeen),
+            ("型　　号:", string.IsNullOrWhiteSpace(Item.Model) ? "—" : Item.Model),
+            ("机　　台:", string.IsNullOrWhiteSpace(Item.StationId) ? "—" : Item.StationId),
+            ("归并键:", Item.GroupKey),
+        };
+        return (Item.Title,
+                $"未确认不良 · 优先级{Item.PriorityZh} · {Item.SortCount} 次",
+                rows,
+                "双击卡片=确认问题 · 拖到其它列=确认并置为该状态 · 不可忽略/删除");
     }
 }
 

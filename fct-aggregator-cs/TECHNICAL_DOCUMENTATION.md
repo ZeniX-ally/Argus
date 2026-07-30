@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.6.0
+**当前版本**：v2.7.0
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -46,6 +46,7 @@ FAIL 记录报告查看、调试工具页。
 | 飞书告警 | FAIL 记录推交互卡片，含失败步骤名称 / 实测值 / 上下限 |
 | 设备状态 | 解析 `FCT.ini`：型号列表、固件版本、COM/USB 设备在线灯、A2L 文件 |
 | 维修记录 / 待办 | **看板（5 列拖拽改状态）/ 列表**两视图；增 / 查 / **改（全字段编辑）** / 删 + 导出 xlsx / csv<br>**故障项目从 FAIL 记录去重后挑选**（不显示 SN），可一次建多条；维修人可下拉选历史值<br>**待办（v2.5.0 起整合进看板）**：未确认的不良以 `TodoCard` 直接排在看板「待办」列顶部，双击确认 / 拖到别列 = 确认并置状态 / 右键忽略 |
+| 卡片预览 | **单击**卡片弹 `CardPreviewForm`：完整故障项名 / 明细（可复制）/ **合并的 fail 项 + 各自次数**；延迟一个 DoubleClickTime 触发，避免与双击冲突 |
 | 待办登记 | 只扫近 `todo_scan_days`(默认30) 天的 FAIL，按 `TodoGrouping.KeyOf()` **同类合并成大项**，落 `todo_items` 表**永久保留**；可按时间区间查看，按 fail 次数排优先级（高/中/低） |
 | 桌面提示 | FAIL 落库即弹 **Windows 原生通知**（托盘 `NotifyIcon` + BalloonTip，无 UWP 依赖），节流合并，点通知直达待办看板 |
 | FAIL 记录 | 本机全部 FAIL 列表，双击弹出报告式查看器（完整测试流程，失败项标红） |
@@ -86,7 +87,8 @@ fct-aggregator-cs/
 ├── FailItemPicker.cs         # 从 FAIL 记录挑故障项（去重 / 不显示 SN / 可深扫 XML）
 ├── ResolverManager.cs        # ResolverUtil(多人拆合) + 名单管理 + **多选框** ResolverPickerForm
 ├── MaintenanceExporter.cs    # 维修记录导出 xlsx / csv（零依赖 OOXML，12 列）
-├── BoardCard.cs              # BoardCardBase：看板卡片交互基类（hover/起拖/双击/右键 + 拖拽格式）
+├── BoardCard.cs              # BoardCardBase：看板卡片交互基类（hover/起拖/单击预览/双击/右键）
+├── CardPreview.cs            # 单击卡片弹出的详情预览 popup（含合并 fail 项清单+各自次数）
 ├── TodoCard.cs               # 未确认不良卡（看板「待办」列）+ 确认框 + 时间区间选择
 ├── TodoGrouping.cs           # 待办「大项合并」归一化 + 优先级阈值（单一来源）
 ├── DesktopNotifier.cs        # Windows 原生桌面提示（托盘 NotifyIcon + BalloonTip，节流合并）
@@ -554,6 +556,16 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | 机台过滤 | 不再过滤 —— 库文件本身已按机台拆分（`data\{station}.db`），再按机台过滤是重复条件 |
 | 自动出现 | `MainForm.Tick()` 监视 `AppState.Fail` 变化，页面可见时自动 `Refresh2()`，新不良无需手动刷新 |
 | 与【从FAIL选故障项】的分工 | 待办 = **被动推送**（自动列出没人管的）；那个按钮 = **主动挑选**（含已处理的、可深扫 XML、可批量合并），两者不冲突 |
+
+⚙ 单击预览的坑（v2.7.0）：单击**必须延迟一个 `SystemInformation.DoubleClickTime`** 再弹，
+否则双击（确认/编辑）会先闪一下预览。而且 WinForms 消息顺序是
+`Down→Up→Click→Down→DoubleClick→Up`，双击后还有一个 `MouseUp`，
+不用 `_suppressClick` 拦掉，双击完 500ms 又会弹出预览。右键与起拖同样要排除在“单击”之外。
+
+⚙ 合并清单显示的坑（v2.7.0）：维修记录卡**不能为了显示合并清单去查库** —— 一列上百张卡
+每张一次 SQL 会明显卡顿。清单在确认待办时就写进了 `notes`（`TodoGrouping.SourceItemsTag`），
+卡片用 `ParseSourceItems()` 从已加载的记录里回读；只有**预览**才会用
+`GetTodoByMaintenance()` 拿权威清单 + `CountFailByItems()` 补每项次数。
 
 ⚙ 拖拽格式的坑（v2.5.0）：原来取拖拽对象用 `e.Data.GetData(typeof(MaintenanceCard))`，
 `DataObject` 按**精确类型名**查格式，一旦出现第二种卡片（`TodoCard`）就会**静默取不到**——

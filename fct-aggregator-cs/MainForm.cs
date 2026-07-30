@@ -30,7 +30,7 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT-Aggregator v2.6.0";
+        Text = "Zenix-Ally | FCT-Aggregator v2.7.0";
         Width = 1200; Height = 720;
         StartPosition = FormStartPosition.CenterScreen;
         try { Icon = new Icon(Path.Combine(AppConfig.BaseDir, "app_icon.ico")); } catch { }
@@ -175,6 +175,7 @@ public class MainForm : Form
 
     private void ShowPage(int index)
     {
+        CardPreviewForm.CloseCurrent();      // 切页先关掉卡片预览弹窗
         _dashboardPage.Visible = index == 0;
         _devicePage.Visible = index == 1;
         _maintPage.Visible = index == 2;

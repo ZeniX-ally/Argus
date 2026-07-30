@@ -133,6 +133,34 @@ public static class TodoGrouping
         return false;
     }
 
+    // ==================== 合并清单写入 / 回读 ====================
+
+    /// <summary>确认待办时写进维修记录备注的清单标头（卡片/预览回读用）。</summary>
+    public const string SourceItemsTag = "来源测试项：";
+
+    /// <summary>把合并的原始测试项拼成备注文本。</summary>
+    public static string BuildSourceItemsNote(IEnumerable<string> items) =>
+        SourceItemsTag + "\n" + string.Join("\n", items);
+
+    /// <summary>
+    /// 从维修记录备注里把合并的原始测试项读回来。
+    /// 这样看板卡片与预览**不用额外查库**就能显示合并清单（记录本身已带着它）。
+    /// </summary>
+    public static List<string> ParseSourceItems(string? notes)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrWhiteSpace(notes)) return result;
+        var i = notes.IndexOf(SourceItemsTag, StringComparison.Ordinal);
+        if (i < 0) return result;
+        foreach (var line in notes[(i + SourceItemsTag.Length)..]
+                     .Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var t = line.Trim();
+            if (t.Length > 0) result.Add(t);
+        }
+        return result;
+    }
+
     // ==================== 优先级（按 fail 次数） ====================
 
     /// <summary>fail 次数 → 优先级。阈值集中在此，UI 与导出共用。</summary>

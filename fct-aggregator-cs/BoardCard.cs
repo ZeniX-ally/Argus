@@ -21,6 +21,14 @@ public abstract class BoardCardBase : Panel
     /// <summary>双击卡片（维修记录=编辑 / 待办=确认问题）。</summary>
     public event Action<BoardCardBase>? ActivateRequested;
 
+    /// <summary>
+    /// **单击**卡片 —— 弹详情预览（卡片尺寸有限，长故障项名 / 描述 / 合并清单都显不全）。
+    ///
+    /// 必须延迟一个 <see cref="SystemInformation.DoubleClickTime"/> 再触发，
+    /// 否则双击时会先闪一下预览再开对话框。
+    /// </summary>
+    public event Action<BoardCardBase>? PreviewRequested;
+
     /// <summary>右键卡片（参数为卡片内坐标）。</summary>
     public event Action<BoardCardBase, Point>? ContextRequested;
 
@@ -30,7 +38,13 @@ public abstract class BoardCardBase : Panel
     protected bool Hover { get; private set; }
 
     private bool _pressed;
+    private bool _dragged;
+    private bool _suppressClick;
     private Point _origin;
+    private System.Windows.Forms.Timer? _clickTimer;
+
+    /// <summary>自检用：单击预览是否已排队（正在等双击超时）。</summary>
+    internal bool PreviewPending => _clickTimer?.Enabled == true;
 
     protected BoardCardBase()
     {
@@ -68,16 +82,19 @@ public abstract class BoardCardBase : Panel
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
+        CancelPreviewTimer();
         // 卡片是自绘的 Panel, 不会自己跳右键菜单; 同时右键不能走拖拽分支
         if (e.Button == MouseButtons.Right)
         {
             _pressed = false;
+            _suppressClick = true;              // 右键不弹预览
             Focus();
             ContextRequested?.Invoke(this, e.Location);
             return;
         }
         if (e.Button != MouseButtons.Left) return;
         _pressed = true;
+        _dragged = false;
         _origin = e.Location;
     }
 
@@ -89,6 +106,7 @@ public abstract class BoardCardBase : Panel
         var dz = SystemInformation.DragSize;
         if (Math.Abs(e.X - _origin.X) < dz.Width && Math.Abs(e.Y - _origin.Y) < dz.Height) return;
         _pressed = false;
+        _dragged = true;
         var data = new DataObject();
         data.SetData(DragFormat, this);
         DoDragDrop(data, DragDropEffects.Move);
@@ -97,13 +115,47 @@ public abstract class BoardCardBase : Panel
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+        var wasPressed = _pressed;
         _pressed = false;
+
+        if (_suppressClick) { _suppressClick = false; return; }   // 右键 / 双击的第二下
+        if (e.Button != MouseButtons.Left || _dragged || !wasPressed) return;
+        if (!ClientRectangle.Contains(e.Location)) return;
+
+        // 等一个双击间隔：没等到双击才算“单击”
+        _clickTimer ??= new System.Windows.Forms.Timer();
+        _clickTimer.Interval = Math.Max(120, SystemInformation.DoubleClickTime + 20);
+        _clickTimer.Tick -= OnClickTimerTick;
+        _clickTimer.Tick += OnClickTimerTick;
+        _clickTimer.Start();
     }
+
+    private void OnClickTimerTick(object? sender, EventArgs e)
+    {
+        CancelPreviewTimer();
+        PreviewRequested?.Invoke(this);
+    }
+
+    private void CancelPreviewTimer() => _clickTimer?.Stop();
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)
     {
         base.OnMouseDoubleClick(e);
+        CancelPreviewTimer();
+        _suppressClick = true;                  // 拦掉第二下的 MouseUp，不要再排预览
         if (e.Button == MouseButtons.Left) ActivateRequested?.Invoke(this);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && _clickTimer != null)
+        {
+            _clickTimer.Stop();
+            _clickTimer.Tick -= OnClickTimerTick;
+            _clickTimer.Dispose();
+            _clickTimer = null;
+        }
+        base.Dispose(disposing);
     }
 
     /// <summary>时间显示: 今天只显示 "今天 HH:mm"，其余显示 MM-DD HH:mm。</summary>

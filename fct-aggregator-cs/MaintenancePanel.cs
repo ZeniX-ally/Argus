@@ -139,6 +139,7 @@ public class MaintenancePanel : Panel
 
     private void ApplyViewMode()
     {
+        CardPreviewForm.CloseCurrent();      // 切视图先关预览，不让弹窗悬在那里
         _board.Visible = _viewMode == "board";
         _listHost.Visible = _viewMode == "list";
         if (_viewMode == "board") _board.BringToFront();

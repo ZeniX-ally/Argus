@@ -66,6 +66,7 @@ public class MaintenanceBoard : Panel
             col.DropRequested += OnDropRequested;
             col.CardActivateRequested += OnCardActivate;
             col.CardContextRequested += OnCardContext;
+            col.CardPreviewRequested += OnCardPreview;
             _columns[defs[i].Key] = col;
             _grid.Controls.Add(col, i, 0);
         }
@@ -95,6 +96,7 @@ public class MaintenanceBoard : Panel
     /// <summary>整体重载(切页 / 手动刷新 / 新增或删除后调用)。</summary>
     public void Reload()
     {
+        CardPreviewForm.CloseCurrent();      // 卡片要重建了，旧预览内容会过期
         try
         {
             var todos = LoadTodos();
@@ -186,6 +188,52 @@ public class MaintenanceBoard : Panel
             case TodoCard t: BuildTodoMenu(t.Item).Show(anchor, at); break;
             case MaintenanceCard m: ContextRequested?.Invoke(m.Record, anchor, at); break;
         }
+    }
+
+    /// <summary>
+    /// 单击卡片 → 弹详情预览。
+    /// 卡上只能显前两个合并项，预览里把**完整清单 + 每项真实次数**列出来。
+    /// </summary>
+    private void OnCardPreview(BoardCardBase card, Control anchor)
+    {
+        try
+        {
+            switch (card)
+            {
+                case TodoCard t:
+                {
+                    var (title, sub, rows, footer) = t.BuildPreview();
+                    CardPreviewForm.ShowFor(anchor, title, sub, Color.FromArgb(197, 48, 48),
+                        rows, MergedWithCounts(t.Item.Variants, t.Item.StationId), footer);
+                    break;
+                }
+                case MaintenanceCard m:
+                {
+                    var (title, sub, rows, footer) = m.BuildPreview();
+                    // 合并清单优先取关联的待办行（权威、会随新变体增长），没有则回退到备注里的清单
+                    var items = m.SourceItems;
+                    try
+                    {
+                        var linked = _engine.Db.GetTodoByMaintenance(m.Record.Id);
+                        if (linked != null && linked.Variants.Count > 0) items = linked.Variants;
+                    }
+                    catch (Exception ex) { Logger.Warning($"预览反查待办失败: {ex.Message}"); }
+                    CardPreviewForm.ShowFor(anchor, title, sub, MaintenanceMeta.AccentOf(m.Record.Status),
+                        rows, items.Count > 1 ? MergedWithCounts(items, m.Record.StationId) : null, footer);
+                    break;
+                }
+            }
+        }
+        catch (Exception ex) { Logger.Warning($"卡片预览失败: {ex.Message}"); }
+    }
+
+    /// <summary>给合并清单配上每项的真实不良次数（一次 IN 查询）。</summary>
+    private List<(string item, int count)> MergedWithCounts(List<string> items, string stationId)
+    {
+        var counts = new Dictionary<string, int>();
+        try { counts = _engine.Db.CountFailByItems(items, stationId); }
+        catch (Exception ex) { Logger.Warning($"预览统计各项次数失败: {ex.Message}"); }
+        return items.Select(x => (x, counts.GetValueOrDefault(x))).ToList();
     }
 
     /// <summary>未确认不良的右键菜单。
@@ -318,6 +366,7 @@ public class MaintenanceBoard : Panel
         public event Action<BoardCardBase, string>? DropRequested;
         public event Action<BoardCardBase>? CardActivateRequested;
         public event Action<BoardCardBase, Control, Point>? CardContextRequested;
+        public event Action<BoardCardBase, Control>? CardPreviewRequested;
 
         private readonly MaintenanceMeta.StatusDef _def;
         private readonly Panel _head;
@@ -437,6 +486,7 @@ public class MaintenanceBoard : Panel
             c.DragDrop += OnDragDrop;
             c.ActivateRequested += OnCardActivate;
             c.ContextRequested += OnCardContext;
+            c.PreviewRequested += OnCardPreview;
             return c;
         }
 
@@ -447,12 +497,15 @@ public class MaintenanceBoard : Panel
             c.DragDrop -= OnDragDrop;
             c.ActivateRequested -= OnCardActivate;
             c.ContextRequested -= OnCardContext;
+            c.PreviewRequested -= OnCardPreview;
         }
 
         private void OnCardActivate(BoardCardBase c) => CardActivateRequested?.Invoke(c);
 
         private void OnCardContext(BoardCardBase c, Point at) =>
             CardContextRequested?.Invoke(c, c, at);
+
+        private void OnCardPreview(BoardCardBase c) => CardPreviewRequested?.Invoke(c, c);
 
         private void UpdateMoreHint()
         {
@@ -469,7 +522,6 @@ public class MaintenanceBoard : Panel
             foreach (var c in _cards.Controls.OfType<BoardCardBase>())
                 if (c.Width != w) c.Width = w;
         }
-
         // ---------- 拖放 ----------
         private static BoardCardBase? CardOf(DragEventArgs e) => BoardCardBase.FromDrag(e);
 
@@ -584,6 +636,12 @@ public sealed class MaintenanceCard : BoardCardBase
     /// <summary>记录卡所在列 = 它的状态。</summary>
     public override string ColumnKey => MaintenanceMeta.Normalize(Record.Status);
 
+    /// <summary>
+    /// 该记录背后合并了哪些原始 fail 项。
+    /// 从备注里回读（确认待办时写进去的），**不额外查库** —— 上百张卡每张发一次 SQL 会卡。
+    /// </summary>
+    public List<string> SourceItems { get; }
+
     private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F, FontStyle.Bold);
     private static readonly Font BodyFont = new("Microsoft YaHei UI", 8.25F);
     private static readonly Font MetaFont = new("Microsoft YaHei UI", 8F);
@@ -591,6 +649,9 @@ public sealed class MaintenanceCard : BoardCardBase
     public MaintenanceCard(MaintenanceRecord m)
     {
         Record = m;
+        SourceItems = TodoGrouping.ParseSourceItems(m.Notes);
+        // 合并过的记录多给一行，把“合并了哪些项”也显在卡上
+        if (SourceItems.Count > 1) Height = 100;
         Tip.SetToolTip(this, BuildTooltip());
     }
 
@@ -600,12 +661,18 @@ public sealed class MaintenanceCard : BoardCardBase
         sb.AppendLine($"#{Record.Id}  {Record.FailItem}");
         // v2.3.0: 不再展示设备型号 / SN
         sb.AppendLine($"严重度: {MaintenanceMeta.SeverityZhOf(Record.Severity)}");
+        if (SourceItems.Count > 1)
+        {
+            sb.AppendLine($"合并的 fail 项（{SourceItems.Count} 项）:");
+            foreach (var v in SourceItems.Take(10)) sb.AppendLine($"   · {v}");
+            if (SourceItems.Count > 10) sb.AppendLine($"   …另有 {SourceItems.Count - 10} 项");
+        }
         if (!string.IsNullOrWhiteSpace(Record.FailReason)) sb.AppendLine($"故障描述: {Record.FailReason}");
         if (!string.IsNullOrWhiteSpace(Record.Resolution)) sb.AppendLine($"维修措施: {Record.Resolution}");
         if (!string.IsNullOrWhiteSpace(Record.Notes)) sb.AppendLine($"备注: {Record.Notes}");
         sb.AppendLine($"记录日期: {Record.CreatedAt}");
         sb.AppendLine($"最后更新: {(string.IsNullOrEmpty(Record.UpdatedAt) ? "—" : Record.UpdatedAt)}");
-        sb.Append("双击编辑 · 拖动到其它列改状态");
+        sb.Append("单击预览 · 双击编辑 · 拖动到其它列改状态");
         return sb.ToString();
     }
 
@@ -655,6 +722,49 @@ public sealed class MaintenanceCard : BoardCardBase
         TextRenderer.DrawText(g, when, MetaFont,
             new Rectangle(Width - 92, 50, 86, 16),
             Color.FromArgb(150, 160, 175), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+
+        // 第 4 行(仅合并过的记录): 合并了哪些原始 fail 项
+        if (SourceItems.Count > 1)
+        {
+            var text = $"合并 {SourceItems.Count} 项：{SourceItems[0]}" +
+                       (SourceItems.Count > 1 ? $"  +{SourceItems.Count - 1}" : "");
+            TextRenderer.DrawText(g, text, MetaFont,
+                new Rectangle(left, 70, Math.Max(20, Width - left - 8), 16),
+                Color.FromArgb(150, 140, 120), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        }
+    }
+
+    /// <summary>预览弹窗用的内容。</summary>
+    public (string title, string subtitle, List<(string, string)> rows, string footer) BuildPreview()
+    {
+        var rows = new List<(string, string)>
+        {
+            ("记录号:", $"#{Record.Id}"),
+            ("状　　态:", MaintenanceMeta.ZhOf(MaintenanceMeta.Normalize(Record.Status))),
+            ("严重程度:", MaintenanceMeta.SeverityZhOf(Record.Severity)),
+            ("维修人员:", string.IsNullOrWhiteSpace(Record.Resolver) ? "未指派" : Record.Resolver),
+            ("故障描述:", string.IsNullOrWhiteSpace(Record.FailReason) ? "—" : Record.FailReason),
+            ("维修措施:", string.IsNullOrWhiteSpace(Record.Resolution) ? "—" : Record.Resolution),
+            ("备　　注:", NotesWithoutSourceItems()),
+            ("记录日期:", Record.CreatedAt),
+            ("最后更新:", string.IsNullOrEmpty(Record.UpdatedAt) ? "—" : Record.UpdatedAt),
+            ("机　　台:", string.IsNullOrWhiteSpace(Record.StationId) ? "—" : Record.StationId),
+        };
+        return (Record.FailItem,
+                $"#{Record.Id} · {MaintenanceMeta.ZhOf(MaintenanceMeta.Normalize(Record.Status))}" +
+                (SourceItems.Count > 1 ? $" · 合并 {SourceItems.Count} 项" : ""),
+                rows,
+                "双击卡片=编辑 · 拖动到其它列=改状态 · 右键=更多操作");
+    }
+
+    /// <summary>备注里去掉“来源测试项”那一大段（预览里它已经单独成表了）。</summary>
+    private string NotesWithoutSourceItems()
+    {
+        var n = Record.Notes ?? "";
+        var i = n.IndexOf(TodoGrouping.SourceItemsTag, StringComparison.Ordinal);
+        if (i >= 0) n = n[..i];
+        n = n.Replace("\r", " ").Replace("\n", " ").Trim();
+        return n.Length == 0 ? "—" : n;
     }
 }
 

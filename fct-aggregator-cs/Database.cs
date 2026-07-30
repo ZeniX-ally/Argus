@@ -917,7 +917,7 @@ public class Database
             Severity = severity,
             Status = string.IsNullOrEmpty(status) ? "open" : status,
             Resolver = resolver,
-            Notes = todo.VariantCount > 1 ? "来源测试项：\n" + string.Join("\n", todo.Variants.Take(20)) : "",
+            Notes = todo.VariantCount > 1 ? TodoGrouping.BuildSourceItemsNote(todo.Variants.Take(20)) : "",
         };
         var id = CreateMaintenance(rec);
 
@@ -962,6 +962,49 @@ public class Database
         if (vs.Length > 0) it.Variants.AddRange(vs.Split('\n', StringSplitOptions.RemoveEmptyEntries));
         it.RangeCount = it.TotalCount;
         return it;
+    }
+
+    /// <summary>
+    /// 每个原始测试项各自的真实不良次数（预览里逐项列次数用）。
+    /// 一次 IN 查询搞定，不循环发 SQL。
+    /// </summary>
+    public Dictionary<string, int> CountFailByItems(IEnumerable<string> items, string stationId = "")
+    {
+        var list = items.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct().ToList();
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (list.Count == 0) return result;
+
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var names = new List<string>();
+        for (int i = 0; i < list.Count; i++)
+        {
+            names.Add($"@p{i}");
+            cmd.Parameters.AddWithValue($"@p{i}", list[i]);
+        }
+        var where = $"WHERE result='FAIL' AND fail_reason IN ({string.Join(",", names)})";
+        if (!string.IsNullOrEmpty(stationId))
+        {
+            where += " AND station_id=@st";
+            cmd.Parameters.AddWithValue("@st", stationId);
+        }
+        cmd.CommandText = $"SELECT fail_reason, COUNT(*) FROM test_records {where} GROUP BY fail_reason";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result[r.IsDBNull(0) ? "" : r.GetString(0)] = r.GetInt32(1);
+        return result;
+    }
+
+    /// <summary>根据维修记录反查关联的待办行（预览里拿权威的合并清单与次数）。</summary>
+    public TodoItem? GetTodoByMaintenance(int maintenanceId)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id FROM todo_items WHERE maintenance_id=@id LIMIT 1";
+        cmd.Parameters.AddWithValue("@id", maintenanceId);
+        var v = cmd.ExecuteScalar();
+        if (v == null || v is DBNull) return null;
+        return GetTodoItem(Convert.ToInt32(v));
     }
 
     /// <summary>

@@ -31,6 +31,7 @@
     <Compile Include="..\BoardCard.cs" />
     <Compile Include="..\TodoCard.cs" />
     <Compile Include="..\TodoGrouping.cs" />
+    <Compile Include="..\CardPreview.cs" />
     <Compile Include="..\DesktopNotifier.cs" />
     <Compile Include="..\Engine.cs" />
     <Compile Include="..\Processor.cs" />
