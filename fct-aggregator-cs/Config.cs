@@ -17,6 +17,11 @@ public class AppConfig
     public bool DesktopNotify { get; set; } = true;
     /// <summary>两次桌面提示的最小间隔秒数。config.json: notify_min_interval_sec。</summary>
     public int NotifyMinIntervalSec { get; set; } = 15;
+    /// <summary>
+    /// 待办扫描窗口（天）：只把近 N 天的不良并入待办登记表，默认 30。
+    /// 已登记的待办**永久保留**，不会因窗口滑动而消失。config.json: todo_scan_days。
+    /// </summary>
+    public int TodoScanDays { get; set; } = 30;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -47,6 +52,9 @@ public class AppConfig
                 if (root.TryGetProperty("notify_min_interval_sec", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var sec) && sec >= 0)
                     cfg.NotifyMinIntervalSec = sec;
+                if (root.TryGetProperty("todo_scan_days", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var days) && days >= 1)
+                    cfg.TodoScanDays = days;
                 return cfg;
             }
             else

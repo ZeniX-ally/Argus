@@ -20,6 +20,9 @@ public class MaintenancePanel : Panel
     private Label _filterLabel = null!;
     private Button _btnBoard = null!;
     private Button _btnList = null!;
+    private ComboBox _range = null!;
+    private Label _rangeLabel = null!;
+    private DateTime? _customFrom, _customTo;
     private List<MaintenanceRecord> _current = new();   // 列表视图当前内容(供导出)
 
     public MaintenancePanel(Engine engine)
@@ -60,6 +63,19 @@ public class MaintenancePanel : Panel
         _filter.SelectedIndex = 0;
         _filter.SelectedIndexChanged += (_, _) => { if (_viewMode == "list") RefreshList(); };
         bar.Controls.Add(_filter);
+
+        // 待办时间区间（只影响看板「待办」列的显示范围，不删任何待办）
+        _rangeLabel = new Label
+        {
+            Text = "待办区间:", AutoSize = true, Anchor = AnchorStyles.Left,
+            Margin = new Padding(12, 8, 4, 0),
+        };
+        bar.Controls.Add(_rangeLabel);
+        _range = new ComboBox { Width = 146, DropDownStyle = ComboBoxStyle.DropDownList };
+        _range.Items.AddRange(TodoRange.Presets(AppConfig.Instance.TodoScanDays).Cast<object>().ToArray());
+        _range.SelectedIndex = 1;                     // 默认「近 N 天」
+        _range.SelectedIndexChanged += (_, _) => ApplyTodoRange();
+        bar.Controls.Add(_range);
 
         var btnFromFail = new Button
         {
@@ -131,6 +147,9 @@ public class MaintenancePanel : Panel
         // 筛选下拉只对列表视图有意义
         _filter.Enabled = _viewMode == "list";
         _filterLabel.Enabled = _viewMode == "list";
+        // 待办区间只对看板视图有意义
+        _range.Enabled = _viewMode == "board";
+        _rangeLabel.Enabled = _viewMode == "board";
 
         var on = Color.FromArgb(26, 82, 118);
         var off = SystemColors.Control;
@@ -149,6 +168,27 @@ public class MaintenancePanel : Panel
 
     /// <summary>当前未确认不良数(看板已加载时才准)。</summary>
     public int PendingTodoCount => _board.PendingTodoCount;
+
+    /// <summary>应用待办时间区间选择（含“自定义…”弹框）。</summary>
+    private void ApplyTodoRange()
+    {
+        if (_range.SelectedItem is not TodoRange r) return;
+        if (r.Label.StartsWith("自定义"))
+        {
+            using var dlg = new TodoRangeForm(_customFrom, _customTo);
+            if (dlg.ShowDialog(this) != DialogResult.OK)
+            {
+                _range.SelectedIndex = 1;             // 取消 -> 回到默认区间
+                return;
+            }
+            _customFrom = dlg.From;
+            _customTo = dlg.To;
+            _board.SetTodoRange(_customFrom, _customTo);
+            Logger.Info($"[待办] 区间已设为 {_customFrom:yyyy-MM-dd} ~ {_customTo:yyyy-MM-dd}");
+            return;
+        }
+        _board.SetTodoRange(r.From, r.To);
+    }
 
     private void RefreshList()
     {

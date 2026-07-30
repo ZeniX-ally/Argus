@@ -8,6 +8,7 @@
     "log_level": "INFO",
     "desktop_notify": true,
     "notify_min_interval_sec": 15,
+    "todo_scan_days": 30,
     "fts": {
         "hookspool_path": "C:\\FTS\\HookSpool",
         "results_path": "D:/Results"

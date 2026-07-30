@@ -12,7 +12,7 @@
   注意：Windows 通知能否**肉眼看到**受系统「通知与专注助手」设置影响，脚本只能验证代码路径没炸。
 #>
 param(
-    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.5.1.zip'
+    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.6.0.zip'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -75,6 +75,7 @@ function Assert($cond, $msg) {
 
 Assert ($text -match '桌面提示已就绪') '桌面提示已初始化（托盘 NotifyIcon 建成）'
 Assert ($text -match '\[入库\].*FAIL') 'FAIL 记录已实时入库'
+Assert ($text -match '\[待办\].*新登记') '新不良已登记进待办（大项合并 + 永久保留）'
 Assert ($text -notmatch '桌面提示弹出失败') '桌面提示弹出无异常'
 Assert ($text -notmatch '桌面提示初始化失败') '桌面提示初始化无异常'
 Assert ($text -notmatch '\| ERROR') '日志无 ERROR'

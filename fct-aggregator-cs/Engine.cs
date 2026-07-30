@@ -181,6 +181,8 @@ public class Engine
                 RefreshStats();
             }
             Logger.Info($"[历史扫描] 结束 | xml={allFiles.Count} | 插入={totalInserted}");
+            // 历史扫描完就把近 N 天的不良并入待办登记表（大项合并、永久保留）
+            SyncTodos("历史扫描后");
         }
         catch (Exception ex)
         {
@@ -197,6 +199,20 @@ public class Engine
     }
 
     private void RefreshStats() => AppState.RefreshStats(_db, _stationId, _cfg.ResultsRoot);
+
+    /// <summary>
+    /// 把「近 <c>todo_scan_days</c> 天」的新不良并入待办登记表。
+    /// 增量(靠水位线)、按大项合并、登记后永久保留。失败不影响采集主流程。
+    /// </summary>
+    private void SyncTodos(string tag)
+    {
+        try
+        {
+            var n = _db.SyncTodoItems(_cfg.TodoScanDays);
+            if (n > 0) Logger.Info($"[待办]{tag} 新登记 {n} 条待办(近 {_cfg.TodoScanDays} 天、同类项已合并)");
+        }
+        catch (Exception ex) { Logger.Warning($"[待办]{tag} 同步失败: {ex.Message}"); }
+    }
 
     // ==================== 实时监控 ====================
     private void OnFileCreated(object sender, FileSystemEventArgs e) => ScheduleProcess(e.FullPath);
@@ -232,6 +248,8 @@ public class Engine
         // FAIL 推送 + 桌面提示(扫描中/UNKNOWN 不推)
         if (rec.Result == "FAIL")
         {
+            // 新不良立即并入待办登记表 —— 就算用户不开待办页也不会漏登记
+            SyncTodos("实时");
             if (rec.StationId == "UNKNOWN")
                 Logger.Info($"[跳过推送-无机台号] FAIL / {rec.Model} / {rec.Sn}");
             else if (!_initialScanComplete)

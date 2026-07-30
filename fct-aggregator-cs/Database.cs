@@ -103,6 +103,41 @@ public class Database
                 CREATE INDEX IF NOT EXISTS idx_dismissed_item ON dismissed_todos(fail_item);
             ";
             cmd4.ExecuteNonQuery();
+
+            // v2.6.0: 待办登记表（**永久保留**）。
+            // 与 v2.4/v2.5 的“实时聚合视图”不同：一旦被扫到就落库，
+            // 即使它的不良滑出了“近一个月”扫描窗口，待办仍在（除非被处理完）。
+            //   group_key : TodoGrouping.KeyOf() 归一化后的合并键（同类测试项合一张卡）
+            //   fail_count: 累计不良次数（靠 app_meta 里的水位线增量累加，不重复计）
+            //   state     : pending 未确认 / ack 已确认(有活跃维修记录) / resolved 已处理完
+            using var cmd5 = conn.CreateCommand();
+            cmd5.CommandText = @"
+                CREATE TABLE IF NOT EXISTS todo_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_key TEXT NOT NULL,
+                    station_id TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL,
+                    model TEXT,
+                    variants TEXT,
+                    variant_count INTEGER NOT NULL DEFAULT 1,
+                    fail_count INTEGER NOT NULL DEFAULT 0,
+                    first_seen TEXT,
+                    last_seen TEXT,
+                    state TEXT NOT NULL DEFAULT 'pending',
+                    maintenance_id INTEGER,
+                    resolved_at TEXT,
+                    created_at TEXT DEFAULT (datetime('now','localtime')),
+                    updated_at TEXT DEFAULT (datetime('now','localtime'))
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_todo_group ON todo_items(group_key, station_id);
+                CREATE INDEX IF NOT EXISTS idx_todo_state ON todo_items(state);
+
+                CREATE TABLE IF NOT EXISTS app_meta (
+                    k TEXT PRIMARY KEY,
+                    v TEXT
+                );
+            ";
+            cmd5.ExecuteNonQuery();
         }
         MigrateClosedStatus();
     }
@@ -473,73 +508,378 @@ public class Database
         return affected > 0;
     }
 
-    // ==================== 待办（FAIL → 确认问题 → 维修记录） ====================
+    // ==================== 待办登记表（v2.6.0：扫描窗口 + 大项合并 + 永久保留） ====================
+
+    /// <summary>增量同步的水位线：已并入待办的 test_records 最大 id。</summary>
+    private const string TodoWatermarkKey = "todo_sync_last_id";
+
+    /// <summary>待办卡上限（登记表可以很大，但一次只呈现最需要处理的这些）。</summary>
+    public const int TodoViewLimit = 300;
+
+    public string? GetMeta(string key)
+    {
+        using var conn = Open();
+        return GetMeta(conn, key);
+    }
+
+    private static string? GetMeta(SqliteConnection conn, string key)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT v FROM app_meta WHERE k=@k";
+        cmd.Parameters.AddWithValue("@k", key);
+        var v = cmd.ExecuteScalar();
+        return v == null || v is DBNull ? null : v.ToString();
+    }
+
+    private static void SetMeta(SqliteConnection conn, string key, string value, SqliteTransaction? tx = null)
+    {
+        using var cmd = conn.CreateCommand();
+        if (tx != null) cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO app_meta(k,v) VALUES(@k,@v) ON CONFLICT(k) DO UPDATE SET v=@v";
+        cmd.Parameters.AddWithValue("@k", key);
+        cmd.Parameters.AddWithValue("@v", value);
+        cmd.ExecuteNonQuery();
+    }
 
     /// <summary>
-    /// 待办项：从 test_records 按故障项聚合，排除已有活跃维修记录的项。
-    /// 活跃维修记录定义：status 不是 resolved/closed（即还在排查/处理中）。
+    /// 把「近 <paramref name="scanDays"/> 天」内的新 FAIL 并入待办登记表。
     ///
-    /// v2.5.1 策略变更：**不再排除 `dismissed_todos`**。
-    /// 待办每一条都对应真实发生过的不良，允许“忽略”等于允许把真问题抹掎；
-    /// 唯一的出口是**确认**（建维修记录）→ 处理 → 拖到「已完成」。
-    /// 旧库里曾被忽略的故障项会因此**自动重新出现**在待办列（预期行为）。
+    /// 三条关键规则：
+    ///   1. **只扫近 N 天**（默认 30）—— 老库里几年的历史不良不会一次性灌成几千张卡；
+    ///   2. **增量**：靠 `app_meta.todo_sync_last_id` 水位线，只处理 id 更大的行，次数不会重复累加；
+    ///   3. **永久保留**：登记过的待办行只改状态、**从不删除**，所以哪怕它的不良早已滑出扫描窗口，
+    ///      待办仍在（用户可以用时间区间去筛，但不会“到期消失”）。
+    ///
+    /// 同类测试项按 <see cref="TodoGrouping.KeyOf"/> 合并为一条（大项合并）。
+    /// 返回本次**新登记**的待办条数。
     /// </summary>
-    public List<TodoItem> ListPendingTodos(string stationId = "")
+    public int SyncTodoItems(int scanDays = 30)
+    {
+        if (scanDays < 1) scanDays = 1;
+        var cutoff = DateTime.Today.AddDays(-scanDays).ToString("yyyyMMdd");
+
+        using var conn = Open();
+
+        long watermark = 0;
+        var wm = GetMeta(conn, TodoWatermarkKey);
+        if (wm != null) long.TryParse(wm, out watermark);
+
+        long maxId;
+        using (var c = conn.CreateCommand())
+        {
+            c.CommandText = "SELECT COALESCE(MAX(id),0) FROM test_records";
+            maxId = Convert.ToInt64(c.ExecuteScalar() ?? 0L);
+        }
+
+        // 分组累加：key = (group_key, station_id)
+        var groups = new Dictionary<(string, string), TodoAgg>();
+        if (maxId > watermark)
+        {
+            using var c = conn.CreateCommand();
+            c.CommandText = @"
+                SELECT fail_reason, station_id, COALESCE(model,''),
+                       COALESCE(NULLIF(batch_timestamp,''), test_date)
+                  FROM test_records
+                 WHERE result='FAIL'
+                   AND fail_reason IS NOT NULL AND TRIM(fail_reason) <> ''
+                   AND id > @wm AND id <= @max
+                   AND test_date >= @cut";
+            c.Parameters.AddWithValue("@wm", watermark);
+            c.Parameters.AddWithValue("@max", maxId);
+            c.Parameters.AddWithValue("@cut", cutoff);
+            using var r = c.ExecuteReader();
+            while (r.Read())
+            {
+                var item = r.IsDBNull(0) ? "" : r.GetString(0);
+                var key = TodoGrouping.KeyOf(item);
+                if (key.Length == 0) continue;
+                var station = r.IsDBNull(1) ? "" : r.GetString(1);
+                var model = r.IsDBNull(2) ? "" : r.GetString(2);
+                var ts = NormalizeTs(r.IsDBNull(3) ? "" : r.GetString(3));
+
+                if (!groups.TryGetValue((key, station), out var agg))
+                    groups[(key, station)] = agg = new TodoAgg { Model = model };
+                agg.Count++;
+                agg.Variants.Add(item.Trim());
+                if (string.IsNullOrEmpty(agg.Model)) agg.Model = model;
+                if (ts.Length > 0)
+                {
+                    if (agg.First.Length == 0 || string.CompareOrdinal(ts, agg.First) < 0) agg.First = ts;
+                    if (string.CompareOrdinal(ts, agg.Last) > 0) agg.Last = ts;
+                }
+            }
+        }
+
+        int created = 0;
+        using (var tx = conn.BeginTransaction())
+        {
+            foreach (var ((key, station), agg) in groups)
+            {
+                // 已有则合并累加，没有则新建
+                string? oldVariants = null;
+                int id = 0;
+                using (var sel = conn.CreateCommand())
+                {
+                    sel.Transaction = tx;
+                    sel.CommandText = "SELECT id, variants FROM todo_items WHERE group_key=@k AND station_id=@s";
+                    sel.Parameters.AddWithValue("@k", key);
+                    sel.Parameters.AddWithValue("@s", station);
+                    using var rr = sel.ExecuteReader();
+                    if (rr.Read())
+                    {
+                        id = rr.GetInt32(0);
+                        oldVariants = rr.IsDBNull(1) ? "" : rr.GetString(1);
+                    }
+                }
+
+                var variants = new List<string>();
+                if (!string.IsNullOrEmpty(oldVariants))
+                    variants.AddRange(oldVariants.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+                foreach (var v in agg.Variants)
+                    if (!variants.Contains(v, StringComparer.OrdinalIgnoreCase)) variants.Add(v);
+                if (variants.Count > 40) variants = variants.Take(40).ToList();   // 防止无界膨胀
+                var title = TodoGrouping.TitleOf(variants);
+                if (string.IsNullOrEmpty(title)) title = key;
+
+                if (id == 0)
+                {
+                    using var ins = conn.CreateCommand();
+                    ins.Transaction = tx;
+                    ins.CommandText = @"
+                        INSERT INTO todo_items
+                            (group_key, station_id, title, model, variants, variant_count,
+                             fail_count, first_seen, last_seen, state)
+                        VALUES (@k, @s, @t, @m, @vs, @vc, @c, @f, @l, 'pending')";
+                    ins.Parameters.AddWithValue("@k", key);
+                    ins.Parameters.AddWithValue("@s", station);
+                    ins.Parameters.AddWithValue("@t", title);
+                    ins.Parameters.AddWithValue("@m", agg.Model);
+                    ins.Parameters.AddWithValue("@vs", string.Join("\n", variants));
+                    ins.Parameters.AddWithValue("@vc", variants.Count);
+                    ins.Parameters.AddWithValue("@c", agg.Count);
+                    ins.Parameters.AddWithValue("@f", agg.First);
+                    ins.Parameters.AddWithValue("@l", agg.Last);
+                    ins.ExecuteNonQuery();
+                    created++;
+                }
+                else
+                {
+                    using var upd = conn.CreateCommand();
+                    upd.Transaction = tx;
+                    upd.CommandText = @"
+                        UPDATE todo_items
+                           SET title=@t,
+                               model=CASE WHEN COALESCE(model,'')='' THEN @m ELSE model END,
+                               variants=@vs, variant_count=@vc,
+                               fail_count=fail_count+@c,
+                               first_seen=CASE WHEN COALESCE(first_seen,'')='' OR (@f<>'' AND @f<first_seen)
+                                               THEN @f ELSE first_seen END,
+                               last_seen=CASE WHEN @l>COALESCE(last_seen,'') THEN @l ELSE last_seen END,
+                               updated_at=datetime('now','localtime')
+                         WHERE id=@id";
+                    upd.Parameters.AddWithValue("@t", title);
+                    upd.Parameters.AddWithValue("@m", agg.Model);
+                    upd.Parameters.AddWithValue("@vs", string.Join("\n", variants));
+                    upd.Parameters.AddWithValue("@vc", variants.Count);
+                    upd.Parameters.AddWithValue("@c", agg.Count);
+                    upd.Parameters.AddWithValue("@f", agg.First);
+                    upd.Parameters.AddWithValue("@l", agg.Last);
+                    upd.Parameters.AddWithValue("@id", id);
+                    upd.ExecuteNonQuery();
+                }
+            }
+
+            SetMeta(conn, TodoWatermarkKey, maxId.ToString(), tx);
+            tx.Commit();
+        }
+
+        ReconcileTodoStates(conn);
+        return created;
+    }
+
+    private sealed class TodoAgg
+    {
+        public int Count;
+        public string Model = "";
+        public string First = "";
+        public string Last = "";
+        public readonly List<string> Variants = new();
+    }
+
+    /// <summary>时间戳统一成 `yyyy-MM-dd HH:mm:ss`，否则字符串比较会因 `T` / 纯日期而错乱。</summary>
+    private static string NormalizeTs(string ts)
+    {
+        ts = (ts ?? "").Trim();
+        if (ts.Length == 0) return "";
+        if (ts.Length == 8 && ts.All(char.IsDigit))                  // yyyyMMdd
+            return $"{ts[..4]}-{ts[4..6]}-{ts[6..8]} 00:00:00";
+        if (DateTime.TryParse(ts, out var dt)) return dt.ToString("yyyy-MM-dd HH:mm:ss");
+        return ts.Replace('T', ' ');
+    }
+
+    /// <summary>
+    /// 状态对账（幂等，每次同步后跑）：
+    ///   · 关联的维修记录被删 → 回到 pending（**待办删不掉**）
+    ///   · 关联记录仍活跃      → ack（不在待办列显示）
+    ///   · 关联记录已完成      → resolved（记 resolved_at）
+    ///   · 已完成之后又出新不良 → 回到 pending（复发重现）
+    /// </summary>
+    private static void ReconcileTodoStates(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            -- 记录被删 -> 重新变成未确认
+            UPDATE todo_items
+               SET state='pending', maintenance_id=NULL, resolved_at=NULL,
+                   updated_at=datetime('now','localtime')
+             WHERE maintenance_id IS NOT NULL
+               AND maintenance_id NOT IN (SELECT id FROM maintenance_records);
+
+            -- 记录已完成 -> resolved（resolved_at 取记录的最后更新时间）
+            UPDATE todo_items
+               SET state='resolved',
+                   resolved_at=(SELECT COALESCE(NULLIF(m.updated_at,''), m.created_at)
+                                  FROM maintenance_records m WHERE m.id=todo_items.maintenance_id),
+                   updated_at=datetime('now','localtime')
+             WHERE maintenance_id IS NOT NULL
+               AND (SELECT status FROM maintenance_records WHERE id=todo_items.maintenance_id)
+                   IN ('resolved','closed');
+
+            -- 记录仍活跃 -> ack
+            UPDATE todo_items
+               SET state='ack', resolved_at=NULL, updated_at=datetime('now','localtime')
+             WHERE maintenance_id IS NOT NULL
+               AND (SELECT status FROM maintenance_records WHERE id=todo_items.maintenance_id)
+                   NOT IN ('resolved','closed');
+
+            -- 处理完之后又出现新不良 -> 复发，回到未确认
+            UPDATE todo_items
+               SET state='pending', maintenance_id=NULL, resolved_at=NULL,
+                   updated_at=datetime('now','localtime')
+             WHERE state='resolved' AND COALESCE(resolved_at,'')<>''
+               AND COALESCE(last_seen,'') > resolved_at;
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 待办视图：未确认（pending）的待办项，**按 fail 次数倒序**（= 处理优先级）。
+    ///
+    /// <paramref name="from"/> / <paramref name="to"/> 给定时按时间区间筛：
+    /// 只保留「该区间内真实出现过不良」的项，且 <see cref="TodoItem.RangeCount"/> = 区间内次数
+    /// （区间统计现算，直接从 test_records 聚合，不依赖登记表）。
+    /// 两个都传 null = 不限区间，显示全部未处理的待办（永久保留的都在）。
+    /// </summary>
+    public List<TodoItem> ListTodoView(DateTime? from = null, DateTime? to = null, int limit = TodoViewLimit)
+    {
+        using var conn = Open();
+
+        // 1) 登记表里所有未确认项
+        var list = new List<TodoItem>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = @"
+                SELECT id, group_key, station_id, title, COALESCE(model,''), COALESCE(variants,''),
+                       variant_count, fail_count, COALESCE(first_seen,''), COALESCE(last_seen,'')
+                  FROM todo_items
+                 WHERE state='pending'
+                 ORDER BY fail_count DESC, last_seen DESC";
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                var it = new TodoItem
+                {
+                    Id = r.GetInt32(0),
+                    GroupKey = r.GetString(1),
+                    StationId = r.GetString(2),
+                    Title = r.GetString(3),
+                    Model = r.GetString(4),
+                    VariantCount = r.GetInt32(6),
+                    TotalCount = r.GetInt32(7),
+                    FirstSeen = r.GetString(8),
+                    LastSeen = r.GetString(9),
+                };
+                var vs = r.GetString(5);
+                if (vs.Length > 0) it.Variants.AddRange(vs.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+                list.Add(it);
+            }
+        }
+        if (list.Count == 0) return list;
+
+        // 2) 区间统计（可选）
+        if (from != null || to != null)
+        {
+            var ranged = new Dictionary<(string, string), (int cnt, string first, string last)>();
+            using (var cmd = conn.CreateCommand())
+            {
+                var where = "WHERE result='FAIL' AND fail_reason IS NOT NULL AND TRIM(fail_reason) <> ''";
+                if (from != null) { where += " AND test_date >= @a"; }
+                if (to != null) { where += " AND test_date <= @b"; }
+                cmd.CommandText = $@"
+                    SELECT fail_reason, station_id, COUNT(*),
+                           MIN(COALESCE(NULLIF(batch_timestamp,''), test_date)),
+                           MAX(COALESCE(NULLIF(batch_timestamp,''), test_date))
+                      FROM test_records {where}
+                     GROUP BY fail_reason, station_id";
+                if (from != null) cmd.Parameters.AddWithValue("@a", from.Value.ToString("yyyyMMdd"));
+                if (to != null) cmd.Parameters.AddWithValue("@b", to.Value.ToString("yyyyMMdd"));
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    var key = TodoGrouping.KeyOf(r.IsDBNull(0) ? "" : r.GetString(0));
+                    if (key.Length == 0) continue;
+                    var station = r.IsDBNull(1) ? "" : r.GetString(1);
+                    var cnt = r.GetInt32(2);
+                    var f = NormalizeTs(r.IsDBNull(3) ? "" : r.GetString(3));
+                    var l = NormalizeTs(r.IsDBNull(4) ? "" : r.GetString(4));
+                    if (ranged.TryGetValue((key, station), out var old))
+                        ranged[(key, station)] = (old.cnt + cnt,
+                            old.first.Length == 0 || (f.Length > 0 && string.CompareOrdinal(f, old.first) < 0) ? f : old.first,
+                            string.CompareOrdinal(l, old.last) > 0 ? l : old.last);
+                    else
+                        ranged[(key, station)] = (cnt, f, l);
+                }
+            }
+
+            var kept = new List<TodoItem>();
+            foreach (var it in list)
+            {
+                if (!ranged.TryGetValue((it.GroupKey, it.StationId), out var v)) continue;  // 区间内没出现
+                it.RangeCount = v.cnt;
+                it.RangeFirstSeen = v.first;
+                it.RangeLastSeen = v.last;
+                kept.Add(it);
+            }
+            list = kept;
+        }
+        else
+        {
+            foreach (var it in list) it.RangeCount = it.TotalCount;
+        }
+
+        // 3) 按 fail 次数排优先级（区间模式下按区间内次数）
+        list = list.OrderByDescending(x => x.SortCount)
+                   .ThenByDescending(x => x.LastSeen, StringComparer.Ordinal)
+                   .Take(limit)
+                   .ToList();
+        return list;
+    }
+
+    /// <summary>未确认待办条数（列头徽章用，比拉全表便宜）。</summary>
+    public int CountPendingTodos()
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        var where = "WHERE f.result='FAIL'";
-        if (!string.IsNullOrEmpty(stationId)) where += " AND f.station_id=@s";
-        cmd.CommandText = $@"
-            SELECT
-                f.fail_reason,
-                f.station_id,
-                COALESCE(f.model, ''),
-                COALESCE(f.category, ''),
-                COUNT(*) AS cnt,
-                MIN(COALESCE(NULLIF(f.batch_timestamp,''), f.test_date)) AS first_seen,
-                MAX(COALESCE(NULLIF(f.batch_timestamp,''), f.test_date)) AS last_seen,
-                MIN(f.test_date) AS first_test_date,
-                MAX(f.test_date) AS last_test_date
-            FROM test_records f
-            WHERE f.result='FAIL'
-              AND f.fail_reason IS NOT NULL AND TRIM(f.fail_reason) <> ''
-              AND NOT EXISTS (
-                  SELECT 1 FROM maintenance_records m
-                  WHERE m.fail_item = f.fail_reason
-                    AND m.station_id = f.station_id
-                    AND m.status NOT IN ('resolved','closed')
-              )
-            GROUP BY f.fail_reason, f.station_id
-            ORDER BY last_seen DESC, cnt DESC
-            LIMIT 500";
-        if (!string.IsNullOrEmpty(stationId)) cmd.Parameters.AddWithValue("@s", stationId);
-        var list = new List<TodoItem>();
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
-        {
-            list.Add(new TodoItem
-            {
-                FailItem = r.IsDBNull(0) ? "" : r.GetString(0),
-                StationId = r.IsDBNull(1) ? "" : r.GetString(1),
-                Model = r.IsDBNull(2) ? "" : r.GetString(2),
-                Category = r.IsDBNull(3) ? "" : r.GetString(3),
-                OccurrenceCount = r.GetInt32(4),
-                FirstSeen = r.IsDBNull(5) ? "" : r.GetString(5),
-                LastSeen = r.IsDBNull(6) ? "" : r.GetString(6),
-                FirstTestDate = r.IsDBNull(7) ? "" : r.GetString(7),
-                LastTestDate = r.IsDBNull(8) ? "" : r.GetString(8),
-            });
-        }
-        return list;
+        cmd.CommandText = "SELECT COUNT(*) FROM todo_items WHERE state='pending'";
+        return Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
     }
 
     /// <summary>
     /// ⚠ **已废弃（v2.5.1）**：待办来自真实不良，不得忽略/删除。
-    /// 保留方法仅为不破坏旧调用方的编译；写入仍会发生，但 <see cref="ListPendingTodos"/> 已不再读它，
+    /// 保留方法仅为不破坏旧调用方的编译；写入仍会发生，但待办视图已不再读它，
     /// 所以**调了也不会让待办消失**。新代码请勿使用。
     /// </summary>
-    [Obsolete("待办来自真实不良，不得忽略；ListPendingTodos 已不再读 dismissed_todos。")]
+    [Obsolete("待办来自真实不良，不得忽略；待办视图已不再读 dismissed_todos。")]
     public void DismissTodo(string failItem, string stationId, string model)
     {
         using var conn = Open();
@@ -554,23 +894,74 @@ public class Database
     }
 
     /// <summary>
-    /// 从待办确认问题：创建一条维修记录（状态=open），并返回其 ID。
-    /// 该记录创建后待办列表自动不再显示此故障项（因为有活跃维修记录存在）。
-    /// 反之，若该记录被删除或拖到「已完成」而故障又复发，待办会**自动重新出现** ——
-    /// 这就是“待办不可删除”的底层保障：它不是一条可操作的行，而是真实数据的投影。
+    /// 确认待办 → 建一条维修记录并与待办行**双向关联**，返回维修记录 ID。
+    ///
+    /// 关联之后：
+    ///   · 待办行 state=ack，不再出现在待办列；
+    ///   · 记录被拖到「已完成」→ state=resolved；同故障项再出不良 → 自动回到 pending（复发）；
+    ///   · 记录被删 → 自动回到 pending（**待办删不掉**）。
     /// </summary>
-    public int AcknowledgeTodo(string failItem, string stationId, string model, string resolver, string severity)
+    public int AcknowledgeTodo(int todoId, string resolver, string severity, string status = "open")
     {
+        TodoItem? todo = GetTodoItem(todoId);
+        if (todo == null) throw new InvalidOperationException($"待办 #{todoId} 不存在（可能已被处理）");
+
+        var reason = todo.VariantCount > 1
+            ? $"合并 {todo.VariantCount} 个同类测试项，累计 {todo.TotalCount} 次不良"
+            : $"累计 {todo.TotalCount} 次不良";
         var rec = new MaintenanceRecord
         {
-            StationId = stationId,
-            FailItem = failItem,
-            FailReason = $"来自 FAIL 待办 — {model}",
+            StationId = todo.StationId,
+            FailItem = todo.Title,
+            FailReason = reason,
             Severity = severity,
-            Status = "open",
+            Status = string.IsNullOrEmpty(status) ? "open" : status,
             Resolver = resolver,
+            Notes = todo.VariantCount > 1 ? "来源测试项：\n" + string.Join("\n", todo.Variants.Take(20)) : "",
         };
-        return CreateMaintenance(rec);
+        var id = CreateMaintenance(rec);
+
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE todo_items
+               SET state='ack', maintenance_id=@mid, resolved_at=NULL,
+                   updated_at=datetime('now','localtime')
+             WHERE id=@id";
+        cmd.Parameters.AddWithValue("@mid", id);
+        cmd.Parameters.AddWithValue("@id", todoId);
+        cmd.ExecuteNonQuery();
+        return id;
+    }
+
+    public TodoItem? GetTodoItem(int id)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT id, group_key, station_id, title, COALESCE(model,''), COALESCE(variants,''),
+                   variant_count, fail_count, COALESCE(first_seen,''), COALESCE(last_seen,''), state
+              FROM todo_items WHERE id=@id";
+        cmd.Parameters.AddWithValue("@id", id);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        var it = new TodoItem
+        {
+            Id = r.GetInt32(0),
+            GroupKey = r.GetString(1),
+            StationId = r.GetString(2),
+            Title = r.GetString(3),
+            Model = r.GetString(4),
+            VariantCount = r.GetInt32(6),
+            TotalCount = r.GetInt32(7),
+            FirstSeen = r.GetString(8),
+            LastSeen = r.GetString(9),
+            State = r.GetString(10),
+        };
+        var vs = r.GetString(5);
+        if (vs.Length > 0) it.Variants.AddRange(vs.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        it.RangeCount = it.TotalCount;
+        return it;
     }
 
     /// <summary>
@@ -869,17 +1260,40 @@ public class FailItemSource
     public string XmlPath = "";
 }
 
+/// <summary>
+/// 一条待办（= `todo_items` 一行）。
+///
+/// 它不是单个测试项，而是**合并后的大项**：同类测试项（只差编号/通道/位号）
+/// 经 <see cref="TodoGrouping.KeyOf"/> 归一化后归为一条，<see cref="Variants"/> 里留着原始项名。
+/// </summary>
 public class TodoItem
 {
-    public string FailItem = "";
+    public int Id;
+    /// <summary>合并键（归一化后的测试项）。</summary>
+    public string GroupKey = "";
+    /// <summary>展示名（代表性测试项，已去步骤号）。</summary>
+    public string Title = "";
     public string StationId = "";
     public string Model = "";
-    public string Category = "";
-    public int OccurrenceCount;
+    /// <summary>被合并的原始测试项名。</summary>
+    public readonly List<string> Variants = new();
+    /// <summary>合并了多少个原始测试项。</summary>
+    public int VariantCount = 1;
+    /// <summary>累计不良次数（永久累加，不因扫描窗口滑动而减少）。</summary>
+    public int TotalCount;
+    /// <summary>当前选定时间区间内的不良次数（不限区间时等于累计）。</summary>
+    public int RangeCount;
+    /// <summary>排优先级用的次数：有区间就用区间内次数，否则用累计。</summary>
+    public int SortCount => RangeCount > 0 ? RangeCount : TotalCount;
     public string FirstSeen = "";
     public string LastSeen = "";
-    public string FirstTestDate = "";
-    public string LastTestDate = "";
+    public string RangeFirstSeen = "";
+    public string RangeLastSeen = "";
+    /// <summary>pending 未确认 / ack 已确认 / resolved 已处理完。</summary>
+    public string State = "pending";
+
+    /// <summary>优先级中文（按 fail 次数）。</summary>
+    public string PriorityZh => TodoGrouping.PriorityZhOf(SortCount);
 }
 
 public class MaintenanceRecord

@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.5.1
+**当前版本**：v2.6.0
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -46,6 +46,7 @@ FAIL 记录报告查看、调试工具页。
 | 飞书告警 | FAIL 记录推交互卡片，含失败步骤名称 / 实测值 / 上下限 |
 | 设备状态 | 解析 `FCT.ini`：型号列表、固件版本、COM/USB 设备在线灯、A2L 文件 |
 | 维修记录 / 待办 | **看板（5 列拖拽改状态）/ 列表**两视图；增 / 查 / **改（全字段编辑）** / 删 + 导出 xlsx / csv<br>**故障项目从 FAIL 记录去重后挑选**（不显示 SN），可一次建多条；维修人可下拉选历史值<br>**待办（v2.5.0 起整合进看板）**：未确认的不良以 `TodoCard` 直接排在看板「待办」列顶部，双击确认 / 拖到别列 = 确认并置状态 / 右键忽略 |
+| 待办登记 | 只扫近 `todo_scan_days`(默认30) 天的 FAIL，按 `TodoGrouping.KeyOf()` **同类合并成大项**，落 `todo_items` 表**永久保留**；可按时间区间查看，按 fail 次数排优先级（高/中/低） |
 | 桌面提示 | FAIL 落库即弹 **Windows 原生通知**（托盘 `NotifyIcon` + BalloonTip，无 UWP 依赖），节流合并，点通知直达待办看板 |
 | FAIL 记录 | 本机全部 FAIL 列表，双击弹出报告式查看器（完整测试流程，失败项标红） |
 | 调试工具 | 推送测试 / 数据库状态 / 机台检测 / 型号发现 / 查询 / 自启开关 / 清库 |
@@ -86,7 +87,8 @@ fct-aggregator-cs/
 ├── ResolverManager.cs        # ResolverUtil(多人拆合) + 名单管理 + **多选框** ResolverPickerForm
 ├── MaintenanceExporter.cs    # 维修记录导出 xlsx / csv（零依赖 OOXML，12 列）
 ├── BoardCard.cs              # BoardCardBase：看板卡片交互基类（hover/起拖/双击/右键 + 拖拽格式）
-├── TodoCard.cs               # 未确认不良卡（看板「待办」列）+ TodoConfirmForm 确认框
+├── TodoCard.cs               # 未确认不良卡（看板「待办」列）+ 确认框 + 时间区间选择
+├── TodoGrouping.cs           # 待办「大项合并」归一化 + 优先级阈值（单一来源）
 ├── DesktopNotifier.cs        # Windows 原生桌面提示（托盘 NotifyIcon + BalloonTip，节流合并）
 ├── DebugPanel.cs             # 调试工具页
 ├── FailListPanel.cs          # FAIL 记录页 + XmlViewerForm 报告查看器
@@ -170,7 +172,7 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
 - **`BaseDir` 用 `AppContext.BaseDirectory` 而非 `Environment.ProcessPath`**：
   用 `dotnet FCT-Aggregator.dll` 启动时 ProcessPath 是 `dotnet.exe`，会导致 db/log 落错目录。
 - 字段：`station_id` / `results_root` / `fct_ini_path` / `webhook_url` /
-  `skip_historical_scan` / `log_level` / **`desktop_notify`** / **`notify_min_interval_sec`**
+  `skip_historical_scan` / `log_level` / **`desktop_notify`** / **`notify_min_interval_sec`** / **`todo_scan_days`**
   （config.json 里其余字段为历史遗留，程序不读）。
 
 ### 4.3 `Engine.cs`
@@ -239,7 +241,15 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
   - `DeleteMaintenance(id)` —— 同事务内把 `sqlite_sequence.seq` 回抨到 `MAX(id)`，
     使「删空后新建回到 1 / 删最后一条后接着用」；中间空号不回填
 - FAIL 查询：`RecentFails(limit)`（Debug 页）、`AllFails(stationId)`（FAIL 记录页，时间倒序）
-- 待办（v2.4.0，v2.5.0 起消费方从 TodoPanel 改为看板 `TodoCard`）：
+- 待办（v2.6.0 重做为**登记表**，消费方 = 看板 `TodoCard`）：
+  - `SyncTodoItems(scanDays = 30)` —— 把近 N 天的新 FAIL 并入 `todo_items`（增量 + 大项合并），返回新登记条数
+  - `ListTodoView(from?, to?, limit)` —— 未确认待办，按 fail 次数倒序；给了区间则只留区间内出现过的，
+    并填 `RangeCount`（区间内次数，现算）
+  - `CountPendingTodos()` / `GetTodoItem(id)` / `GetMeta(key)`
+  - `AcknowledgeTodo(todoId, resolver, severity, status)` —— 建维修记录并与待办行双向关联
+  - `CountFailRecords(failItem, stationId)` —— 删维修记录时提示“会回到待办”
+  - ⚠ 已删除：`ListPendingTodos()`（旧的实时聚合视图）；`DismissTodo()` 仍在但 `[Obsolete]`
+- 待办（v2.4.0，历史）：
   - `ListPendingTodos(stationId)` —— 实时聚合 `test_records` 中 FAIL 项（按 `fail_reason` 分组），
     排除已有**活跃维修记录**（status 不在 resolved/closed）或已忽略的项
   - `DismissTodo(failItem, stationId, model)` —— ⚠ **v2.5.1 已 `[Obsolete]`**：待办不可忽略，
@@ -435,6 +445,7 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 | `log_level` | `INFO` | DEBUG / INFO / WARNING / ERROR |
 | `desktop_notify` | `true` | Windows 原生桌面提示总开关（**只有显式写 `false` 才关**） |
 | `notify_min_interval_sec` | `15` | 两次桌面提示的最小间隔秒数，期间多条合并 |
+| `todo_scan_days` | `30` | 待办扫描窗口（天）。只影响**新并入**；已登记的待办永久保留 |
 
 历史遗留但**当前程序不读**的键：`auto_start`、`fts.*`、`api_key`、`cleanup_admin_key`、
 `api_host`、`api_port`（HTTP API 已下线）。
@@ -454,6 +465,31 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 | **调试** | 推送测试、数据库状态、机台检测、型号发现、设备状态、最近 10 条 FAIL、今日统计、最大 SN、查看配置、开机自启开关、清空数据库 |
 
 底部另有「清空日志」「退出」。窗口标题显示版本号，便于现场确认机台上的版本。
+
+### 6.5 `todo_items` + `app_meta`（v2.6.0 新增）
+
+待办从「SQL 实时聚合」改为**登记表**，这是「永久保留 + 累计次数」的落点。
+
+| 字段 | 说明 |
+|------|------|
+| `group_key` | `TodoGrouping.KeyOf(fail_reason)` 归一化键，**同 key = 同一张待办卡**（大项合并） |
+| `station_id` | 机台号；`UNIQUE(group_key, station_id)` —— 不同机台各算一条待办 |
+| `title` | 展示名 = 组内最短的原始项名（去步骤号），稳定不跳 |
+| `variants` / `variant_count` | 被合并的原始测试项名（换行分隔，上限 40 条防膨胀） |
+| `fail_count` | **累计**不良次数（靠水位线增量累加，重复同步不会翻倍） |
+| `first_seen` / `last_seen` | 统一 `yyyy-MM-dd HH:mm:ss`（见下方“坑”） |
+| `state` | `pending` 未确认 / `ack` 已确认(有活跃记录) / `resolved` 已处理完 |
+| `maintenance_id` / `resolved_at` | 与维修记录的关联、完成时间（复发判定用） |
+
+`app_meta(k,v)` 目前只存一个 `todo_sync_last_id` —— 已并入待办的 `test_records` 最大 id（增量水位线）。
+
+⚠ **坑**：`last_seen` 与 `resolved_at` 必须同格式才能比较。`batch_timestamp` 形如
+`2026-07-30T10:00:00`，维修记录是 `2026-07-30 10:00:00`，而 `'T'(84) > ' '(32)`，
+不归一化会把「刚完成的记录」误判成复发、立刻弹回待办。统一走 `NormalizeTs()`。
+
+⚠ **坑**：不能简单剔掉开头数字。`5V_Rail` 的 `5` 是电压值，剔了变成 `V_Rail`，
+还会把 `5V_Rail` 与 `12V_Rail` 错并。只剔三种确定是序号的形式：
+`12) ` / `Step 3 ` / 多段号 `6.1.1.1 `；单个数字+空格宁可不剔。
 
 ### 8.1 维修记录看板实现要点（v2.2.0）
 
@@ -500,7 +536,12 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 
 | 设计 | 说明 |
 |------|------|
-| 数据源 | **`test_records` 实时聚合**，不建待办表 —— 避开「快照表与真实数据不一致」的经典坑 |
+| 数据源（v2.6.0） | `todo_items` **登记表** + 现算的区间统计。v2.4/2.5 的纯实时聚合视图已废：那样无法“永久保留”，也无法累计次数 |
+| 扫描窗口（v2.6.0） | 只并入近 `todo_scan_days`（默认 30）天的 FAIL；靠 `app_meta.todo_sync_last_id` 水位线增量，反复同步不重算 |
+| 大项合并（v2.6.0） | `TodoGrouping.KeyOf()`：丢步骤号 / 通道号 / 位号 / 括号限定词，**保留数字+单位**（5V≠12V）。展示名取组内最短项，原始项存 `variants` |
+| 永久保留（v2.6.0） | 登记行只改 `state`、**从不删除**；不良滑出扫描窗口后待办仍在 |
+| 时间区间（v2.6.0） | `ListTodoView(from,to)`：区间统计从 `test_records` 现算再用同一套 `KeyOf` 归并；区间只影响显示，不删待办 |
+| 优先级（v2.6.0） | 按 fail 次数倒序（有区间用区间内次数）；高 ≥20 / 中 ≥5 / 低，阈值在 `TodoGrouping` |
 | 去重口径 | `GROUP BY fail_reason, station_id` —— 同一故障项在不同机台是两条待办 |
 | 何时不显示（已确认） | `NOT EXISTS` 子查询：存在**活跃维修记录**（`status NOT IN ('resolved','closed')`）即视为有人在处理 |
 | 不可忽略 / 不可删除（**v2.5.1**） | 待办 = 真实 FAIL 数据的**投影**，不是可划掉的事项。UI 无忽略入口（右键菜单只有确认 + 一条禁用说明）；`ListPendingTodos` **不再读 `dismissed_todos`**（旧库里被忽略过的项会自动重现）；看板上已无任何 `Dismiss*` 方法（自检断言防回流） |

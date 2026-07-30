@@ -46,6 +46,9 @@ public class DebugPanel : Panel
         AddBtn("最近10条FAIL", QueryFails);
         AddBtn("今日统计", QueryToday);
         AddBtn("最大SN", QueryMaxSn);
+        AddTag("待办");
+        AddBtn("待办同步", TodoSync);
+        AddBtn("合并预览", TodoPreview);
         AddTag("配置");
         AddBtn("查看配置", ViewConfig);
         AddBtn("桌面提示开关", ToggleDesktopNotify);
@@ -153,6 +156,38 @@ public class DebugPanel : Panel
         Print($"最大SN: {_engine.Db.MaxSn() ?? "(无)"}");
     }
 
+    /// <summary>手动跑一次待办同步（平时由引擎/看板自动调）。</summary>
+    private void TodoSync()
+    {
+        var days = _engine.Config.TodoScanDays;
+        var n = _engine.Db.SyncTodoItems(days);
+        Print($"待办同步完成（扫描窗口 {days} 天）：新登记 {n} 条；当前未确认 {_engine.Db.CountPendingTodos()} 条");
+        Print($"水位线(已并入的 test_records 最大 id): {_engine.Db.GetMeta("todo_sync_last_id") ?? "(未设置)"}");
+    }
+
+    /// <summary>
+    /// 预览“大项合并”的效果：当前库里的故障项会被归成哪些待办大项。
+    /// 现场命名习惯各不相同，上线前用这个确认不会错合并 / 漏合并。
+    /// </summary>
+    private void TodoPreview()
+    {
+        var srcs = _engine.Db.FailItemSources("");
+        var agg = FailItemPickerForm.Aggregate(srcs);
+        if (agg.Count == 0) { Print("库里没有 FAIL 故障项。"); return; }
+        var groups = agg.GroupBy(a => TodoGrouping.KeyOf(a.Item))
+                        .OrderByDescending(g => g.Sum(x => x.Count)).ToList();
+        Print($"故障项 {agg.Count} 个 -> 合并为 {groups.Count} 个待办大项（按 fail 次数倒序 = 处理优先级）:");
+        foreach (var g in groups.Take(40))
+        {
+            var total = g.Sum(x => x.Count);
+            var merged = g.Count() > 1 ? $"   ← 合并 {g.Count()} 项" : "";
+            Print($"  {total,4}x [优先级{TodoGrouping.PriorityZhOf(total)}] {TodoGrouping.TitleOf(g.Select(x => x.Item))}{merged}");
+            if (g.Count() > 1)
+                foreach (var v in g) Print($"          · {v.Count}x {v.Item}");
+        }
+        if (groups.Count > 40) Print($"  …另有 {groups.Count - 40} 个大项未列出");
+    }
+
     private void ViewConfig()
     {
         var c = _engine.Config;
@@ -164,6 +199,7 @@ public class DebugPanel : Panel
         Print($"  log_level: {c.LogLevel}");
         Print($"  desktop_notify: {(c.DesktopNotify ? "开" : "关")}（当前运行中: {(DesktopNotifier.Enabled ? "开" : "关")}）");
         Print($"  notify_min_interval_sec: {c.NotifyMinIntervalSec}");
+        Print($"  todo_scan_days: {c.TodoScanDays}（待办只扫近 {c.TodoScanDays} 天；已登记的永久保留）");
     }
 
     /// <summary>弹一条假的不良提示，验证 Windows 通知是否被系统屏蔽。</summary>

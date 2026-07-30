@@ -295,6 +295,19 @@ class SelfTest
         Check(realFails.All(f => f.GetType().GetField("Sn") == null),
               "FailItemSource 结构里根本没有 Sn 字段（从数据层就不带 SN）");
 
+        // 真实库上看一眼大项合并的效果（人工校对用，不做硬断言：每个现场的命名习惯不一样）
+        {
+            var byKey = realAgg.GroupBy(a => TodoGrouping.KeyOf(a.Item))
+                               .OrderByDescending(g => g.Sum(x => x.Count)).ToList();
+            Console.WriteLine($"    大项合并：{realAgg.Count} 个原始测试项 -> {byKey.Count} 个待办大项");
+            foreach (var g in byKey.Take(8))
+                Console.WriteLine($"      {g.Sum(x => x.Count),3}x  {TodoGrouping.TitleOf(g.Select(x => x.Item))}" +
+                                  (g.Count() > 1 ? $"   ← 合并 {g.Count()} 项: {string.Join(" / ", g.Select(x => x.Item))}" : ""));
+            Check(byKey.Count <= realAgg.Count, "合并后的大项数不多于原始项数");
+            Check(byKey.All(g => TodoGrouping.TitleOf(g.Select(x => x.Item)).Length > 0),
+                  "每个大项都能算出非空展示名");
+        }
+
         // ---------- 新功能: 维修人候选（不用每次手输） ----------
         var who = d.DistinctResolvers();
         Console.WriteLine("    历史维修人: " + (who.Count == 0 ? "(无)" : string.Join(", ", who)));
@@ -512,7 +525,7 @@ class SelfTest
             }
 
             // 待办卡与记录卡共用拖拽基类，否则拖放会静默失效
-            var todoCard = new TodoCard(new TodoItem { FailItem = "Check_5V_Rail", OccurrenceCount = 3 });
+            var todoCard = new TodoCard(new TodoItem { Title = "Check_5V_Rail", TotalCount = 3, RangeCount = 3 });
             var recCard = new MaintenanceCard(new MaintenanceRecord { Id = 1, FailItem = "X", Status = "in_progress" });
             Check(todoCard is BoardCardBase && recCard is BoardCardBase, "两种卡片均继承 BoardCardBase（拖放格式统一）");
             Check(todoCard.ColumnKey == MaintenanceMeta.DefaultStatus, "待办卡固定属于「待办」列");
@@ -527,8 +540,46 @@ class SelfTest
             Check(!boardMethods.Any(x => x.Contains("Dismiss")),
                   "**看板上已无忽略入口**（待办来自真实不良，不可忽略/删除）");
         }
+        // ---------- 归一化 / 大项合并（v2.6.0） ----------
+        Console.WriteLine("\n【待办·大项合并】同类测试项归一化");
+        {
+            string K(string s) => TodoGrouping.KeyOf(s);
 
-        // 造一个干净库验待办的四条规则
+            // 步骤号不同、本体相同 -> 合并
+            Check(K("6.1.1.1 5V_Rail") == K("6.1.1.2 5V_Rail"), "步骤号不同的同一测试项合并为一项");
+            Check(K("6.1.1.1 5V_Rail") == K("5V Rail"), "去掉步骤号后与裸名同键");
+            // 通道 / 位号不同 -> 合并
+            Check(K("CAN_Bus_Test_CH1") == K("CAN_Bus_Test_CH2"), "通道号不同(CH1/CH2)合并");
+            Check(K("Check LED pin3") == K("Check LED pin7"), "位号不同(pin3/pin7)合并");
+            Check(K("U12_Voltage") == K("U7_Voltage"), "器件位号不同(U12/U7)合并");
+            // 数字+单位必须保留 -> 不能合并
+            Check(K("Check_5V_Rail") != K("Check_12V_Rail"), "**5V 与 12V 不合并**（数字+单位有物理含义）");
+            Check(K("Delay_100ms") != K("Delay_200ms"), "100ms 与 200ms 不合并");
+            Check(K("3V3_Rail") != K("1V8_Rail"), "3V3 与 1V8 不合并");
+            // 大小写 / 分隔符 / 全角
+            Check(K("check_5v_rail") == K("Check-5V-Rail"), "大小写与分隔符差异合并");
+            Check(K("ＣＡＮ＿Ｂｕｓ") == K("CAN_Bus"), "全角写法与半角合并");
+            // 括号里的限定词（测量手段/条件）归为同一大项
+            Check(K("BSW_v_Kl30UC(XCP)") == K("BSW_v_Kl30UC (KL30_LS_UC)(XCP)"),
+                  "同一参数带不同括号限定词 -> 合并为一个大项");
+            Check(K("Vref_3V3(DMM)") == K("Vref_3V3(XCP)"), "同一参数不同测量路径(DMM/XCP) -> 合并");
+            Check(K("Check(Voltage)") != K("Check(Current)"),
+                  "**括号里就是核心语义时不丢**（Check(Voltage) 不等于 Check(Current)）");
+            // 空与纯序号
+            Check(K("") == "", "空故障项返回空键（调用方跳过）");
+            Check(K("6.1.1.1") != "", "纯序号项不会退化成空键（否则会全挤成一张卡）");
+
+            // 展示名取最短、且已去步骤号
+            var title = TodoGrouping.TitleOf(new[] { "6.1.1.2 5V_Rail_Check", "5V_Rail", "6.1.1.1 5V_Rail" });
+            Check(title == "5V_Rail", $"合并后展示名取最短且去步骤号（得到「{title}」）");
+
+            // 优先级阈值
+            Check(TodoGrouping.PriorityZhOf(50) == "高" && TodoGrouping.PriorityZhOf(8) == "中" &&
+                  TodoGrouping.PriorityZhOf(1) == "低", "优先级按 fail 次数分高/中/低");
+        }
+
+        // ---------- 待办登记表：扫描窗口 / 永久保留 / 优先级 / 区间 ----------
+        Console.WriteLine("\n【待办·登记表】只扫近一个月 · 永久保留 · 按次数排优先级");
         {
             var tdb = Path.Combine(work, "todo.db");
             var t = new Database(tdb);
@@ -540,62 +591,118 @@ class SelfTest
                 {
                     StationId = station, Model = "E3002781", Category = "Offline", TestDate = date,
                     Sn = sn, Result = "FAIL", XmlPath = $@"X:\{station}_{sn}_{item}_{date}.xml",
-                    FailReason = item, BatchTimestamp = $"{date} 10:00:00", HasFailItems = true,
+                    FailReason = item, BatchTimestamp = $"{date[..4]}-{date[4..6]}-{date[6..8]}T00:00:00",
+                    HasFailItems = true,
                 });
             }
 
-            AddFail(t, St, "Check_5V_Rail", "SN001", "20260728");
-            AddFail(t, St, "Check_5V_Rail", "SN002", "20260729");   // 同故障项两条 -> 聚成 1 项、次数 2
-            AddFail(t, St, "Check_CAN_Bus", "SN003", "20260729");
+            string Today = DateTime.Today.ToString("yyyyMMdd");
+            string Yesterday = DateTime.Today.AddDays(-1).ToString("yyyyMMdd");
+            string LongAgo = DateTime.Today.AddDays(-200).ToString("yyyyMMdd");   // 远超扫描窗口
 
-            var pending = t.ListPendingTodos(St);
-            Check(pending.Count == 2, $"按故障项聚合：3 条 FAIL -> {pending.Count} 项待办（期望 2）");
-            var rail = pending.FirstOrDefault(x => x.FailItem == "Check_5V_Rail");
-            Check(rail != null && rail.OccurrenceCount == 2, "同故障项出现次数累计为 2");
-            Check(rail != null && rail.LastSeen.StartsWith("20260729"), "最近出现取的是较新那条");
+            // 同类项(步骤号不同) 3 条 + 另一项 1 条 + 一条很老的
+            AddFail(t, St, "6.1.1.1 5V_Rail", "SN001", Yesterday);
+            AddFail(t, St, "6.1.1.2 5V_Rail", "SN002", Yesterday);
+            AddFail(t, St, "6.1.1.3 5V_Rail", "SN003", Today);
+            AddFail(t, St, "Check_CAN_Bus", "SN004", Today);
+            AddFail(t, St, "Ancient_Item", "SN005", LongAgo);
 
-            // 确认问题 -> 建 open 记录 -> 该项从待办消失
-            var mid = t.AcknowledgeTodo("Check_5V_Rail", St, "E3002781", "张三", "major");
-            Check(mid > 0, $"确认问题已建维修记录 #{mid}");
-            var afterAck = t.ListPendingTodos(St);
-            Check(afterAck.Count == 1 && afterAck[0].FailItem == "Check_CAN_Bus",
-                  "确认后该故障项从待办消失（靠活跃维修记录拦截）");
-            var created = t.ListMaintenance("open", 10).FirstOrDefault(x => x.Id == mid);
-            Check(created != null && created.Status == "open", "新建记录状态 = open（看板「待办」列）");
-            Check(created != null && created.Resolver == "张三", "维修人已写入");
+            var created = t.SyncTodoItems(30);
+            Check(created == 2, $"3 条同类 + 1 条异类 -> 新登记 {created} 条待办（期望 2，同类已合并）");
 
-            // 拖到「已完成」后不再算活跃 -> 同故障项自动回到待办（复发重现）
+            var view = t.ListTodoView();          // 不限区间
+            var rail = view.FirstOrDefault(x => x.Title == "5V_Rail");
+            Check(rail != null, "合并后的大项展示名 = 5V_Rail");
+            Check(rail != null && rail.TotalCount == 3, $"合并项累计次数 = 3（实得 {rail?.TotalCount}）");
+            Check(rail != null && rail.VariantCount == 3, "记住了 3 个原始测试项（variants）");
+            Check(!view.Any(x => x.Title == "Ancient_Item"), "**200 天前的不良不入待办**（只扫近一个月）");
+
+            // 优先级排序：次数多的在前
+            Check(view.Count >= 2 && view[0].Title == "5V_Rail", "列表按 fail 次数倒序（3 次的排在 1 次前面）");
+            Check(view[0].SortCount >= view[^1].SortCount, "SortCount 单调不增（优先处理次数多的）");
+
+            // 幂等：再同步一次不会重复累加
+            var again = t.SyncTodoItems(30);
+            var rail2 = t.ListTodoView().First(x => x.Title == "5V_Rail");
+            Check(again == 0 && rail2.TotalCount == 3, $"重复同步不新增不重算（新增 {again}，次数仍 {rail2.TotalCount}）");
+
+            // 新不良增量累加
+            AddFail(t, St, "6.1.1.4 5V_Rail", "SN006", Today);
+            t.SyncTodoItems(30);
+            var rail3 = t.ListTodoView().First(x => x.Title == "5V_Rail");
+            Check(rail3.TotalCount == 4, $"新不良增量累加到同一张卡（{rail3.TotalCount} 次）");
+            Check(rail3.VariantCount == 4, "新的同类变体并入 variants");
+
+            // 时间区间：只看今天 -> 昨天那两条不计入区间次数
+            var todayOnly = t.ListTodoView(DateTime.Today, DateTime.Today);
+            var railToday = todayOnly.FirstOrDefault(x => x.Title == "5V_Rail");
+            Check(railToday != null && railToday.RangeCount == 2 && railToday.TotalCount == 4,
+                  $"区间统计独立于累计（今日 {railToday?.RangeCount} 次 / 累计 {railToday?.TotalCount} 次）");
+
+            // 区间内没出现的项不显示，但**没有被删除**（换成不限区间又回来）
+            var future = t.ListTodoView(DateTime.Today.AddDays(5), DateTime.Today.AddDays(6));
+            Check(future.Count == 0, "选一个没有不良的区间 -> 待办列为空");
+            Check(t.ListTodoView().Count >= 2, "**换回不限区间待办还在**（永久保留，不是被删了）");
+            Check(t.CountPendingTodos() >= 2, "CountPendingTodos 与视图一致");
+
+            // 确认 -> 关联维修记录 -> 待办离开列表
+            var railItem = t.ListTodoView().First(x => x.Title == "5V_Rail");
+            var mid = t.AcknowledgeTodo(railItem.Id, "张三", "critical", "in_progress");
+            Check(mid > 0, $"确认待办已建维修记录 #{mid}");
+            var rec = t.ListMaintenance("in_progress", 10).FirstOrDefault(x => x.Id == mid);
+            Check(rec != null && rec.FailItem == "5V_Rail", "维修记录的故障项 = 合并后的大项名");
+            Check(rec != null && rec.Notes.Contains("6.1.1.1 5V_Rail"), "备注里留了原始测试项清单（可追溯）");
+            Check(rec != null && rec.Status == "in_progress", "可以确认时直接置为「进行中」");
+            Check(!t.ListTodoView().Any(x => x.Title == "5V_Rail"), "确认后该项离开待办列");
+
+            // 记录标为已完成 -> 仍不在待办
             t.UpdateMaintenanceStatus(mid, "resolved");
-            var reopened = t.ListPendingTodos(St);
-            Check(reopened.Any(x => x.FailItem == "Check_5V_Rail"),
-                  "记录标为已完成后，同故障项**自动回到待办**（复发重现）");
+            t.SyncTodoItems(30);
+            Check(!t.ListTodoView().Any(x => x.Title == "5V_Rail"), "记录已完成后待办仍不显示（问题已处理）");
 
-            // 删掉确认后的记录 -> 不良因为还在 test_records，**自动回到待办**（不可删除的底层保障）
-            var mid2 = t.AcknowledgeTodo("Check_CAN_Bus", St, "E3002781", "李四", "major");
-            Check(!t.ListPendingTodos(St).Any(x => x.FailItem == "Check_CAN_Bus"), "确认后 CAN 项暂时离开待办");
+            // 复发：处理完之后又出新不良 -> 自动回到待办
+            System.Threading.Thread.Sleep(1100);      // 让 last_seen 明确晚于 resolved_at
+            t.InsertOne(new TestRecord
+            {
+                StationId = St, Model = "E3002781", Category = "Offline", TestDate = Today,
+                Sn = "SN007", Result = "FAIL", XmlPath = @"X:\recur.xml", FailReason = "6.1.1.9 5V_Rail",
+                BatchTimestamp = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss"), HasFailItems = true,
+            });
+            t.SyncTodoItems(30);
+            var back = t.ListTodoView().FirstOrDefault(x => x.Title == "5V_Rail");
+            Check(back != null, "**处理完后再复发 -> 自动回到待办**");
+            Check(back != null && back.TotalCount == 5, $"复发时次数继续累加（{back?.TotalCount} 次，不清零）");
+
+            // 删维修记录 -> 待办回到未确认（待办删不掉）
+            var canItem = t.ListTodoView().First(x => x.Title == "Check_CAN_Bus");
+            var mid2 = t.AcknowledgeTodo(canItem.Id, "李四", "major");
+            Check(!t.ListTodoView().Any(x => x.Title == "Check_CAN_Bus"), "确认后 CAN 项暂时离开待办");
             Check(t.CountFailRecords("Check_CAN_Bus", St) == 1, "CountFailRecords 能数出该故障项的真实不良数");
             t.DeleteMaintenance(mid2);
-            Check(t.ListPendingTodos(St).Any(x => x.FailItem == "Check_CAN_Bus"),
-                  "**删掉维修记录后不良自动回到待办**（待办删不掉）");
+            t.SyncTodoItems(30);
+            Check(t.ListTodoView().Any(x => x.Title == "Check_CAN_Bus"),
+                  "**删掉维修记录后待办自动回来**（待办删不掉）");
 
             // v2.5.1: 即使旧库里写过忽略名单，待办也不再被隐藏
-            var cntBeforeDismiss = t.ListMaintenance("", 500).Count;
 #pragma warning disable CS0618 // 故意调已废弃接口，验证“写了也不生效”
-            t.DismissTodo("Check_5V_Rail", St, "E3002781");
+            t.DismissTodo("Check_CAN_Bus", St, "E3002781");
 #pragma warning restore CS0618
-            Check(t.ListPendingTodos(St).Any(x => x.FailItem == "Check_5V_Rail"),
-                  "**写入 dismissed_todos 也不会让待办消失**（v2.5.1 不再读忽略名单）");
-            Check(t.ListMaintenance("", 500).Count == cntBeforeDismiss, "忽略接口**不**会创建维修记录");
+            t.SyncTodoItems(30);
+            Check(t.ListTodoView().Any(x => x.Title == "Check_CAN_Bus"),
+                  "**写入 dismissed_todos 也不会让待办消失**（不读忽略名单）");
 
-            // 建表幂等：重开库不报错，且待办仍在
+            // 重开库：登记表与水位线都在（永久保留、不重复累加）
             var t2 = new Database(tdb);
-            Check(t2.ListPendingTodos(St).Any(x => x.FailItem == "Check_5V_Rail"),
-                  "重开库后真实不良仍在待办列（建表幂等、不读忽略名单）");
+            var cntBeforeReopen = t2.ListTodoView().First(x => x.Title == "5V_Rail").TotalCount;
+            t2.SyncTodoItems(30);
+            var cntAfterReopen = t2.ListTodoView().First(x => x.Title == "5V_Rail").TotalCount;
+            Check(cntBeforeReopen == cntAfterReopen, $"重开库后同步不重复累加（{cntBeforeReopen} -> {cntAfterReopen}）");
 
-            // 机台隔离：其它机台的同名故障项各算一条待办
-            AddFail(t, "FCT8", "Check_5V_Rail", "SN900", "20260729");
-            Check(t.ListPendingTodos("FCT8").Any(x => x.FailItem == "Check_5V_Rail"),
-                  "待办按机台聚合（其它机台单独一条）");
+            // 机台隔离：不同机台各自一条待办
+            AddFail(t, "FCT8", "6.1.1.1 5V_Rail", "SN900", Today);
+            t.SyncTodoItems(30);
+            var railBoth = t.ListTodoView();
+            Check(railBoth.Count(x => x.Title == "5V_Rail") == 2, "同故障项在两个机台各自一条待办");
         }
 
         // ---------- 导出 ----------

@@ -80,6 +80,18 @@ public class MaintenanceBoard : Panel
     /// <summary>当前「待办」列里未确认的不良数量(供外层显示角标)。</summary>
     public int PendingTodoCount { get; private set; }
 
+    // 待办时间区间（null = 不限，即“全部·永久保留”）
+    private DateTime? _todoFrom = DateTime.Today.AddDays(-29);
+    private DateTime? _todoTo = DateTime.Today;
+
+    /// <summary>设待办列的时间区间并重载（只影响显示，不删任何待办）。</summary>
+    public void SetTodoRange(DateTime? from, DateTime? to)
+    {
+        _todoFrom = from;
+        _todoTo = to;
+        Reload();
+    }
+
     /// <summary>整体重载(切页 / 手动刷新 / 新增或删除后调用)。</summary>
     public void Reload()
     {
@@ -126,8 +138,9 @@ public class MaintenanceBoard : Panel
     {
         try
         {
-            // 库文件本身已按机台拆分(data\{station}.db)，这里不再按机台过滤
-            var list = _engine.Db.ListPendingTodos();
+            // 先把「近 N 天」的新不良并入登记表（增量、按大项合并、永久保留），再按区间取视图。
+            _engine.Db.SyncTodoItems(AppConfig.Instance.TodoScanDays);
+            var list = _engine.Db.ListTodoView(_todoFrom, _todoTo);
             return list.Count > PerColumnLimit ? list.Take(PerColumnLimit).ToList() : list;
         }
         catch (Exception ex)
@@ -180,7 +193,9 @@ public class MaintenanceBoard : Panel
     private ContextMenuStrip BuildTodoMenu(TodoItem todo)
     {
         var menu = new ContextMenuStrip { Font = Font };
-        menu.Items.Add(new ToolStripMenuItem($"未确认不良 · 出现 {todo.OccurrenceCount} 次") { Enabled = false });
+        menu.Items.Add(new ToolStripMenuItem(
+            $"未确认不良 · 优先级{todo.PriorityZh} · {todo.SortCount} 次" +
+            (todo.VariantCount > 1 ? $" · 合并 {todo.VariantCount} 项" : "")) { Enabled = false });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("确认问题（建维修记录）", null, (_, _) => ConfirmTodo(todo, MaintenanceMeta.DefaultStatus));
         foreach (var def in MaintenanceMeta.Statuses)
@@ -204,16 +219,15 @@ public class MaintenanceBoard : Panel
 
         try
         {
-            var id = _engine.Db.AcknowledgeTodo(
-                todo.FailItem, todo.StationId, todo.Model, dlg.Resolver, dlg.Severity);
+            // 确认 = 建记录 + 与待办行关联（记录被删 / 复发时待办会自动回到未确认）
+            var id = _engine.Db.AcknowledgeTodo(todo.Id, dlg.Resolver, dlg.Severity, targetStatus);
             // 手敲的新名字自动进名单(与维修表单行为一致)
             foreach (var who in ResolverUtil.Split(dlg.Resolver))
             {
                 try { _engine.Db.AddResolver(who); } catch { }
             }
-            if (targetStatus != MaintenanceMeta.DefaultStatus)
-                _engine.Db.UpdateMaintenanceStatus(id, targetStatus);
-            Logger.Info($"[待办] 确认不良 -> 维修记录 #{id}（{MaintenanceMeta.ZhOf(targetStatus)}）: {todo.FailItem}");
+            Logger.Info($"[待办] 确认不良 -> 维修记录 #{id}（{MaintenanceMeta.ZhOf(targetStatus)}）: {todo.Title}" +
+                        (todo.VariantCount > 1 ? $"（合并 {todo.VariantCount} 个同类项）" : ""));
             Reload();
             Changed?.Invoke();
         }
