@@ -45,6 +45,7 @@ public class CardPreviewForm : Form
     }
 
     private readonly Color _accent;
+    private readonly TextBox _detail;
 
     private CardPreviewForm(string title, string subtitle, Color accent,
                             IEnumerable<(string k, string v)> rows,
@@ -89,13 +90,18 @@ public class CardPreviewForm : Form
         head.Controls.Add(close);
 
         // ===== 明细（可选中复制）=====
+        // ⚠ TabStop=false：WinForms 的 TextBox 一旦因“窗口激活/Tab”拿到焦点就会**自动全选**，
+        // popup 一弹出文字全蓝了，看着就像“单击就选中了文字”。
+        // 靠鼠标点进去的焦点不会全选（只放光标），所以手动划选复制不受影响。
         var detail = new TextBox
         {
             Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None,
             BackColor = Color.White, Dock = DockStyle.Top, ScrollBars = ScrollBars.Vertical,
-            Font = new Font("Microsoft YaHei UI", 9F),
+            Font = new Font("Microsoft YaHei UI", 9F), TabStop = false,
             Text = string.Join(Environment.NewLine, rows.Select(r => $"{r.k}  {r.v}")),
         };
+        _detail = detail;
+        detail.GotFocus += (_, _) => ClearAutoSelection();     // 任何途径拿到焦点都不开局全选
         var lineCount = Math.Max(1, detail.Text.Split('\n').Length);
         detail.Height = Math.Min(300, 6 + lineCount * 19);
 
@@ -124,6 +130,7 @@ public class CardPreviewForm : Form
                 Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
                 GridLines = false, HeaderStyle = ColumnHeaderStyle.Nonclickable,
                 BorderStyle = BorderStyle.FixedSingle, Font = new Font("Microsoft YaHei UI", 8.5F),
+                TabStop = false,                       // 同理：不抢焦点、不自动高亮首行
             };
             list.Columns.Add("次数", 52, HorizontalAlignment.Center);
             list.Columns.Add("原始测试项", 372);
@@ -160,7 +167,29 @@ public class CardPreviewForm : Form
         Height = Math.Min(620, total);
 
         Deactivate += (_, _) => Close();
+        Activated += (_, _) => ClearAutoSelection();       // 激活时 WinForms 可能又把焦点塞给输入框
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+    }
+
+    /// <summary>自检用：明细区当前选中了多少字符（刚弹出时必须是 0）。</summary>
+    internal int DetailSelectionLength => _detail.SelectionLength;
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        ClearAutoSelection();
+    }
+
+    /// <summary>清掉“因激活而全选”的选区，并把焦点从输入控件上拿走。</summary>
+    private void ClearAutoSelection()
+    {
+        try
+        {
+            _detail.SelectionStart = 0;
+            _detail.SelectionLength = 0;
+            if (ActiveControl != null) ActiveControl = null;   // 焦点给窗口本身，Esc 仍然能关
+        }
+        catch { }
     }
 
     /// <summary>贴着卡片右侧弹出；越界就翻到左侧 / 贴边，保证完整可见。</summary>

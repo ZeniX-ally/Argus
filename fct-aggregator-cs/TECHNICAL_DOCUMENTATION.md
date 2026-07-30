@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.7.0
+**当前版本**：v2.7.1
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -556,6 +556,12 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | 机台过滤 | 不再过滤 —— 库文件本身已按机台拆分（`data\{station}.db`），再按机台过滤是重复条件 |
 | 自动出现 | `MainForm.Tick()` 监视 `AppState.Fail` 变化，页面可见时自动 `Refresh2()`，新不良无需手动刷新 |
 | 与【从FAIL选故障项】的分工 | 待办 = **被动推送**（自动列出没人管的）；那个按钮 = **主动挑选**（含已处理的、可深扫 XML、可批量合并），两者不冲突 |
+
+⚙ 预览"一弹出就全选"的坑（v2.7.1）：WinForms `TextBox` **因窗口激活/Tab 拿到焦点会自动全选**
+（鼠标点进去的焦点不会）。预览里那个只读明细框是唯一 tab-stop 控件，`Show()+Activate()` 后
+焦点落在它上面 → 整片蓝底，看着像"单击顺手选中了文字"。修法：明细框与清单 ListView 都
+`TabStop=false`，并在 `OnShown` / `Activated` / `GotFocus` 里统一 `ClearAutoSelection()`
+（`SelectionLength=0` + `ActiveControl=null`）。手动划选复制不受影响。
 
 ⚙ 单击预览的坑（v2.7.0）：单击**必须延迟一个 `SystemInformation.DoubleClickTime`** 再弹，
 否则双击（确认/编辑）会先闪一下预览。而且 WinForms 消息顺序是

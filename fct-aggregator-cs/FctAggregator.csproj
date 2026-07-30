@@ -8,9 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>FCT-Aggregator</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
-    <Version>2.7.0</Version>
-    <AssemblyVersion>2.7.0.0</AssemblyVersion>
-    <FileVersion>2.7.0.0</FileVersion>
+    <Version>2.7.1</Version>
+    <AssemblyVersion>2.7.1.0</AssemblyVersion>
+    <FileVersion>2.7.1.0</FileVersion>
     <Company>Zenix-Ally</Company>
     <Product>FCT-Aggregator</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

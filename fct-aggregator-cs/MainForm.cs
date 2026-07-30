@@ -30,7 +30,7 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT-Aggregator v2.7.0";
+        Text = "Zenix-Ally | FCT-Aggregator v2.7.1";
         Width = 1200; Height = 720;
         StartPosition = FormStartPosition.CenterScreen;
         try { Icon = new Icon(Path.Combine(AppConfig.BaseDir, "app_icon.ico")); } catch { }

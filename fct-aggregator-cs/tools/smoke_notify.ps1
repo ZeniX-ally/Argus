@@ -12,7 +12,7 @@
   注意：Windows 通知能否**肉眼看到**受系统「通知与专注助手」设置影响，脚本只能验证代码路径没炸。
 #>
 param(
-    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.7.0.zip'
+    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.7.1.zip'
 )
 $ErrorActionPreference = 'Stop'
 

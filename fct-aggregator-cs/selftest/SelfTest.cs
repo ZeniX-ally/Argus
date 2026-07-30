@@ -625,6 +625,15 @@ class SelfTest
                     CardPreviewForm.ShowFor(anchorCard, t2, s2, Color.FromArgb(197, 48, 48), r2,
                         merged.Variants.Select(v => (v, 3)), f2);
                     Check(true, "CardPreviewForm 可正常弹出（含合并清单表）");
+
+                    // 刚弹出时**不能有选中的文字** —— 只读 TextBox 拿到焦点会自动全选，
+                    // 看起来就像“单击就把预览里的字选中了”
+                    var opened = Application.OpenForms.OfType<CardPreviewForm>().FirstOrDefault();
+                    Check(opened != null, "预览窗已在打开列表里");
+                    Check(opened == null || opened.DetailSelectionLength == 0,
+                          $"**预览刚弹出时没有选中任何文字**（选区长度 {opened?.DetailSelectionLength}）");
+                    Check(opened == null || opened.ActiveControl == null,
+                          "预览窗不把焦点塞给输入框（焦点在窗口本身，Esc 仍可关）");
                 }
                 catch (Exception ex)
                 {
