@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.5.0
+**当前版本**：v2.5.1
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -242,7 +242,10 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
 - 待办（v2.4.0，v2.5.0 起消费方从 TodoPanel 改为看板 `TodoCard`）：
   - `ListPendingTodos(stationId)` —— 实时聚合 `test_records` 中 FAIL 项（按 `fail_reason` 分组），
     排除已有**活跃维修记录**（status 不在 resolved/closed）或已忽略的项
-  - `DismissTodo(failItem, stationId, model)` —— 忽略（写入 `dismissed_todos`）
+  - `DismissTodo(failItem, stationId, model)` —— ⚠ **v2.5.1 已 `[Obsolete]`**：待办不可忽略，
+    写入仍会发生但 `ListPendingTodos` 已不再读，所以**调了也不会让待办消失**
+  - `CountFailRecords(failItem, stationId)`（v2.5.1）—— 该故障项还有多少条真实 FAIL，
+    删维修记录时用它提醒“删了会回到待办列”
   - `AcknowledgeTodo(failItem, stationId, model, resolver, severity)` —— 确认问题，内部调 `CreateMaintenance` 建一条 `open` 记录
 - 其它：`MaxSn()`、`TotalRecords()`
 
@@ -397,7 +400,10 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 > 3. `UPDATE ... SET status='resolved' WHERE status='closed'` —— **不动 `updated_at`**，
 >    保留记录真实的最后人工更新时间。
 
-### 6.4 `dismissed_todos`（v2.4.0 新增）
+### 6.4 `dismissed_todos`（v2.4.0 新增，**v2.5.1 已停用**）
+
+> ⚠ v2.5.1 起待办来自真实不良，**不得忽略/删除**，此表**不再被读取**（也不再有 UI 写入）。
+> 建表语句保留仅为：① 旧库兼容；② 万一回退到 v2.4/v2.5 时不报错。用户已有数据**不删**。
 
 | 字段 | 说明 |
 |------|------|
@@ -497,7 +503,8 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | 数据源 | **`test_records` 实时聚合**，不建待办表 —— 避开「快照表与真实数据不一致」的经典坑 |
 | 去重口径 | `GROUP BY fail_reason, station_id` —— 同一故障项在不同机台是两条待办 |
 | 何时不显示（已确认） | `NOT EXISTS` 子查询：存在**活跃维修记录**（`status NOT IN ('resolved','closed')`）即视为有人在处理 |
-| 何时不显示（已忽略） | `NOT EXISTS` 子查询 `dismissed_todos` |
+| 不可忽略 / 不可删除（**v2.5.1**） | 待办 = 真实 FAIL 数据的**投影**，不是可划掉的事项。UI 无忽略入口（右键菜单只有确认 + 一条禁用说明）；`ListPendingTodos` **不再读 `dismissed_todos`**（旧库里被忽略过的项会自动重现）；看板上已无任何 `Dismiss*` 方法（自检断言防回流） |
+| 删维修记录的后果（**v2.5.1**） | 删的只是“处理单”：只要 FAIL 还在库里，卡片**自动回到待办列**。删除确认框用 `CountFailRecords()` 把这个后果写清楚 |
 | **复发自动重现** | 维修记录被拖到「已完成」后不再算活跃，同故障项再 FAIL 就**自动回到待办**（无需人工重开） |
 | 呈现位置（v2.5.0） | 看板「待办」列（`open`）**列顶**，用 `TodoCard`（暖色底 + 虚线框 + 「未确认」红标）与记录卡区分；列头红徽章 `新 N` = 未确认数 |
 | 确认动作 | `TodoConfirmForm`（轻量：维修人 + 严重度）→ `AcknowledgeTodo()` → 建一条 `status='open'` 记录 → 看板「待办」列 |

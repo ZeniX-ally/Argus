@@ -88,7 +88,9 @@ public class Database
             ";
             cmd3.ExecuteNonQuery();
 
-            // v2.4.0: 待办忽略名单（标记为「不是问题」的故障项，不再出现在待办列表）
+            // v2.4.0: 待办忽略名单。
+            // ⚠ v2.5.1 起**已停用**：待办来自真实不良，不允许忽略/删除，必须确认处理。
+            // 建表语句保留（仅为旧库兼容与回退到 v2.4/v2.5 时不报错），但**不再读也不再写**。
             using var cmd4 = conn.CreateCommand();
             cmd4.CommandText = @"
                 CREATE TABLE IF NOT EXISTS dismissed_todos (
@@ -474,8 +476,13 @@ public class Database
     // ==================== 待办（FAIL → 确认问题 → 维修记录） ====================
 
     /// <summary>
-    /// 待办项：从 test_records 按故障项聚合，排除已有活跃维修记录或已忽略的项。
+    /// 待办项：从 test_records 按故障项聚合，排除已有活跃维修记录的项。
     /// 活跃维修记录定义：status 不是 resolved/closed（即还在排查/处理中）。
+    ///
+    /// v2.5.1 策略变更：**不再排除 `dismissed_todos`**。
+    /// 待办每一条都对应真实发生过的不良，允许“忽略”等于允许把真问题抹掎；
+    /// 唯一的出口是**确认**（建维修记录）→ 处理 → 拖到「已完成」。
+    /// 旧库里曾被忽略的故障项会因此**自动重新出现**在待办列（预期行为）。
     /// </summary>
     public List<TodoItem> ListPendingTodos(string stationId = "")
     {
@@ -503,11 +510,6 @@ public class Database
                     AND m.station_id = f.station_id
                     AND m.status NOT IN ('resolved','closed')
               )
-              AND NOT EXISTS (
-                  SELECT 1 FROM dismissed_todos d
-                  WHERE d.fail_item = f.fail_reason
-                    AND d.station_id = f.station_id
-              )
             GROUP BY f.fail_reason, f.station_id
             ORDER BY last_seen DESC, cnt DESC
             LIMIT 500";
@@ -532,7 +534,12 @@ public class Database
         return list;
     }
 
-    /// <summary>忽略某故障项（不再出现在待办列表）。已存在的维修记录不受影响。</summary>
+    /// <summary>
+    /// ⚠ **已废弃（v2.5.1）**：待办来自真实不良，不得忽略/删除。
+    /// 保留方法仅为不破坏旧调用方的编译；写入仍会发生，但 <see cref="ListPendingTodos"/> 已不再读它，
+    /// 所以**调了也不会让待办消失**。新代码请勿使用。
+    /// </summary>
+    [Obsolete("待办来自真实不良，不得忽略；ListPendingTodos 已不再读 dismissed_todos。")]
     public void DismissTodo(string failItem, string stationId, string model)
     {
         using var conn = Open();
@@ -549,6 +556,8 @@ public class Database
     /// <summary>
     /// 从待办确认问题：创建一条维修记录（状态=open），并返回其 ID。
     /// 该记录创建后待办列表自动不再显示此故障项（因为有活跃维修记录存在）。
+    /// 反之，若该记录被删除或拖到「已完成」而故障又复发，待办会**自动重新出现** ——
+    /// 这就是“待办不可删除”的底层保障：它不是一条可操作的行，而是真实数据的投影。
     /// </summary>
     public int AcknowledgeTodo(string failItem, string stationId, string model, string resolver, string severity)
     {
@@ -562,6 +571,23 @@ public class Database
             Resolver = resolver,
         };
         return CreateMaintenance(rec);
+    }
+
+    /// <summary>
+    /// 某故障项在 test_records 里还有多少条真实 FAIL。
+    /// 用于删维修记录时提醒用户：删了它这个故障项会重新回到「待办」列。
+    /// </summary>
+    public int CountFailRecords(string failItem, string stationId)
+    {
+        if (string.IsNullOrWhiteSpace(failItem)) return 0;
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE result='FAIL' AND fail_reason=@item";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id=@st";
+        cmd.CommandText = $"SELECT COUNT(*) FROM test_records {where}";
+        cmd.Parameters.AddWithValue("@item", failItem);
+        if (!string.IsNullOrEmpty(stationId)) cmd.Parameters.AddWithValue("@st", stationId);
+        return Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
     }
 
     // ==================== 维修人员名单 ====================

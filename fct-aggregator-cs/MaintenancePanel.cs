@@ -363,7 +363,19 @@ public class MaintenancePanel : Panel
 
     private void DeleteRecord(MaintenanceRecord m)
     {
-        if (MessageBox.Show($"确定删除维修记录 #{m.Id}（{m.FailItem}）？", "确认",
+        // 记录可以删，但它背后的**真实不良删不掉** —— 删完会自动回到「待办」列，
+        // 提前说清楚，避免现场以为“删了就干净了”。
+        int failCount = 0;
+        try { failCount = _engine.Db.CountFailRecords(m.FailItem, m.StationId); }
+        catch (Exception ex) { Logger.Warning($"查故障项 FAIL 数失败: {ex.Message}"); }
+
+        var msg = $"确定删除维修记录 #{m.Id}（{m.FailItem}）？";
+        if (failCount > 0)
+            msg += $"\n\n⚠ 该故障项在 FAIL 记录里还有 {failCount} 条真实不良，\n" +
+                   "删掉本记录后它会以「未确认」卡片**自动回到「待办」列**（不良不可删除）。\n" +
+                   "如果问题已解决，请改为把卡片拖到「已完成」。";
+
+        if (MessageBox.Show(msg, "确认",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         try
         {

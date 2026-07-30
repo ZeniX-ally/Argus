@@ -1,8 +1,8 @@
-# 打包 FCT-Aggregator v2.5.0
-# 生成 package_v2.5.0（完整包，含 config.json）与 package_v2.5.0-update（覆盖包，无 config/data/logs/pdb）
+# 打包 FCT-Aggregator v2.5.1
+# 生成 package_v2.5.1（完整包，含 config.json）与 package_v2.5.1-update（覆盖包，无 config/data/logs/pdb）
 $ErrorActionPreference = 'Stop'
 $root = 'F:\Programe\G4_9-QA\fct-aggregator-cs'
-$ver  = '2.5.0'
+$ver  = '2.5.1'
 $dist = Join-Path $root 'dist'
 $full = Join-Path $root "package_v$ver"
 $upd  = Join-Path $root "package_v$ver-update"

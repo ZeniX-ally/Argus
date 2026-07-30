@@ -518,6 +518,14 @@ class SelfTest
             Check(todoCard.ColumnKey == MaintenanceMeta.DefaultStatus, "待办卡固定属于「待办」列");
             Check(recCard.ColumnKey == "in_progress", "记录卡所在列 = 它的状态");
             todoCard.Dispose(); recCard.Dispose();
+
+            // v2.5.1: 待办不可忽略/删除 —— 看板上不能再有任何忽略入口
+            var boardMethods = typeof(MaintenanceBoard)
+                .GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
+                            System.Reflection.BindingFlags.Instance)
+                .Select(x => x.Name).ToList();
+            Check(!boardMethods.Any(x => x.Contains("Dismiss")),
+                  "**看板上已无忽略入口**（待办来自真实不良，不可忽略/删除）");
         }
 
         // 造一个干净库验待办的四条规则
@@ -562,21 +570,32 @@ class SelfTest
             Check(reopened.Any(x => x.FailItem == "Check_5V_Rail"),
                   "记录标为已完成后，同故障项**自动回到待办**（复发重现）");
 
-            // 忽略 -> 不再出现，且不会建维修记录
+            // 删掉确认后的记录 -> 不良因为还在 test_records，**自动回到待办**（不可删除的底层保障）
+            var mid2 = t.AcknowledgeTodo("Check_CAN_Bus", St, "E3002781", "李四", "major");
+            Check(!t.ListPendingTodos(St).Any(x => x.FailItem == "Check_CAN_Bus"), "确认后 CAN 项暂时离开待办");
+            Check(t.CountFailRecords("Check_CAN_Bus", St) == 1, "CountFailRecords 能数出该故障项的真实不良数");
+            t.DeleteMaintenance(mid2);
+            Check(t.ListPendingTodos(St).Any(x => x.FailItem == "Check_CAN_Bus"),
+                  "**删掉维修记录后不良自动回到待办**（待办删不掉）");
+
+            // v2.5.1: 即使旧库里写过忽略名单，待办也不再被隐藏
             var cntBeforeDismiss = t.ListMaintenance("", 500).Count;
+#pragma warning disable CS0618 // 故意调已废弃接口，验证“写了也不生效”
             t.DismissTodo("Check_5V_Rail", St, "E3002781");
-            Check(!t.ListPendingTodos(St).Any(x => x.FailItem == "Check_5V_Rail"), "忽略后不再出现在待办");
-            Check(t.ListMaintenance("", 500).Count == cntBeforeDismiss, "忽略**不**会创建维修记录");
+#pragma warning restore CS0618
+            Check(t.ListPendingTodos(St).Any(x => x.FailItem == "Check_5V_Rail"),
+                  "**写入 dismissed_todos 也不会让待办消失**（v2.5.1 不再读忽略名单）");
+            Check(t.ListMaintenance("", 500).Count == cntBeforeDismiss, "忽略接口**不**会创建维修记录");
 
-            // 建表幂等：重开库后忽略名单不丢
+            // 建表幂等：重开库不报错，且待办仍在
             var t2 = new Database(tdb);
-            Check(!t2.ListPendingTodos(St).Any(x => x.FailItem == "Check_5V_Rail"),
-                  "重开库后忽略仍生效（dismissed_todos 建表幂等）");
+            Check(t2.ListPendingTodos(St).Any(x => x.FailItem == "Check_5V_Rail"),
+                  "重开库后真实不良仍在待办列（建表幂等、不读忽略名单）");
 
-            // 机台隔离：其它机台的同名故障项不受本机台忽略影响
+            // 机台隔离：其它机台的同名故障项各算一条待办
             AddFail(t, "FCT8", "Check_5V_Rail", "SN900", "20260729");
             Check(t.ListPendingTodos("FCT8").Any(x => x.FailItem == "Check_5V_Rail"),
-                  "忽略按机台隔离（其它机台仍会提醒）");
+                  "待办按机台聚合（其它机台单独一条）");
         }
 
         // ---------- 导出 ----------

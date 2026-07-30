@@ -10,7 +10,10 @@ namespace FctAggregator;
 /// v2.5.0：**待办不再是独立页面**。「待办」列同时装两种卡：
 ///   · 上半部 <see cref="TodoCard"/> —— 新出现的不良（尚未确认，来自 test_records 聚合）
 ///   · 下半部 <see cref="MaintenanceCard"/> —— 已确认待修的维修记录
-/// 待办卡双击=确认建单、拖到别列=确认并置为该状态、右键=忽略。
+/// 待办卡双击=确认建单、拖到别列=确认并置为该状态。
+///
+/// v2.5.1：待办卡**不可忽略 / 不可删除** —— 它是真实 FAIL 数据的投影，
+/// 唯一出口是确认后处理掉（拖到「已完成」）。
 /// </summary>
 public class MaintenanceBoard : Panel
 {
@@ -172,7 +175,8 @@ public class MaintenanceBoard : Panel
         }
     }
 
-    /// <summary>未确认不良的右键菜单(确认 / 忽略)。</summary>
+    /// <summary>未确认不良的右键菜单。
+    /// **没有忽略/删除** —— 待办是真实不良的投影，只能确认后处理掉。</summary>
     private ContextMenuStrip BuildTodoMenu(TodoItem todo)
     {
         var menu = new ContextMenuStrip { Font = Font };
@@ -186,7 +190,7 @@ public class MaintenanceBoard : Panel
             menu.Items.Add($"确认并置为 {def.Zh}", null, (_, _) => ConfirmTodo(todo, key));
         }
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("忽略（不再提醒）", null, (_, _) => DismissTodo(todo));
+        menu.Items.Add(new ToolStripMenuItem("来自真实不良，不可忽略 / 删除") { Enabled = false });
         return menu;
     }
 
@@ -217,26 +221,6 @@ public class MaintenanceBoard : Panel
         {
             Logger.Error($"[待办] 确认不良失败: {ex.Message}");
             MessageBox.Show($"创建维修记录失败: {ex.Message}", "错误");
-        }
-    }
-
-    /// <summary>忽略一条未确认不良(不建记录，之后不再出现在待办列)。</summary>
-    private void DismissTodo(TodoItem todo)
-    {
-        if (MessageBox.Show(
-                $"确定忽略故障项「{todo.FailItem}」？\n它将不再出现在待办列，但不会创建维修记录。",
-                "忽略不良", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-            return;
-        try
-        {
-            _engine.Db.DismissTodo(todo.FailItem, todo.StationId, todo.Model);
-            Logger.Info($"[待办] 已忽略: {todo.FailItem}");
-            Reload();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"忽略失败: {ex.Message}", "错误");
-            Logger.Error($"[待办] 忽略失败: {ex.Message}");
         }
     }
 

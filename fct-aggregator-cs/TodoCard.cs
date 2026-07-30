@@ -9,7 +9,12 @@ namespace FctAggregator;
 ///   · 数据源 = test_records 实时聚合（<see cref="Database.ListPendingTodos"/>），不是 maintenance_records
 ///   · 双击 = 确认问题（建维修记录，留在待办列）
 ///   · 拖到其它列 = 确认问题并直接置为该列状态
-///   · 右键 = 确认 / 忽略（忽略后记入 dismissed_todos，不再出现）
+///
+/// **v2.5.1：不可忽略 / 不可删除**。待办卡对应的是真实发生过的不良，
+/// 它不是一条“可以删掉的待办事项”，而是数据库里 FAIL 记录的**投影**：
+///   · UI 上没有忽略/删除入口（右键菜单只有确认）
+///   · 就算把确认后的维修记录删了，只要 FAIL 还在库里，卡片就会自动回到待办列
+///   · 想让它消失只有一条路：确认 → 处理 → 拖到「已完成」
 ///
 /// 视觉上与维修记录卡刻意不同：暖色底 + 虚线框 + 左侧红条，表示“还没人认领”。
 /// </summary>
@@ -43,7 +48,8 @@ public sealed class TodoCard : BoardCardBase
         if (!string.IsNullOrWhiteSpace(Item.Model)) sb.AppendLine($"型号: {Item.Model}");
         if (!string.IsNullOrWhiteSpace(Item.StationId)) sb.AppendLine($"机台: {Item.StationId}");
         sb.AppendLine();
-        sb.Append("双击=确认问题(建维修记录) · 拖到其它列=确认并置为该状态 · 右键=忽略");
+        sb.AppendLine("双击=确认问题(建维修记录) · 拖到其它列=确认并置为该状态");
+        sb.Append("⚠ 来自真实不良，不可忽略/删除；处理完拖到「已完成」它就不在了");
         return sb.ToString();
     }
 
@@ -92,7 +98,7 @@ public sealed class TodoCard : BoardCardBase
         TextRenderer.DrawText(g, $"{model} · {station}", MetaFont,
             new Rectangle(left, 50, Math.Max(20, Width - left - 96), 16),
             Color.FromArgb(150, 130, 128), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-        TextRenderer.DrawText(g, "双击确认", MetaFont,
+        TextRenderer.DrawText(g, "必须确认", MetaFont,
             new Rectangle(Width - 92, 50, 86, 16),
             Color.FromArgb(180, 120, 110), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
     }
@@ -197,7 +203,7 @@ public class TodoConfirmForm : Form
             Padding = new Padding(14, 0, 14, 0),
             ForeColor = Color.FromArgb(140, 150, 168),
             Text = string.IsNullOrEmpty(targetStatusZh)
-                 ? "确定后自动创建「待办」维修记录，可继续拖动处理。"
+                 ? "确定后自动创建「待办」维修记录；不良本身不可忽略，只能处理掉。"
                  : $"确定后自动创建维修记录并置为「{targetStatusZh}」。",
         };
 
