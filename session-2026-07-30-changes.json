@@ -1,0 +1,281 @@
+{
+  "$schema_note": "本会话（2026-07-30）工作记录。给下一次接手的人/AI 看：做了什么、为什么这么做、踩了哪些坑、还剩什么。",
+  "meta": {
+    "date": "2026-07-30",
+    "repo": "F:/Programe/G4_9-QA",
+    "gitea": "http://192.168.1.16:3000/zenix/Argus.git",
+    "branch": "main",
+    "commits_this_session": 12,
+    "diff_vs_session_start": "111 files changed, +6907 / -3340",
+    "version_span": "fct-aggregator v2.4.0 -> v2.9.4（FCT 工具套件）",
+    "agent_model": "step-explore (step-anthropic / anthropic-messages)"
+  },
+  "commits": [
+    {
+      "hash": "3ec4b2c",
+      "subject": "feat(aggregator): v2.5.0 待办整合进看板 + Windows 原生桌面提示"
+    },
+    {
+      "hash": "73968ab",
+      "subject": "feat(aggregator)!: v2.5.1 待办来自真实不良，不可忽略/不可删除"
+    },
+    {
+      "hash": "d215df3",
+      "subject": "feat(aggregator): v2.6.0 待办登记表：只扫近一月 + 同类大项合并 + 永久保留 + 区间/优先级"
+    },
+    {
+      "hash": "243f1e2",
+      "subject": "feat(aggregator): v2.7.0 单击卡片弹详情预览；合并的 fail 项在卡片与预览同时显示"
+    },
+    {
+      "hash": "7904019",
+      "subject": "fix(aggregator): v2.7.1 预览弹出时不再自动全选文字"
+    },
+    {
+      "hash": "ab0458a",
+      "subject": "feat(aggregator): v2.8.0 GUI 重构：侧边导航 + 顶栏状态胶囊 + KPI 总览 + 状态栏"
+    },
+    {
+      "hash": "26f5ef6",
+      "subject": "chore: 合并前快照（fct-fetcher-cs / fct-tdms-viewer 未提交改动入库）"
+    },
+    {
+      "hash": "9e5a77c",
+      "subject": "feat!: v2.9.0 五个项目合并为单 exe「FCT 工具套件」"
+    },
+    {
+      "hash": "afcce8b",
+      "subject": "feat: v2.9.1 四个工具真内嵌成主窗口页面（不再弹独立窗口）"
+    },
+    {
+      "hash": "a06d9b7",
+      "subject": "feat: v2.9.2 九个页面风格统一（递归主题器，只改外观不碰布局）"
+    },
+    {
+      "hash": "ef3f80e",
+      "subject": "refactor: v2.9.3 删重复功能，三处各只留一份（净减 560 行代码）"
+    },
+    {
+      "hash": "1787e73",
+      "subject": "feat: v2.9.4 换上正式软件图标，并修掉\"发布包里没有图标文件\""
+    }
+  ],
+  "arc_of_the_session": [
+    "① 待办功能演进（v2.5.0~v2.6.0）：从独立页面整合进看板 -> 不可删除 -> 登记表化（扫描窗口/大项合并/永久保留/区间/优先级）",
+    "② 卡片可读性（v2.7.x）：单击预览 + 合并项在卡片与预览同时显示 + 修预览自动全选",
+    "③ GUI 重构（v2.8.0）：侧边导航 + 顶栏状态胶囊 + KPI 总览 + 状态栏 + Theme 设计令牌",
+    "④ 项目合并（v2.9.0~v2.9.2）：5 个独立 exe -> 单 exe 工具套件 -> 工具真内嵌为页面 -> 九页风格统一",
+    "⑤ 收尾（v2.9.3~v2.9.4）：删重复功能（xlsx 写出器 4->1 等） + 正式软件图标"
+  ],
+  "feature_work": {
+    "todo_system": {
+      "final_design": "待办 = test_records 里真实 FAIL 的投影，落 todo_items 登记表",
+      "rules": [
+        "只扫近 todo_scan_days(默认30) 天的 FAIL 并入登记表；靠 app_meta.todo_sync_last_id 水位线增量，反复同步不重算",
+        "同类测试项按 TodoGrouping.KeyOf 合并成大项：丢步骤号/通道号/位号/括号限定词，保留数字+单位（5V≠12V）",
+        "登记后永久保留：只改 state（pending/ack/resolved），从不删除",
+        "不可忽略、不可删除：UI 无入口；删维修记录后不良自动回到待办；dismissed_todos 已停用（表保留、不再读）",
+        "按 fail 次数排优先级（高≥20/中≥5/低），支持时间区间查看（区间统计现算）"
+      ],
+      "db_changes": [
+        "新增表 todo_items",
+        "新增表 app_meta（水位线）",
+        "dismissed_todos 停用但保留"
+      ]
+    },
+    "desktop_notify": {
+      "impl": "托盘 NotifyIcon + ShowBalloonTip（Win10/11 原生 Toast），不引 UWP 包、不注册 AUMID",
+      "throttle": "notify_min_interval_sec(默认15)s 内多条合并成 ⚠ FCT 不良 ×N",
+      "click": "点通知/双击托盘 -> 主窗口置前并跳到待办看板",
+      "gotcha": "BalloonTip 文本超 ~255 字符 Windows 直接不显示，已截到 220"
+    },
+    "gui": {
+      "shell": "侧边导航(168px, 待办红色角标) + 顶栏(页标题/状态胶囊/刷新) + 进度条 + 内容区 + 底部状态栏",
+      "pages": "0~4 主程序页（总览/待办维修/FAIL/设备/调试），5~8 内嵌工具页（数据分发/FAIL排行/取数打包/TDMS波形）",
+      "shortcuts": "Ctrl+1~5 主页面，Ctrl+6~9 工具页，Ctrl+R 刷新",
+      "theme": "Theme.cs 设计令牌 + Theme.Apply 递归主题器（只改外观不碰布局）",
+      "window": "默认 1360x920，最小 1240x860（最大的内嵌工具 MinimumSize 是 1040x790）"
+    },
+    "merge_5_projects": {
+      "layout": "fct-aggregator-cs/modules/{Distributor,FailRanker,Fetcher,TdmsViewer}（git mv 保留历史）",
+      "why_no_rename": "各项目 RootNamespace 不同，10 组同名类靠命名空间隔离，一行类名没改",
+      "entry": "csproj <StartupObject>FctAggregator.Program</StartupObject>；其余 Main 保留（含 CLI），由主入口按子命令转发",
+      "subcommands": "distribute / rank / tdms [文件] / fetch --xxx / --help；.tdms 拖到 exe 上仍可打开",
+      "embedding": "ToolHost: TopLevel=false + FormBorderStyle=None + Dock=Fill，惰性构造 + AutoScroll 兜底",
+      "moved_out": [
+        "12 个历史发布包 + 各项目 bin/publish -> _releases/（仓库 120MB -> 28.5MB）",
+        "Python 版取数工具 -> legacy/fct-fetcher-python/"
+      ]
+    },
+    "dedup": {
+      "xlsx_writers": "4 份 -> 1 份（新增 Xlsx.cs / FctShared.Xlsx）。只合外壳不合调色板：styles.xml 由调用方传入，报表长相不变",
+      "station_detector": "2 份 -> 1 份（先逐条核对 7 条 IP 映射一致才删）",
+      "xml_viewer": "2 份 -> 1 份（留 FailRanker 的超集，主程序白拿'看原始XML'与'外部打开'）",
+      "icon_loader": "6 处 -> 1 处（AppIcon.cs，嵌入资源优先）",
+      "kept_on_purpose": {
+        "FailItem": "取数那份多 StepType，扫描口径不同",
+        "Exporter": "xlsx 汇总 vs csv/json 波形",
+        "XmlParser/XmlScanner/XmlTimeScanner/Scanner": "解析单文件/扫描排名/只读时间戳/定位文件，四件事",
+        "FAIL排行工具 vs 主程序待办": "离线出 Excel 报表 vs 在线实时看板"
+      }
+    },
+    "app_icon": {
+      "source": "assets/icon/icon-{16,32,48,64,128,256}x*.png（来自 C:/Users/admin/Downloads/all-icons）",
+      "build": "python tools/make_icon.py（直接写 ICO 容器，PNG 条目原样塞入，不二次缩放）",
+      "size": "285 字节占位图 -> 159425 字节 / 6 个尺寸",
+      "bug_fixed": "make_package.ps1 从未把 app_icon.ico 放进发布包 -> 现场窗口退回 exe 内嵌图、托盘退回 SystemIcons.Application（灰图）"
+    }
+  },
+  "lessons_learned_pitfalls": [
+    {
+      "topic": "WinForms 停靠顺序",
+      "detail": "Dock 按 z-order 从后往前处理：最后 Add 的最先停靠。Dock=Fill 必须最先 Add，侧栏必须最后 Add。写反不报错，只是内容区占满客户区、其它栏盖在上面。",
+      "guard": "自检有几何断言（量 Left/Top/Width/Height）"
+    },
+    {
+      "topic": "Control.FindForm()",
+      "detail": "在 Form 自身上返回 this（实现是'从自己往上找第一个 Form'）。内嵌后要拿真正顶层窗必须用 TopLevelControl。",
+      "guard": "4 条 TopLevelControl==主窗口 断言"
+    },
+    {
+      "topic": "只读 TextBox 自动全选",
+      "detail": "因窗口激活/Tab 拿到焦点会自动全选（鼠标点进去不会）。修法：TabStop=false + OnShown/Activated/GotFocus 里 SelectionLength=0 + ActiveControl=null。"
+    },
+    {
+      "topic": "DataObject 按精确类型名查格式",
+      "detail": "e.Data.GetData(typeof(MaintenanceCard)) 遇到第二种卡片会静默取不到 -> 统一用自定义格式字符串 + 基类 BoardCardBase。"
+    },
+    {
+      "topic": "单击 vs 双击",
+      "detail": "单击预览必须延迟一个 SystemInformation.DoubleClickTime；且消息顺序是 Down→Up→Click→Down→DoubleClick→Up，双击后那个 MouseUp 要用 _suppressClick 拦掉。"
+    },
+    {
+      "topic": "时间戳格式比较",
+      "detail": "batch_timestamp 是 2026-07-30T10:00:00，维修记录是 2026-07-30 10:00:00，'T'(84)>' '(32) 会把刚完成的记录误判成复发 -> 统一 NormalizeTs。"
+    },
+    {
+      "topic": "别剔开头数字",
+      "detail": "5V_Rail 的 5 是电压值，剔了变 V_Rail 且会把 5V/12V 错并。只剔三种确定是序号的形式：12) / Step 3 / 多段号 6.1.1.1。"
+    },
+    {
+      "topic": "WinExe 下 CLI 没输出",
+      "detail": "AttachConsole(-1) 之后必须 Console.SetOut(new StreamWriter(Console.OpenStandardOutput()))，否则 Console.Out 已被绑成 TextWriter.Null，管道下全丢。"
+    },
+    {
+      "topic": "五个 Main",
+      "detail": "用 csproj <StartupObject> 消歧，别删各工具的 Main（里面有 CLI 逻辑）。自检工程编译 modules/** 时同样需要。"
+    },
+    {
+      "topic": "dotnet publish 不带 RID 时原生库位置",
+      "detail": "e_sqlite3.dll 只在 runtimes/win-x64/native/，不在 dist 根。之前靠旧残留文件蒙对，dist 一清就报找不到路径 -> Resolve-DistFile 递归查找。"
+    },
+    {
+      "topic": "自检里不能真触发 DoDragDrop",
+      "detail": "会进模态拖拽消息循环，无鼠标输入时挂死（曾把自检卡到 400s 超时）。"
+    },
+    {
+      "topic": "ICO/工作表名细节",
+      "detail": "Excel 禁止的工作表名字符是 \\ / ? * [ ] :，而 < > 合法只需 XML 转义；XML 非法控制字符必须丢弃否则 Excel 报'文件已损坏'。"
+    },
+    {
+      "topic": "自检 fixture",
+      "detail": "真实库 dist/data/fct.db 是 gitignore 的本地文件；断言已改成缺失时跳过 + 多候选相对路径。"
+    }
+  ],
+  "testing": {
+    "selftest": "dotnet run --project selftest/SelfTest.csproj -c Release（必须全绿）。本会话新增约 130 条断言：待办闭环、大项合并（含反向断言防过度合并）、GUI 几何布局、工具内嵌、主题器不改布局、xlsx 结构、图标",
+    "smoke_scripts": {
+      "tools/smoke_gui.ps1": "起窗口/看标题/查日志 ERROR",
+      "tools/smoke_notify.ps1": "丢一条 FAIL -> 桌面提示 + 待办登记",
+      "tools/smoke_cli.ps1": "子命令 / CLI stdout 未被吞 / 单实例不误伤 CLI（本会话新增）",
+      "tools/snap_gui.ps1": "Ctrl+1..9 逐页截图到 .snap/（本会话新增，供人工核对布局）"
+    },
+    "must_run_after_change": "build + SelfTest + smoke_gui；动 UI 再跑 snap_gui；动子命令再跑 smoke_cli"
+  },
+  "config_keys_added": {
+    "desktop_notify": "true（仅显式 false 关闭）",
+    "notify_min_interval_sec": "15",
+    "todo_scan_days": "30（只影响新并入；已登记的待办永久保留）"
+  },
+  "outside_this_repo": {
+    "zeroclaw_step_explore": {
+      "file": "C:/Users/admin/.zeroclaw/config.toml",
+      "provider": "[providers.models.anthropic.step] model=step-explore uri=https://api.stepfun.com/step_plan（base，不是完整端点）",
+      "agents_pointed_to_it": [
+        "meme",
+        "step",
+        "step-explore"
+      ],
+      "pitfalls": [
+        "uri 要填 base：anthropic 客户端自己拼 /v1/messages，填完整端点会 404 空 body",
+        "-p anthropic.step 无效（-p 只认类型），别名只能通过 [agents.x].model_provider 生效",
+        "别信模型自述'你是什么模型'，看 --log-level debug -v 里的 model= 与连接域名",
+        "agents.step-explore 别名带连字符，zeroclaw CLI 拒绝操作它（只能手工改 TOML）"
+      ],
+      "backups": [
+        "config.toml.bak-20260730-1441",
+        "config.toml.bak2-20260730-1526"
+      ]
+    },
+    "fct_xml_to_pdf": {
+      "script": "C:/Users/admin/Downloads/fct_xml2pdf.py",
+      "usage": "python fct_xml2pdf.py <xml> [-o out.pdf] [--keep-html] [--portrait]",
+      "impl": "XML -> 自排版 HTML -> Microsoft Edge 无头 --print-to-pdf（回退 weasyprint）",
+      "verified": "P_Fts_..._K62700557 转换成功：575 项测试全 PASS，1.8MB PDF"
+    }
+  },
+  "pending_decisions": [
+    {
+      "item": "ListView 列头无法改色",
+      "detail": "WinForms 限制（要 owner-draw 整个控件）。FAIL 记录/维修列表/待办列表列头仍是系统样式。彻底统一需把它们换成 DataGridView。",
+      "priority": "低"
+    },
+    {
+      "item": "xlsx 样式需人眼确认",
+      "detail": "去重只验证了结构合法性，配色/列宽是否与之前一致我无法目视。上线前请拿实际数据各导一次（分发 SN 表 / FAIL 排行报表 / 取数清单 / 维修记录）。",
+      "priority": "高（上线前必做）"
+    },
+    {
+      "item": "机台上删掉旧的 4 个 exe",
+      "detail": "FCT-Distributor / FCT-FailRanker / FCT-Fetcher / FCT-TdmsViewer 及其目录，避免有人继续开旧的。",
+      "priority": "高"
+    },
+    {
+      "item": "图标视觉确认",
+      "detail": "我看不到图片，小尺寸下是否辨得清需人眼确认；任务栏图标没变是 Windows 图标缓存。",
+      "priority": "中"
+    },
+    {
+      "item": "小屏适配",
+      "detail": "主窗口最小 1240x860；1366x768 机台上工具页会有滚动条。可考虑按屏幕自适应或给工具页加缩放。",
+      "priority": "中"
+    },
+    {
+      "item": "agents.step-explore 别名清理",
+      "detail": "带连字符，zeroclaw CLI 无法操作，建议删掉统一用 step。",
+      "priority": "低"
+    },
+    {
+      "item": "抽 FctShared 更多共享",
+      "detail": "FailItem/Exporter/XML 扫描器等刻意未合；若真要合需单独一轮回归。",
+      "priority": "低"
+    }
+  ],
+  "how_to_continue": {
+    "build": "cd F:/Programe/G4_9-QA/fct-aggregator-cs; dotnet build FctAggregator.csproj -c Release",
+    "test": "dotnet run --project selftest/SelfTest.csproj -c Release",
+    "package": "dotnet publish FctAggregator.csproj -c Release -o dist; ./tools/make_package.ps1; Compress-Archive ...",
+    "read_first": [
+      "README.md（结构/命令/约定）",
+      "TECHNICAL_DOCUMENTATION.md 第 8 章（设计约定与全部坑）",
+      "更新日志.md 顶部几条"
+    ],
+    "conventions": [
+      "改动后至少跑 build + SelfTest + smoke_gui",
+      "新面板取 Theme 令牌，不要自己写颜色字号",
+      "要导 Excel 用 FctShared.Xlsx；要图标用 AppIcon.Load()/Apply()",
+      "内嵌 Form 里别用 FindForm()，用 TopLevelControl",
+      "提交前确认 _releases/ package_v*/ dist/ .snap/ data/ logs/ 不入库"
+    ]
+  }
+}
