@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    FCT 数据分发器 v1.9.0 —— 独立程序（v3.0.0 起）
+
+    ⚠ 为什么从「FCT 工具套件」里拆出来：
+      分发器能改文件时间戳、按模板造数、批量投放 XML。这些操作放在**产线机台**的
+      主程序里，误点一次的后果很重。所以彻底分家：产线机台只装 FCT-Aggregator，
+      分发器单独发给工程/测试人员。
+
+    ⚠ 彻底分家的代价（用户已确认接受）：
+      Xlsx.cs / AppIcon.cs / StationDetector.cs 各自持有一份副本，不再共享源文件。
+      Xlsx.cs 与主程序那份是**逐字节相同的副本**，AppIcon / StationDetector 是精简版。
+      改动这三者时要顺手看主程序那份。分发器自检里有跨工程一致性断言盯着 IP 映射表。
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>FCT-Distributor</AssemblyName>
+    <RootNamespace>FctDistributor</RootNamespace>
+    <StartupObject>FctDistributor.Program</StartupObject>
+    <Version>1.9.0</Version>
+    <AssemblyVersion>1.9.0.0</AssemblyVersion>
+    <FileVersion>1.9.0.0</FileVersion>
+    <Company>Zenix-Ally</Company>
+    <Product>FCT 数据分发器</Product>
+    <ApplicationIcon>app_icon.ico</ApplicationIcon>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 自检工程独立编译（不排除的话它的 obj\AssemblyInfo.cs 会被默认 glob 当源码 -> CS0579） -->
+    <Compile Remove="selftest\**" />
+    <None Remove="selftest\**" />
+    <EmbeddedResource Remove="selftest\**" />
+    <Compile Remove="tools\**" />
+    <None Remove="tools\**" />
+    <EmbeddedResource Remove="tools\**" />
+
+    <!-- 内置模板。LogicalName 固定成 FctDistributor.tpl.*，与 TemplateGenerator.EmbeddedPrefix 一致；
+         自检工程也用同样的 LogicalName，两边行为才一样 -->
+    <EmbeddedResource Include="tpl\*.xml" LogicalName="FctDistributor.tpl.%(Filename)%(Extension)" />
+    <!-- 图标走嵌入资源（AppIcon 按 EndsWith("app_icon.ico") 找，不依赖发布包里有 .ico 文件） -->
+    <EmbeddedResource Include="app_icon.ico" />
+  </ItemGroup>
+
+</Project>

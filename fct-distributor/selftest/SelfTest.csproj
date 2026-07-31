@@ -2,10 +2,10 @@
 
   <!--
     自检工程：不属于主程序，独立运行。
-    直接引用主项目的源文件（除 WinForms 的 MainForm/Program），在临时目录里
+    直接引用上一层的源文件（除 WinForms 的 MainForm/Program），在临时目录里
     造出「已有目录」结构，验证「只投放到已有目录」模式的全部不变量。
 
-    运行:  dotnet run ––project selftest\SelfTest.csproj -c Release
+    运行:  dotnet run ––project selftest\SelfTest.csproj -c Release   （注：XML 注释里不能写两个半角横线）
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -29,6 +29,9 @@
     <Compile Include="..\XlsxWriter.cs" />
     <Compile Include="..\SnExporter.cs" />
     <Compile Include="..\RestampScopeDialog.cs" />
+    <!-- v3.0.0 彻底分家后分发器自带的副本（SnExporter/XlsxWriter 依赖 FctShared.Xlsx） -->
+    <Compile Include="..\Xlsx.cs" />
+    <Compile Include="..\StationDetector.cs" />
     <!-- 与主程序一致的内置模板资源名，使 LoadEmbedded() 在自检里也能工作 -->
     <EmbeddedResource Include="..\tpl\*.xml" LogicalName="FctDistributor.tpl.%(Filename)%(Extension)" />
   </ItemGroup>

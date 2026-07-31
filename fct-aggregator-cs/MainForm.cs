@@ -56,29 +56,32 @@ public class MainForm : Form
     private FailListPanel _failPage = null!;
     private System.Windows.Forms.Timer _timer = null!;
 
-    /// <summary>页索引 → 标题（顶栏显示）。0~4 主程序页，5~8 内嵌的工具页。</summary>
+    /// <summary>页索引 → 标题（顶栏显示）。0~4 主程序页，5~7 内嵌的工具页。</summary>
     private static readonly string[] PageTitles =
     {
         "总览", "待办 / 维修记录", "FAIL 记录", "设备状态", "调试工具",
-        "数据分发", "FAIL 排行", "取数打包", "TDMS 波形",
+        "FAIL 排行", "取数打包", "TDMS 波形",
     };
 
-    /// <summary>主程序自己的页面数（后面那四个是内嵌工具页）。</summary>
+    /// <summary>主程序自己的页面数（后面那三个是内嵌工具页）。</summary>
     private const int OwnPageCount = 5;
 
     /// <summary>
     /// 工具（v2.9.4 起**内嵌**在主窗口里，不再弹独立窗口）。
-    /// key 同时是 CLI 子命令名（<c>FCT-Aggregator.exe distribute</c> 仍能单独开窗）。
+    /// key 同时是 CLI 子命令名（<c>FCT-Aggregator.exe rank</c> 仍能单独开窗）。
+    ///
+    /// ⚠ v3.0.0：**数据分发已移出本程序**。它能改文件时间戳、按模板造数、批量投放 XML，
+    /// 放在产线机台的主程序里误点一次后果很重。现在是独立程序 <c>FCT-Distributor.exe</c>
+    /// （仓库里的 <c>fct-distributor/</c>），只发给工程/测试人员，不进产线包。
     /// </summary>
     private static readonly (string key, string label, Func<Form> factory)[] Tools =
     {
-        ("distribute", "数据分发", () => new FctDistributor.MainForm()),
         ("rank",       "FAIL 排行", () => new FctFailRanker.MainForm()),
         ("fetch",      "取数打包", () => new FctFetcher.MainForm()),
         ("tdms",       "TDMS 波形", () => new FctTdmsViewer.MainForm()),
     };
 
-    /// <summary>四个工具页（惰加载：第一次切过去才构造）。</summary>
+    /// <summary>三个工具页（惰加载：第一次切过去才构造）。</summary>
     private readonly ToolHost[] _toolPages = new ToolHost[Tools.Length];
 
     private int _page = 0;
@@ -87,11 +90,12 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT 工具套件 v2.9.4";
-        // 内嵌的工具自带最小尺寸（最大的数据分发是 1040×790），窗口得能装下；
-        // 装不下时由 ToolHost 的 AutoScroll 兼底。
+        Text = "Zenix-Ally | FCT 工具套件 v3.0.0";
+        // 内嵌工具自带最小尺寸，窗口得能装下；装不下时由 ToolHost 的 AutoScroll 兜底。
+        // v3.0.0：数据分发（1040×790，原来最大的那个）移出后，剩下最大是 TDMS 波形 1000×640，
+        // 所以最小窗口从 1240×860 降到 1200×720 —— 1366×768 的机台不再出横向滚动条。
         Width = 1360; Height = 920;
-        MinimumSize = new Size(1240, 860);
+        MinimumSize = new Size(1200, 720);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Bg;
         AppIcon.Apply(this);                     // v2.9.4: 统一走 AppIcon（嵌入资源优先）
@@ -210,7 +214,7 @@ public class MainForm : Form
         contentHost.Controls.Add(_maintPage);
         contentHost.Controls.Add(_debugPage);
         contentHost.Controls.Add(_failPage);
-        // 四个内嵌工具页（惰加载：这里只建宿主，真正构造在第一次切过去时）
+        // 三个内嵌工具页（惰加载：这里只建宿主，真正构造在第一次切过去时）
         for (int i = 0; i < Tools.Length; i++)
         {
             var t = Tools[i];
@@ -243,7 +247,7 @@ public class MainForm : Form
 
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v2.9.4", ForeColor = Color.FromArgb(120, 134, 154),
+            Dock = DockStyle.Bottom, Height = 26, Text = "v3.0.0", ForeColor = Color.FromArgb(120, 134, 154),
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };
@@ -459,7 +463,7 @@ public class MainForm : Form
                 case 2: _failPage.Refresh2(); break;
                 case 3: _devicePage.Refresh2(); break;
                 case 0: Tick(); break;
-                default: break;               // 5~8 = 内嵌工具页
+                default: break;               // 5~7 = 内嵌工具页
             }
         }
         catch (Exception ex) { Logger.Warning($"页面刷新失败: {ex.Message}"); }
@@ -474,7 +478,7 @@ public class MainForm : Form
             _ => -1,
         };
         if (idx >= 0) { ShowPage(idx); e.Handled = true; return; }
-        // Ctrl+6..9 = 四个内嵌工具页
+        // Ctrl+6..8 = 三个内嵌工具页
         int tool = e.KeyCode switch
         {
             Keys.D6 => 0, Keys.D7 => 1, Keys.D8 => 2, Keys.D9 => 3,

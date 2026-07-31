@@ -5,8 +5,8 @@
 #>
 param(
     # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
-    [string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v2.9.4.zip",
-    [string]$ExpectTitle = 'FCT 工具套件 v2.9.4'
+    [string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v3.0.0.zip",
+    [string]$ExpectTitle = 'FCT 工具套件 v3.0.0'
 )
 $ErrorActionPreference = 'Stop'
 

@@ -7,7 +7,7 @@
 #>
 param(
     # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
-    [string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v2.9.4.zip",
+    [string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v3.0.0.zip",
     [string]$SeedDb = "$PSScriptRoot\..\dist\data\fct.db",
     [string]$OutDir = "$PSScriptRoot\..\.snap"
 )
@@ -76,8 +76,8 @@ function Snap([string]$file) {
 }
 
 Snap (Join-Path $OutDir 'page1.png')
-# 2~5 = 主程序页，6~9 = 四个内嵌工具页（v2.9.4）
-foreach ($n in 2, 3, 4, 5, 6, 7, 8, 9) {
+# 2~5 = 主程序页，6~8 = 三个内嵌工具页（v3.0.0：数据分发已独立）
+foreach ($n in 2, 3, 4, 5, 6, 7, 8) {
     [Win32]::SetForegroundWindow($h) | Out-Null
     Start-Sleep -Milliseconds 400
     [System.Windows.Forms.SendKeys]::SendWait("^$n")

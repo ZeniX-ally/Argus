@@ -1,9 +1,10 @@
-# 打包 FCT 工具套件 v2.9.4（单 exe：主程序 + 分发/排行/取数/TDMS 四个工具）
-# 生成 package_v2.9.4（完整包，含 config.json）与 package_v2.9.4-update（覆盖包，无 config/data/logs/pdb）
+# 打包 FCT 工具套件 v3.0.0（单 exe：主程序 + 排行/取数/TDMS 三个工具）
+# ⚠ v3.0.0：数据分发已独立成 FCT-Distributor.exe，单独打包（见 ../fct-distributor/tools/make_package.ps1）
+# 生成 package_v3.0.0（完整包，含 config.json）与 package_v3.0.0-update（覆盖包，无 config/data/logs/pdb）
 $ErrorActionPreference = 'Stop'
 # 路径自己推（仓库目录 2026-07-31 从 G4_9-QA 改名成 Argus，写死绝对路径会静静失效）
 $root = (Resolve-Path "$PSScriptRoot\..").Path
-$ver  = '2.9.4'
+$ver  = '3.0.0'
 $dist = Join-Path $root 'dist'
 $full = Join-Path $root "package_v$ver"
 $upd  = Join-Path $root "package_v$ver-update"

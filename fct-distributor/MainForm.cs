@@ -173,7 +173,7 @@ public class MainForm : Form
         for (int i = 1; i <= 7; i++) _clbStations.Items.Add($"FCT{i}");
         _clbStations.Visible = false;
 
-        var detected = FctAggregator.StationDetector.DetectStation();   // v2.9.3: 与主程序共用一份 IP 映射表
+        var detected = StationDetector.DetectStation();   // v3.0.0: 分发器自己那份（彻底分家，IP 表两份，自检盯一致性）
         _lblDetect.Left = 400; _lblDetect.Top = 129; _lblDetect.Width = 250; _lblDetect.Height = 20;
         if (detected != null)
         {
@@ -1154,9 +1154,7 @@ public class MainForm : Form
     {
         try
         {
-            FctAggregator.AppIcon.Apply(this);   // v2.9.4: 统一图标入口
-            var p = Path.Combine(AppContext.BaseDirectory, "app_icon.ico");
-            if (File.Exists(p)) Icon = new Icon(p);
+            AppIcon.Apply(this);   // v3.0.0: 分发器自己的 AppIcon（嵌入资源优先，已含文件兵底）
         }
         catch { }
     }

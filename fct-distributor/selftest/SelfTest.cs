@@ -392,7 +392,78 @@ class SelfTest
         Check(!Directory.EnumerateDirectories(root).Any(), "空目标根仍然是空的（未新建目录）");
         Directory.Delete(root, true);
 
+        // ==================== v3.0.0 彻底分家：副本一致性 ====================
+        // 分发器独立后不再引用主程序源码，IP 映射表与 Xlsx 写出器各持一份副本。
+        // 副本最大的风险是**静默漂移**：改了一边忘了另一边，两边自检还都是绿的。
+        // 所以这里直接去读主程序的源文件做跨工程比对（源码不在时跳过，不影响独立部署）。
+        CheckCopiesInSync();
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
+    }
+
+    /// <summary>从当前目录/程序目录两头往上找文件（不写死绝对路径）。</summary>
+    static string FindUp(string relative)
+    {
+        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            var dir = new DirectoryInfo(start);
+            for (int i = 0; i < 7 && dir != null; i++, dir = dir.Parent)
+            {
+                var p = Path.Combine(dir.FullName, relative);
+                if (File.Exists(p)) return p;
+            }
+        }
+        return "";
+    }
+
+    /// <summary>
+    /// 验「分发器的副本」与「主程序的原份」没有静默漂移。
+    /// 比两样：① IP→机台映射表逐条；② Xlsx.cs 是否逐字节相同。
+    /// </summary>
+    static void CheckCopiesInSync()
+    {
+        Console.WriteLine();
+        var mainSd = FindUp(Path.Combine("fct-aggregator-cs", "StationDetector.cs"));
+        if (mainSd.Length == 0)
+        {
+            Console.WriteLine("    (跳过副本一致性比对：没找到主程序源码，独立部署时属正常）");
+        }
+        else
+        {
+            var text = File.ReadAllText(mainSd);
+            // 抽 ["172.28.55.11"] = "FCT1" 这种行
+            var re = new System.Text.RegularExpressions.Regex(
+                @"\[""(?<ip>[\d\.]+)""\]\s*=\s*""(?<st>FCT\d+)""");
+            var mainMap = new Dictionary<string, string>();
+            foreach (System.Text.RegularExpressions.Match m in re.Matches(text))
+                mainMap[m.Groups["ip"].Value] = m.Groups["st"].Value;
+
+            Check(mainMap.Count > 0, $"能从主程序源码里解出 IP 映射表（{mainMap.Count} 条）");
+            var mine = StationDetector.IpToStation;
+            Check(mine.Count == mainMap.Count,
+                  $"IP 映射表条数一致（分发器 {mine.Count} / 主程序 {mainMap.Count}）");
+            var diff = new List<string>();
+            foreach (var kv in mainMap)
+                if (!mine.TryGetValue(kv.Key, out var v) || v != kv.Value)
+                    diff.Add($"{kv.Key}：主程序={kv.Value} / 分发器={(mine.TryGetValue(kv.Key, out var x) ? x : "缺失")}");
+            foreach (var kv in mine)
+                if (!mainMap.ContainsKey(kv.Key)) diff.Add($"{kv.Key}：主程序=缺失 / 分发器={kv.Value}");
+            Check(diff.Count == 0,
+                  diff.Count == 0 ? "**IP 映射表与主程序逐条一致**（副本未漂移）"
+                                  : "IP 映射表与主程序不一致：" + string.Join("；", diff));
+        }
+
+        var mainXlsx = FindUp(Path.Combine("fct-aggregator-cs", "Xlsx.cs"));
+        var mineXlsx = FindUp("Xlsx.cs");
+        if (mainXlsx.Length == 0 || mineXlsx.Length == 0)
+            Console.WriteLine("    (跳过 Xlsx.cs 比对：源文件不齐)");
+        else
+        {
+            var a = File.ReadAllBytes(mainXlsx);
+            var b = File.ReadAllBytes(mineXlsx);
+            Check(a.AsSpan().SequenceEqual(b),
+                  $"Xlsx.cs 与主程序那份逐字节相同（{a.Length} / {b.Length} 字节）");
+        }
     }
 }

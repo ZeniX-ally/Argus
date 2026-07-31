@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.9.4（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 去重 + 正式图标）
+**当前版本**：v3.0.0（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 去重 + 正式图标；**数据分发已独立成 FCT-Distributor**）
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除。

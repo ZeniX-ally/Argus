@@ -74,9 +74,6 @@ static class Program
                         return f;
                     });
 
-                case "distribute":
-                    return RunToolGui(() => new FctDistributor.MainForm());
-
                 case "rank":
                     return RunToolGui(() => new FctFailRanker.MainForm());
 
@@ -147,7 +144,6 @@ static class Program
 FCT 工具套件 (FCT-Aggregator.exe)
 
   FCT-Aggregator.exe                    主程序：采集聚合 / 待办维修 / 工具箱
-  FCT-Aggregator.exe distribute         分发工具（窗口）
   FCT-Aggregator.exe rank               FAIL 排行（窗口）
   FCT-Aggregator.exe tdms [文件.tdms]   TDMS 波形查看（窗口）
   FCT-Aggregator.exe tdms --help        TDMS 工具的命令行用法

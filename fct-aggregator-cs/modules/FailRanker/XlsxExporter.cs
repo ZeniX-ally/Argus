@@ -226,6 +226,10 @@ public static class XlsxExporter
 
 
 
+    /// <summary>自检用：把样式部件暴露出来做对拍（与 Fetcher 那边同一做法）。
+    /// v3.0.0：原来这条断言拿的是分发器的调色板，分发器拆出去后改用 FAIL 排行这份。</summary>
+    internal static string Styles2() => Styles();
+
     /// <summary>
     /// 样式表: fonts / fills / borders / cellXfs。
     /// cellXfs 索引与顶部 S_* 常量一一对应。

@@ -1,14 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    FCT 工具套件（v2.9.4 起：单 exe 工具箱）
+    FCT 工具套件（v3.0.0：单 exe 工具箱，数据分发已独立出去）
 
-    原来 5 个独立项目（aggregator / distributor / fail-ranker / fetcher / tdms-viewer）
-    合并进这一个程序集：主程序 = 采集聚合，其余 4 个作为「工具箱」入口，
-    源码在 modules\<Name>\ 下，各自保留自己的 namespace（FctDistributor / FctFailRanker /
+    v2.9.0 曾把 5 个独立项目合并进这一个程序集；v3.0.0 又把**数据分发**拆了出去
+    （它能改时间戳/造数/批量投放，不该出现在产线机台的主程序里，见 fct-distributor/）。
+    现在这里是：主程序 = 采集聚合，外加 3 个「工具箱」入口，
+    源码在 modules\<Name>\ 下，各自保留自己的 namespace（FctFailRanker /
     FctFetcher / FctTdmsViewer），所以 MainForm / Program / XlsxWriter 这些同名类不会打架。
 
-    ⚠ 5 个 Program 各有一个 Main -> 用 <StartupObject> 显式指定主入口，
+    ⚠ 4 个 Program 各有一个 Main -> 用 <StartupObject> 显式指定主入口，
       否则 CS0017「程序定义了多个入口点」。各工具的 Main 保留着（内含 CLI 逻辑），
       由 FctAggregator.Program 按子命令转发。
   -->
@@ -21,9 +22,9 @@
     <AssemblyName>FCT-Aggregator</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
     <StartupObject>FctAggregator.Program</StartupObject>
-    <Version>2.9.4</Version>
-    <AssemblyVersion>2.9.4.0</AssemblyVersion>
-    <FileVersion>2.9.4.0</FileVersion>
+    <Version>3.0.0</Version>
+    <AssemblyVersion>3.0.0.0</AssemblyVersion>
+    <FileVersion>3.0.0.0</FileVersion>
     <Company>Zenix-Ally</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
@@ -45,8 +46,6 @@
     <None Remove="tools\**" />
     <EmbeddedResource Remove="tools\**" />
 
-    <!-- 分发工具的内置模板（TemplateGenerator.LoadEmbedded 按 .xml 结尾扫描） -->
-    <EmbeddedResource Include="modules\Distributor\tpl\*.xml" />
     <!-- 取数/TDMS 工具从嵌入资源里找图标（按 EndsWith("app_icon.ico") 匹配，一份就够） -->
     <EmbeddedResource Include="app_icon.ico" />
 

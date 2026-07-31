@@ -927,7 +927,7 @@ class SelfTest
 
                 var navButtons = nav!.Controls.OfType<NavButton>().Where(b => b.PageIndex >= 0)
                                      .OrderBy(b => b.PageIndex).ToList();
-                Check(navButtons.Count == 9, $"导航有 {navButtons.Count} 项（5 个主页面 + 4 个内嵌工具页）");
+                Check(navButtons.Count == 8, $"导航有 {navButtons.Count} 项（5 个主页面 + 3 个内嵌工具页）");
                 bool ordered = true;
                 for (int i = 1; i < navButtons.Count; i++)
                     if (navButtons[i].Top <= navButtons[i - 1].Top) ordered = false;
@@ -982,12 +982,14 @@ class SelfTest
                 var toolPages = (ToolHost[])typeof(MainForm).GetField("_toolPages",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
                     .GetValue(form)!;
-                Check(toolPages.Length == 4, $"四个工具页宿主已建（{toolPages.Length} 个）");
+                Check(toolPages.Length == 3, $"三个工具页宿主已建（{toolPages.Length} 个）");
                 Check(toolPages.All(h => h.Embedded == null),
                       "**启动时工具尚未构造**（惰加载，不拖慢开机）");
 
                 var toolTitles = new List<string>();
-                for (int i = 0; i < 4; i++)
+                // v3.0.0：数据分发拆出去后只剩 3 个工具页。别写死 4，直接拿数组长度 ——
+                // 写死的话以后再增减工具会 IndexOutOfRange（刚就踩了）。
+                for (int i = 0; i < toolPages.Length; i++)
                 {
                     var page = 5 + i;
                     showPage.Invoke(form, new object?[] { page });
@@ -1010,7 +1012,7 @@ class SelfTest
                           $"{pt}：页面可见且开了 AutoScroll（窗口拉小靠滚动条兑）");
                     Check(navButtons.First(b => b.PageIndex == page).Active, $"{pt}：对应导航项高亮");
                 }
-                Check(toolTitles.Distinct().Count() == 4, $"四个工具页标题各不相同：{string.Join(" / ", toolTitles)}");
+                Check(toolTitles.Distinct().Count() == 3, $"三个工具页标题各不相同：{string.Join(" / ", toolTitles)}");
 
                 showPage.Invoke(form, new object?[] { 0 });
                 Application.DoEvents();
@@ -1027,15 +1029,14 @@ class SelfTest
             Check(true, "退出时托盘图标已回收（Shutdown 可重复调）");
         }
 
-        // ---------- 工具箱（v2.9.0：四个原独立 exe 合进同一个程序）----------
-        Console.WriteLine("\n【工具箱】四个合入的工具必须能无 UI 构造并单例打开");
+        // ---------- 工具箱（v2.9.0 合入；v3.0.0 数据分发已拆出去）----------
+        Console.WriteLine("\n【工具箱】三个合入的工具必须能无 UI 构造并单例打开");
         {
             // 合并后最大的风险：某个工具的窗口构造失败（缺资源/缺依赖/静态初始化抛），
             // 在主程序里点一下就弹错。这里逐个真构造一遍。
-            // 工具窗口仍能当普通 Form 单独用（CLI 子命令 distribute/rank/tdms 走这条）
+            // 工具窗口仍能当普通 Form 单独用（CLI 子命令 rank/fetch/tdms 走这条）
             var tools = new (string name, Func<Form> make)[]
             {
-                ("分发工具 FctDistributor", () => new FctDistributor.MainForm()),
                 ("FAIL 排行 FctFailRanker", () => new FctFailRanker.MainForm()),
                 ("取数打包 FctFetcher", () => new FctFetcher.MainForm()),
                 ("TDMS 波形 FctTdmsViewer", () => new FctTdmsViewer.MainForm()),
@@ -1073,26 +1074,25 @@ class SelfTest
                     var names = System.Reflection.Assembly.LoadFrom(Path.GetFullPath(dll))
                                       .GetManifestResourceNames();
                     var xmls = names.Where(n => n.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)).ToList();
-                    Check(xmls.Count >= 2, $"主程序里内置模板仍在（{xmls.Count} 个 .xml 资源）");
-                    Check(xmls.All(n => n.StartsWith(FctDistributor.TemplateGenerator.EmbeddedPrefix)),
-                          "EmbeddedPrefix 与实际资源名对得上（否则模板名会显示成一串命名空间）");
+                    // v3.0.0：分发器的内置模板（tpl\*.xml）随它一起搬去 fct-distributor/ 了。
+                    // 这里反向断言 —— 主程序里**不该**再有任何 xml 资源，否则说明拆分没拆干净。
+                    Check(xmls.Count == 0,
+                          $"主程序里已无内置模板 xml 资源（分发器已独立，实得 {xmls.Count} 个）");
                     Check(names.Any(n => n.EndsWith("app_icon.ico", StringComparison.OrdinalIgnoreCase)),
                           "内嵌图标仍在（取数/TDMS 工具靠 EndsWith(\"app_icon.ico\") 找它）");                }
             }
 
             // 名字重名的类确实靠命名空间隔开了（合并前有 10 组同名类）
-            Check(typeof(FctDistributor.MainForm) != typeof(FctFailRanker.MainForm) &&
+            Check(typeof(FctFailRanker.MainForm) != typeof(FctFetcher.MainForm) &&
                   typeof(FctFetcher.MainForm) != typeof(FctTdmsViewer.MainForm) &&
-                  typeof(FctAggregator.MainForm) != typeof(FctDistributor.MainForm),
-                  "五个 MainForm 共存于同一程序集（靠命名空间隔离，无需改名）");
-            Check(typeof(FctDistributor.XlsxWriter) != typeof(FctFetcher.XlsxWriter),
-                  "两份 XlsxWriter 也共存（后续可抽共享库去重）");
+                  typeof(FctAggregator.MainForm) != typeof(FctFailRanker.MainForm),
+                  "四个 MainForm 共存于同一程序集（靠命名空间隔离，无需改名）");
         }
 
         // ---------- 风格统一（v2.9.2）----------
         Console.WriteLine("\n【风格统一】主题器只改外观，不能碰布局");
         {
-            // 四个工具都是绝对坐标布局，一旦主题器改了尺寸/位置就会错位。
+            // 三个工具都是绝对坐标布局，一旦主题器改了尺寸/位置就会错位。
             // 这里逐个工具：刷前记下所有控件的 Bounds，刷完逐个比。
             IEnumerable<Control> Walk(Control c)
             {
@@ -1103,7 +1103,6 @@ class SelfTest
 
             var makers = new (string name, Func<Form> make)[]
             {
-                ("数据分发", () => new FctDistributor.MainForm()),
                 ("FAIL 排行", () => new FctFailRanker.MainForm()),
                 ("取数打包", () => new FctFetcher.MainForm()),
                 ("TDMS 波形", () => new FctTdmsViewer.MainForm()),
@@ -1171,7 +1170,7 @@ class SelfTest
             });
             sh.Merges.Add((0, 1, 0, 2));
             var shared = Path.Combine(dir, "shared.xlsx");
-            FctShared.Xlsx.Write(shared, new[] { sh }, FctDistributor.XlsxWriter.Styles2());
+            FctShared.Xlsx.Write(shared, new[] { sh }, FctFetcher.XlsxWriter.Styles2());
 
             Check(new FileInfo(shared).Length > 800, $"共享写出器生成 xlsx（{new FileInfo(shared).Length} 字节）");
             using (var zip = System.IO.Compression.ZipFile.OpenRead(shared))
@@ -1222,8 +1221,8 @@ class SelfTest
                       "维修导出冻结表头（v2.9.3 新增；v2.9.2 无冻结，是刻意保留的唯一长相变化）");
             }
 
-            // 三个工具的样式部件各不相同 = 报表长相没有被"统一"掉
-            var st1 = FctDistributor.XlsxWriter.Styles2();
+            // 两个工具的样式部件各不相同 = 报表长相没有被“统一”掉
+            var st1 = FctFailRanker.XlsxExporter.Styles2();
             var st2 = FctFetcher.XlsxWriter.Styles2();
             Check(st1 != st2, "各工具的 styles.xml 仍是各自的调色板（只合并了外壳，没统一长相）");
             Check(st1.Contains("styleSheet") && st2.Contains("styleSheet"), "样式部件格式正常");

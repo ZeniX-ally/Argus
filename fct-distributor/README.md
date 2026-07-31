@@ -1,3 +1,43 @@
+# FCT 数据分发器 v1.9.0（独立程序）
+
+> ⚠ **v3.0.0 起本工具从「FCT 工具套件」里独立出来，是单独的 `FCT-Distributor.exe`。**
+>
+> 为什么独立：它能**改文件时间戳、按模板造数、批量投放 XML**。这些操作放在产线机台的
+> 主程序里，误点一次会污染真实测试数据。所以现在**只发给工程/测试人员，不装到产线机台**。
+>
+> 产线机台上装的是 `FCT-Aggregator.exe`（`../fct-aggregator-cs/`），那边已经没有分发功能。
+
+## 构建 / 自检 / 打包
+
+```powershell
+dotnet build FctDistributor.csproj -c Release                  # 要求 0 警告 0 错误
+dotnet run --project selftest\SelfTest.csproj -c Release        # 全量自检（必须全绿）
+dotnet publish FctDistributor.csproj -c Release -o dist
+.\tools\make_package.ps1                                       # 完整包 + 覆盖包（带断言）
+Compress-Archive -Path package_v1.9.0\* -DestinationPath FCT-Distributor-v1.9.0.zip -Force
+```
+
+## ⚠ 三个文件是主程序的副本，别只改一边
+
+彻底分家的代价：以下文件在本工程与主程序里**各有一份**。
+
+| 文件 | 与主程序的关系 |
+|---|---|
+| `Xlsx.cs` | **逐字节相同的副本**（xlsx 写出外壳） |
+| `StationDetector.cs` | 精简副本：只有 IP→机台号 与型号校验 |
+| `AppIcon.cs` | 精简副本：不依赖 `Logger` |
+
+副本最大的风险是**静默漂移**（改一边忘另一边，两边自检还都是绿的）。所以本工程自检里有
+**跨工程一致性断言**：会去读 `../fct-aggregator-cs/` 的源文件，逐条比对 IP 映射表、
+逐字节比对 `Xlsx.cs`。源码不在时自动跳过（不影响独立部署）。
+
+## 内置模板资源名
+
+`TemplateGenerator.EmbeddedPrefix` = `FctDistributor.tpl.`，由 csproj 的 `LogicalName`
+**写死**（历史上它跟着工程结构漂移过两次）。主工程与自检工程用同一个 LogicalName，
+打包脚本里有断言校验。
+
+---
 # FCT 数据分发器 (FCT-Distributor)
 
 把 FCT 测试数据**一键投放**到机台的结果目录，并按文件名**修复时间戳**，主界面实时显示成果。
