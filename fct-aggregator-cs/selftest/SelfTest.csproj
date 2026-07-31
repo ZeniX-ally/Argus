@@ -13,6 +13,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>FctAggregator.SelfTest</RootNamespace>
     <AssemblyName>FctAggregator.SelfTest</AssemblyName>
+    <StartupObject>SelfTest</StartupObject>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
@@ -48,11 +49,15 @@
     <Compile Include="..\DeviceStatusPanel.cs" />
     <Compile Include="..\DebugPanel.cs" />
     <Compile Include="..\FailListPanel.cs" />
+    <!-- v2.9.0：四个合入的工具（各自 namespace，同名类不打架）。
+         它们的 Program 都有 Main，所以本工程也要显式指定 StartupObject -->
+    <Compile Include="..\modules\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="TDMSReader" Version="3.1.0" />
   </ItemGroup>
 
 </Project>

@@ -34,3 +34,6 @@ desktop.ini
 
 # GUI 截图产物
 .snap/
+
+# 发布产物与历史包（v2.9.0 起移出仓库，只留最新一版在 _releases/）
+_releases/

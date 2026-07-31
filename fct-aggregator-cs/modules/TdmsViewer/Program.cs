@@ -40,6 +40,12 @@ internal static class Program
         return RunCli(args);
     }
 
+    /// <summary>
+    /// v2.9.0：合入套件后由 <c>FctAggregator.Program</c> 转发子命令
+    /// （<c>FCT-Aggregator.exe tdms …</c>），因此开一个 internal 口子。
+    /// </summary>
+    internal static int RunCliEntry(string[] args) => RunCli(args);
+
     private static int RunCli(string[] args)
     {
         if (args[0] is "--help" or "-h")

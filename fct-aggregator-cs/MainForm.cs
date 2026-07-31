@@ -60,13 +60,28 @@ public class MainForm : Form
     private static readonly string[] PageTitles =
         { "总览", "待办 / 维修记录", "FAIL 记录", "设备状态", "调试工具" };
 
+    /// <summary>
+    /// 工具箱（v2.9.0）：原来四个独立 exe 合进来了，点一下开各自的窗口。
+    /// key 用于“同一工具只开一个窗”的去重，也是 CLI 子命令名。
+    /// </summary>
+    private static readonly (string key, string label, Func<Form> factory)[] Tools =
+    {
+        ("distribute", "分发工具", () => new FctDistributor.MainForm()),
+        ("rank",       "FAIL 排行", () => new FctFailRanker.MainForm()),
+        ("fetch",      "取数打包", () => new FctFetcher.MainForm()),
+        ("tdms",       "TDMS 波形", () => new FctTdmsViewer.MainForm()),
+    };
+
+    /// <summary>已打开的工具窗口（单例）。</summary>
+    private readonly Dictionary<string, Form> _openTools = new();
+
     private int _page = 0;
 
     public MainForm(Engine engine)
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT-Aggregator v2.8.0";
+        Text = "Zenix-Ally | FCT 工具套件 v2.9.0";
         Width = 1280; Height = 780;
         MinimumSize = new Size(1040, 640);
         StartPosition = FormStartPosition.CenterScreen;
@@ -209,7 +224,7 @@ public class MainForm : Form
 
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v2.8.0", ForeColor = Color.FromArgb(120, 134, 154),
+            Dock = DockStyle.Bottom, Height = 26, Text = "v2.9.0", ForeColor = Color.FromArgb(120, 134, 154),
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };
@@ -222,8 +237,26 @@ public class MainForm : Form
             b.Click += (_, _) => ShowPage(idx);
             _navButtons.Add(b);
         }
+        // ===== 工具箱（开窗口，不是切页）=====
+        var toolButtons = new List<NavButton>();
+        for (int i = Tools.Length - 1; i >= 0; i--)
+        {
+            var t = Tools[i];
+            var b = new NavButton(t.label, -1 - (i + 1));   // 负索引：不参与页面高亮
+            b.Click += (_, _) => OpenTool(t.key, t.label, t.factory);
+            toolButtons.Add(b);
+        }
+        var toolTitle = new Label
+        {
+            Dock = DockStyle.Top, Height = 26, Text = "工具箱", ForeColor = Color.FromArgb(118, 132, 152),
+            Font = Theme.Tiny, BackColor = Theme.NavBg, TextAlign = ContentAlignment.BottomLeft,
+            Padding = new Padding(18, 0, 0, 4),
+        };
+
         _nav.Controls.Add(version);
         _nav.Controls.Add(exit);
+        foreach (var b in toolButtons) _nav.Controls.Add(b);       // 工具箱在页面导航下面
+        _nav.Controls.Add(toolTitle);
         foreach (var b in _navButtons) _nav.Controls.Add(b);      // PageIndex 4 → 0 逐个 Add
         _nav.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 8, BackColor = Theme.NavBg });
         _nav.Controls.Add(brand);                                 // 最后 Add → 最先停靠 → 真的在最上面
@@ -245,6 +278,36 @@ public class MainForm : Form
     private void SetActiveNav(int index)
     {
         foreach (var b in _navButtons) b.Active = b.PageIndex == index;
+    }
+
+    /// <summary>
+    /// 打开一个工具窗口（非模态，与主窗口并存）。
+    /// 已打开则激活原窗不重复开 —— 否则手一拖能开出十几个。
+    /// </summary>
+    private void OpenTool(string key, string label, Func<Form> factory)
+    {
+        if (_openTools.TryGetValue(key, out var exist) && !exist.IsDisposed)
+        {
+            if (exist.WindowState == FormWindowState.Minimized) exist.WindowState = FormWindowState.Normal;
+            exist.Activate();
+            exist.BringToFront();
+            return;
+        }
+        try
+        {
+            var f = factory();
+            _openTools[key] = f;
+            f.FormClosed += (_, _) => _openTools.Remove(key);
+            f.Show(this);                 // 以主窗口为 Owner
+            Logger.Info($"[工具箱] 打开 {label}");
+        }
+        catch (Exception ex)
+        {
+            _openTools.Remove(key);
+            Logger.Error($"[工具箱] {label} 打开失败: {ex.GetType().Name} {ex.Message}");
+            MessageBox.Show($"{label} 打开失败：\n{ex.Message}", "工具箱",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     // ==================================================================
@@ -406,8 +469,21 @@ public class MainForm : Form
             Keys.D1 => 0, Keys.D2 => 1, Keys.D3 => 2, Keys.D4 => 3, Keys.D5 => 4,
             _ => -1,
         };
-        if (idx >= 0) { ShowPage(idx); e.Handled = true; }
-        else if (e.KeyCode == Keys.R) { RefreshCurrentPage(); e.Handled = true; }
+        if (idx >= 0) { ShowPage(idx); e.Handled = true; return; }
+        // Ctrl+6..9 = 工具箱四个工具
+        int tool = e.KeyCode switch
+        {
+            Keys.D6 => 0, Keys.D7 => 1, Keys.D8 => 2, Keys.D9 => 3,
+            _ => -1,
+        };
+        if (tool >= 0)
+        {
+            var t = Tools[tool];
+            OpenTool(t.key, t.label, t.factory);
+            e.Handled = true;
+            return;
+        }
+        if (e.KeyCode == Keys.R) { RefreshCurrentPage(); e.Handled = true; }
     }
 
     /// <summary>点桌面提示 / 双击托盘图标: 窗口拉到前面并直接跳到待办看板。</summary>
@@ -546,7 +622,7 @@ public class MainForm : Form
         var left = $"结果目录: {_cfg.ResultsRoot}     库: {db}     待办 {_pendingTodo} 条     未完成维修 {_openMaint} 条";
         if (s.Status == "error") left = "⚠ 结果目录不存在，数据采集未运行！  " + left;
         if (_statusLeft.Text != left) _statusLeft.Text = left;
-        var right = $"更新于 {DateTime.Now:HH:mm:ss}     Ctrl+1~5 切页 / Ctrl+R 刷新";
+        var right = $"更新于 {DateTime.Now:HH:mm:ss}     Ctrl+1~5 切页 / 6~9 工具 / R 刷新";
         _statusRight.Text = right;
     }
 

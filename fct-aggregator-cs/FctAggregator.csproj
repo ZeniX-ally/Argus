@@ -1,5 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    FCT 工具套件（v2.9.0 起：单 exe 工具箱）
+
+    原来 5 个独立项目（aggregator / distributor / fail-ranker / fetcher / tdms-viewer）
+    合并进这一个程序集：主程序 = 采集聚合，其余 4 个作为「工具箱」入口，
+    源码在 modules\<Name>\ 下，各自保留自己的 namespace（FctDistributor / FctFailRanker /
+    FctFetcher / FctTdmsViewer），所以 MainForm / Program / XlsxWriter 这些同名类不会打架。
+
+    ⚠ 5 个 Program 各有一个 Main -> 用 <StartupObject> 显式指定主入口，
+      否则 CS0017「程序定义了多个入口点」。各工具的 Main 保留着（内含 CLI 逻辑），
+      由 FctAggregator.Program 按子命令转发。
+  -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -8,11 +20,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>FCT-Aggregator</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
-    <Version>2.8.0</Version>
-    <AssemblyVersion>2.8.0.0</AssemblyVersion>
-    <FileVersion>2.8.0.0</FileVersion>
+    <StartupObject>FctAggregator.Program</StartupObject>
+    <Version>2.9.0</Version>
+    <AssemblyVersion>2.9.0.0</AssemblyVersion>
+    <FileVersion>2.9.0.0</FileVersion>
     <Company>Zenix-Ally</Company>
-    <Product>FCT-Aggregator</Product>
+    <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
     <!-- 单文件、框架依赖发布时体积最小 -->
     <SelfContained>false</SelfContained>
@@ -23,8 +36,19 @@
     <Compile Remove="selftest\**" />
     <None Remove="selftest\**" />
     <EmbeddedResource Remove="selftest\**" />
+    <Compile Remove="selftest-distributor\**" />
+    <None Remove="selftest-distributor\**" />
+    <EmbeddedResource Remove="selftest-distributor\**" />
+
+    <!-- 分发工具的内置模板（TemplateGenerator.LoadEmbedded 按 .xml 结尾扫描） -->
+    <EmbeddedResource Include="modules\Distributor\tpl\*.xml" />
+    <!-- 取数/TDMS 工具从嵌入资源里找图标（按 EndsWith("app_icon.ico") 匹配，一份就够） -->
+    <EmbeddedResource Include="app_icon.ico" />
+
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <!-- TDMS 波形查看（原 fct-tdms-viewer 的依赖） -->
+    <PackageReference Include="TDMSReader" Version="3.1.0" />
   </ItemGroup>
 
 </Project>

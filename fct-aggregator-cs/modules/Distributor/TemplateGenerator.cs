@@ -112,8 +112,12 @@ public sealed class TemplateGenerator
 
     // ==================== 模板加载 ====================
 
-    /// <summary>内置资源名前缀（RootNamespace + 目录）。</summary>
-    public const string EmbeddedPrefix = "FctDistributor.tpl.";
+    /// <summary>
+    /// 内置资源名前缀（RootNamespace + 目录）。
+    /// v2.9.0 合入 FCT 工具套件后，源码移到 modules\Distributor\，RootNamespace 也变成了
+    /// FctAggregator，所以前缀跟着变（仅用于把资源名删成好看的文件名，匹不上也不影响加载）。
+    /// </summary>
+    public const string EmbeddedPrefix = "FctAggregator.modules.Distributor.tpl.";
 
     /// <summary>加载编进 exe 的内置模板（tpl\*.xml）。</summary>
     public static List<Template> LoadEmbedded(Action<string>? onError = null)

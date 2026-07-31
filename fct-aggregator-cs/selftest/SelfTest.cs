@@ -20,10 +20,18 @@ class SelfTest
     {
         var work = Path.Combine(Path.GetTempPath(), "fct_agg_" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(work);
-        var real = @"F:\Programe\G4_9-QA\fct-aggregator-cs\dist\data\fct.db";
+        // 真实库只是本地 fixture（data/*.db 已 gitignore）—— 别写死结构路径，
+        // 也别在没有它的机器上报红（下面几条依赖它的断言已改成有它才跑）。
+        var real = new[]
+        {
+            Path.Combine("dist", "data", "fct.db"),
+            Path.Combine("..", "dist", "data", "fct.db"),
+            Path.Combine("..", "..", "dist", "data", "fct.db"),
+            @"F:\Programe\G4_9-QA\fct-aggregator-cs\dist\data\fct.db",
+        }.Select(Path.GetFullPath).FirstOrDefault(File.Exists) ?? "";
         var db = Path.Combine(work, "fct.db");
 
-        bool haveReal = File.Exists(real);
+        bool haveReal = real.Length > 0 && File.Exists(real);
         if (haveReal) File.Copy(real, db);
         Console.WriteLine($"工作目录: {work}");
         Console.WriteLine(haveReal ? $"已复制真实库: {new FileInfo(db).Length / 1024} KB" : "真实库不存在，用空库");
@@ -58,7 +66,10 @@ class SelfTest
         Check(true, "Database 构造完成（Init + 迁移已跑）");
 
         var bak = Directory.GetFiles(work, "fct.db.bak-*");
-        Check(bak.Length == 1, $"迁移前已自动备份 db（{(bak.Length == 1 ? Path.GetFileName(bak[0]) : "未找到")}）");
+        if (haveReal)
+            Check(bak.Length == 1, $"迁移前已自动备份 db（{(bak.Length == 1 ? Path.GetFileName(bak[0]) : "未找到")}）");
+        else
+            Console.WriteLine("    (跳过迁移备份断言：无真实库 fixture)");
         if (bak.Length == 1)
             Check(new FileInfo(bak[0]).Length > 0, $"备份文件非空（{new FileInfo(bak[0]).Length / 1024} KB）");
 
@@ -286,12 +297,15 @@ class SelfTest
         Check(agg.All(a => !a.Item.Contains("E30027") ), "聚合结果里不含 SN（只有测试项名）");
 
         var realFails = d.FailItemSources("");
-        Check(realFails.Count > 0, $"从真实库读到 FAIL 源行 {realFails.Count} 条");
+        if (haveReal) Check(realFails.Count > 0, $"从真实库读到 FAIL 源行 {realFails.Count} 条");
         var realAgg = FailItemPickerForm.Aggregate(realFails);
         Console.WriteLine($"    真实库去重后故障项 {realAgg.Count} 个，前 3: " +
                           string.Join(" | ", realAgg.Take(3).Select(a => $"{a.Count}x {a.Item}")));
-        Check(realAgg.Count > 0 && realAgg.Count < realFails.Count,
-              $"真实库：{realFails.Count} 条 FAIL -> 去重后 {realAgg.Count} 个故障项（确实去了重）");
+        if (haveReal)
+            Check(realAgg.Count > 0 && realAgg.Count < realFails.Count,
+                  $"真实库：{realFails.Count} 条 FAIL -> 去重后 {realAgg.Count} 个故障项（确实去了重）");
+        else
+            Console.WriteLine("    (跳过真实库断言：无 fixture，把任意一个机台库拷到 dist\\data\\fct.db 即可启用)");
         Check(realFails.All(f => f.GetType().GetField("Sn") == null),
               "FailItemSource 结构里根本没有 Sn 字段（从数据层就不带 SN）");
 
@@ -948,6 +962,68 @@ class SelfTest
             }
             DesktopNotifier.Shutdown();     // 自检里也会建托盘图标，记得收
             Check(true, "退出时托盘图标已回收（Shutdown 可重复调）");
+        }
+
+        // ---------- 工具箱（v2.9.0：四个原独立 exe 合进同一个程序）----------
+        Console.WriteLine("\n【工具箱】四个合入的工具必须能无 UI 构造并单例打开");
+        {
+            // 合并后最大的风险：某个工具的窗口构造失败（缺资源/缺依赖/静态初始化抛），
+            // 在主程序里点一下就弹错。这里逐个真构造一遍。
+            var tools = new (string name, Func<Form> make)[]
+            {
+                ("分发工具 FctDistributor", () => new FctDistributor.MainForm()),
+                ("FAIL 排行 FctFailRanker", () => new FctFailRanker.MainForm()),
+                ("取数打包 FctFetcher", () => new FctFetcher.MainForm()),
+                ("TDMS 波形 FctTdmsViewer", () => new FctTdmsViewer.MainForm()),
+            };
+            foreach (var (name, make) in tools)
+            {
+                try
+                {
+                    using var f = make();
+                    Check(f is Form && f.Controls.Count > 0,
+                          $"{name} 无 UI 构造成功（{f.Controls.Count} 个顶层控件）");
+                }
+                catch (Exception ex)
+                {
+                    Check(false, $"{name} 构造失败！主程序工具箱里一点就炸：{ex.GetType().Name} {ex.Message}");
+                }
+            }
+
+            // 分发工具的内置模板：源码换目录后资源名会变，必须仍能加载到。
+            // ⚠ 自检工程只编译源码、**没有**嵌入 tpl\*.xml，所以要去量真正要发出去的那个程序集里查。
+            {
+                var dllCandidates = new[]
+                {
+                    Path.Combine("bin", "Release", "net8.0-windows", "FCT-Aggregator.dll"),
+                    Path.Combine("dist", "FCT-Aggregator.dll"),
+                    Path.Combine("..", "bin", "Release", "net8.0-windows", "FCT-Aggregator.dll"),
+                };
+                var dll = dllCandidates.FirstOrDefault(File.Exists);
+                if (dll == null)
+                {
+                    Console.WriteLine("    (跳过内置模板检查：没找到已构建的 FCT-Aggregator.dll)");
+                }
+                else
+                {
+                    var names = System.Reflection.Assembly.LoadFrom(Path.GetFullPath(dll))
+                                      .GetManifestResourceNames();
+                    var xmls = names.Where(n => n.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)).ToList();
+                    Check(xmls.Count >= 2, $"主程序里内置模板仍在（{xmls.Count} 个 .xml 资源）");
+                    Check(xmls.All(n => n.StartsWith(FctDistributor.TemplateGenerator.EmbeddedPrefix)),
+                          "EmbeddedPrefix 与实际资源名对得上（否则模板名会显示成一串命名空间）");
+                    Check(names.Any(n => n.EndsWith("app_icon.ico", StringComparison.OrdinalIgnoreCase)),
+                          "内嵌图标仍在（取数/TDMS 工具靠 EndsWith(\"app_icon.ico\") 找它）");
+                }
+            }
+
+            // 名字重名的类确实靠命名空间隔开了（合并前有 10 组同名类）
+            Check(typeof(FctDistributor.MainForm) != typeof(FctFailRanker.MainForm) &&
+                  typeof(FctFetcher.MainForm) != typeof(FctTdmsViewer.MainForm) &&
+                  typeof(FctAggregator.MainForm) != typeof(FctDistributor.MainForm),
+                  "五个 MainForm 共存于同一程序集（靠命名空间隔离，无需改名）");
+            Check(typeof(FctDistributor.XlsxWriter) != typeof(FctFetcher.XlsxWriter),
+                  "两份 XlsxWriter 也共存（后续可抽共享库去重）");
         }
 
         // ---------- 导出 ----------

@@ -1,11 +1,11 @@
 #requires -Version 7
 <#
   GUI 冒烟测试：解压完整包到临时目录 -> 启动 -> 断言【主窗口真的存在且标题正确】-> 关掉
-  只看"进程还活着"是不够的：v2.8.0 曾出现进程秒退(0xC0000005)，也可能出现进程活着但窗口没建起来。
+  只看"进程还活着"是不够的：v2.9.0 曾出现进程秒退(0xC0000005)，也可能出现进程活着但窗口没建起来。
 #>
 param(
-    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.8.0.zip',
-    [string]$ExpectTitle = 'FCT-Aggregator v2.8.0'
+    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.9.0.zip',
+    [string]$ExpectTitle = 'FCT 工具套件 v2.9.0'
 )
 $ErrorActionPreference = 'Stop'
 

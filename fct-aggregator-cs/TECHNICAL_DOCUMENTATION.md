@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.8.0
+**当前版本**：v2.9.0（FCT 工具套件：五个原独立程序合并为单 exe）
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -100,7 +100,13 @@ fct-aggregator-cs/
 ├── FctAggregator.csproj      # net8.0-windows / WinForms / SelfContained=false
 ├── config.json               # 运行配置
 ├── app_icon.ico
+├── modules/                  # v2.9.0 合入的四个工具（各自保留 namespace）
+│   ├── Distributor/          #   原 fct-distributor（含 tpl\*.xml 内置模板）
+│   ├── FailRanker/           #   原 fct-fail-ranker
+│   ├── Fetcher/              #   原 fct-fetcher-cs（含 CLI）
+│   └── TdmsViewer/           #   原 fct-tdms-viewer（含 CLI，依赖 TDMSReader）
 ├── selftest/                 # 自检工程（不属主程序，引用主项目源文件）
+├── selftest-distributor/     # 分发工具原自检，原样保留
 ├── data/                     # SQLite 数据库（{station_id}.db）
 ├── logs/                     # app.log
 └── dist/                     # 发布产物（含 启动.bat）
@@ -615,6 +621,29 @@ v2.8.0 第一版就踩了这个坑，靠自检的几何断言（量 `Left/Top/Wi
 所以 `SelfTest` 里保留了一组「GUI 布局」断言，改布局后必须跑。
 
 辅助工具：`tools/snap_gui.ps1` —— 解压完整包、灌真实库、启动后 `Ctrl+1..5` 逐页截图到 `.snap\`。
+
+### 8.6 单 exe 合并（v2.9.0）
+
+五个原独立工程合进 `FctAggregator.csproj` 一个程序集。三条关键约定：
+
+| 问题 | 做法 |
+|---|---|
+| 10 组同名类（`MainForm` ×5、`Program` ×4、`XlsxWriter` ×2…） | **不改名**，靠各自 `namespace`（`FctDistributor` / `FctFailRanker` / `FctFetcher` / `FctTdmsViewer`）隔离 |
+| 五个 `Main` → `CS0017 多个入口点` | csproj `<StartupObject>FctAggregator.Program</StartupObject>`；其余 `Main` 留着（含 CLI），由主入口按子命令转发 |
+| WinExe 下 CLI 没输出 | `AttachConsole(-1)` **且** `Console.SetOut(new StreamWriter(Console.OpenStandardOutput()))`；只 Attach 不 SetOut 会被 `TextWriter.Null` 吞掉 |
+
+其它落地细节：
+- 嵌入资源名随目录变 → `TemplateGenerator.EmbeddedPrefix` 必须同步改成
+  `FctAggregator.modules.Distributor.tpl.`（否则模板名显示成一串命名空间）。
+- 工具窗口用 `Form.Show(this)` 非模态 + `Dictionary<string,Form>` 单例去重；
+  `FormClosed` 里移除，避免第二次点开时拿到已 Dispose 的窗口。
+- 单实例互斥锁**只在 GUI 分支**加，否则主程序开着就跑不了 CLI 子命令。
+- 自检工程用 `<Compile Include="..\modules\**\*.cs" />` 把工具源码一起编，
+  因此它也需要 `<StartupObject>`。
+
+⚠ 打包脚本的坑：无 RID 的 `dotnet publish` 不把原生库放根目录，
+`e_sqlite3.dll` 只在 `runtimes\win-x64\native\`。`make_package.ps1` 现用
+`Resolve-DistFile` 递归查找（优先 win-x64）；`启动.bat`/`config.json` 从仓库根取。
 
 ## 9. 构建与部署
 

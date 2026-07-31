@@ -6,7 +6,7 @@
   产物：<OutDir>\page1..5.png
 #>
 param(
-    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.8.0.zip',
+    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.9.0.zip',
     [string]$SeedDb = 'F:\Programe\G4_9-QA\fct-aggregator-cs\dist\data\fct.db',
     [string]$OutDir = 'F:\Programe\G4_9-QA\fct-aggregator-cs\.snap'
 )
