@@ -1,0 +1,336 @@
+{
+  "$schema_note": "本会话（2026-07-31）工作记录。给下一次接手的人/AI 看：做了什么、为什么这么做、我犯了哪些错、还有什么悬着没解决。⚠ 请先读 unresolved_critical。",
+  "meta": {
+    "date": "2026-07-31",
+    "repo": "F:/Programe/Argus",
+    "repo_renamed_this_session": "本会话中用户把目录从 F:/Programe/G4_9-QA 改名为 F:/Programe/Argus（与 gitea 仓库名对齐）。仓库内 9 处写死的旧绝对路径已全部改成自我定位。",
+    "gitea": "http://192.168.1.16:3000/zenix/Argus.git",
+    "branch": "main",
+    "commits_this_session": 4,
+    "head_at_end": "8e94fde",
+    "version_span": "fct-aggregator v2.9.4 -> v3.0.0；fct-distributor v1.9.0（拆出为独立程序）",
+    "agent_model": "阶跃星辰大模型（pi coding agent）",
+    "shell": "PowerShell 7（pwsh），非 bash"
+  },
+
+  "commits": [
+    {
+      "hash": "9b742d0",
+      "subject": "test(aggregator): xlsx 长相验收 —— 新旧逐单元格对比，查出并保留「维修导出冻结首行」"
+    },
+    {
+      "hash": "9bb2d52",
+      "subject": "chore: 仓库目录改名 G4_9-QA -> Argus，清掉全部写死的绝对路径"
+    },
+    {
+      "hash": "039a57d",
+      "subject": "test: 新增升级演练脚本（证明覆盖不动配置与历史数据）+ 部署说明补两个静默坑"
+    },
+    {
+      "hash": "8e94fde",
+      "subject": "feat!: v3.0.0 数据分发器从套件里彻底拆出，成为独立程序"
+    }
+  ],
+
+  "arc_of_the_session": [
+    "① 接管项目：读 session-2026-07-30-changes.json，跑通 build + SelfTest 确认基线绿",
+    "② 补做上一会话遗留的高优先级待办：xlsx 长相人眼确认 —— 做成了新旧机器对比，查出一处真差异",
+    "③ 用户把仓库目录改名 G4_9-QA -> Argus，清掉 9 处写死绝对路径（它们坏起来不报错）",
+    "④ 用户要去部署，交付 v2.9.4 包 + 写升级演练脚本证明「不动现有数据」",
+    "⑤ 用户报「桌面提示测试没用」-> 查出系统 ToastEnabled=0，但改完后用户仍未看到提示（未闭环）",
+    "⑥ 用户报「设备状态读不到 FCT.ini」-> 本机实测代码正常，交付两个诊断工具，等现场输出（未闭环）",
+    "⑦ 用户要求数据分发器独立出去（选方案 C 彻底分家）-> v3.0.0"
+  ],
+
+  "unresolved_critical": [
+    {
+      "id": "现场版本与仓库版本可能不一致",
+      "priority": "最高",
+      "detail": "用户说「我要去部署了」时，我交付的是 **v2.9.4**（桌面上的 FCT-Aggregator-v2.9.4-update.zip）。之后用户又要求拆分发器，仓库现在是 **v3.0.0**。所以现场机台上很可能是 v2.9.4（仍带数据分发功能），而仓库/桌面已有 v3.0.0。",
+      "todo": "先问清用户现场实际部署了哪个版本。桌面上同时存在 5 个 zip（v2.9.4 两个 + v3.0.0 两个 + Distributor 一个），有拿错风险，建议清理只留 v3.0.0 与 Distributor。"
+    },
+    {
+      "id": "桌面提示始终没被人眼看到",
+      "priority": "高",
+      "detail": "用户报「桌面提示测试没有用，没有桌面提示」。查到根因候选：HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications\\ToastEnabled = 0（系统通知总开关关闭）。我已改为 1（备份说明在 C:/Users/admin/Documents/xlsx-check/reg-backup-ToastEnabled.txt），并重启了 WpnUserService_99064。但**用户三次都说没看到**（改之前、改之后、重启服务之后各一次）。",
+      "already_ruled_out": [
+        "不是 MTA 问题：pwsh 7 与 powershell 5.1 子进程 ApartmentState 都是 STA",
+        "不是组策略：Policies\\...\\Explorer 下只有 HidePeopleBar / EnableShellExecuteHooks，没有 DisableNotificationCenter / NoToastApplicationNotification",
+        "服务正常：WpnService + WpnUserService_99064 都 Running",
+        "EnableBalloonTips 与 NOC_GLOBAL_SETTING_TOASTS_ENABLED 都未设置（= 默认开）",
+        "16 个 Microsoft.Explorer.Notification.* 的 per-app Enabled 都未设置（= 默认开）"
+      ],
+      "next_steps": [
+        "① 重启 explorer.exe（最可能）：它 9:22 启动，我改注册表在那之后；托盘气球由 explorer 渲染，启动时读过一次「通知已关闭」并缓存了。需用户同意（会关掉资源管理器窗口）",
+        "② 用真程序验：启动 FCT-Aggregator.exe -> Ctrl+5 调试工具页 -> 点「桌面提示测试」。比我用 pwsh 脚本模拟更可信，能区分「系统通道不通」与「程序没发」",
+        "③ 若仍不行，考虑之前提的方案 B：DesktopNotifier 检测 ToastEnabled/专注助手，被拦时自动改用自绘窗口提示（右下角滑入、TopMost、不受任何通知设置影响）。报警功能不该依赖『用户没关某个开关』"
+      ],
+      "test_blind_spot": "⚠ smoke_notify.ps1 的 6 条断言在 ToastEnabled=0 时**照样全绿** —— 它只能证明 ShowBalloonTip 没抛异常。这次问题就是它漏掉的。我在覆盖说明.md 里写了排查方法，但**没有**给 smoke_notify.ps1 加系统开关断言（当时用户选了方案 A 只改系统设置）。建议补上。",
+      "diag_tool": "C:/Users/admin/AppData/Local/Temp/diag_notify.ps1（临时文件，未入库）"
+    },
+    {
+      "id": "设备状态读不到 FCT.ini —— 等现场诊断输出",
+      "priority": "高",
+      "detail": "用户报机台上设备状态检测不到、读不到 FCT.ini。**本机实测代码路径完全正常**：用 tools/inidiag 直接调 FctIni.Parse，读 C:/FTS/Apps/XPT/Cfg/FCT.ini（本机竟然有这个文件，7738 字节），解析出 12 个设备 / 6 个型号 / 3 条固件 / 3 个 A2L，结论「读取与解析都正常」。所以问题在机台环境，不在代码。",
+      "candidates": [
+        "机台真实路径不在程序的 4 个候选里（配的路径 -> C:\\FTS\\Apps\\XPT\\Cfg\\FCT.ini -> D:\\FTS\\... -> C:\\FTS\\Cfg\\...）—— 改 config.json 的 fct_ini_path 即可，不用改代码",
+        "权限：文件在但读不到（诊断脚本第 4 步会报出确切异常类型）",
+        "那台机台确实没有这个文件（测试软件版本/配置位置不同）"
+      ],
+      "next_steps": [
+        "让用户在机台上跑 tools/diag_fctini.ps1（已复制到 C:/Users/admin/Desktop/），把输出发回",
+        "拿到真实路径后：把候选路径改成在 C:\\FTS / D:\\FTS 下有限深度递归查找（EnumerationOptions{RecurseSubdirectories=true, MaxRecursionDepth=5, IgnoreInaccessible=true}），再从运行中的 XPT 进程 MainModule.FileName 往上反推 Cfg\\FCT.ini，这样换机台不用手改配置",
+        "顺带把设备状态页的错误提示改得能自助排查：现在只列尝试过的路径，应该把「目录存在但文件不在」「无权限」区分显示"
+      ],
+      "known_defect_of_diag_tool": "⚠ diag_fctini.ps1 的『全盘搜 FCT.ini』那步在大容量盘上会超时（本机自测 300s 超时）。机台盘小应该没事，卡住就 Ctrl+C，前两步输出已够定位。**这个缺陷还没修**，应改成限定目录 + 限制递归深度。"
+    }
+  ],
+
+  "work_done": {
+    "1_xlsx_appearance_acceptance": {
+      "why": "上一会话遗留的高优先级待办：v2.9.3 把 4 份 xlsx 写出器合成 1 份，但『只验证了结构合法性，配色/列宽是否与之前一致』没人目视确认过。",
+      "approach": "没靠肉眼硬看，而是拿 v2.9.2（去重前）当基准做机器对比。",
+      "new_tools": {
+        "tools/xlsxdump/": "同一份 fixture，各导出口各导一次真实 xlsx。**只调高层导出入口**，不碰 Cell/Sheet/Xlsx —— 所以同一份源码在 v2.9.2 的代码上也能编译，这是能做新旧对比的前提",
+        "tools/xlsx_check.ps1": "-Compare 时 git worktree 检出 a06d9b7(v2.9.2)，用**同一份 fixture** 再导一次，唯一变量只有代码",
+        "tools/xlsx_cmp.py": "比 styles.xml 逐字节、列宽、冻结行、合并单元格、每个单元格的『值 + 样式号』",
+        "tools/xlsx_style_report.py": "把 styles.xml 翻成人话（我看不到图片/Excel 配色，这个给人对照用）"
+      },
+      "result": "分发 SN 台账 / FAIL 排行(4 Sheet) / 取数清单(3 Sheet) **完全一致**；维修记录**多了「冻结首行」**，其余完全一致。",
+      "the_real_diff": "git diff a06d9b7 ef3f80e 证实 v2.9.3 顺手给 MaintenanceExporter 加了 FreezeRows=1，v2.9.2 无冻结窗格。当时代码注释写「输出格式不变」、自检断言写「**仍**冻结表头」—— **两句都不准确**。用户选择保留（方案 A），措辞已改成实话。",
+      "regression_guard": "维修导出长相钉进自检（+4 条）：12 个列宽值逐个比对(6/24/14/22/30/10/10/12/30/24/20/20)、表头底色 #4472C4、白色粗体、微软雅黑。",
+      "fixture_note": "真实库 maintenance_records 是 0 条（现场从没录过维修记录），harness 会在**库副本**上补 6 条样例（故障项名取自真实 test_records.fail_reason），绝不碰 dist/data/fct.db。FAIL 样本按不同 SN 复制数份，为的是让斑马纹样式显现。"
+    },
+
+    "2_repo_rename": {
+      "trigger": "用户把 F:/Programe/G4_9-QA 改名成 F:/Programe/Argus",
+      "git_itself": "没事 —— remote 本来就是 Argus.git，worktree 路径自动跟随",
+      "the_danger": "仓库里散着 9 处写死的旧绝对路径，而且**坏起来不报错**：selftest 用『多候选 + 找不到就跳过』找真实库与 app_icon.ico，写死那条一失效就静静退成「用空库 / 跳过 ico 校验」，依赖真实库的一批断言悄悄不跑，**自检照样全绿（伪绿）**",
+      "fix": "不是把字符串换成 Argus，而是**改成自我定位**：SelfTest.cs 新增 FindUp()（从 cwd 与 AppContext.BaseDirectory 两头各往上找 6 层，含下钻 fct-aggregator-cs 一层）；4 个 smoke/snap 脚本的 $Zip/$SeedDb/$OutDir 改 \"$PSScriptRoot\\..\\...\"；make_package.ps1 用 Resolve-Path $PSScriptRoot\\..；make_icon.py 用 __file__ 推导",
+      "bad_news_found": "TECHNICAL_DOCUMENTATION.md 原写『Python v1.0.2 源码备份保留在 ...\\fct-aggregator-python-v1.0.2-源码备份.tar.gz』—— 该文件在新旧路径、整个 F: 盘都不存在（fd 全盘搜过），git 历史里也没有（首次提交 b122059 就已是 C# 重写版，*.tar.gz 在 .gitignore 里）。**Python 版源码目前无任何存档**，只剩技术文档第 10 章的差异描述可考。我没把路径改成 Argus\\...（那会变成更可信的假话），而是在文档里写明『源码备份已丢』。"
+    },
+
+    "3_deploy_package_and_upgrade_drill": {
+      "delivered_then": "FCT-Aggregator-v2.9.4-update.zip（覆盖包，16 个文件，不含 config.json/data/logs/pdb）",
+      "new_tool": {
+        "tools/upgrade_drill.ps1": "拿旧版本完整包当「机台现状」跑真实升级：铺旧版 -> 丢 2 条 FAIL 入库 -> 再插 2 条维修记录 -> 记 config.json SHA256 与各表行数 -> 整包覆盖 -> 启新版跑迁移 -> 逐项校验。默认基线 v2.4.0（它还没有 todo_items/app_meta，能真正考到自动建表）。-FullScan 切换 skip_historical_scan",
+        "tools/upgrade_drill_db.py": "只读模式打印 sqlite 各表行数"
+      },
+      "drill_result": "config.json 一字节未变、现场自定义字段与 todo_scan_days=45 都在、test_records/maintenance_records 一行没少、todo_items/app_meta 由新版自动建好、版本确实从 2.4.0.0 变 3.0.0.0、app_icon.ico 已随包落地、日志无 ERROR",
+      "risk_exposed_by_drill": "⚠ skip_historical_scan=true 时**历史不良不会登记进待办**（SyncTodos 挂在 Engine 的『历史扫描后』这个时机；新不良走实时那条路不受影响）。现场若有机台设了 true，升级后要到【调试】页点一次【待办同步】。两条路径都已实测。已写进覆盖说明.md"
+    },
+
+    "4_v3_split_distributor": {
+      "user_choice": "用户选方案 C（最彻底）：两个仓库目录、不共享源文件",
+      "why": "分发器能改文件时间戳、按模板造数、批量投放 XML。放在产线机台的主程序里，误点一次会污染真实测试数据",
+      "moves": [
+        "git mv fct-aggregator-cs/modules/Distributor -> fct-distributor/（保留全部提交历史，git status 显示为 R）",
+        "git mv fct-aggregator-cs/selftest-distributor -> fct-distributor/selftest/",
+        "新建 fct-distributor/FctDistributor.csproj -> FCT-Distributor.exe（812 KB，不带 SQLite/TDMS）"
+      ],
+      "main_program_removals": [
+        "MainForm.cs：Tools 数组去掉 distribute、PageTitles 去掉「数据分发」、导航 9 项 -> 8 项",
+        "Program.cs：distribute 子命令 + --help 里那行",
+        "FctAggregator.csproj：modules\\Distributor\\tpl\\*.xml 嵌入资源",
+        "版本 2.9.4 -> 3.0.0（只改『当前版本标识』，保留历史注释如 // v2.9.4: 统一图标入口）"
+      ],
+      "copies_and_the_cost": {
+        "files": {
+          "Xlsx.cs": "逐字节副本（xlsx 写出外壳）",
+          "StationDetector.cs": "精简副本：只留 IP→机台号 与型号校验；不抄 ExtractStationFromTester 与整个 AutoStart",
+          "AppIcon.cs": "精简副本：不依赖 Logger，失败静默退回系统图标"
+        },
+        "note": "这等于把 v2.9.3 刚合并掉的重复又拆回两份 —— 是彻底分家的既定代价，用户已确认接受",
+        "drift_guard": "⚠ 副本最大的风险是**静默漂移**（改一边忘另一边，两边自检还都是绿的）。分发器自检加了**跨工程一致性断言**：去读 ../fct-aggregator-cs/ 的源文件，正则解出 IP 映射表逐条比对、Xlsx.cs 逐字节比对。源码不在时跳过（不影响独立部署）。实测三条断言都真的在跑"
+      },
+      "side_benefit": "分发器 MinimumSize 1040×790 是四个内嵌工具里最大的。它一走，剩下最大是 TDMS 1000×640，主窗口最小尺寸从 1240×860 降到 **1200×720** —— 1366×768 机台不再出横向滚动条（这是上一会话待办里『小屏适配』那条）",
+      "embedded_prefix_fixed": "TemplateGenerator.EmbeddedPrefix 历史上跟着工程结构漂移过两次（FctDistributor.tpl. -> FctAggregator.modules.Distributor.tpl.）。现在主工程与自检工程都用 csproj 的 LogicalName 把资源名**写死**成 FctDistributor.tpl.*，以后换目录/命名空间都不会变；打包脚本有断言校验前缀",
+      "caught_by_tests": [
+        "遍历工具页的循环写死 i < 4 -> 拆完直接 IndexOutOfRangeException。已改成取 toolPages.Length",
+        "导航项 9 -> 8、工具页宿主 4 -> 3",
+        "内置模板断言改成**反向**：主程序里不该再有任何 xml 资源（拆不干净会被抓住）",
+        "同名类共存断言从「五个 MainForm」改成「四个」",
+        "「各工具调色板互不相同」这条断言原来拿的是分发器样式；我一度改成 Fetcher 自比自，断言变恒假并报红 —— 已给 FctFailRanker.XlsxExporter 补 internal Styles2() 测试入口",
+        "smoke_cli.ps1 新增反向断言：distribute 必须返回非 0 且提示「未知子命令」"
+      ]
+    },
+
+    "5_fctini_diagnostics": {
+      "tools/diag_fctini.ps1": "拷到机台直接跑的纯只读诊断（已放桌面）：config.json 配的路径 / 4 个内置候选各自情况 / 全盘搜真实位置 / 用与程序完全相同的 FileShare.ReadWrite 共享读取验证 / 打印 [Resource Name] 段 / 反推 XPT 进程路径，最后给出该写进 config.json 的那一行",
+      "tools/inidiag/": "直接调产品代码 FctIni.Parse 打印全过程（Found/Error/型号/固件/设备在线状态/A2L/系统 COM 口）。界面只显示一句『未找到』，看不出是哪一步断的；这个能看到。需要时可 publish 成 exe 带到机台",
+      "local_result": "本机 C:/FTS/Apps/XPT/Cfg/FCT.ini 存在且解析完全正常 —— 12 设备 / 6 型号 / 3 固件 / 3 A2L"
+    }
+  },
+
+  "my_mistakes_this_session": [
+    {
+      "what": "一条 git mv 误把主程序还在用的 Xlsx.cs 移走了",
+      "how": "我写了 `git mv fct-aggregator-cs/Xlsx.cs fct-distributor/Xlsx.cs.tmp 2>$null; if ($LASTEXITCODE -ne 0) {...}`，本以为它会失败，结果**成功了**",
+      "fix": "立刻 git mv 还原，分发器改用 Copy-Item 取副本",
+      "lesson": "别用『我猜它会失败』的方式试探破坏性命令"
+    },
+    {
+      "what": "批量改文件时连续三次 pattern 没命中",
+      "how": "仓库**行尾混杂**：MainForm.cs/SelfTest.cs/fct-distributor/MainForm.cs 是 CRLF，Program.cs/XlsxDump.cs 是 LF。我用带 \\n 的多行 pattern，在 CRLF 文件里全不命中；单行 pattern 却能命中，所以现象很迷惑",
+      "worse": "更糟的是我的删行逻辑 `s.split('\\r\\n')` 在 LF 文件里把整个文件当成一行，`d in ln` 匹配到整个文件 —— 打印出了假的『[删]』。所幸 `replace(hit[0]+'\\r\\n')` 找不到目标，实际没改坏（git diff 确认 Program.cs 未被改动）",
+      "fix": "后续脚本统一『先探测 NL = \\r\\n if \\r\\n in s else \\n，再把 pattern 里的 \\n 归一化』，并对每处替换校验**命中**与**唯一性**",
+      "lesson": "改文件前先探测行尾；任何『删除』操作都要先校验命中数量，别信打印出来的成功"
+    },
+    {
+      "what": "把「各工具调色板互不相同」的断言改成了自我比较",
+      "how": "分发器拆出去后我把 st1 从 FctDistributor.XlsxWriter.Styles2() 改成 FctFetcher 的，而 st2 本来就是 Fetcher 的 -> st1 == st2 -> 断言恒假",
+      "fix": "给 FctFailRanker.XlsxExporter 补 internal static Styles2()，st1 用它",
+      "lesson": "改断言的数据源时要想清楚断言在证明什么"
+    },
+    {
+      "what": "在 Main 上方插入方法时把 [STAThread] 挤跑了",
+      "how": "SelfTest.cs 里 [STAThread] 紧贴 static int Main()，我在 Main 前插 FindUp()，特性就贴到 FindUp 头上了 -> 自检立刻 ThreadStateException（构造 ComboBox.AutoCompleteMode 需要 STA）",
+      "fix": "特性移回 Main，并在旁边写了警示注释",
+      "lesson": "往方法上方插代码时注意别把 attribute 抛离原宿主"
+    },
+    {
+      "what": "csproj 的 XML 注释里写了 `--`",
+      "how": "写 `dotnet run --project ...` 进 <!-- --> 注释 -> MSB4025 『An XML comment cannot contain --』。犯了两次（xlsxdump 与 fct-distributor/selftest）",
+      "lesson": "XML 注释里不能出现两个连续半角横线，写成 – – 或换措辞"
+    }
+  ],
+
+  "pitfalls_learned": [
+    {
+      "topic": "写死绝对路径 + 『找不到就跳过』= 伪绿",
+      "detail": "自检里『多候选路径 + 缺失则 skip』本是好意（别在没数据的机器上报红），但配上写死的绝对路径就危险：路径一失效，断言静默不跑，自检还是全绿。修法是自我定位（FindUp）而不是换字符串。"
+    },
+    {
+      "topic": "Windows 通知被关时 ShowBalloonTip 不报错",
+      "detail": "ToastEnabled=0 时 ShowBalloonTip() 正常返回、不抛异常，日志无 ERROR、调试页照样显示『已发送』，但屏幕上永远没有提示。任何『只验证代码路径没炸』的测试都测不出来。报警类功能不该依赖『用户没关某个开关』。"
+    },
+    {
+      "topic": "同版本号重复打包会混淆",
+      "detail": "我在产品代码只有注释变化时重新打包了 v2.9.4，覆盖了同名 zip。虽然做了全套验证，但『同一版本号两个不同 zip』本身是隐患。后来又出了 v3.0.0，桌面上现在 5 个 zip 并存。"
+    },
+    {
+      "topic": "pwsh 里 cmdlet 与原生程序输出顺序会错乱",
+      "detail": "PowerShell 的对象格式化有缓冲，python/dotnet 等原生程序直接写 stdout，混用时输出不按代码顺序（xlsx_check.ps1 的输出就出现过 XlsxDump 的行跑到最后）。修法：cmdlet 管道末尾加 | Out-Host。"
+    },
+    {
+      "topic": "powershell 5.1 读 UTF-8 无 BOM 文件会乱码",
+      "detail": "我用 powershell.exe -File 跑含中文的 diag 脚本，5.1 按 ANSI(GBK) 解码 -> 中文全乱 -> 语法错误。要给 5.1 用的脚本请写纯 ASCII 或加 BOM。"
+    },
+    {
+      "topic": "主工程默认 glob 会吃掉子工程的 obj",
+      "detail": "在 tools/ 下新建小工程后，主程序 build 报 9 个 CS0579（AssemblyInfo 特性重复）—— tools/xlsxdump/obj/**/AssemblyInfo.cs 被主工程默认 glob 当源码了。已加 <Compile Remove=\"tools\\**\" />，与 selftest\\** 同一个坑。"
+    }
+  ],
+
+  "testing": {
+    "main_program": {
+      "build": "dotnet build FctAggregator.csproj -c Release（0 警告 0 错误）",
+      "selftest": "dotnet run --project selftest\\SelfTest.csproj -c Release（全绿）",
+      "smoke": "tools\\smoke_gui.ps1 / smoke_cli.ps1 通过；smoke_notify.ps1 本会话未重跑",
+      "new_scripts": "tools\\xlsx_check.ps1 -Compare、tools\\upgrade_drill.ps1 [-FullScan]、tools\\diag_fctini.ps1"
+    },
+    "distributor": {
+      "build": "cd fct-distributor; dotnet build FctDistributor.csproj -c Release（0 警告 0 错误）",
+      "selftest": "dotnet run --project selftest\\SelfTest.csproj -c Release（全绿，含 3 条跨工程一致性断言）",
+      "smoke": "解压 zip 起 exe，标题 = 『Zenix-Ally | FCT 数据分发器 v1.9.0』，版本 1.9.0.0",
+      "package": "dotnet publish -c Release -o dist; .\\tools\\make_package.ps1（含 4 类断言：不含主程序文件/内置模板数量与前缀/图标已嵌入）"
+    },
+    "must_run_after_change": "两个工程各自 build + SelfTest；动主程序 UI 再跑 smoke_gui/snap_gui；动子命令跑 smoke_cli；动导出长相跑 xlsx_check.ps1 -Compare；发版前跑 upgrade_drill.ps1"
+  },
+
+  "deliverables_on_desktop": {
+    "path": "C:/Users/admin/Desktop/",
+    "files": [
+      "FCT-Aggregator-v3.0.0-update.zip（1,998,929）—— 产线机台覆盖用，16 个文件，不含 config.json/data/logs/pdb",
+      "FCT-Aggregator-v3.0.0.zip（1,995,061）—— 全新装机（含 config.json 模板）",
+      "FCT-Distributor-v1.9.0.zip（812,141）—— 只发工程/测试人员，免安装无配置",
+      "FCT-Aggregator-v2.9.4-update.zip / FCT-Aggregator-v2.9.4.zip —— ⚠ 旧版，建议删掉免拿错",
+      "diag_fctini.ps1 —— 拷到机台跑的 FCT.ini 诊断"
+    ],
+    "other_local_files": "C:/Users/admin/Documents/xlsx-check/（xlsx 对比产物、reg-backup-ToastEnabled.txt、本会话用过的若干 py 脚本，均未入库）"
+  },
+
+  "pending_decisions": [
+    {
+      "item": "桌面提示闭环",
+      "detail": "见 unresolved_critical。下一步：重启 explorer.exe 或用调试页按钮验；仍不行则实现自绘提示窗兜底",
+      "priority": "高"
+    },
+    {
+      "item": "FCT.ini 现场诊断输出",
+      "detail": "见 unresolved_critical。等用户在机台跑 diag_fctini.ps1",
+      "priority": "高"
+    },
+    {
+      "item": "smoke_notify.ps1 补系统开关断言",
+      "detail": "当前它在通知被关时照样全绿。应开头读 ToastEnabled/EnableBalloonTips，被关就直接 FAIL 并打印修复命令；另外它丢完 FAIL 只等 8 秒就 Stop-Process，气球显示 8000ms，人眼可看时间可能只剩一两秒 —— 建议加 -Hold 参数",
+      "priority": "中"
+    },
+    {
+      "item": "diag_fctini.ps1 全盘搜超时",
+      "detail": "大容量盘上会卡住（本机 300s 超时）。改成限定目录 + 限制递归深度",
+      "priority": "中"
+    },
+    {
+      "item": "机台上删掉旧的独立 exe",
+      "detail": "FCT-FailRanker / FCT-Fetcher / FCT-TdmsViewer 已内嵌进主程序（Ctrl+6~8），机台上的旧 exe 该删。⚠ 而 FCT-Distributor 现在**反过来**了：它是独立程序，但**不该出现在产线机台**上",
+      "priority": "高"
+    },
+    {
+      "item": "图标视觉确认",
+      "detail": "我看不到图片，小尺寸下是否辨得清需人眼确认；任务栏图标没变是 Windows 图标缓存",
+      "priority": "中"
+    },
+    {
+      "item": "ListView 列头无法改色",
+      "detail": "WinForms 限制（要 owner-draw 整个控件）。FAIL 记录/维修列表/待办列表列头仍是系统样式。彻底统一需换成 DataGridView",
+      "priority": "低"
+    },
+    {
+      "item": "agents.step-explore 别名清理",
+      "detail": "C:/Users/admin/.zeroclaw/config.toml 里带连字符的别名，zeroclaw CLI 无法操作，建议删掉统一用 step",
+      "priority": "低"
+    },
+    {
+      "item": "Python v1.0.2 源码已无存档",
+      "detail": "备份 tar.gz 全盘与 git 历史都没有。若用户记得备份到过别的盘/U盘/NAS，趁早找回",
+      "priority": "低（信息性）"
+    }
+  ],
+
+  "how_to_continue": {
+    "main_program": {
+      "build": "cd F:/Programe/Argus/fct-aggregator-cs; dotnet build FctAggregator.csproj -c Release",
+      "test": "dotnet run --project selftest\\SelfTest.csproj -c Release",
+      "package": "dotnet publish FctAggregator.csproj -c Release -o dist; .\\tools\\make_package.ps1; Compress-Archive -Path package_v3.0.0\\* -DestinationPath FCT-Aggregator-v3.0.0.zip -Force"
+    },
+    "distributor": {
+      "build": "cd F:/Programe/Argus/fct-distributor; dotnet build FctDistributor.csproj -c Release",
+      "test": "dotnet run --project selftest\\SelfTest.csproj -c Release",
+      "package": "dotnet publish FctDistributor.csproj -c Release -o dist; .\\tools\\make_package.ps1; Compress-Archive -Path package_v1.9.0\\* -DestinationPath FCT-Distributor-v1.9.0.zip -Force"
+    },
+    "read_first": [
+      "本文件的 unresolved_critical（三件悬着的事）",
+      "fct-aggregator-cs/README.md（结构/命令/约定）",
+      "fct-aggregator-cs/TECHNICAL_DOCUMENTATION.md 第 8 章（设计约定与全部坑）",
+      "fct-aggregator-cs/更新日志.md 顶部 v3.0.0 那节",
+      "fct-distributor/README.md（副本一致性那节）"
+    ],
+    "conventions": [
+      "改动后至少跑 build + SelfTest + smoke_gui（两个工程各自）",
+      "新面板取 Theme 令牌，不要自己写颜色字号",
+      "要导 Excel 用 FctShared.Xlsx；要图标用 AppIcon.Load()/Apply()",
+      "内嵌 Form 里别用 FindForm()，用 TopLevelControl",
+      "WinForms 停靠顺序是反的：Dock=Fill 最先 Add，侧栏最后 Add",
+      "改 Xlsx.cs / StationDetector.cs / AppIcon.cs 时**两个工程都要看**（分发器自检会抓漂移）",
+      "别写死绝对路径，用 $PSScriptRoot / FindUp / __file__ 推导",
+      "改文件前先探测行尾（仓库 CRLF 与 LF 混杂）",
+      "提交前确认 _releases/ package_v*/ dist/ .snap/ data/ logs/ *.zip 不入库"
+    ],
+    "environment_notes": [
+      "shell 是 PowerShell 7，不是 bash。别用 find 找文件（那是 system32\\find.exe 搜文本，会返回伪空结果），用 Get-ChildItem -Recurse 或 fd",
+      "cmdlet 管道末尾加 | Out-Host 保证与原生程序的输出顺序",
+      "dotnet SDK 9.0.314，目标框架 net8.0-windows"
+    ]
+  }
+}
