@@ -19,7 +19,7 @@ Write-Host ""
 $cfgCandidates = @(
     (Join-Path $PSScriptRoot 'config.json'),
     (Join-Path (Get-Location) 'config.json'),
-    'C:\FCT-Aggregator\config.json'
+    'C:\Argus\config.json'
 )
 $cfgPath = $cfgCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 $configured = ''
@@ -103,7 +103,7 @@ if ($target) {
         if ($n -eq 0) { Write-Host "      [X] 没有 [Resource Name] 段 —— 程序会认为没有设备" -ForegroundColor Red }
     } catch {
         Write-Host "    [X] 读取失败: $($_.Exception.GetType().Name) $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "        权限问题的话，试试用管理员身份运行 FCT-Aggregator" -ForegroundColor Yellow
+        Write-Host "        权限问题的话，试试用管理员身份运行 Argus" -ForegroundColor Yellow
     }
     Write-Host ""
     Write-Host "[5] 把这一行写进 config.json（注意 JSON 里反斜杠要双写）" -ForegroundColor Cyan

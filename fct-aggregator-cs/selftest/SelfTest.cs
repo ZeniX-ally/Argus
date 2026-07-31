@@ -896,16 +896,24 @@ class SelfTest
                 var cw = form.ClientSize.Width;
                 var ch = form.ClientSize.Height;
 
+                // v3.0.1：自绘标题栏占顶部 Theme.TitleBarHeight，侧栏/顶栏相对客户区下移
+                var titleBar = form.Controls.OfType<TitleBar>().FirstOrDefault();
+                Check(titleBar != null, "自绘标题栏存在（替换系统标题栏）");
+                Check(titleBar != null && titleBar.Dock == DockStyle.Top && titleBar.Height == Theme.TitleBarHeight,
+                      $"标题栏在顶部、高 {Theme.TitleBarHeight}px");
+                Check(titleBar != null && titleBar.Width == cw,
+                      $"标题栏横贯整窗（{titleBar?.Width} == 客户区宽 {cw}）");
+
                 Check(nav != null && nav.Dock == DockStyle.Left && nav.Width == Theme.NavWidth,
                       $"侧边导航靠左、宽 {nav?.Width}px");
-                Check(nav != null && nav.Height == ch,
-                      $"**侧栏占满整列高**（{nav?.Height} == 客户区 {ch}）—— 证明它是最先 Add 的最外层");
+                Check(nav != null && nav.Height == ch - Theme.TitleBarHeight,
+                      $"**侧栏占满标题栏之下整列高**（{nav?.Height} == 客户区 {ch} - 标题栏 {Theme.TitleBarHeight}）");
 
                 var topBar = form.Controls.OfType<Panel>()
                     .FirstOrDefault(p => p.Dock == DockStyle.Top && p.Height == Theme.TopBarHeight);
                 Check(topBar != null, "顶栏存在");
-                Check(topBar != null && topBar.Left == Theme.NavWidth && topBar.Top == 0,
-                      $"顶栏从侧栏右侧开始（left={topBar?.Left}, top={topBar?.Top}）");
+                Check(topBar != null && topBar.Left == Theme.NavWidth && topBar.Top == Theme.TitleBarHeight,
+                      $"顶栏在标题栏之下、从侧栏右侧开始（left={topBar?.Left}, top={topBar?.Top}）");
                 Check(topBar != null && topBar.Width == cw - Theme.NavWidth,
                       $"顶栏宽度 = 客户区宽 - 侧栏宽（{topBar?.Width}），没盖到侧栏上");
                 Check(title != null && title.Text.Length > 0 && chips != null && chips.Dock == DockStyle.Fill,
@@ -1060,14 +1068,14 @@ class SelfTest
             {
                 var dllCandidates = new[]
                 {
-                    Path.Combine("bin", "Release", "net8.0-windows", "FCT-Aggregator.dll"),
-                    Path.Combine("dist", "FCT-Aggregator.dll"),
-                    Path.Combine("..", "bin", "Release", "net8.0-windows", "FCT-Aggregator.dll"),
+                    Path.Combine("bin", "Release", "net8.0-windows", "Argus.dll"),
+                    Path.Combine("dist", "Argus.dll"),
+                    Path.Combine("..", "bin", "Release", "net8.0-windows", "Argus.dll"),
                 };
                 var dll = dllCandidates.FirstOrDefault(File.Exists);
                 if (dll == null)
                 {
-                    Console.WriteLine("    (跳过内置模板检查：没找到已构建的 FCT-Aggregator.dll)");
+                    Console.WriteLine("    (跳过内置模板检查：没找到已构建的 Argus.dll)");
                 }
                 else
                 {

@@ -19,7 +19,7 @@ param(
     # 默认拿 v2.4.0 作基线：它还没有 todo_items / app_meta 两张表，
     # 能真正考到「升级时自动建新表且不动旧数据」这条路径。
     [string]$OldZip = "$PSScriptRoot\..\..\_releases\aggregator\FCT-Aggregator-v2.4.0.zip",
-    [string]$NewUpdateZip = "$PSScriptRoot\..\FCT-Aggregator-v3.0.0-update.zip",
+    [string]$NewUpdateZip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.0.1-update.zip",
     # 默认 skip_historical_scan=true（演练跑得快）。
     # ⚠ 加上 -FullScan 则模拟现场默认配置（false）：只有这条路径会在启动时
     #   把历史不良并入待办登记表（SyncTodos 挂在「历史扇描后」）。
@@ -72,7 +72,7 @@ $cfg | ConvertTo-Json -Depth 6 | Set-Content $cfgPath -Encoding utf8
 $cfgHashBefore = (Get-FileHash $cfgPath -Algorithm SHA256).Hash
 Write-Host "  config.json SHA256(升级前) = $($cfgHashBefore.Substring(0,16))..."
 
-$exe = Join-Path $station 'FCT-Aggregator.exe'
+$exe = Join-Path $station 'Argus.exe'
 $verBefore = (Get-Item $exe).VersionInfo.FileVersion
 Write-Host "  机台现有版本 = $verBefore"
 Write-Host "===== 2. 启动旧版并丢 2 条 FAIL 入库 =====" -ForegroundColor Cyan

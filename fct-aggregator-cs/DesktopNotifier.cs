@@ -49,7 +49,7 @@ public static class DesktopNotifier
             {
                 Icon = ico,
                 Visible = true,
-                Text = "FCT-Aggregator",
+                Text = "Argus",
                 BalloonTipIcon = ToolTipIcon.Warning,
             };
             _icon.BalloonTipClicked += (_, _) => Activated?.Invoke();

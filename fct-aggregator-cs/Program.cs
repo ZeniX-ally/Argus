@@ -11,11 +11,11 @@ namespace FctAggregator;
 ///
 /// 用法：
 /// <code>
-/// FCT-Aggregator.exe                 主程序 GUI（采集聚合 + 工具箱）
-/// FCT-Aggregator.exe fetch --diag    取数工具 CLI（原 FCT-Fetcher.exe）
-/// FCT-Aggregator.exe tdms --help     TDMS 工具 CLI（原 FCT-TdmsViewer.exe）
-/// FCT-Aggregator.exe tdms x.tdms     直接用 TDMS 窗口打开文件
-/// FCT-Aggregator.exe --help          子命令一览
+/// Argus.exe                 主程序 GUI（采集聚合 + 工具箱）
+/// Argus.exe fetch --diag    取数工具 CLI（原 FCT-Fetcher.exe）
+/// Argus.exe tdms --help     TDMS 工具 CLI（原 FCT-TdmsViewer.exe）
+/// Argus.exe tdms x.tdms     直接用 TDMS 窗口打开文件
+/// Argus.exe --help          子命令一览
 /// </code>
 /// </summary>
 static class Program
@@ -100,7 +100,7 @@ static class Program
 
         // ===== 主程序 GUI =====
         // 单实例保护（只管 GUI；CLI 子命令不受限，否则主程序开着就没法跑命令行）
-        _singleInstanceMutex = new Mutex(true, @"Global\FCT_Aggregator_SingleInstance", out bool isNew);
+        _singleInstanceMutex = new Mutex(true, @"Global\Argus_SingleInstance", out bool isNew);
         if (!isNew)
         {
             MessageBox.Show("程序已在运行，请勿重复打开。", "FCT 工具套件",
@@ -141,14 +141,14 @@ static class Program
     private static void PrintUsage()
     {
         Console.WriteLine("""
-FCT 工具套件 (FCT-Aggregator.exe)
+FCT 工具套件 (Argus.exe)
 
-  FCT-Aggregator.exe                    主程序：采集聚合 / 待办维修 / 工具箱
-  FCT-Aggregator.exe rank               FAIL 排行（窗口）
-  FCT-Aggregator.exe tdms [文件.tdms]   TDMS 波形查看（窗口）
-  FCT-Aggregator.exe tdms --help        TDMS 工具的命令行用法
-  FCT-Aggregator.exe fetch --help       取数打包工具的命令行用法
-  FCT-Aggregator.exe --help             本帮助
+  Argus.exe                    主程序：采集聚合 / 待办维修 / 工具箱
+  Argus.exe rank               FAIL 排行（窗口）
+  Argus.exe tdms [文件.tdms]   TDMS 波形查看（窗口）
+  Argus.exe tdms --help        TDMS 工具的命令行用法
+  Argus.exe fetch --help       取数打包工具的命令行用法
+  Argus.exe --help             本帮助
 
 四个工具也能在主程序左侧「工具箱」里直接点开。
 """);

@@ -31,7 +31,7 @@ public sealed class TodoCard : BoardCardBase
     private static readonly Font MetaFont = new("Microsoft YaHei UI", 8F);
     private static readonly Font TagFont = new("Microsoft YaHei UI", 7.5F, FontStyle.Bold);
 
-    private static readonly Color Accent = Color.FromArgb(197, 48, 48);
+    private static readonly Color Accent = Theme.Danger;
 
     public TodoCard(TodoItem item)
     {

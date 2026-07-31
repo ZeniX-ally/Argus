@@ -29,7 +29,7 @@ public class FailItem
 }
 
 /// <summary>
-/// 单个 XML 的解析结果。业务规则与主项目 FCT-Aggregator 保持一致:
+/// 单个 XML 的解析结果。业务规则与主项目 Argus 保持一致:
 /// 分类看文件名前缀 P_/F_/O_; USER==debug 跳过; 失败项排除 "Get Unit Information" 和 "UUT Status Err"。
 /// </summary>
 public class XmlRecord

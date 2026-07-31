@@ -78,7 +78,7 @@ public class MainForm : Form
 
     public MainForm()
     {
-        Text = $"Zenix-Ally | FCT 数据分发器 v{Ver}";
+        Text = $"Argus | FCT 数据分发器 v{Ver}";
         Width = 1180;
         Height = 906;
         MinimumSize = new Size(1040, 790);

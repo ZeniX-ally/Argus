@@ -171,7 +171,7 @@ public static class TodoGrouping
         failCount >= HighThreshold ? "高" : failCount >= MediumThreshold ? "中" : "低";
 
     public static Color PriorityColorOf(int failCount) =>
-        failCount >= HighThreshold ? Color.FromArgb(197, 48, 48)      // 红
+        failCount >= HighThreshold ? Theme.Danger          // 红
       : failCount >= MediumThreshold ? Color.FromArgb(221, 107, 32)   // 橙
       : Color.FromArgb(120, 132, 150);                                // 灰
 }

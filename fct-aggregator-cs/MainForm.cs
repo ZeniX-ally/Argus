@@ -68,7 +68,7 @@ public class MainForm : Form
 
     /// <summary>
     /// 工具（v2.9.4 起**内嵌**在主窗口里，不再弹独立窗口）。
-    /// key 同时是 CLI 子命令名（<c>FCT-Aggregator.exe rank</c> 仍能单独开窗）。
+    /// key 同时是 CLI 子命令名（<c>Argus.exe rank</c> 仍能单独开窗）。
     ///
     /// ⚠ v3.0.0：**数据分发已移出本程序**。它能改文件时间戳、按模板造数、批量投放 XML，
     /// 放在产线机台的主程序里误点一次后果很重。现在是独立程序 <c>FCT-Distributor.exe</c>
@@ -86,17 +86,23 @@ public class MainForm : Form
 
     private int _page = 0;
 
+    /// <summary>侧栏品牌图标（32×32 原生帧 1:1 绘制，不缩放不模糊）。</summary>
+    private readonly Icon _brandIcon = AppIcon.Load(32);
+
     public MainForm(Engine engine)
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT 工具套件 v3.0.0";
+        Text = "Argus";
         // 内嵌工具自带最小尺寸，窗口得能装下；装不下时由 ToolHost 的 AutoScroll 兜底。
         // v3.0.0：数据分发（1040×790，原来最大的那个）移出后，剩下最大是 TDMS 波形 1000×640，
         // 所以最小窗口从 1240×860 降到 1200×720 —— 1366×768 的机台不再出横向滚动条。
         Width = 1360; Height = 920;
         MinimumSize = new Size(1200, 720);
         StartPosition = FormStartPosition.CenterScreen;
+        // v3.0.1：去掉系统标题栏，改自绘炭黑标题栏（与侧栏一体）；最大化不盖任务栏
+        FormBorderStyle = FormBorderStyle.None;
+        MaximizedBounds = Screen.PrimaryScreen.WorkingArea;
         BackColor = Theme.Bg;
         AppIcon.Apply(this);                     // v2.9.4: 统一走 AppIcon（嵌入资源优先）
         Font = Theme.Body;
@@ -223,7 +229,54 @@ public class MainForm : Form
         }
         _dashboardPage.BringToFront();
 
+        // v3.0.1：自绘标题栏 —— 必须最后 Add（最先停靠 = 窗口最顶部，盖住所有 Top 栏）
+        Controls.Add(BuildTitleBar());
         KeyDown += OnShortcut;
+    }
+
+    /// <summary>
+    /// 自绘标题栏（v3.0.1）：替换系统标题栏。最后 Add = 最先停靠 = 窗口最顶部。
+    /// 拖动 / 双击最大化 / 控制按钮由 <see cref="TitleBar"/> 处理，这里只接线。
+    /// </summary>
+    private Control BuildTitleBar()
+    {
+        var bar = new TitleBar();
+        bar.MinimizeRequested += () => WindowState = FormWindowState.Minimized;
+        bar.MaximizeRequested += () =>
+            WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+        bar.CloseRequested += Close;
+        Resize += (_, _) => bar.SetMaximized(WindowState == FormWindowState.Maximized);
+        return bar;
+    }
+
+    /// <summary>
+    /// 无边框窗口的边缘拖拽缩放（WM_NCHITTEST）：鼠标在窗口 6px 边缘时返回对应命中区域。
+    /// 最大化时不缩放（系统此时也不让调）。
+    /// </summary>
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_NCHITTEST = 0x84;
+        const int HTCLIENT = 1, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12,
+                  HTTOPLEFT = 13, HTTOPRIGHT = 14, HTBOTTOM = 15,
+                  HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
+        if (m.Msg == WM_NCHITTEST && WindowState != FormWindowState.Maximized)
+        {
+            base.WndProc(ref m);
+            if (m.Result == (IntPtr)HTCLIENT)
+            {
+                int l = m.LParam.ToInt32();
+                var pt = PointToClient(new Point((short)(l & 0xFFFF), (short)((l >> 16) & 0xFFFF)));
+                const int EDGE = 6;
+                bool left = pt.X <= EDGE, right = pt.X >= Width - EDGE;
+                bool top = pt.Y <= EDGE, bottom = pt.Y >= Height - EDGE;
+                m.Result = (IntPtr)(
+                    left ? (top ? HTTOPLEFT : bottom ? HTBOTTOMLEFT : HTLEFT)
+                    : right ? (top ? HTTOPRIGHT : bottom ? HTBOTTOMRIGHT : HTRIGHT)
+                    : top ? HTTOP : bottom ? HTBOTTOM : HTCLIENT);
+            }
+            return;
+        }
+        base.WndProc(ref m);
     }
 
     /// <summary>侧边导航：品牌块 + 5 个导航项 + 底部退出。只构造不挂，由调用方按停靠顺序 Add。</summary>
@@ -231,15 +284,20 @@ public class MainForm : Form
     {
         _nav = new Panel { Dock = DockStyle.Left, Width = Theme.NavWidth, BackColor = Theme.NavBg };
 
-        var brand = new Panel { Dock = DockStyle.Top, Height = Theme.TopBarHeight, BackColor = Theme.NavBg };
+        var brand = new Panel { Dock = DockStyle.Top, Height = 68, BackColor = Theme.NavBg };
         brand.Paint += (_, e) =>
         {
-            TextRenderer.DrawText(e.Graphics, "Zenix-Ally", new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
-                new Rectangle(18, 6, brand.Width - 24, 22), Color.White,
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            // 品牌图标：32×32 原生帧 1:1（垂直居中 (68-32)/2=18，左侧留白 18）
+            g.DrawIcon(_brandIcon, new Rectangle(18, 18, 32, 32));
+            // 品牌名：垂直居中、13pt 粗体
+            TextRenderer.DrawText(g, "Argus", new Font("Microsoft YaHei UI", 13F, FontStyle.Bold),
+                new Rectangle(58, 0, brand.Width - 70, brand.Height), Color.White,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-            TextRenderer.DrawText(e.Graphics, "FCT 数据聚合", Theme.Small,
-                new Rectangle(18, 26, brand.Width - 24, 18), Theme.NavText,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            // 底部细分隔线（与导航区区分，高级简约）
+            using var pen = new Pen(Color.FromArgb(44, 50, 58));
+            g.DrawLine(pen, 0, brand.Height - 1, brand.Width, brand.Height - 1);
         };
 
         var exit = new NavButton("退出程序", -1) { Dock = DockStyle.Bottom };
@@ -247,7 +305,7 @@ public class MainForm : Form
 
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v3.0.0", ForeColor = Color.FromArgb(120, 134, 154),
+            Dock = DockStyle.Bottom, Height = 26, Text = "v3.0.0", ForeColor = Theme.NavText,
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };
@@ -272,7 +330,7 @@ public class MainForm : Form
         }
         var toolTitle = new Label
         {
-            Dock = DockStyle.Top, Height = 26, Text = "工具箱", ForeColor = Color.FromArgb(118, 132, 152),
+            Dock = DockStyle.Top, Height = 26, Text = "工具箱", ForeColor = Theme.NavText,
             Font = Theme.Tiny, BackColor = Theme.NavBg, TextAlign = ContentAlignment.BottomLeft,
             Padding = new Padding(18, 0, 0, 4),
         };

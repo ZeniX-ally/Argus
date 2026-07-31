@@ -44,9 +44,9 @@ public class MaintenancePanel : Panel
             Dock = DockStyle.Top, Height = 42, Padding = new Padding(0, 4, 0, 4), BackColor = Theme.Bg,
         };
 
-        _btnBoard = new Button { Text = "看板", Width = 62, Height = 28, FlatStyle = FlatStyle.Flat };
+        _btnBoard = new Button { Text = "看板", Width = 64, Height = 30, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 2, 4, 2) };
         _btnBoard.Click += (_, _) => SetViewMode("board");
-        _btnList = new Button { Text = "列表", Width = 62, Height = 28, FlatStyle = FlatStyle.Flat };
+        _btnList = new Button { Text = "列表", Width = 64, Height = 30, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 2, 4, 2) };
         _btnList.Click += (_, _) => SetViewMode("list");
         bar.Controls.Add(_btnBoard);
         bar.Controls.Add(_btnList);
@@ -54,10 +54,10 @@ public class MaintenancePanel : Panel
         _filterLabel = new Label
         {
             Text = "筛选:", AutoSize = true, Anchor = AnchorStyles.Left,
-            Margin = new Padding(12, 8, 4, 0),
+            Margin = new Padding(12, 9, 4, 0),
         };
         bar.Controls.Add(_filterLabel);
-        _filter = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList };
+        _filter = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 6, 4, 0) };
         _filter.Items.AddRange(MaintenanceMeta.FilterItems());
         _filter.SelectedIndex = 0;
         _filter.SelectedIndexChanged += (_, _) => { if (_viewMode == "list") RefreshList(); };
@@ -67,10 +67,10 @@ public class MaintenancePanel : Panel
         _rangeLabel = new Label
         {
             Text = "待办区间:", AutoSize = true, Anchor = AnchorStyles.Left,
-            Margin = new Padding(12, 8, 4, 0),
+            Margin = new Padding(12, 9, 4, 0),
         };
         bar.Controls.Add(_rangeLabel);
-        _range = new ComboBox { Width = 146, DropDownStyle = ComboBoxStyle.DropDownList };
+        _range = new ComboBox { Width = 146, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 6, 4, 0) };
         _range.Items.AddRange(TodoRange.Presets(AppConfig.Instance.TodoScanDays).Cast<object>().ToArray());
         _range.SelectedIndex = 1;                     // 默认「近 N 天」
         _range.SelectedIndexChanged += (_, _) => ApplyTodoRange();
@@ -78,20 +78,20 @@ public class MaintenancePanel : Panel
 
         var btnFromFail = new Button
         {
-            Text = "从FAIL选故障项", Width = 122, Height = 28,
-            Margin = new Padding(12, 3, 3, 3),
+            Text = "从FAIL选故障项", Width = 118, Height = 30,
+            Margin = new Padding(12, 2, 4, 2),
             BackColor = Color.FromArgb(226, 240, 217),
         };
         btnFromFail.Click += (_, _) => NewFromFailItems();
         bar.Controls.Add(btnFromFail);
 
-        var btnNew = new Button { Text = "新增记录", Width = 90, Height = 28, Margin = new Padding(3, 3, 3, 3) };
+        var btnNew = new Button { Text = "新增记录", Width = 82, Height = 30, Margin = new Padding(0, 2, 4, 2) };
         btnNew.Click += (_, _) => NewRecord();
         bar.Controls.Add(btnNew);
-        var btnRefresh = new Button { Text = "刷新", Width = 70, Height = 28 };
+        var btnRefresh = new Button { Text = "刷新", Width = 76, Height = 30, Margin = new Padding(0, 2, 4, 2) };
         btnRefresh.Click += (_, _) => Refresh2();
         bar.Controls.Add(btnRefresh);
-        var btnExport = new Button { Text = "导出", Width = 80, Height = 28 };
+        var btnExport = new Button { Text = "导出", Width = 76, Height = 30, Margin = new Padding(0, 2, 4, 2) };
         btnExport.Click += (s, _) => ShowExportMenu(btnExport);
         bar.Controls.Add(btnExport);
 
@@ -150,12 +150,14 @@ public class MaintenancePanel : Panel
         _range.Enabled = _viewMode == "board";
         _rangeLabel.Enabled = _viewMode == "board";
 
-        var on = Color.FromArgb(26, 82, 118);
-        var off = SystemColors.Control;
+        var on = Theme.Primary;
+        var off = Theme.Surface;
         _btnBoard.BackColor = _viewMode == "board" ? on : off;
-        _btnBoard.ForeColor = _viewMode == "board" ? Color.White : SystemColors.ControlText;
+        _btnBoard.ForeColor = _viewMode == "board" ? Color.White : Theme.TextMain;
+        _btnBoard.FlatAppearance.BorderColor = Theme.Border;
         _btnList.BackColor = _viewMode == "list" ? on : off;
-        _btnList.ForeColor = _viewMode == "list" ? Color.White : SystemColors.ControlText;
+        _btnList.ForeColor = _viewMode == "list" ? Color.White : Theme.TextMain;
+        _btnList.FlatAppearance.BorderColor = Theme.Border;
     }
 
     /// <summary>外部(MainForm 切页 / 新不良到达)调用的刷新入口。</summary>

@@ -113,7 +113,7 @@ public static class MaintenanceMeta
     /// <summary>严重度色条颜色: 严重=红 / 一般=橙 / 轻微=灰。</summary>
     public static Color SeverityColorOf(string? key) => key?.ToLowerInvariant() switch
     {
-        "critical" => Color.FromArgb(197, 48, 48),
+        "critical" => Theme.Danger,
         "minor" => Color.FromArgb(140, 152, 170),
         _ => Color.FromArgb(221, 107, 32),
     };

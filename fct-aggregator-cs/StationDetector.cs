@@ -55,10 +55,10 @@ public static class StationDetector
 /// </summary>
 public static class AutoStart
 {
-    private const string AppName = "FCT-Aggregator";
+    private const string AppName = "Argus";
 
     private static string ExePath => Environment.ProcessPath ?? "";
-    private static string DllPath => Path.Combine(AppConfig.BaseDir, "FCT-Aggregator.dll");
+    private static string DllPath => Path.Combine(AppConfig.BaseDir, "Argus.dll");
     private static bool IsRunningAsDll =>
         (Environment.ProcessPath ?? "").EndsWith("dotnet.exe", StringComparison.OrdinalIgnoreCase);
     private static string MarkerPath => Path.Combine(AppConfig.BaseDir, "data", ".autostart_initialized");
@@ -130,7 +130,7 @@ public static class AutoStart
             if (!string.IsNullOrEmpty(arguments))
                 st.InvokeMember("Arguments", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { arguments });
             st.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { workingDir });
-            st.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { "FCT-Aggregator 开机自启" });
+            st.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { "Argus 开机自启" });
             st.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, null);
         }
         finally

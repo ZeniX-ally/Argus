@@ -95,7 +95,7 @@ public sealed class TemplateGenerator
         public bool ExistingDirsOnly = true;
         /// <summary>
         /// 是否改写 FACTORY@USER。**默认 false，保留模板的 Debug**。
-        /// 注意：USER=debug 的数据 FCT-Aggregator 会跳过不入库（Classifier.IsDebug）。
+        /// 注意：USER=debug 的数据 Argus 会跳过不入库（Classifier.IsDebug）。
         /// </summary>
         public string User = "Operator";
         public bool ForceUser = false;
@@ -330,7 +330,7 @@ public sealed class TemplateGenerator
                 log?.Invoke(o.ForceUser
                     ? $"[注意] 模板 USER=\"{t.TemplateUser}\"，已按设置改写为 \"{o.User}\""
                     : $"[注意] 模板 USER=\"{t.TemplateUser}\" 保留不改；" +
-                      $"FCT-Aggregator 会把 USER=debug 的数据跳过不入库（如需入库请勾选改写 USER）");
+                      $"Argus 会把 USER=debug 的数据跳过不入库（如需入库请勾选改写 USER）");
         }
         if (res.Templates.Count == 0)
         {
@@ -568,7 +568,7 @@ public sealed class TemplateGenerator
         return it;
     }
 
-    /// <summary>与 FCT-Aggregator 的 Classifier.IsDebug() 同口径。</summary>
+    /// <summary>与 Argus 的 Classifier.IsDebug() 同口径。</summary>
     public static bool IsDebugUser(string? user)
         => (user ?? "").Trim().ToLowerInvariant() == "debug";
 

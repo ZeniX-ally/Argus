@@ -7,14 +7,14 @@
     AttachConsole + Console.SetOut 接回来，这里就是防它再退化。）
 #>
 # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
-param([string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v3.0.0.zip")
+param([string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.0.1.zip")
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 
 $tmp = Join-Path $env:TEMP "fct_cli_$(Get-Random -Maximum 999999)"
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 Expand-Archive $Zip -DestinationPath $tmp
-$exe = Join-Path $tmp 'FCT-Aggregator.exe'
+$exe = Join-Path $tmp 'Argus.exe'
 $fail = 0
 function Assert($cond, $msg) {
     if ($cond) { Write-Host "[OK]   $msg" } else { Write-Host "[FAIL] $msg" -ForegroundColor Red; $script:fail++ }

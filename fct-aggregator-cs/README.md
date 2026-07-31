@@ -16,11 +16,11 @@
 ## 快速开始
 
 ```powershell
-# 机台部署：解压完整包，改好 config.json，双击 FCT-Aggregator.exe
-FCT-Aggregator.exe                    # 主程序（左侧导航切页，工具箱在下方）
-FCT-Aggregator.exe --help             # 全部子命令
-FCT-Aggregator.exe tdms x.tdms        # 直接看某个波形文件
-FCT-Aggregator.exe fetch --help       # 取数工具命令行
+# 机台部署：解压完整包，改好 config.json，双击 Argus.exe
+Argus.exe                    # 主程序（左侧导航切页，工具箱在下方）
+Argus.exe --help             # 全部子命令
+Argus.exe tdms x.tdms        # 直接看某个波形文件
+Argus.exe fetch --help       # 取数工具命令行
 ```
 快捷键：`Ctrl+1~5` 主程序页、`Ctrl+6~8` 三个工具页、`Ctrl+R` 刷新。
 三个工具是**内嵌页面**（`TopLevel=false` 的 Form）；命令行方式则以独立窗口打开。
@@ -54,12 +54,13 @@ fct-aggregator-cs/
 ## 开发
 
 ```powershell
-dotnet build FctAggregator.csproj -c Release          # 编译（要求 0 警告 0 错误）
-dotnet run --project selftest\SelfTest.csproj -c Release   # 全量自检（必须全绿）
+dotnet build FctAggregator.csproj -c Release          # 编译（要求 0 警告 0 错误；产物在 bin\Release\net8.0-windows\）
+dotnet run --project selftest\SelfTest.csproj -c Release   # 全量自检（必须全绿；当前 297 项断言）
 
-dotnet publish FctAggregator.csproj -c Release -o dist
-.\tools\make_package.ps1                             # 生成完整包 + 覆盖包
-.\tools\smoke_gui.ps1                                # 起窗口、看标题、查日志 ERROR
+# ⚠ 2026-08-01 起产物统一收敛到 bin\Release\net8.0-windows\（铺平，无 package_v*/ 子目录）：
+#   程序文件 + config.json + 启动.bat + 文档 + data\ + logs\ + Argus-v3.0.1.zip（完整）+ Argus-v3.0.1-update.zip（覆盖）
+.\tools\make_package.ps1                             # build 后跑一次：铺平随包文件 + 自动生成两个 zip（含更新包断言）
+.\tools\smoke_gui.ps1                                # 起窗口、看标题、查日志 ERROR（自动从新路径取 zip）
 .\tools\smoke_notify.ps1                             # 丢一条 FAIL → 桌面提示 + 待办登记
 .\tools\smoke_cli.ps1                                # 子命令 / CLI stdout / 单实例
 .\tools\snap_gui.ps1                                 # 逐页截图到 .snap\（人工核对布局）

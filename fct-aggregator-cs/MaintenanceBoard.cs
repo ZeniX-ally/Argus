@@ -203,7 +203,7 @@ public class MaintenanceBoard : Panel
                 case TodoCard t:
                 {
                     var (title, sub, rows, footer) = t.BuildPreview();
-                    CardPreviewForm.ShowFor(anchor, title, sub, Color.FromArgb(197, 48, 48),
+                    CardPreviewForm.ShowFor(anchor, title, sub, Theme.Danger,
                         rows, MergedWithCounts(t.Item.Variants, t.Item.StationId), footer);
                     break;
                 }

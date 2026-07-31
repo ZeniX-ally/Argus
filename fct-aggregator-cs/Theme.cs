@@ -11,28 +11,29 @@ namespace FctAggregator;
 public static class Theme
 {
     // ==================== 颜色 ====================
-    /// <summary>工作区底色（浅灰，衬托白色卡片）。</summary>
-    public static readonly Color Bg = Color.FromArgb(243, 245, 249);
+    /// <summary>工作区底色（极浅冷灰，衬托白色卡片；高级简约风）。</summary>
+    public static readonly Color Bg = Color.FromArgb(247, 248, 250);
     /// <summary>卡片/面板底色。</summary>
     public static readonly Color Surface = Color.White;
-    /// <summary>侧边导航底色（深蓝灰）。</summary>
-    public static readonly Color NavBg = Color.FromArgb(28, 39, 54);
-    public static readonly Color NavHover = Color.FromArgb(40, 54, 73);
-    public static readonly Color NavActive = Color.FromArgb(46, 104, 168);
-    public static readonly Color NavText = Color.FromArgb(196, 206, 219);
+    /// <summary>侧边导航底色（炭黑，中性克制的深底）。</summary>
+    public static readonly Color NavBg = Color.FromArgb(16, 20, 24);
+    public static readonly Color NavHover = Color.FromArgb(28, 34, 40);
+    public static readonly Color NavActive = Color.FromArgb(30, 36, 42);
+    public static readonly Color NavText = Color.FromArgb(150, 158, 166);
     public static readonly Color NavTextActive = Color.White;
 
-    public static readonly Color Border = Color.FromArgb(223, 228, 235);
-    public static readonly Color TextMain = Color.FromArgb(30, 41, 57);
-    public static readonly Color TextSub = Color.FromArgb(98, 112, 132);
-    public static readonly Color TextFaint = Color.FromArgb(150, 160, 175);
+    public static readonly Color Border = Color.FromArgb(231, 234, 240);
+    public static readonly Color TextMain = Color.FromArgb(15, 23, 42);
+    public static readonly Color TextSub = Color.FromArgb(100, 116, 139);
+    public static readonly Color TextFaint = Color.FromArgb(160, 174, 192);
 
-    public static readonly Color Primary = Color.FromArgb(37, 99, 165);
-    public static readonly Color Success = Color.FromArgb(34, 134, 88);
-    public static readonly Color Warning = Color.FromArgb(202, 138, 4);
-    public static readonly Color Danger = Color.FromArgb(197, 48, 48);
-    public static readonly Color Info = Color.FromArgb(13, 138, 145);
-    public static readonly Color Neutral = Color.FromArgb(113, 128, 150);
+    // 唯一强调色 + 降饱和语义色（高级简约：彩色收敛，只留必要的语义）
+    public static readonly Color Primary = Color.FromArgb(37, 99, 235);
+    public static readonly Color Success = Color.FromArgb(22, 163, 74);
+    public static readonly Color Warning = Color.FromArgb(217, 119, 6);
+    public static readonly Color Danger = Color.FromArgb(220, 38, 38);
+    public static readonly Color Info = Color.FromArgb(13, 148, 136);
+    public static readonly Color Neutral = Color.FromArgb(100, 116, 139);
 
     // ==================== 字体 ====================
     private const string Family = "Microsoft YaHei UI";
@@ -51,6 +52,8 @@ public static class Theme
     public const int NavWidth = 168;
     public const int TopBarHeight = 54;
     public const int StatusBarHeight = 26;
+    /// <summary>自绘标题栏高度（v3.0.1：去掉系统标题栏，改炭黑自绘，与侧栏一体）。</summary>
+    public const int TitleBarHeight = 34;
     public const int Radius = 6;
     public const int Gap = 10;
 

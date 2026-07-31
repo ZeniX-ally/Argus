@@ -7,7 +7,8 @@
 import io, os, struct
 from PIL import Image
 
-SRC = r'C:\Users\admin\Downloads\all-icons'
+SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets', 'icon')
+# 源 PNG 从项目内 assets/icon/ 取（2026-08-01：原先是 Downloads\all-icons 写死路径，改名/换机就失效）
 # 路径自己推（仓库目录 2026-07-31 从 G4_9-QA 改名成 Argus，写死绝对路径会静静失效）
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'app_icon.ico')
 

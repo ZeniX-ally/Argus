@@ -5,7 +5,7 @@
 
     ⚠ 为什么从「FCT 工具套件」里拆出来：
       分发器能改文件时间戳、按模板造数、批量投放 XML。这些操作放在**产线机台**的
-      主程序里，误点一次的后果很重。所以彻底分家：产线机台只装 FCT-Aggregator，
+      主程序里，误点一次的后果很重。所以彻底分家：产线机台只装 Argus，
       分发器单独发给工程/测试人员。
 
     ⚠ 彻底分家的代价（用户已确认接受）：
@@ -25,7 +25,7 @@
     <Version>1.9.0</Version>
     <AssemblyVersion>1.9.0.0</AssemblyVersion>
     <FileVersion>1.9.0.0</FileVersion>
-    <Company>Zenix-Ally</Company>
+    <Company>Argus</Company>
     <Product>FCT 数据分发器</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
     <SelfContained>false</SelfContained>

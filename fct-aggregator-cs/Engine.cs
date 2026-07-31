@@ -151,7 +151,10 @@ public class Engine
             for (int i = 0; i < allFiles.Count; i += batchSize)
             {
                 if (_cts.IsCancellationRequested) return;
-                var batch = allFiles.Skip(i).Take(batchSize).Select(Path.GetFullPath).ToList();
+                // ⚠ 用 GetRange 而非 Skip(i).Take()：Skip 每次从头迭代是 O(i)，
+                // 百万级文件时总代价 O(n²)（曾拖慢历史扫描）；GetRange 是 O(batch)。
+                var take = Math.Min(batchSize, allFiles.Count - i);
+                var batch = allFiles.GetRange(i, take).Select(Path.GetFullPath).ToList();
                 var existing = _db.GetExistingPaths(batch);
 
                 var records = new List<TestRecord>();

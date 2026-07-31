@@ -1,7 +1,16 @@
 namespace FctAggregator;
 
-/// <summary>设备状态面板: 型号/软件版本/COM设备(带小灯)/A2L。
-/// 一屏铺满不滚动; 刷新只更新数据不重建控件(防闪烁)。</summary>
+/// <summary>
+/// 设备状态面板: 型号 / 软件版本 / A2L / 设备（COM·USB）。
+/// 刷新只更新数据不重建控件（防闪烁）。
+///
+/// v3.0.1 重新设计（对称 + 简洁）：
+///   · 顶部信息两列对称白卡：左「支持的型号」右「当前软件版本」，A2L 跨整行；
+///     行高自适应，不再固定 175px（旧版 A2L 文件多时下半截被裁掉）。
+///   · 设备网格双列对称 + 列头，列宽按百分比铺满（旧版绝对列宽只占 684px，
+///     内容区右侧留一大片空白）。
+///   · 整个面板可滚动，设备再多也不截断。
+/// </summary>
 public class DeviceStatusPanel : Panel
 {
     private readonly AppConfig _cfg;
@@ -16,7 +25,7 @@ public class DeviceStatusPanel : Panel
 
     // 设备行控件缓存(灯/名/端口/状态), 按索引复用, 不重建
     private readonly List<(Label lamp, Label name, Label port, Label status)> _devRows = new();
-    private const int MaxDevRows = 20;   // 预建行数(设备一般十几个)
+    private const int MaxDevRows = 20;   // 双列各 10 行（车间设备一般十几个）
 
     public DeviceStatusPanel(AppConfig cfg)
     {
@@ -32,93 +41,156 @@ public class DeviceStatusPanel : Panel
     {
         Padding = new Padding(Theme.Gap);
         BackColor = Theme.Bg;
+        AutoScroll = true;   // 窗口矮 / 内容高时滚动，不截断
 
-        // 页标题由主窗口顶标统一显示（v2.8.0），这里只留 ini 路径与错误提示
-        var title = new Label { Dock = DockStyle.Top, Height = 0, Visible = false };
-        _iniLabel = new Label { Dock = DockStyle.Top, Height = 20, ForeColor = Theme.TextFaint, Font = Theme.Small };
-        _errorLabel = new Label { Dock = DockStyle.Top, AutoSize = false, Height = 0, ForeColor = Theme.Danger, Font = Theme.BodyBold, Visible = false };
+        // FCT.ini 路径（小字，超长省略号）
+        _iniLabel = new Label
+        {
+            Dock = DockStyle.Top, Height = 22, ForeColor = Theme.TextFaint,
+            Font = Theme.Small, AutoEllipsis = true, Padding = new Padding(0, 2, 0, 0),
+        };
+        // 错误提示（平时隐藏，出错时展开）
+        _errorLabel = new Label
+        {
+            Dock = DockStyle.Top, AutoSize = false, Height = 0, Visible = false,
+            ForeColor = Theme.Danger, Font = Theme.BodyBold, Padding = new Padding(0, 6, 0, 6),
+        };
 
-        // 型号
-        var modelTitle = SectionTitle("支持的型号");
+        // ===================== 顶部信息：两列对称白卡 =====================
+        var infoGrid = new TableLayoutPanel
+        {
+            ColumnCount = 2, RowCount = 4, Dock = DockStyle.Top, AutoSize = true,
+            BackColor = Theme.Surface, Padding = new Padding(16, 12, 16, 10),
+            Margin = new Padding(0, 0, 0, Theme.Gap),
+        };
+        infoGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        infoGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        for (int i = 0; i < 4; i++) infoGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
         _modelsValue = ValueLabel();
-        // 版本
-        var fwTitle = SectionTitle("当前软件版本");
         _fwValue = ValueLabel();
-        // A2L
-        var a2lTitle = SectionTitle("A2L 文件");
-        _a2lValue = ValueLabel();
-        // 设备(标题 + 双列网格, 填充剩余空间)
-        var devTitle = SectionTitle("设备状态");
+        _a2lValue = ValueLabel(maxWidth: 620);   // A2L 多行（多个文件 \n 拼接），限宽自动换行
+
+        infoGrid.Controls.Add(SectionTitle("支持的型号"), 0, 0);
+        infoGrid.Controls.Add(SectionTitle("当前软件版本"), 1, 0);
+        infoGrid.Controls.Add(_modelsValue, 0, 1);
+        infoGrid.Controls.Add(_fwValue, 1, 1);
+        infoGrid.Controls.Add(SectionTitle("A2L 文件"), 0, 2);
+        infoGrid.SetColumnSpan(infoGrid.GetControlFromPosition(0, 2)!, 2);   // 标题跨整行
+        infoGrid.Controls.Add(_a2lValue, 0, 3);
+        infoGrid.SetColumnSpan(_a2lValue, 2);
+
+        // ===================== 设备状态：双列对称 + 列头 =====================
+        var devTitle = new Label
+        {
+            Text = "设备状态（● 在线 / ○ 离线）", Dock = DockStyle.Top, Height = 30,
+            Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
+            ForeColor = Theme.Primary,
+            TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 0, 0),
+        };
         _devGrid = BuildDeviceGrid();
-
-        // 顺序 Add(Dock=Top 是逆序显示, 所以后 Add 的在上面; 用一个容器按自然顺序)
-        var host = new Panel { Dock = DockStyle.Fill };
-        // 设备网格填充
         _devGrid.Dock = DockStyle.Fill;
-        host.Controls.Add(_devGrid);      // fill
-        host.Controls.Add(devTitle);      // top
-        // 用 FlowLayout 顶部区域承载 型号/版本/A2L(紧凑)
-        var topInfo = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Height = 175 };
-        topInfo.Controls.Add(modelTitle);
-        topInfo.Controls.Add(_modelsValue);
-        topInfo.Controls.Add(fwTitle);
-        topInfo.Controls.Add(_fwValue);
-        topInfo.Controls.Add(a2lTitle);
-        topInfo.Controls.Add(_a2lValue);
-        host.Controls.Add(topInfo);       // top(在devTitle之上)
 
-        // devGrid(fill) + devTitle(top) + topInfo(top) 的 Dock 顺序:
-        // WinForms Dock: 后添加的 Top 更靠上。已按 fill, devTitle, topInfo 顺序添加 => topInfo最上, devTitle次之, devGrid填充
+        var devHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface };
+        devHost.Controls.Add(_devGrid);   // fill（最先 Add = 最后停靠 = 吃剩余）
+        devHost.Controls.Add(devTitle);   // top（后 Add = 先停靠 = 在上）
 
-        Controls.Add(host);         // fill
-        Controls.Add(_errorLabel);  // top
-        Controls.Add(_iniLabel);    // top
-        Controls.Add(title);        // top
+        // ===== 组装：Fill 最先 Add，Top 后 Add（后停靠的在上）=====
+        Controls.Add(devHost);
+        Controls.Add(infoGrid);
+        Controls.Add(_errorLabel);
+        Controls.Add(_iniLabel);          // 最后 Add -> 最先停靠 -> 最上面
     }
 
+    /// <summary>
+    /// 双列设备网格：每半 4 列（灯/名称/端口/状态），带列头行。
+    /// 列宽用**百分比**铺满内容区（旧版绝对列宽 684px 在宽窗口右侧留大片空白）。
+    /// </summary>
     private TableLayoutPanel BuildDeviceGrid()
     {
-        // 双列: 每列 4 个子列(灯/名/端口/状态), 共 8 列
+        const int rowsPerHalf = MaxDevRows / 2;   // 10
         var grid = new TableLayoutPanel
         {
-            ColumnCount = 8, RowCount = (MaxDevRows + 1) / 2 + 1,
-            AutoScroll = false, GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
+            ColumnCount = 8, RowCount = rowsPerHalf + 1,   // +1 列头
+            GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
+            BackColor = Theme.Surface, Padding = new Padding(16, 0, 16, 12),
         };
-        // 列宽: 灯(20) 名(140) 端口(auto) 状态(60) x2
-        int[] widths = { 22, 140, 120, 60, 22, 140, 120, 60 };
-        foreach (var w in widths)
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, w));
+        // 每半 4 列百分比：灯 8% / 名称 42% / 端口 28% / 状态 22%
+        float[] half = { 8, 42, 28, 22 };
+        for (int i = 0; i < 8; i++)
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, half[i % 4]));
+        for (int r = 0; r <= rowsPerHalf; r++)
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
 
-        int rowsPerCol = (MaxDevRows + 1) / 2;
+        // 列头（两半对称：灯列留空）
+        string[] heads = { "", "名称", "端口", "状态" };
+        for (int halfIdx = 0; halfIdx < 2; halfIdx++)
+            for (int c = 0; c < 4; c++)
+            {
+                grid.Controls.Add(new Label
+                {
+                    Text = heads[c], Dock = DockStyle.Fill,
+                    Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+                    ForeColor = Theme.TextSub, TextAlign = ContentAlignment.MiddleLeft,
+                    Margin = new Padding(c == 3 ? 0 : 0, 0, 8, 0),
+                }, halfIdx * 4 + c, 0);
+            }
+
+        // 数据行（每半 10 行）
         for (int i = 0; i < MaxDevRows; i++)
         {
-            var lamp = new Label { Text = "", AutoSize = false, Width = 20, Height = 22, Font = new Font("Microsoft YaHei UI", 12F), TextAlign = ContentAlignment.MiddleCenter };
-            var name = new Label { Text = "", AutoSize = false, Width = 138, Height = 22, Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
-            var port = new Label { Text = "", AutoSize = false, Width = 118, Height = 22, Font = new Font("Microsoft YaHei UI", 9F), TextAlign = ContentAlignment.MiddleLeft };
-            var status = new Label { Text = "", AutoSize = false, Width = 58, Height = 22, Font = new Font("Microsoft YaHei UI", 9F), TextAlign = ContentAlignment.MiddleLeft };
+            var lamp = new Label
+            {
+                Text = "", Dock = DockStyle.Fill, AutoSize = false,
+                Font = new Font("Microsoft YaHei UI", 11F),
+                TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0),
+            };
+            var name = new Label
+            {
+                Text = "", Dock = DockStyle.Fill, AutoSize = false,
+                Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0),
+                AutoEllipsis = true,
+            };
+            var port = new Label
+            {
+                Text = "", Dock = DockStyle.Fill, AutoSize = false,
+                Font = new Font("Microsoft YaHei UI", 9F),
+                TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0),
+            };
+            var status = new Label
+            {
+                Text = "", Dock = DockStyle.Fill, AutoSize = false,
+                Font = new Font("Microsoft YaHei UI", 9F),
+                TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0),
+            };
             _devRows.Add((lamp, name, port, status));
 
-            int col = i < rowsPerCol ? 0 : 4;   // 左列 0-3, 右列 4-7
-            int row = i < rowsPerCol ? i : i - rowsPerCol;
-            grid.Controls.Add(lamp, col + 0, row);
-            grid.Controls.Add(name, col + 1, row);
-            grid.Controls.Add(port, col + 2, row);
-            grid.Controls.Add(status, col + 3, row);
+            int col = i < rowsPerHalf ? 0 : 4;   // 左半 0-3，右半 4-7
+            int row = i < rowsPerHalf ? i : i - rowsPerHalf;
+            grid.Controls.Add(lamp, col + 0, row + 1);   // +1 让出列头行
+            grid.Controls.Add(name, col + 1, row + 1);
+            grid.Controls.Add(port, col + 2, row + 1);
+            grid.Controls.Add(status, col + 3, row + 1);
         }
         return grid;
     }
 
-    private Label SectionTitle(string text) => new()
+    /// <summary>小节标题（白卡内左对齐，AutoSize 让行高自适应）。</summary>
+    private static Label SectionTitle(string text) => new()
     {
-        Text = text, AutoSize = true, Margin = new Padding(0, 6, 0, 2),
-        ForeColor = Color.FromArgb(26, 82, 118),
+        Text = text, AutoSize = true, Margin = new Padding(0, 0, 12, 2),
+        ForeColor = Theme.Primary,
         Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
     };
 
-    private Label ValueLabel() => new()
+    /// <summary>字段值（AutoSize + 限宽：多行文本自动换行、行高自适应）。</summary>
+    private static Label ValueLabel(int maxWidth = 300) => new()
     {
-        Text = "", AutoSize = true, Margin = new Padding(4, 0, 0, 4),
+        Text = "", AutoSize = true, MaximumSize = new Size(maxWidth, 0),
+        Margin = new Padding(0, 0, 12, 6),
         Font = new Font("Microsoft YaHei UI", 9F),
+        ForeColor = Theme.TextMain,
     };
 
     private string IniPath()
@@ -154,7 +226,7 @@ public class DeviceStatusPanel : Panel
         SetIfChanged(_fwValue, data.FwVersions.Count > 0
             ? string.Join("    ", data.FwVersions.Select(v => $"{v.Label}={v.Version}"))
             : "(无)");
-        // A2L
+        // A2L（多行）
         SetIfChanged(_a2lValue, data.A2lFiles.Count > 0
             ? string.Join("\n", data.A2lFiles.Select(a => $"{a.Label}: {a.File}"))
             : "(无)");

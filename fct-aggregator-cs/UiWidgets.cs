@@ -50,9 +50,9 @@ public sealed class NavButton : Control
         var bg = _active ? Theme.NavActive : _hover ? Theme.NavHover : Theme.NavBg;
         using (var b = new SolidBrush(bg)) g.FillRectangle(b, r);
 
-        // 激活态左侧亮条
+        // 激活态左侧亮条（主色细条，高级简约：不再用白色块）
         if (_active)
-            using (var b = new SolidBrush(Color.White))
+            using (var b = new SolidBrush(Theme.Primary))
                 g.FillRectangle(b, new Rectangle(0, 0, 3, r.Height));
 
         var fore = _active ? Theme.NavTextActive : Theme.NavText;
@@ -168,6 +168,129 @@ public sealed class ChipBar : Control
 }
 
 /// <summary>
+/// 自绘标题栏（v3.0.1）：替换 Windows 系统标题栏，炭黑与侧栏一体（高级简约）。
+/// 左侧为拖拽区（拖动/双击最大化），右侧三个控制按钮（最小化 / 最大化还原 / 关闭）。
+/// 窗口边缘拖拽缩放由 MainForm.WndProc 的 WM_NCHITTEST 处理，本控件不管。
+/// </summary>
+public sealed class TitleBar : Control
+{
+    private const int BtnW = 46;
+    private enum Hit { None, Min, Max, Close }
+    private Hit _hit = Hit.None;
+    private bool _maximized;
+
+    /// <summary>窗口控制事件（由 MainForm 接线）。</summary>
+    public event Action? MinimizeRequested;
+    public event Action? MaximizeRequested;
+    public event Action? CloseRequested;
+
+    public TitleBar()
+    {
+        Height = Theme.TitleBarHeight;
+        Dock = DockStyle.Top;
+        BackColor = Theme.NavBg;
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint, true);
+    }
+
+    /// <summary>窗口最大化状态变化时调用（按钮图标 □ ↔ ❐）。</summary>
+    public void SetMaximized(bool maximized)
+    {
+        if (_maximized != maximized) { _maximized = maximized; Invalidate(); }
+    }
+
+    private Hit HitAt(int x) =>
+        x >= Width - BtnW ? Hit.Close :
+        x >= Width - BtnW * 2 ? Hit.Max :
+        x >= Width - BtnW * 3 ? Hit.Min : Hit.None;
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        var h = HitAt(e.X);
+        if (h != _hit) { _hit = h; Invalidate(); }
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_hit != Hit.None) { _hit = Hit.None; Invalidate(); }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        switch (HitAt(e.X))
+        {
+            case Hit.Min: MinimizeRequested?.Invoke(); break;
+            case Hit.Max: MaximizeRequested?.Invoke(); break;
+            case Hit.Close: CloseRequested?.Invoke(); break;
+            default:
+                // 空白区：交给系统开始窗口拖动（同时双击会自动切最大化）
+                if (e.Button == MouseButtons.Left)
+                {
+                    var form = FindForm();
+                    if (form != null)
+                    {
+                        Win32.ReleaseCapture();
+                        Win32.SendMessage(form.Handle, Win32.WM_NCLBUTTONDOWN, (IntPtr)Win32.HTCAPTION, IntPtr.Zero);
+                    }
+                }
+                break;
+        }
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        if (HitAt(e.X) == Hit.None) MaximizeRequested?.Invoke();   // 空白区双击 = 最大化/还原
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using (var b = new SolidBrush(Theme.NavBg)) g.FillRectangle(b, ClientRectangle);
+
+        // 三个控制按钮
+        DrawBtn(g, 0, Hit.Min, "─");
+        DrawBtn(g, 1, Hit.Max, _maximized ? "❐" : "□");
+        DrawBtn(g, 2, Hit.Close, "✕");
+
+        // 底部细分隔线
+        using var pen = new Pen(Color.FromArgb(44, 50, 58));
+        g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
+    }
+
+    private void DrawBtn(Graphics g, int idx, Hit h, string glyph)
+    {
+        var x = Width - BtnW * (idx + 1);
+        var r = new Rectangle(x, 0, BtnW, Height);
+        if (_hit == h)
+        {
+            using var bg = new SolidBrush(h == Hit.Close ? Theme.Danger : Theme.NavHover);
+            g.FillRectangle(bg, r);
+        }
+        var color = (_hit == h && h == Hit.Close) ? Color.White : Theme.NavText;
+        TextRenderer.DrawText(g, glyph, new Font("Segoe UI", 10F), r, color,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+}
+
+/// <summary>Win32 P/Invoke（自绘标题栏用：拖动窗口 / 边缘缩放）。</summary>
+internal static class Win32
+{
+    public const int WM_NCLBUTTONDOWN = 0xA1;
+    public const int HTCAPTION = 0x2;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern bool ReleaseCapture();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+}
+
+/// <summary>
 /// 工具页宿主（v2.9.1）—— 把工具的 <see cref="Form"/> **内嵌**到主窗口内容区，
 /// 而不是弹一个独立窗口。
 ///
@@ -228,7 +351,7 @@ public sealed class ToolHost : Panel
             {
                 Dock = DockStyle.Top, Height = 80, Padding = new Padding(18, 18, 18, 0),
                 ForeColor = Theme.Danger, Font = Theme.Body,
-                Text = $"{_label} 加载失败：\n{ex.Message}\n\n（可先用命令行单独跑：FCT-Aggregator.exe 子命令）",
+                Text = $"{_label} 加载失败：\n{ex.Message}\n\n（可先用命令行单独跑：Argus.exe 子命令）",
             };
             Controls.Add(_error);
             return false;

@@ -1,4 +1,4 @@
-# FCT-Aggregator 技术文档（C# 版）
+# Argus 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
 **当前版本**：v3.0.0（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 去重 + 正式图标；**数据分发已独立成 FCT-Distributor**）
@@ -108,13 +108,12 @@ fct-aggregator-cs/
 ├── app_icon.ico              # 多分辨率图标(16~256)，同时作为 EmbeddedResource
 ├── AppIcon.cs                # 图标唯一取用口：嵌入资源优先 → 文件 → 系统图标
 ├── assets/icon/              # 图标源 PNG（tools/make_icon.py 可重建 ico）
-├── modules/                  # v2.9.0 合入的四个工具（各自保留 namespace）
-│   ├── Distributor/          #   原 fct-distributor（含 tpl\*.xml 内置模板）
+├── modules/                  # v2.9.0 合入、v3.0.0 拆分后的三个工具（各自保留 namespace）
 │   ├── FailRanker/           #   原 fct-fail-ranker
 │   ├── Fetcher/              #   原 fct-fetcher-cs（含 CLI）
 │   └── TdmsViewer/           #   原 fct-tdms-viewer（含 CLI，依赖 TDMSReader）
 ├── selftest/                 # 自检工程（不属主程序，引用主项目源文件）
-├── selftest-distributor/     # 分发工具原自检，原样保留
+│                             #   ⚠ v3.0.0 起数据分发已拆为独立程序 ../fct-distributor/（本目录不再有 modules/Distributor/）
 ├── data/                     # SQLite 数据库（{station_id}.db）
 ├── logs/                     # app.log
 └── dist/                     # 发布产物（含 启动.bat）
@@ -126,6 +125,7 @@ fct-aggregator-cs/
 |----|------|------|
 | `Microsoft.Data.Sqlite` | 8.0.10 | SQLite 访问 |
 | `System.IO.Ports` | 8.0.0 | `SerialPort.GetPortNames()` 检测 COM 口 |
+| `TDMSReader` | 3.1.0 | TDMS 波形解析（内嵌 TdmsViewer 工具） |
 
 Excel 导出**不依赖**任何第三方库（手写 OOXML）。
 
@@ -170,7 +170,7 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
 - 共享状态：`AppState` / `Logger` 内部 `lock` / `ConcurrentQueue` 保证线程安全
 
 **启动流程**：
-1. `Mutex("Global\FCT_Aggregator_SingleInstance")` → 已运行则弹框退出
+1. `Mutex("Global\Argus_SingleInstance")` → 已运行则弹框退出
 2. `AppConfig.Instance` 读 `config.json`（缺失走默认值并告警）；`Logger.SetLevel`
 3. `new Engine(cfg)`：解析机台号 → 建 `data/{station}.db` → 打印启动信息
 4. `engine.Start()`：校验 results_root → 型号发现 → 挂 watcher → 起历史扫描任务
@@ -189,7 +189,7 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
 ### 4.2 `Config.cs` — `AppConfig`
 - 单例 `AppConfig.Instance`，从 `AppContext.BaseDirectory/config.json` 读取。
 - **`BaseDir` 用 `AppContext.BaseDirectory` 而非 `Environment.ProcessPath`**：
-  用 `dotnet FCT-Aggregator.dll` 启动时 ProcessPath 是 `dotnet.exe`，会导致 db/log 落错目录。
+  用 `dotnet Argus.dll` 启动时 ProcessPath 是 `dotnet.exe`，会导致 db/log 落错目录。
 - 字段：`station_id` / `results_root` / `fct_ini_path` / `webhook_url` /
   `skip_historical_scan` / `log_level` / **`desktop_notify`** / **`notify_min_interval_sec`** / **`todo_scan_days`**
   （config.json 里其余字段为历史遗留，程序不读）。
@@ -722,13 +722,15 @@ dlg.ShowDialog((IWin32Window)(TopLevelControl ?? this));
 
 | 问题 | 做法 |
 |---|---|
-| 10 组同名类（`MainForm` ×5、`Program` ×4、`XlsxWriter` ×2…） | **不改名**，靠各自 `namespace`（`FctDistributor` / `FctFailRanker` / `FctFetcher` / `FctTdmsViewer`）隔离 |
+| 10 组同名类（v2.9.0 时 `MainForm` ×5、`Program` ×4、`XlsxWriter` ×2…；v3.0.0 拆出分发器后为 `MainForm` ×4、`Program` ×3） | **不改名**，靠各自 `namespace`（`FctAggregator` / `FctFailRanker` / `FctFetcher` / `FctTdmsViewer`；分发器独立成 `FctDistributor` 程序集）隔离 |
 | 五个 `Main` → `CS0017 多个入口点` | csproj `<StartupObject>FctAggregator.Program</StartupObject>`；其余 `Main` 留着（含 CLI），由主入口按子命令转发 |
 | WinExe 下 CLI 没输出 | `AttachConsole(-1)` **且** `Console.SetOut(new StreamWriter(Console.OpenStandardOutput()))`；只 Attach 不 SetOut 会被 `TextWriter.Null` 吞掉 |
 
 其它落地细节：
 - 嵌入资源名随目录变 → `TemplateGenerator.EmbeddedPrefix` 必须同步改成
   `FctAggregator.modules.Distributor.tpl.`（否则模板名显示成一串命名空间）。
+  ⚠ v3.0.0 分发器拆出后：前缀固定为 `FctDistributor.tpl.`，由两个工程的 csproj
+  用 `LogicalName` **写死**，不再随目录/命名空间漂移（详见 ../fct-distributor/README.md）。
 - 工具窗口用 `Form.Show(this)` 非模态 + `Dictionary<string,Form>` 单例去重；
   `FormClosed` 里移除，避免第二次点开时拿到已 Dispose 的窗口。
 - 单实例互斥锁**只在 GUI 分支**加，否则主程序开着就跑不了 CLI 子命令。
@@ -765,7 +767,7 @@ dotnet publish -c Release -o dist --self-contained false
 dotnet run --project selftest\SelfTest.csproj -c Release
 ```
 
-> 自检覆盖 114 项断言：`closed` 迁移与备份、迁移幂等、五状态计数与全表对得上、
+> 自检覆盖 **294 项断言**（v3.0.0 后实测计数；初稿时 114 项，随功能演进持续增长）：`closed` 迁移与备份、迁移幂等、五状态计数与全表对得上、
 > `updated_at` 取得到与排序、全字段更新、拖动只改状态、往期日期不顶前、
 > xlsx/csv 各 12 列且无漏译英文 key、**id 回收四种场景**、**卡片左/右键行为**、
 > **故障项去重（含拿真实库验 62 条 FAIL → 7 个项）**、**批量建单**、
@@ -776,7 +778,7 @@ dotnet run --project selftest\SelfTest.csproj -c Release
 ### 9.2 部署
 1. 机台安装 **.NET 8 Desktop Runtime**（一次性）
 2. 解压发布包，检查 `config.json`（机台号 / 结果目录 / ini 路径 / webhook）
-3. 运行 `FCT-Aggregator.exe`，或用 `启动.bat`（`dotnet FCT-Aggregator.dll`，
+3. 运行 `Argus.exe`，或用 `启动.bat`（`dotnet Argus.dll`，
    机台上无 exe 可被静态查杀）
 4. 需要开机自启：Debug 页 → 「开机自启」按钮（写启动文件夹快捷方式）
 5. 升级：退出程序 → 覆盖程序文件 → **保留 `config.json` 与 `data/`**
@@ -824,7 +826,7 @@ dotnet run --project selftest\SelfTest.csproj -c Release
 
 ### 11.2 候选后续工作（按现场价值排序）
 1. **机台排名 / 失败项 Pareto**：定位最差机台与头部失败项，支撑“测量系统能力”整治
-   （离线分析已有独立工具 `../fct-fail-ranker`，可考虑并入或复用其聚合逻辑）
+   （离线分析工具已并入本套件「FAIL 排行」页 `modules/FailRanker/`，可直接复用其聚合逻辑）
 2. **误测率统计**：同 SN 重测后 PASS → 疑似误测，统计误测率（假 fail 不扣良率但吃产能）
 3. **FAIL 聚类告警**：时间窗内同失败项 N 次 → 合并成一条飞书告警
 4. **定时日报**：良率 / FAIL TOP / 机台排名，文本卡片直推飞书（避免 xlsx 占用问题）
@@ -835,4 +837,5 @@ dotnet run --project selftest\SelfTest.csproj -c Release
 ### 11.3 相关项目
 | 项目 | 说明 |
 |------|------|
-| `../fct-fail-ranker` | FCT 不良项排名导出工具 v1.5.0，离线按时间段汇总 + 排名 + Excel/CSV 导出，业务规则与本项目一致（另多排除 `UUT Status Err`） |
+| `../fct-distributor` | FCT 数据分发器 v1.9.0（v3.0.0 拆出独立）：模板直生 / 源目录分发 / 修时间戳，只发工程人员、不进产线包；本工程与它有 `Xlsx.cs` / `StationDetector.cs` / `AppIcon.cs` 三份副本（自检盯一致性） |
+| `../legacy/fct-fetcher-python` | 取数工具的 Python 版存档（主程序 Python 版源码无任何存档，仅本文第 10 章差异描述可考） |

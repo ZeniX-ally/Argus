@@ -5,13 +5,13 @@
 > 为什么独立：它能**改文件时间戳、按模板造数、批量投放 XML**。这些操作放在产线机台的
 > 主程序里，误点一次会污染真实测试数据。所以现在**只发给工程/测试人员，不装到产线机台**。
 >
-> 产线机台上装的是 `FCT-Aggregator.exe`（`../fct-aggregator-cs/`），那边已经没有分发功能。
+> 产线机台上装的是 `Argus.exe`（`../fct-aggregator-cs/`），那边已经没有分发功能。
 
 ## 构建 / 自检 / 打包
 
 ```powershell
 dotnet build FctDistributor.csproj -c Release                  # 要求 0 警告 0 错误
-dotnet run --project selftest\SelfTest.csproj -c Release        # 全量自检（必须全绿）
+dotnet run --project selftest\SelfTest.csproj -c Release        # 全量自检（必须全绿；当前 71 项断言，含跨工程副本一致性）
 dotnet publish FctDistributor.csproj -c Release -o dist
 .\tools\make_package.ps1                                       # 完整包 + 覆盖包（带断言）
 Compress-Archive -Path package_v1.9.0\* -DestinationPath FCT-Distributor-v1.9.0.zip -Force
@@ -139,7 +139,7 @@ Compress-Archive -Path package_v1.9.0\* -DestinationPath FCT-Distributor-v1.9.0.
 
 ### ⚠️ USER 字段（关键）
 
-内置两个模板的 `FACTORY@USER` 都是 **`Debug`**。而 FCT-Aggregator 的 `Classifier.IsDebug()`：
+内置两个模板的 `FACTORY@USER` 都是 **`Debug`**。而 Argus 的 `Classifier.IsDebug()`：
 
 ```csharp
 public static bool IsDebug(string? user)
@@ -467,7 +467,7 @@ FCT4  20260702  Offline  E3002781  08:08~08:39  待生成 2 个文件
 
 **v1.5.0**
 - 新增 `FACTORY@USER` 改写（默认 `Operator`）+ 模板 debug 检测告警
-  —— 修复「生成的数据被 FCT-Aggregator 全部跳过」的致命问题
+  —— 修复「生成的数据被 Argus 全部跳过」的致命问题
 - 校验项增至 18 项
 
 **v1.1.0**

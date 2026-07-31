@@ -53,14 +53,14 @@ Write-Host "  完整包: $((Get-ChildItem $full -Recurse -File).Count) 个文件
 Write-Host "  更新包: $((Get-ChildItem $upd  -Recurse -File).Count) 个文件"
 
 # --- 断言：别把主程序的东西混进来 ---
-$forbidden = @('*.pdb', 'FCT-Aggregator.*', 'config.json', '*.db')
+$forbidden = @('*.pdb', 'Argus.*', 'config.json', '*.db')
 foreach ($pat in $forbidden) {
     foreach ($d in @($full, $upd)) {
         $hit = Get-ChildItem $d -Recurse -File -Filter $pat -ErrorAction SilentlyContinue
         if ($hit) { throw "包里出现了不该有的文件: $($hit.Name -join ', ')" }
     }
 }
-Write-Host "[OK] 包里不含 *.pdb / FCT-Aggregator.* / config.json / *.db"
+Write-Host "[OK] 包里不含 *.pdb / Argus.* / config.json / *.db"
 
 # --- 断言：内置模板真的编进了 exe（LoadEmbedded 靠它） ---
 $dll = Join-Path $full 'FCT-Distributor.dll'

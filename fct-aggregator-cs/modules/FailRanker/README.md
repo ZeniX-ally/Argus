@@ -43,7 +43,7 @@
 
 CSV 为 UTF-8 BOM 编码，Excel 打开中文不乱码。
 
-## 业务规则（与主项目 FCT-Aggregator 一致）
+## 业务规则（与主项目 Argus 一致）
 
 - 分类看文件名前缀：`P_`=PASS、`F_`=FAIL、`O_`=中断
 - 中断细分：`O_` 有真实 fail 项 → 记为 FAIL，无 → INTERRUPTED

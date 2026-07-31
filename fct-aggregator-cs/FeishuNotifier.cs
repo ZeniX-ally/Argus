@@ -13,22 +13,11 @@ public static class FeishuNotifier
     {
         if (string.IsNullOrWhiteSpace(webhookUrl)) return;
 
-        var md = BuildFailMarkdown(record);
+        var card = BuildFailCard(record);
         var payload = new
         {
             msg_type = "interactive",
-            card = new
-            {
-                header = new
-                {
-                    title = new { tag = "plain_text", content = "FCT Fail 告警" },
-                    template = "red",
-                },
-                elements = new object[]
-                {
-                    new { tag = "markdown", content = md }
-                }
-            }
+            card,
         };
         var json = JsonSerializer.Serialize(payload);
 
@@ -50,27 +39,92 @@ public static class FeishuNotifier
         Logger.Error($"飞书推送最终失败: {record.Sn}");
     }
 
-    private static string BuildFailMarkdown(TestRecord r)
+    /// <summary>
+    /// 交互卡片：机台/型号前置到 header，正文用 <c>div.fields</c> 两列等宽对称布局。
+    /// 失败项不再用 6 列表格（手机窄屏会被挤/截断），改为每项一行统一格式。
+    /// </summary>
+    private static object BuildFailCard(TestRecord r)
+    {
+        var station = string.IsNullOrWhiteSpace(r.StationId) ? "未知机台" : r.StationId;
+        var model = string.IsNullOrWhiteSpace(r.Model) ? "—" : r.Model;
+
+        var header = new
+        {
+            title = new { tag = "plain_text", content = $"{station} · {model} · FAIL 告警" },
+            template = "red",
+        };
+
+        var elements = new List<object>
+        {
+            // 对称两列（is_short=true 每个占一半宽度）：机台 | 型号
+            new
+            {
+                tag = "div",
+                fields = new object[] { Field("机台", station), Field("型号", model) },
+            },
+            // 位置 | 时间
+            new
+            {
+                tag = "div",
+                fields = new object[] { Field("位置", r.Category), Field("时间", FmtTime(r.BatchTimestamp)) },
+            },
+            // SN 长，占满整行（is_short=false）
+            new
+            {
+                tag = "div",
+                fields = new object[] { Field("产品 SN", r.Sn ?? "—", fullWidth: true) },
+            },
+        };
+
+        if (r.FailedTests.Count > 0)
+            elements.Add(new { tag = "markdown", content = BuildFailItems(r) });
+        else if (!string.IsNullOrWhiteSpace(r.FailReason))
+            elements.Add(new { tag = "markdown", content = $"**失败项**\n{r.FailReason}" });
+
+        elements.Add(new
+        {
+            tag = "note",
+            elements = new object[] { new { tag = "plain_text", content = $"文件 {Path.GetFileName(r.XmlPath)}" } },
+        });
+
+        return new { header, elements };
+    }
+
+    /// <summary>对称字段：粗体标签 + 值。fullWidth=true 时占满整行。</summary>
+    private static object Field(string label, string value, bool fullWidth = false) => new
+    {
+        is_short = !fullWidth,
+        text = new { tag = "lark_md", content = $"**{label}**\n{Escape(value)}" },
+    };
+
+    /// <summary>失败项每行统一格式：▸ 名称 = 实测值（规格 下限 ~ 上限）。</summary>
+    private static string BuildFailItems(TestRecord r)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("## FCT Fail 告警");
+        sb.AppendLine($"**失败项 ×{r.FailedTests.Count}**");
         sb.AppendLine();
-        sb.AppendLine("| 字段 | 值 |");
-        sb.AppendLine("|------|-----|");
-        sb.AppendLine($"| **机台** | {r.StationId} |");
-        sb.AppendLine($"| **型号** | {r.Model} |");
-        sb.AppendLine($"| **位置** | {r.Category} |");
-        sb.AppendLine($"| **时间** | {r.BatchTimestamp} |");
-        sb.AppendLine($"| **SN** | {r.Sn} |");
-        sb.AppendLine($"| **文件** | {Path.GetFileName(r.XmlPath)} |");
-        sb.AppendLine();
-        if (r.FailedTests.Count > 0)
+        foreach (var t in r.FailedTests)
         {
-            sb.AppendLine("| 测试项 | 实测值 | 下限 | 上限 | 单位 | 规则 |");
-            sb.AppendLine("|--------|--------|------|------|------|------|");
-            foreach (var t in r.FailedTests)
-                sb.AppendLine($"| {t.Name} | {t.Value} | {t.Lolim} | {t.Hilim} | {t.Unit} | {t.Rule} |");
+            var val = string.IsNullOrWhiteSpace(t.Value) ? "" : $" = {t.Value}{t.Unit}";
+            var spec = string.IsNullOrWhiteSpace(t.Lolim) && string.IsNullOrWhiteSpace(t.Hilim)
+                ? "" : $"（规格 {t.Lolim} ~ {t.Hilim}）";
+            sb.AppendLine($"▸ {Escape(t.Name)}{val} {spec}".Trim());
         }
         return sb.ToString();
+    }
+
+    /// <summary>2026-07-30T10:00:00 -> 2026-07-30 10:00:00（去掉 T）。解析失败原样返回。</summary>
+    private static string FmtTime(string? ts)
+    {
+        if (string.IsNullOrWhiteSpace(ts)) return "—";
+        if (DateTime.TryParse(ts, out var dt)) return dt.ToString("yyyy-MM-dd HH:mm:ss");
+        return ts.Replace('T', ' ');
+    }
+
+    /// <summary>飞书 lark_md 转义：粗体符号与竖线（避免测试项名里的 * 意外触发粗体）。</summary>
+    private static string Escape(string? s)
+    {
+        s ??= "";
+        return s.Replace("*", "\\*").Replace("|", "\\|");
     }
 }

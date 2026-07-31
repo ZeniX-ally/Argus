@@ -30,13 +30,13 @@ public class DebugPanel : Panel
             bar.Controls.Add(new Label
             {
                 Text = t, AutoSize = true, ForeColor = Theme.Primary, Font = Theme.BodyBold,
-                Margin = new Padding(8, 9, 2, 0),
+                Margin = new Padding(14, 9, 4, 0),
             });
         }
         void AddBtn(string t, Action a)
         {
             var b = Theme.MakeButton(t, 104);
-            b.Margin = new Padding(2, 3, 2, 3);
+            b.Margin = new Padding(2, 4, 2, 4);
             b.Click += (_, _) => { try { a(); } catch (Exception ex) { Print($"错误: {ex.Message}"); } };
             bar.Controls.Add(b);
         }

@@ -7,7 +7,7 @@
 #>
 param(
     # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
-    [string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v3.0.0.zip",
+    [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.0.1.zip",
     [string]$SeedDb = "$PSScriptRoot\..\dist\data\fct.db",
     [string]$OutDir = "$PSScriptRoot\..\.snap"
 )
@@ -46,7 +46,7 @@ if (Test-Path $SeedDb) {
     Write-Host "[i] 已灌入种子数据库: $SeedDb"
 }
 
-$exe = Join-Path $tmp 'FCT-Aggregator.exe'
+$exe = Join-Path $tmp 'Argus.exe'
 $proc = Start-Process -FilePath $exe -PassThru
 
 $h = [IntPtr]::Zero
