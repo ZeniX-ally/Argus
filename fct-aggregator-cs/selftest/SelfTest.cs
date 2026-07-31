@@ -906,7 +906,7 @@ class SelfTest
 
                 var navButtons = nav!.Controls.OfType<NavButton>().Where(b => b.PageIndex >= 0)
                                      .OrderBy(b => b.PageIndex).ToList();
-                Check(navButtons.Count == 5, $"导航有 {navButtons.Count} 项（总览/待办/FAIL/设备/调试）");
+                Check(navButtons.Count == 9, $"导航有 {navButtons.Count} 项（5 个主页面 + 4 个内嵌工具页）");
                 bool ordered = true;
                 for (int i = 1; i < navButtons.Count; i++)
                     if (navButtons[i].Top <= navButtons[i - 1].Top) ordered = false;
@@ -956,7 +956,49 @@ class SelfTest
                 Check(switchOk, "切页时只有目标页可见、对应导航项高亮");
                 Check(titles.Distinct().Count() == 5, $"5 个页标题各不相同：{string.Join(" / ", titles)}");
 
+                // ---------- 工具真内嵌（v2.9.1）----------
+                // 要验的就是“一体化”：工具不再是独立窗口，而是 TopLevel=false 挂在内容区的子控件。
+                var toolPages = (ToolHost[])typeof(MainForm).GetField("_toolPages",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .GetValue(form)!;
+                Check(toolPages.Length == 4, $"四个工具页宿主已建（{toolPages.Length} 个）");
+                Check(toolPages.All(h => h.Embedded == null),
+                      "**启动时工具尚未构造**（惰加载，不拖慢开机）");
+
+                var toolTitles = new List<string>();
+                for (int i = 0; i < 4; i++)
+                {
+                    var page = 5 + i;
+                    showPage.Invoke(form, new object?[] { page });
+                    Application.DoEvents();
+                    var host = toolPages[i];
+                    var emb = host.Embedded;
+                    var pt = title!.Text;
+                    toolTitles.Add(pt);
+
+                    Check(emb != null, $"切到第 {page} 页后工具已实例化（{pt}）");
+                    if (emb == null) continue;
+                    Check(!emb.TopLevel && ReferenceEquals(emb.Parent, host),
+                          $"{pt}：**TopLevel=false 且父容器是页面宿主**（真内嵌，不是弹窗）");
+                    Check(emb.FormBorderStyle == FormBorderStyle.None && emb.Dock == DockStyle.Fill,
+                          $"{pt}：已去掉自己的标题栏并铺满页面");
+                    // ⚠ Form.FindForm() 在自身上返回 this，拿顶层窗必须用 TopLevelControl
+                    Check(ReferenceEquals(emb.TopLevelControl, form),
+                          $"{pt}：TopLevelControl 指回主窗口（模态窗 owner 才不会跑偏）");
+                    Check(host.Visible && host.AutoScroll,
+                          $"{pt}：页面可见且开了 AutoScroll（窗口拉小靠滚动条兑）");
+                    Check(navButtons.First(b => b.PageIndex == page).Active, $"{pt}：对应导航项高亮");
+                }
+                Check(toolTitles.Distinct().Count() == 4, $"四个工具页标题各不相同：{string.Join(" / ", toolTitles)}");
+
                 showPage.Invoke(form, new object?[] { 0 });
+                Application.DoEvents();
+                Check(toolPages.All(h => !h.Visible) && toolPages.All(h => h.Embedded != null),
+                      "切回总览后工具页隐藏但实例保留（再切回去无需重建）");
+                Check(typeof(MainForm).GetMethod("OpenTool",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance) == null,
+                      "**已没有 OpenTool 弹窗路径**（工具只能内嵌，防回流）");
+
                 form.Hide();
                 form.Dispose();
             }
@@ -969,6 +1011,7 @@ class SelfTest
         {
             // 合并后最大的风险：某个工具的窗口构造失败（缺资源/缺依赖/静态初始化抛），
             // 在主程序里点一下就弹错。这里逐个真构造一遍。
+            // 工具窗口仍能当普通 Form 单独用（CLI 子命令 distribute/rank/tdms 走这条）
             var tools = new (string name, Func<Form> make)[]
             {
                 ("分发工具 FctDistributor", () => new FctDistributor.MainForm()),

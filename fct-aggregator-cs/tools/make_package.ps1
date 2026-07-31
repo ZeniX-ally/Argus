@@ -1,8 +1,8 @@
-# 打包 FCT 工具套件 v2.9.0（单 exe：主程序 + 分发/排行/取数/TDMS 四个工具）
-# 生成 package_v2.9.0（完整包，含 config.json）与 package_v2.9.0-update（覆盖包，无 config/data/logs/pdb）
+# 打包 FCT 工具套件 v2.9.1（单 exe：主程序 + 分发/排行/取数/TDMS 四个工具）
+# 生成 package_v2.9.1（完整包，含 config.json）与 package_v2.9.1-update（覆盖包，无 config/data/logs/pdb）
 $ErrorActionPreference = 'Stop'
 $root = 'F:\Programe\G4_9-QA\fct-aggregator-cs'
-$ver  = '2.9.0'
+$ver  = '2.9.1'
 $dist = Join-Path $root 'dist'
 $full = Join-Path $root "package_v$ver"
 $upd  = Join-Path $root "package_v$ver-update"
@@ -19,7 +19,7 @@ $progFiles = @(
     'SQLitePCLRaw.core.dll',
     'SQLitePCLRaw.provider.e_sqlite3.dll',
     'System.IO.Ports.dll',
-    'TDMSReader.dll'                    # v2.9.0 新增：TDMS 波形工具依赖
+    'TDMSReader.dll'                    # v2.9.1 新增：TDMS 波形工具依赖
 )
 # 仓库根目录里的随包文件（不是构建产物，不在 dist 里）
 $rootFiles = @('启动.bat', 'config.json')

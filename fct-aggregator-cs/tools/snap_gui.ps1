@@ -6,7 +6,7 @@
   产物：<OutDir>\page1..5.png
 #>
 param(
-    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.9.0.zip',
+    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.9.1.zip',
     [string]$SeedDb = 'F:\Programe\G4_9-QA\fct-aggregator-cs\dist\data\fct.db',
     [string]$OutDir = 'F:\Programe\G4_9-QA\fct-aggregator-cs\.snap'
 )
@@ -75,7 +75,8 @@ function Snap([string]$file) {
 }
 
 Snap (Join-Path $OutDir 'page1.png')
-foreach ($n in 2, 3, 4, 5) {
+# 2~5 = 主程序页，6~9 = 四个内嵌工具页（v2.9.1）
+foreach ($n in 2, 3, 4, 5, 6, 7, 8, 9) {
     [Win32]::SetForegroundWindow($h) | Out-Null
     Start-Sleep -Milliseconds 400
     [System.Windows.Forms.SendKeys]::SendWait("^$n")

@@ -690,7 +690,8 @@ public class MainForm : Form
         // ---- 先选范围：窗口弹出后在**后台线程**扫目录（可停），不卡 UI
         using (var dlg = new RestampScopeDialog(root, exts))
         {
-            if (dlg.ShowDialog(this) != DialogResult.OK) { Log("[修时间戳] 已取消（未选范围）"); return; }
+            // 内嵌到主窗口后 this 不是顶层窗；注意 FindForm() 在 Form 自身上会返回 this，得用 TopLevelControl
+        if (dlg.ShowDialog((IWin32Window)(TopLevelControl ?? this)) != DialogResult.OK) { Log("[修时间戳] 已取消（未选范围）"); return; }
 
             var dirs = dlg.SelectedDirs;
             bool recursive = dlg.Recursive;
@@ -1186,4 +1187,5 @@ public static class StationDetector
         catch { }
         return null;
     }
+
 }

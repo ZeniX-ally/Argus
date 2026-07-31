@@ -168,6 +168,74 @@ public sealed class ChipBar : Control
 }
 
 /// <summary>
+/// 工具页宿主（v2.9.1）—— 把工具的 <see cref="Form"/> **内嵌**到主窗口内容区，
+/// 而不是弹一个独立窗口。
+///
+/// 做法是 WinForms 的者用法：<c>TopLevel = false</c> 之后 Form 就能当普通子控件用。
+/// 好处是四个工具的代码**一行不用改**（它们都是绝对坐标布局的大表单窗口，
+/// 改写成 UserControl 得重排上百个控件）。
+///
+/// 两个要点：
+///   · <b>惰加载</b>：第一次切到该页才构造，启动不被四个大窗口拖慢；
+///   · <b>AutoScroll</b>：工具自带 <c>MinimumSize</c>（最大的 1040×790），主窗口被拉小时
+///     靠滚动条兑，而不是把控件压死。
+/// </summary>
+public sealed class ToolHost : Panel
+{
+    private readonly Func<Form> _factory;
+    private readonly string _label;
+    private Label? _error;
+
+    /// <summary>已内嵌的工具窗口（尚未初始化时为 null）。</summary>
+    public Form? Embedded { get; private set; }
+
+    public ToolHost(string label, Func<Form> factory)
+    {
+        _label = label;
+        _factory = factory;
+        AutoScroll = true;
+        BackColor = Theme.Bg;
+        Dock = DockStyle.Fill;
+        Visible = false;
+    }
+
+    /// <summary>确保工具已内嵌（首次切页时调）。失败时就地显示错误，不抛。</summary>
+    public bool Ensure()
+    {
+        if (Embedded != null && !Embedded.IsDisposed) return true;
+
+        // 工具自己把自己 Close() 掉了的情况：清掉残局重建
+        if (Embedded != null) { try { Controls.Remove(Embedded); } catch { } Embedded = null; }
+        if (_error != null) { Controls.Remove(_error); _error.Dispose(); _error = null; }
+
+        try
+        {
+            var f = _factory();
+            f.TopLevel = false;                          // ← 关键：Form 当子控件用
+            f.FormBorderStyle = FormBorderStyle.None;    // 去掉自己的标题栏/边框
+            f.Dock = DockStyle.Fill;
+            Controls.Add(f);
+            f.Show();
+            Embedded = f;
+            Logger.Info($"[工具] {_label} 已内嵌到主窗口（{f.MinimumSize.Width}×{f.MinimumSize.Height} 最小尺寸）");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[工具] {_label} 内嵌失败: {ex.GetType().Name} {ex.Message}");
+            _error = new Label
+            {
+                Dock = DockStyle.Top, Height = 80, Padding = new Padding(18, 18, 18, 0),
+                ForeColor = Theme.Danger, Font = Theme.Body,
+                Text = $"{_label} 加载失败：\n{ex.Message}\n\n（可先用命令行单独跑：FCT-Aggregator.exe 子命令）",
+            };
+            Controls.Add(_error);
+            return false;
+        }
+    }
+}
+
+/// <summary>
 /// 白卡片容器：标题栏 + 内容区（<see cref="Content"/>），面板里所有分区都用它。
 /// 子控件请加到 <see cref="Content"/> 上，不要直接加到本体（会盖住标题）。
 /// </summary>

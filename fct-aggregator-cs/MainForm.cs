@@ -56,24 +56,30 @@ public class MainForm : Form
     private FailListPanel _failPage = null!;
     private System.Windows.Forms.Timer _timer = null!;
 
-    /// <summary>页索引 → 标题（顶栏显示）。</summary>
+    /// <summary>页索引 → 标题（顶栏显示）。0~4 主程序页，5~8 内嵌的工具页。</summary>
     private static readonly string[] PageTitles =
-        { "总览", "待办 / 维修记录", "FAIL 记录", "设备状态", "调试工具" };
+    {
+        "总览", "待办 / 维修记录", "FAIL 记录", "设备状态", "调试工具",
+        "数据分发", "FAIL 排行", "取数打包", "TDMS 波形",
+    };
+
+    /// <summary>主程序自己的页面数（后面那四个是内嵌工具页）。</summary>
+    private const int OwnPageCount = 5;
 
     /// <summary>
-    /// 工具箱（v2.9.0）：原来四个独立 exe 合进来了，点一下开各自的窗口。
-    /// key 用于“同一工具只开一个窗”的去重，也是 CLI 子命令名。
+    /// 工具（v2.9.1 起**内嵌**在主窗口里，不再弹独立窗口）。
+    /// key 同时是 CLI 子命令名（<c>FCT-Aggregator.exe distribute</c> 仍能单独开窗）。
     /// </summary>
     private static readonly (string key, string label, Func<Form> factory)[] Tools =
     {
-        ("distribute", "分发工具", () => new FctDistributor.MainForm()),
+        ("distribute", "数据分发", () => new FctDistributor.MainForm()),
         ("rank",       "FAIL 排行", () => new FctFailRanker.MainForm()),
         ("fetch",      "取数打包", () => new FctFetcher.MainForm()),
         ("tdms",       "TDMS 波形", () => new FctTdmsViewer.MainForm()),
     };
 
-    /// <summary>已打开的工具窗口（单例）。</summary>
-    private readonly Dictionary<string, Form> _openTools = new();
+    /// <summary>四个工具页（惰加载：第一次切过去才构造）。</summary>
+    private readonly ToolHost[] _toolPages = new ToolHost[Tools.Length];
 
     private int _page = 0;
 
@@ -81,9 +87,11 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT 工具套件 v2.9.0";
-        Width = 1280; Height = 780;
-        MinimumSize = new Size(1040, 640);
+        Text = "Zenix-Ally | FCT 工具套件 v2.9.1";
+        // 内嵌的工具自带最小尺寸（最大的数据分发是 1040×790），窗口得能装下；
+        // 装不下时由 ToolHost 的 AutoScroll 兼底。
+        Width = 1360; Height = 920;
+        MinimumSize = new Size(1240, 860);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Bg;
         try { Icon = new Icon(Path.Combine(AppConfig.BaseDir, "app_icon.ico")); } catch { }
@@ -198,6 +206,13 @@ public class MainForm : Form
         contentHost.Controls.Add(_maintPage);
         contentHost.Controls.Add(_debugPage);
         contentHost.Controls.Add(_failPage);
+        // 四个内嵌工具页（惰加载：这里只建宿主，真正构造在第一次切过去时）
+        for (int i = 0; i < Tools.Length; i++)
+        {
+            var t = Tools[i];
+            _toolPages[i] = new ToolHost(t.label, t.factory);
+            contentHost.Controls.Add(_toolPages[i]);
+        }
         _dashboardPage.BringToFront();
 
         KeyDown += OnShortcut;
@@ -224,7 +239,7 @@ public class MainForm : Form
 
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v2.9.0", ForeColor = Color.FromArgb(120, 134, 154),
+            Dock = DockStyle.Bottom, Height = 26, Text = "v2.9.1", ForeColor = Color.FromArgb(120, 134, 154),
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };
@@ -237,14 +252,15 @@ public class MainForm : Form
             b.Click += (_, _) => ShowPage(idx);
             _navButtons.Add(b);
         }
-        // ===== 工具箱（开窗口，不是切页）=====
+        // ===== 工具箱（v2.9.1：也是切页，不再弹独立窗口）=====
         var toolButtons = new List<NavButton>();
         for (int i = Tools.Length - 1; i >= 0; i--)
         {
-            var t = Tools[i];
-            var b = new NavButton(t.label, -1 - (i + 1));   // 负索引：不参与页面高亮
-            b.Click += (_, _) => OpenTool(t.key, t.label, t.factory);
+            var page = OwnPageCount + i;
+            var b = new NavButton(Tools[i].label, page);
+            b.Click += (_, _) => ShowPage(page);
             toolButtons.Add(b);
+            _navButtons.Add(b);                             // 与主页面一样参与高亮
         }
         var toolTitle = new Label
         {
@@ -257,7 +273,8 @@ public class MainForm : Form
         _nav.Controls.Add(exit);
         foreach (var b in toolButtons) _nav.Controls.Add(b);       // 工具箱在页面导航下面
         _nav.Controls.Add(toolTitle);
-        foreach (var b in _navButtons) _nav.Controls.Add(b);      // PageIndex 4 → 0 逐个 Add
+        foreach (var b in _navButtons.Where(x => x.PageIndex < OwnPageCount).ToList())
+            _nav.Controls.Add(b);                                 // PageIndex 4 → 0 逐个 Add
         _nav.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 8, BackColor = Theme.NavBg });
         _nav.Controls.Add(brand);                                 // 最后 Add → 最先停靠 → 真的在最上面
         _navButtons.Sort((a, b) => a.PageIndex.CompareTo(b.PageIndex));
@@ -278,36 +295,6 @@ public class MainForm : Form
     private void SetActiveNav(int index)
     {
         foreach (var b in _navButtons) b.Active = b.PageIndex == index;
-    }
-
-    /// <summary>
-    /// 打开一个工具窗口（非模态，与主窗口并存）。
-    /// 已打开则激活原窗不重复开 —— 否则手一拖能开出十几个。
-    /// </summary>
-    private void OpenTool(string key, string label, Func<Form> factory)
-    {
-        if (_openTools.TryGetValue(key, out var exist) && !exist.IsDisposed)
-        {
-            if (exist.WindowState == FormWindowState.Minimized) exist.WindowState = FormWindowState.Normal;
-            exist.Activate();
-            exist.BringToFront();
-            return;
-        }
-        try
-        {
-            var f = factory();
-            _openTools[key] = f;
-            f.FormClosed += (_, _) => _openTools.Remove(key);
-            f.Show(this);                 // 以主窗口为 Owner
-            Logger.Info($"[工具箱] 打开 {label}");
-        }
-        catch (Exception ex)
-        {
-            _openTools.Remove(key);
-            Logger.Error($"[工具箱] {label} 打开失败: {ex.GetType().Name} {ex.Message}");
-            MessageBox.Show($"{label} 打开失败：\n{ex.Message}", "工具箱",
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
     }
 
     // ==================================================================
@@ -434,18 +421,30 @@ public class MainForm : Form
         _failPage.Visible = index == 2;
         _devicePage.Visible = index == 3;
         _debugPage.Visible = index == 4;
+        for (int i = 0; i < _toolPages.Length; i++)
+            _toolPages[i].Visible = index == OwnPageCount + i;
 
-        Control target = index switch
+        Control target;
+        if (index >= OwnPageCount)
         {
-            1 => _maintPage, 2 => _failPage, 3 => _devicePage, 4 => _debugPage, _ => _dashboardPage
-        };
+            var host = _toolPages[index - OwnPageCount];
+            host.Ensure();                    // 首次切过去才真正构造并内嵌
+            target = host;
+        }
+        else
+        {
+            target = index switch
+            {
+                1 => _maintPage, 2 => _failPage, 3 => _devicePage, 4 => _debugPage, _ => _dashboardPage
+            };
+        }
         target.BringToFront();
         _pageTitle.Text = PageTitles[index];
         SetActiveNav(index);
         RefreshCurrentPage();
     }
 
-    /// <summary>顶栏【刷新】/ 切页时刷新当前页数据。</summary>
+    /// <summary>顶栏【刷新】/ 切页时刷新当前页数据。工具页自己有刷新按钮，不插手。</summary>
     private void RefreshCurrentPage()
     {
         try
@@ -455,7 +454,8 @@ public class MainForm : Form
                 case 1: _maintPage.Refresh2(); break;
                 case 2: _failPage.Refresh2(); break;
                 case 3: _devicePage.Refresh2(); break;
-                default: Tick(); break;
+                case 0: Tick(); break;
+                default: break;               // 5~8 = 内嵌工具页
             }
         }
         catch (Exception ex) { Logger.Warning($"页面刷新失败: {ex.Message}"); }
@@ -470,7 +470,7 @@ public class MainForm : Form
             _ => -1,
         };
         if (idx >= 0) { ShowPage(idx); e.Handled = true; return; }
-        // Ctrl+6..9 = 工具箱四个工具
+        // Ctrl+6..9 = 四个内嵌工具页
         int tool = e.KeyCode switch
         {
             Keys.D6 => 0, Keys.D7 => 1, Keys.D8 => 2, Keys.D9 => 3,
@@ -478,8 +478,7 @@ public class MainForm : Form
         };
         if (tool >= 0)
         {
-            var t = Tools[tool];
-            OpenTool(t.key, t.label, t.factory);
+            ShowPage(OwnPageCount + tool);
             e.Handled = true;
             return;
         }

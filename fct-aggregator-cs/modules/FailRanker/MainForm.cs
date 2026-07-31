@@ -456,7 +456,7 @@ public class MainForm : Form
         try
         {
             using var viewer = new XmlViewerForm(path);
-            viewer.ShowDialog(this);
+            viewer.ShowDialog((IWin32Window)(TopLevelControl ?? this));   // 内嵌后 this 不是顶层窗（FindForm 会返回自己，须用 TopLevelControl）
         }
         catch (Exception ex)
         {

@@ -1,14 +1,14 @@
 # FCT 工具套件（FCT Suite）
 
-车间 FCT 测试线的一站式工具集。**v2.9.0 起五个原独立程序合并为一个 exe**。
+车间 FCT 测试线的一站式工具集。**v2.9.1 起五个原独立程序合并为一个 exe，四个工具内嵌为主窗口页面**。
 
-| 模块 | 干什么 | 入口 |
+| 模块 | 干什么 | 入口（内嵌页 / 命令行）|
 |---|---|---|
 | **数据聚合**（主程序） | 监控测试机 XML 落盘 → 解析分类入库 → 统计良率 / 待办维修 / FAIL 告警（飞书 + Windows 桌面提示） | 直接启动 |
-| 数据分发 v1.9.0 | XML 分发到目标目录、批量改时间戳、按模板造数、SN 导出 xlsx | 工具箱 / `distribute` |
-| FAIL 排行 v1.5.0 | 扫 FAIL 记录按不良项排名，导出 xlsx / csv，内置 XML 报告查看 | 工具箱 / `rank` |
-| 取数打包 v1.0.0 | 按日期区间捞 Results + TDMS，打包成 zip / 汇总 xlsx（带 CLI） | 工具箱 / `fetch` |
-| TDMS 波形 v1.1.0 | 打开 TDMS 记录看波形、导出 csv/json（带 CLI） | 工具箱 / `tdms` |
+| 数据分发 v1.9.0 | XML 分发到目标目录、批量改时间戳、按模板造数、SN 导出 xlsx | Ctrl+6 / `distribute` |
+| FAIL 排行 v1.5.0 | 扫 FAIL 记录按不良项排名，导出 xlsx / csv，内置 XML 报告查看 | Ctrl+7 / `rank` |
+| 取数打包 v1.0.0 | 按日期区间捞 Results + TDMS，打包成 zip / 汇总 xlsx（带 CLI） | Ctrl+8 / `fetch` |
+| TDMS 波形 v1.1.0 | 打开 TDMS 记录看波形、导出 csv/json（带 CLI） | Ctrl+9 / `tdms` |
 
 ## 快速开始
 
@@ -20,7 +20,8 @@ FCT-Aggregator.exe distribute         # 只开分发工具
 FCT-Aggregator.exe tdms x.tdms        # 直接看某个波形文件
 FCT-Aggregator.exe fetch --help       # 取数工具命令行
 ```
-快捷键：`Ctrl+1~5` 切页面、`Ctrl+6~9` 开四个工具、`Ctrl+R` 刷新。
+快捷键：`Ctrl+1~5` 主程序页、`Ctrl+6~9` 四个工具页、`Ctrl+R` 刷新。
+四个工具是**内嵌页面**（`TopLevel=false` 的 Form）；命令行方式则以独立窗口打开。
 
 ## 运行环境
 
@@ -69,6 +70,7 @@ dotnet publish FctAggregator.csproj -c Release -o dist
 - **WinForms 停靠顺序是反的**：最后 `Add` 的最先停靠。`Dock=Fill` 的要最先 Add，
   侧栏要最后 Add。写反不报错，只是布局悄悄错位 —— 自检里有几何断言盯着。
 - **五个 `Main` 靠 `<StartupObject>` 消歧**，别删各工具的 `Main`（里面有 CLI）。
+- **内嵌的 Form 里别用 `FindForm()`**：它在 Form 自身上返回 this，拿顶层窗要用 `TopLevelControl`。
 - **WinExe 里 CLI 要输出**：`AttachConsole(-1)` 之后必须 `Console.SetOut(...)`。
 - **待办来自真实不良**：不可忽略、不可删除，只能确认 → 处理 → 拖到「已完成」。
 - 提交前确保 `_releases/`、`package_v*/`、`dist/`、`.snap/`、`data/`、`logs/` 不入库。

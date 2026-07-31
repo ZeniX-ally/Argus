@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.9.0（FCT 工具套件：五个原独立程序合并为单 exe）
+**当前版本**：v2.9.1（FCT 工具套件：五个原独立程序合并为单 exe，四个工具内嵌为页面）
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -621,6 +621,31 @@ v2.8.0 第一版就踩了这个坑，靠自检的几何断言（量 `Left/Top/Wi
 所以 `SelfTest` 里保留了一组「GUI 布局」断言，改布局后必须跑。
 
 辅助工具：`tools/snap_gui.ps1` —— 解压完整包、灌真实库、启动后 `Ctrl+1..5` 逐页截图到 `.snap\`。
+
+### 8.7 工具内嵌为页面（v2.9.1）
+
+四个工具不再弹独立窗口，而是内嵌进主窗口内容区，成为 PageIndex 5~8 的页面。
+
+| 关注点 | 做法 |
+|---|---|
+| 把 `Form` 当子控件 | `TopLevel = false` + `FormBorderStyle = None` + `Dock = Fill`，再 `Show()`；封装在 `ToolHost : Panel` 里 |
+| 启动速度 | **惰性构造**：`ShowPage` 第一次切到该页才 `Ensure()`；自检断言"启动时 `Embedded == null`" |
+| 工具比窗口大 | 工具自带 `MinimumSize`（最大 1040×790）→ 宿主 `AutoScroll = true`；主窗口默认 1360×920、最小 1240×860 |
+| 工具自己 `Close()` 掉 | `Ensure()` 检测 `IsDisposed` 后重建 |
+| 构造失败 | 就地显示红色错误 Label + 记日志，不弹框、不崩主程序 |
+
+⚠ **`Control.FindForm()` 在 `Form` 自身上返回 `this`**（实现是"从自己往上找第一个 Form"）。
+所以内嵌后工具里 `ShowDialog(this)` / `FindForm()` 都拿不到真正的顶层窗，
+必须用 **`TopLevelControl`**：
+
+```csharp
+dlg.ShowDialog((IWin32Window)(TopLevelControl ?? this));
+```
+现有 2 处受影响（分发工具的修时间戳范围框、FAIL 排行的 XML 查看器），已改。
+自检里有 4 条 `TopLevelControl == 主窗口` 断言盯着这条。
+
+`Program.RunToolGui`（CLI 子命令 `distribute` / `rank` / `tdms`）走的仍是**顶层窗口**模式，
+和内嵌互不影响 —— 需要把工具摆到另一个显示器时用它。
 
 ### 8.6 单 exe 合并（v2.9.0）
 
