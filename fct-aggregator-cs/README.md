@@ -71,6 +71,8 @@ dotnet publish FctAggregator.csproj -c Release -o dist
   侧栏要最后 Add。写反不报错，只是布局悄悄错位 —— 自检里有几何断言盯着。
 - **五个 `Main` 靠 `<StartupObject>` 消歧**，别删各工具的 `Main`（里面有 CLI）。
 - **内嵌的 Form 里别用 `FindForm()`**：它在 Form 自身上返回 this，拿顶层窗要用 `TopLevelControl`。
+- **新面板别自己写颜色字号**：取 `Theme` 里的令牌；改完让 `Theme.Apply` 走一遍即可统一。
+  主题器**不许改布局**（自检会逐控件比对 `Bounds`）；自绘控件请加进 `Theme.IsSkipped` 或挂 `Tag = Theme.SkipTag`。
 - **WinExe 里 CLI 要输出**：`AttachConsole(-1)` 之后必须 `Console.SetOut(...)`。
 - **待办来自真实不良**：不可忽略、不可删除，只能确认 → 处理 → 拖到「已完成」。
 - 提交前确保 `_releases/`、`package_v*/`、`dist/`、`.snap/`、`data/`、`logs/` 不入库。

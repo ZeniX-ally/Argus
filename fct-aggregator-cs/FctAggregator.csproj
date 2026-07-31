@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    FCT 工具套件（v2.9.1 起：单 exe 工具箱）
+    FCT 工具套件（v2.9.2 起：单 exe 工具箱）
 
     原来 5 个独立项目（aggregator / distributor / fail-ranker / fetcher / tdms-viewer）
     合并进这一个程序集：主程序 = 采集聚合，其余 4 个作为「工具箱」入口，
@@ -21,9 +21,9 @@
     <AssemblyName>FCT-Aggregator</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
     <StartupObject>FctAggregator.Program</StartupObject>
-    <Version>2.9.1</Version>
-    <AssemblyVersion>2.9.1.0</AssemblyVersion>
-    <FileVersion>2.9.1.0</FileVersion>
+    <Version>2.9.2</Version>
+    <AssemblyVersion>2.9.2.0</AssemblyVersion>
+    <FileVersion>2.9.2.0</FileVersion>
     <Company>Zenix-Ally</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

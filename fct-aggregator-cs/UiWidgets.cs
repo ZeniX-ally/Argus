@@ -214,6 +214,7 @@ public sealed class ToolHost : Panel
             f.TopLevel = false;                          // ← 关键：Form 当子控件用
             f.FormBorderStyle = FormBorderStyle.None;    // 去掉自己的标题栏/边框
             f.Dock = DockStyle.Fill;
+            Theme.Apply(f);                              // v2.9.2：刷成与主程序一致的风格（不动布局）
             Controls.Add(f);
             f.Show();
             Embedded = f;

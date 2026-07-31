@@ -1069,6 +1069,67 @@ class SelfTest
                   "两份 XlsxWriter 也共存（后续可抽共享库去重）");
         }
 
+        // ---------- 风格统一（v2.9.2）----------
+        Console.WriteLine("\n【风格统一】主题器只改外观，不能碰布局");
+        {
+            // 四个工具都是绝对坐标布局，一旦主题器改了尺寸/位置就会错位。
+            // 这里逐个工具：刷前记下所有控件的 Bounds，刷完逐个比。
+            IEnumerable<Control> Walk(Control c)
+            {
+                yield return c;
+                foreach (Control k in c.Controls)
+                    foreach (var x in Walk(k)) yield return x;
+            }
+
+            var makers = new (string name, Func<Form> make)[]
+            {
+                ("数据分发", () => new FctDistributor.MainForm()),
+                ("FAIL 排行", () => new FctFailRanker.MainForm()),
+                ("取数打包", () => new FctFetcher.MainForm()),
+                ("TDMS 波形", () => new FctTdmsViewer.MainForm()),
+            };
+            foreach (var (name, make) in makers)
+            {
+                using var f = make();
+                var boundsBefore = Walk(f).ToDictionary(c => c, c => c.Bounds);
+                Theme.Apply(f);
+                var moved = boundsBefore.Where(kv => kv.Key.Bounds != kv.Value).ToList();
+                Check(moved.Count == 0,
+                      $"{name}：上主题后 **{boundsBefore.Count} 个控件位置尺寸全部未变**" +
+                      (moved.Count > 0 ? $"（实际动了 {moved.Count} 个，如 {moved[0].Key.GetType().Name}）" : ""));
+
+                Check(f.BackColor == Theme.Bg && f.Font.Name == Theme.Body.Name,
+                      $"{name}：底色/字体已统一（{f.BackColor.R},{f.BackColor.G},{f.BackColor.B} / {f.Font.Name}）");
+
+                var btns = Walk(f).OfType<Button>().ToList();
+                Check(btns.Count == 0 || btns.All(b => b.FlatStyle == FlatStyle.Flat),
+                      $"{name}：{btns.Count} 个按钮全部改成扁平风格");
+                var grids = Walk(f).OfType<DataGridView>().ToList();
+                Check(grids.Count == 0 || grids.All(g => !g.EnableHeadersVisualStyles &&
+                                                        g.GridColor == Theme.Border),
+                      $"{name}：{grids.Count} 个表格的表头/网格线已统一");
+                var tips = Walk(f).OfType<TextBox>().ToList();
+                Check(tips.Count == 0 || tips.All(t => t.BorderStyle == BorderStyle.FixedSingle),
+                      $"{name}：{tips.Count} 个输入框边框已统一");
+            }
+
+            // 自绘控件必须被跳过（刷了反而难看）
+            var kpi = new KpiCard("t", Theme.Success) { BackColor = Theme.Bg };
+            var card = new MaintenanceCard(new MaintenanceRecord { Id = 1, FailItem = "x", Status = "open" });
+            var holder = new Panel();
+            holder.Controls.Add(kpi);
+            holder.Controls.Add(card);
+            var kpiBg = kpi.BackColor; var cardBg = card.BackColor;
+            Theme.Apply(holder);
+            Check(kpi.BackColor == kpiBg && card.BackColor == cardBg,
+                  "自绘控件（KPI 卡 / 看板卡）被主题器跳过");
+            var tagged = new Panel { Tag = Theme.SkipTag, BackColor = Color.Fuchsia };
+            holder.Controls.Add(tagged);
+            Theme.Apply(holder);
+            Check(tagged.BackColor == Color.Fuchsia, $"标了 Tag=\"{Theme.SkipTag}\" 的控件不被刷");
+            holder.Dispose(); kpi.Dispose(); card.Dispose(); tagged.Dispose();
+        }
+
         // ---------- 导出 ----------
         var records = d.ListMaintenance("", 500);
         var xlsx = Path.Combine(work, "维修记录.xlsx");

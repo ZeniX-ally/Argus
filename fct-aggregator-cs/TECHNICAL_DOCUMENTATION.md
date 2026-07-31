@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.9.1（FCT 工具套件：五个原独立程序合并为单 exe，四个工具内嵌为页面）
+**当前版本**：v2.9.2（FCT 工具套件：单 exe + 四个工具内嵌为页面 + 九页风格统一）
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -621,6 +621,27 @@ v2.8.0 第一版就踩了这个坑，靠自检的几何断言（量 `Left/Top/Wi
 所以 `SelfTest` 里保留了一组「GUI 布局」断言，改布局后必须跑。
 
 辅助工具：`tools/snap_gui.ps1` —— 解压完整包、灌真实库、启动后 `Ctrl+1..5` 逐页截图到 `.snap\`。
+
+### 8.8 风格统一：递归主题器（v2.9.2）
+
+`Theme.Apply(Control root)` 逐层走控件树按类型上色，用于把四个内嵌工具
+（WinForms 默认灰）与主程序页面刷成同一套外观。
+
+**铁律：只改外观，不碰布局。** 四个工具是绝对坐标大表单，改尺寸/字号必错位。因此：
+- 不动 `Bounds` / `Dock` / `Anchor` / `Padding` / `Margin`；
+- `Font` 只设在页面根上，子控件靠**环境继承**，显式设过字体的保持原样；
+- 只覆盖"还是系统默认色"的属性（`IsDefaultish()` 判定），工具刻意涂过色的主按钮 /
+  状态灯 / 警告文字都保留；
+- 自检有硬断言：**刷前刷后逐控件比 `Bounds`，一个都不许变**（138 个控件）。
+
+**跳过且不递归**（`IsSkipped()`）：`NavButton` / `KpiCard` / `ChipBar` / `SectionPanel` /
+`ToolHost` / `BoardCardBase` / `MaintenanceBoard` / `RichTextBox` / `ProgressBar` /
+`WaveformPanel`。任何控件挂 `Tag = Theme.SkipTag` 也可单独豁免。
+
+调用点：`ToolHost.Ensure()`（内嵌工具时）+ `MainForm.BuildUi()`（主程序五页）。
+
+⚠ 限制：`ListView` 列头在 WinForms 无法直接改色（需 owner-draw 整个控件），
+FAIL 记录 / 维修列表 / 待办列表的列头仍是系统样式。
 
 ### 8.7 工具内嵌为页面（v2.9.1）
 

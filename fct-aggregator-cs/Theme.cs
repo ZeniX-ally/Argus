@@ -115,4 +115,133 @@ public static class Theme
         b.FlatAppearance.BorderSize = 1;
         return b;
     }
+
+    // ==================== 递归上主题（v2.9.2） ====================
+
+    /// <summary>把控件的 <see cref="Control.Tag"/> 设为它，<see cref="Apply"/> 就不动这个控件（及其子树）。</summary>
+    public const string SkipTag = "no-theme";
+
+    /// <summary>
+    /// 把一棵控件树刷成统一风格（颜色 / 字体 / 按钮 / 输入框 / 表格）。
+    ///
+    /// 为什么要递归刷而不是逐个面板重写：四个内嵌工具都是上百个**绝对坐标**控件的大表单，
+    /// 重写等于重排界面；递归刷只改外观。
+    ///
+    /// 铁律：**绝不碰布局** —— 不改 Bounds / Dock / Anchor / Padding / Margin，
+    /// 也不改子控件自己显式设过的 Font（粗体标题之类保留）。
+    /// 自检里有一条断言会比对刷前刷后所有控件的 Bounds。
+    ///
+    /// 下面这些自绘/已调好的控件不递归进去（刷了反而难看）。
+    /// </summary>
+    public static void Apply(Control root, bool isPageRoot = true)
+    {
+        if (root == null || IsSkipped(root)) return;
+
+        switch (root)
+        {
+            case Form f when isPageRoot:
+                f.BackColor = Bg;
+                f.ForeColor = TextMain;
+                f.Font = Body;                     // 显式定住：内嵌/独立两种模式下字体一致
+                break;
+            case GroupBox gb:
+                gb.BackColor = Surface;
+                gb.ForeColor = TextMain;
+                break;
+            case Button b:
+                StyleButton(b);
+                break;
+            case TextBox tb:
+                tb.BorderStyle = BorderStyle.FixedSingle;
+                if (!tb.ReadOnly) tb.BackColor = Surface;
+                break;
+            case ComboBox cb:
+                cb.FlatStyle = FlatStyle.Flat;
+                cb.BackColor = Surface;
+                break;
+            case CheckBox or RadioButton:
+                root.ForeColor = TextMain;
+                root.BackColor = Color.Transparent;
+                break;
+            case Label lb:
+                // 已经刻意染过色的标签（红/绿灯、警告语）不动
+                if (IsDefaultish(lb.ForeColor)) lb.ForeColor = TextMain;
+                lb.BackColor = Color.Transparent;
+                break;
+            case ListView lv:
+                lv.BorderStyle = BorderStyle.FixedSingle;
+                lv.BackColor = Surface;
+                lv.ForeColor = TextMain;
+                break;
+            case DataGridView dg:
+                StyleGrid(dg);
+                break;
+            case Panel p:
+                // 已经自己指定过非默认色的面板不动（比如待办看板的列背景）
+                if (IsDefaultish(p.BackColor)) p.BackColor = isPageRoot ? Bg : Surface;
+                break;
+            case TabControl or TabPage:
+                root.BackColor = Surface;
+                root.ForeColor = TextMain;
+                break;
+        }
+
+        foreach (Control c in root.Controls) Apply(c, isPageRoot: false);
+    }
+
+    private static void StyleButton(Button b)
+    {
+        b.FlatStyle = FlatStyle.Flat;
+        b.UseVisualStyleBackColor = false;
+        b.Cursor = Cursors.Hand;
+        // 工具里已经给“主按钮”涂了颜色（绿底/蓝底）的，只统一边框不改底色
+        if (IsDefaultish(b.BackColor))
+        {
+            b.BackColor = Surface;
+            b.ForeColor = TextMain;
+            b.FlatAppearance.BorderColor = Border;
+        }
+        else
+        {
+            b.FlatAppearance.BorderColor = ControlPaint.Dark(b.BackColor, 0.05f);
+        }
+        b.FlatAppearance.BorderSize = 1;
+    }
+
+    private static void StyleGrid(DataGridView dg)
+    {
+        dg.BorderStyle = BorderStyle.FixedSingle;
+        dg.BackgroundColor = Bg;
+        dg.GridColor = Border;
+        dg.EnableHeadersVisualStyles = false;          // 不关它，表头颜色改不动
+        dg.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(238, 242, 247);
+        dg.ColumnHeadersDefaultCellStyle.ForeColor = TextMain;
+        dg.ColumnHeadersDefaultCellStyle.Font = BodyBold;
+        dg.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(238, 242, 247);
+        dg.ColumnHeadersDefaultCellStyle.SelectionForeColor = TextMain;
+        dg.DefaultCellStyle.BackColor = Surface;
+        dg.DefaultCellStyle.ForeColor = TextMain;
+        dg.DefaultCellStyle.SelectionBackColor = Color.FromArgb(219, 232, 246);
+        dg.DefaultCellStyle.SelectionForeColor = TextMain;
+        dg.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 251, 253);
+        dg.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(244, 246, 249);
+        dg.RowHeadersDefaultCellStyle.ForeColor = TextSub;
+    }
+
+    /// <summary>自绘 / 已调好的控件：不刷，也不递归进去。</summary>
+    private static bool IsSkipped(Control c) =>
+        (c.Tag as string) == SkipTag
+        || c is NavButton or KpiCard or ChipBar or SectionPanel or ToolHost
+        || c is BoardCardBase or MaintenanceBoard
+        || c is RichTextBox        // 日志窗自己着色
+        || c is ProgressBar
+        || c.GetType().Name == "WaveformPanel";   // TDMS 波形图自绘
+
+    /// <summary>是不是“没人改过”的系统默认色（只有这种才能被覆盖）。</summary>
+    private static bool IsDefaultish(Color c) =>
+        c == SystemColors.Control || c == SystemColors.ControlText ||
+        c == SystemColors.Window || c == SystemColors.WindowText ||
+        c == Color.Empty || c == Color.Transparent ||
+        c == Color.Black || c == Color.White ||
+        c.ToArgb() == Color.FromArgb(240, 240, 240).ToArgb();
 }
