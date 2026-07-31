@@ -6,9 +6,10 @@
   产物：<OutDir>\page1..5.png
 #>
 param(
-    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.9.4.zip',
-    [string]$SeedDb = 'F:\Programe\G4_9-QA\fct-aggregator-cs\dist\data\fct.db',
-    [string]$OutDir = 'F:\Programe\G4_9-QA\fct-aggregator-cs\.snap'
+    # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
+    [string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v2.9.4.zip",
+    [string]$SeedDb = "$PSScriptRoot\..\dist\data\fct.db",
+    [string]$OutDir = "$PSScriptRoot\..\.snap"
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing

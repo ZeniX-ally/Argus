@@ -4,8 +4,13 @@
 **当前版本**：v2.9.4（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 去重 + 正式图标）
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
-**前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
-源码备份保留在 `F:\Programe\G4_9-QA\fct-aggregator-python-v1.0.2-源码备份.tar.gz`
+**前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除。
+
+> ⚠ **源码备份已丢**：原文档写「保留在 `F:\Programe\G4_9-QA\fct-aggregator-python-v1.0.2-源码备份.tar.gz`」，
+> 2026-07-31 仓库改名为 `Argus` 后核对发现：该文件在新旧路径、整个 F: 盘均**不存在**，
+> 且 git 历史里也没有（首次提交 `b122059` 就已是 C# 重写版，`*.tar.gz` 还在 `.gitignore` 里）。
+> 即 **Python 版源码目前无任何存档**，只剩本文第 10 章的差异描述可考。
+> （`legacy/fct-fetcher-python/` 是取数小工具的 Python 版，**不是**主程序。）
 
 > 本文档由 Python 版 `TECHNICAL_DOCUMENTATION.md`（停留在 v1.0.1）迁移重写，
 > 全部内容已按 C# 版实际源码核对。用户可读的变更说明见 `更新日志.md` / `版本更新说明.md`。

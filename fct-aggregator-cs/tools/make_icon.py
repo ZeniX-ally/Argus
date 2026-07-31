@@ -8,7 +8,8 @@ import io, os, struct
 from PIL import Image
 
 SRC = r'C:\Users\admin\Downloads\all-icons'
-OUT = r'F:\Programe\G4_9-QA\fct-aggregator-cs\app_icon.ico'
+# 路径自己推（仓库目录 2026-07-31 从 G4_9-QA 改名成 Argus，写死绝对路径会静静失效）
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'app_icon.ico')
 
 sizes = [16, 32, 48, 64, 128, 256]
 frames = []

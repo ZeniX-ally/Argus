@@ -15,7 +15,7 @@
   "final_state": {
     "active_version": "2.0.0 (C#)",
     "language": "C# / .NET 8 (WinForms)",
-    "location": "F:/Programe/G4_9-QA/fct-aggregator-cs/",
+    "location": "F:/Programe/Argus/fct-aggregator-cs/",
     "package_size": "1.2 MB (zip), 2.2 MB (解压)",
     "deploy_mode": "框架依赖 (机台需装 .NET 8 Desktop Runtime)",
     "deliverable": "FCT-Aggregator-CS.zip"
@@ -89,7 +89,7 @@
   ],
 
   "csharp_source_files": {
-    "location": "F:/Programe/G4_9-QA/fct-aggregator-cs/",
+    "location": "F:/Programe/Argus/fct-aggregator-cs/",
     "files": {
       "Program.cs": "入口, 单实例保护(Mutex)",
       "Config.cs": "config.json 加载, BaseDir 定位",

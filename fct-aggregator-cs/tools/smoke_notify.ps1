@@ -12,7 +12,8 @@
   注意：Windows 通知能否**肉眼看到**受系统「通知与专注助手」设置影响，脚本只能验证代码路径没炸。
 #>
 param(
-    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.9.4.zip'
+    # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
+    [string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v2.9.4.zip"
 )
 $ErrorActionPreference = 'Stop'
 

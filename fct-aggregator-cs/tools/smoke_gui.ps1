@@ -4,7 +4,8 @@
   只看"进程还活着"是不够的：v2.9.4 曾出现进程秒退(0xC0000005)，也可能出现进程活着但窗口没建起来。
 #>
 param(
-    [string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.9.4.zip',
+    # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
+    [string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v2.9.4.zip",
     [string]$ExpectTitle = 'FCT 工具套件 v2.9.4'
 )
 $ErrorActionPreference = 'Stop'

@@ -5,7 +5,7 @@
 ## 用法
 
 ```powershell
-cd F:\Programe\G4_9-QA\fct-fetcher
+cd F:\Programe\Argus\legacy\fct-fetcher-python
 
 # 基本:捞 7/22~7/24 的 fail
 python fetch.py --start 20260722 --end 20260724

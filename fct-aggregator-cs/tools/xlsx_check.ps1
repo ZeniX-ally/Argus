@@ -14,7 +14,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repo    = (Resolve-Path "$PSScriptRoot\..\..").Path      # G4_9-QA
+$repo    = (Resolve-Path "$PSScriptRoot\..\..").Path      # 仓库根（Argus）
 $proj    = Join-Path $repo 'fct-aggregator-cs'
 $fixture = Join-Path $OutRoot '_fixture'
 $newDir  = Join-Path $OutRoot 'new'

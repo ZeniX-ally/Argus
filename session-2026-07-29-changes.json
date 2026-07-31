@@ -1,8 +1,8 @@
 {
-  "$schema_note": "本次会话（2026-07-29）在 F:/Programe/G4_9-QA 下的全部改动交接记录。新会话可直接读此文件恢复上下文。",
+  "$schema_note": "本次会话（2026-07-29）在 F:/Programe/Argus 下的全部改动交接记录。新会话可直接读此文件恢复上下文。",
   "meta": {
     "date": "2026-07-29",
-    "workspace": "F:/Programe/G4_9-QA",
+    "workspace": "F:/Programe/Argus",
     "agent_env": {
       "harness": "pi",
       "shell": "PowerShell 7 (pwsh)",
@@ -17,7 +17,7 @@
   },
 
   "project_fct_distributor": {
-    "path": "F:/Programe/G4_9-QA/fct-distributor",
+    "path": "F:/Programe/Argus/fct-distributor",
     "version_chain": "v1.5.0 → v1.6.0 → v1.7.0 → v1.8.0 → v1.8.1 → v1.9.0",
     "current_version": "1.9.0",
     "artifact": "FCT-Distributor-v1.9.0.zip（旧版本 zip 已删）",
@@ -94,7 +94,7 @@
   },
 
   "project_fct_aggregator_cs": {
-    "path": "F:/Programe/G4_9-QA/fct-aggregator-cs",
+    "path": "F:/Programe/Argus/fct-aggregator-cs",
     "version_chain": "v2.1.0 → v2.2.0 → v2.3.0",
     "current_version": "2.3.0",
     "artifacts": {
@@ -214,7 +214,7 @@
   "pending_decisions": [
     {
       "id": "git-commit",
-      "desc": "整个 G4_9-QA 仓库有大量未提交内容：fct-distributor/ 与 fct-aggregator-cs 的 4 个新 .cs + selftest/ 全是未跟踪；fct-fail-ranker 有 4 个已修改文件；另有 fct-fetcher/ fct-fetcher-cs/ 未跟踪",
+      "desc": "整个 Argus 仓库有大量未提交内容：fct-distributor/ 与 fct-aggregator-cs 的 4 个新 .cs + selftest/ 全是未跟踪；fct-fail-ranker 有 4 个已修改文件；另有 fct-fetcher/ fct-fetcher-cs/ 未跟踪",
       "status": "用户尚未点头提交"
     },
     {
@@ -237,8 +237,8 @@
 
   "how_to_continue": {
     "verify_all": [
-      "cd F:/Programe/G4_9-QA/fct-distributor; dotnet build -c Release; dotnet run --project selftest\\SelfTest.csproj -c Release   # 期望 67 项全过",
-      "cd F:/Programe/G4_9-QA/fct-aggregator-cs; dotnet build -c Release --no-incremental; dotnet run --project selftest\\SelfTest.csproj -c Release   # 期望 114 项全过"
+      "cd F:/Programe/Argus/fct-distributor; dotnet build -c Release; dotnet run --project selftest\\SelfTest.csproj -c Release   # 期望 67 项全过",
+      "cd F:/Programe/Argus/fct-aggregator-cs; dotnet build -c Release --no-incremental; dotnet run --project selftest\\SelfTest.csproj -c Release   # 期望 114 项全过"
     ],
     "repackage_aggregator": "publish 到 dist（先 Stop-Process FCT-Aggregator）→ package_v2.3.0(-update) → Compress-Archive；更新包必须排除 config.json / data / logs / *.pdb",
     "conventions": [

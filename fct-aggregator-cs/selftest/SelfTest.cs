@@ -15,6 +15,33 @@ class SelfTest
         if (!ok) _fail++;
     }
 
+    /// <summary>
+    /// 从「当前工作目录」与「程序所在目录」两头各往上找 6 层（兼顾仓库根/子项目两种起点）。
+    ///
+    /// ⚠ 以前这里写死过 <c>F:\Programe\G4_9-QA\fct-aggregator-cs\...</c>，
+    /// 2026-07-31 仓库目录改名成 Argus 后该路径失效 —— 而且**不报错**，
+    /// 只是静静退成「用空库」，一批依赖真实库的断言会悄悄不跑（伪绿）。
+    /// 所以改成自己找，不再依赖任何绝对路径。
+    /// </summary>
+    static string FindUp(string relative)
+    {
+        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            var dir = new DirectoryInfo(start);
+            for (int i = 0; i < 6 && dir != null; i++, dir = dir.Parent)
+            {
+                var p = Path.Combine(dir.FullName, relative);
+                if (File.Exists(p)) return p;
+                // 从仓库根起步时还要下钻一层
+                var p2 = Path.Combine(dir.FullName, "fct-aggregator-cs", relative);
+                if (File.Exists(p2)) return p2;
+            }
+        }
+        return "";
+    }
+
+    // ⚠ [STAThread] 必须贴在 Main 上：自检会构造 ComboBox（AutoCompleteMode），
+    //   不是 STA 就直接 ThreadStateException。在它上方插方法时小心别把这个特性挤跑。
     [STAThread]
     static int Main()
     {
@@ -22,13 +49,7 @@ class SelfTest
         Directory.CreateDirectory(work);
         // 真实库只是本地 fixture（data/*.db 已 gitignore）—— 别写死结构路径，
         // 也别在没有它的机器上报红（下面几条依赖它的断言已改成有它才跑）。
-        var real = new[]
-        {
-            Path.Combine("dist", "data", "fct.db"),
-            Path.Combine("..", "dist", "data", "fct.db"),
-            Path.Combine("..", "..", "dist", "data", "fct.db"),
-            @"F:\Programe\G4_9-QA\fct-aggregator-cs\dist\data\fct.db",
-        }.Select(Path.GetFullPath).FirstOrDefault(File.Exists) ?? "";
+        var real = FindUp(Path.Combine("dist", "data", "fct.db"));
         var db = Path.Combine(work, "fct.db");
 
         bool haveReal = real.Length > 0 && File.Exists(real);
@@ -1222,13 +1243,8 @@ class SelfTest
             Check(ReferenceEquals(AppIcon.Load(), ico), "图标已缓存（不会每个窗口重新解一遍 160KB 的 ico）");
 
             // 直接验图标文件本身：多分辨率 ICO 容器头
-            var icoPath = new[]
-            {
-                "app_icon.ico",
-                Path.Combine("..", "app_icon.ico"),
-                @"F:\Programe\G4_9-QA\fct-aggregator-cs\app_icon.ico",
-            }.FirstOrDefault(File.Exists);
-            if (icoPath == null) Console.WriteLine("    (跳过 ico 文件校验：没找到 app_icon.ico)");
+            var icoPath = FindUp("app_icon.ico");
+            if (icoPath.Length == 0) Console.WriteLine("    (跳过 ico 文件校验：没找到 app_icon.ico)");
             else
             {
                 var bytes = File.ReadAllBytes(icoPath);

@@ -2,7 +2,8 @@
   "$schema_note": "本会话（2026-07-30）工作记录。给下一次接手的人/AI 看：做了什么、为什么这么做、踩了哪些坑、还剩什么。",
   "meta": {
     "date": "2026-07-30",
-    "repo": "F:/Programe/G4_9-QA",
+    "repo": "F:/Programe/Argus",
+    "repo_renamed": "2026-07-31：目录由 F:/Programe/G4_9-QA 改名为 F:/Programe/Argus（与 gitea 仓库名 Argus 对齐）。本文件内路径已同步更新；当时写死绝对路径的 6 个脚本与 SelfTest.cs 已改成自我定位，见提交 test(aggregator) 之后一条。",
     "gitea": "http://192.168.1.16:3000/zenix/Argus.git",
     "branch": "main",
     "commits_this_session": 12,
@@ -262,7 +263,7 @@
     }
   ],
   "how_to_continue": {
-    "build": "cd F:/Programe/G4_9-QA/fct-aggregator-cs; dotnet build FctAggregator.csproj -c Release",
+    "build": "cd F:/Programe/Argus/fct-aggregator-cs; dotnet build FctAggregator.csproj -c Release",
     "test": "dotnet run --project selftest/SelfTest.csproj -c Release",
     "package": "dotnet publish FctAggregator.csproj -c Release -o dist; ./tools/make_package.ps1; Compress-Archive ...",
     "read_first": [

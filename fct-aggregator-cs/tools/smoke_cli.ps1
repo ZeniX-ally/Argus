@@ -4,7 +4,8 @@
   （v2.9.4 把 fetcher / tdms-viewer 的控制台程序合进 WinExe，stdout 靠
     AttachConsole + Console.SetOut 接回来，这里就是防它再退化。）
 #>
-param([string]$Zip = 'F:\Programe\G4_9-QA\fct-aggregator-cs\FCT-Aggregator-v2.9.4.zip')
+# 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
+param([string]$Zip = "$PSScriptRoot\..\FCT-Aggregator-v2.9.4.zip")
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 

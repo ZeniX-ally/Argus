@@ -9,7 +9,7 @@
   "match_mode": "contains",
 
   "_comment_output": "输出目录。清单 xlsx 与(可选)复制的文件都放这里。",
-  "output_dir": "F:/Programe/G4_9-QA/fct-fetcher/out",
+  "output_dir": "F:/Programe/Argus/legacy/fct-fetcher-python/out",
   "copy_files": false,
 
   "_comment_filter": "include_o_fails=true: O_(中断)中含真实失败项的也算 FAIL(与 fail-ranker 一致); false 则只捞 F_",
