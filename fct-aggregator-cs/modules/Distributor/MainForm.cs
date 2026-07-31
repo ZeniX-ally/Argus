@@ -1154,6 +1154,7 @@ public class MainForm : Form
     {
         try
         {
+            FctAggregator.AppIcon.Apply(this);   // v2.9.4: 统一图标入口
             var p = Path.Combine(AppContext.BaseDirectory, "app_icon.ico");
             if (File.Exists(p)) Icon = new Icon(p);
         }

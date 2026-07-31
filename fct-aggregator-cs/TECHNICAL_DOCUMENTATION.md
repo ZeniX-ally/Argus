@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.9.3（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 重复功能已合并）
+**当前版本**：v2.9.4（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 去重 + 正式图标）
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -100,7 +100,9 @@ fct-aggregator-cs/
 ├── FailListPanel.cs          # FAIL 记录页 + XmlViewerForm 报告查看器
 ├── FctAggregator.csproj      # net8.0-windows / WinForms / SelfContained=false
 ├── config.json               # 运行配置
-├── app_icon.ico
+├── app_icon.ico              # 多分辨率图标(16~256)，同时作为 EmbeddedResource
+├── AppIcon.cs                # 图标唯一取用口：嵌入资源优先 → 文件 → 系统图标
+├── assets/icon/              # 图标源 PNG（tools/make_icon.py 可重建 ico）
 ├── modules/                  # v2.9.0 合入的四个工具（各自保留 namespace）
 │   ├── Distributor/          #   原 fct-distributor（含 tpl\*.xml 内置模板）
 │   ├── FailRanker/           #   原 fct-fail-ranker
@@ -710,6 +712,20 @@ dlg.ShowDialog((IWin32Window)(TopLevelControl ?? this));
 ⚠ 打包脚本的坑：无 RID 的 `dotnet publish` 不把原生库放根目录，
 `e_sqlite3.dll` 只在 `runtimes\win-x64\native\`。`make_package.ps1` 现用
 `Resolve-DistFile` 递归查找（优先 win-x64）；`启动.bat`/`config.json` 从仓库根取。
+
+### 8.10 应用图标（v2.9.4）
+
+`app_icon.ico` 是**多分辨率 ICO**（16/32/48/64/128/256，PNG 压缩条目），
+源 PNG 在 `assets/icon/`，用 `python tools/make_icon.py` 重建
+（脚本直接写 ICO 容器，不让 PIL 二次缩放，保证与设计稿逐像素一致）。
+
+取用**只走 `AppIcon`**：`Load()` / `Load(size)` / `Apply(form)`，
+顺序是**嵌入资源 → 同目录文件 → 系统图标**，带缓存、永不抛。
+
+⚠ 踩过的坑：v2.9.4 之前有四处直接 `new Icon(BaseDir\app_icon.ico)`，
+而 `make_package.ps1` 的清单里**从来没有这个文件** —— 于是现场窗口退回 exe 内嵌图标、
+托盘退回 `SystemIcons.Application`（灰色通用图标）。现在两头都堵：
+打包带上该文件，加载又以嵌入资源为首选。自检里有断言确认"拿到的不是系统灰图"。
 
 ## 9. 构建与部署
 

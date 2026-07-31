@@ -41,9 +41,9 @@ public static class DesktopNotifier
         _ui = SynchronizationContext.Current;
         try
         {
-            Icon ico;
-            try { ico = new Icon(Path.Combine(AppConfig.BaseDir, "app_icon.ico")); }
-            catch { ico = SystemIcons.Application; }
+            // v2.9.4: 托盘要 16×16；原来读 BaseDir 下的文件，而发布包里根本没有那个文件，
+            // 于是一直退成系统灰图标。现在统一走 AppIcon（嵌入资源优先）。
+            var ico = AppIcon.Load(16);
 
             _icon = new NotifyIcon
             {

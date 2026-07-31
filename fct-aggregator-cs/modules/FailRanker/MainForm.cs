@@ -123,6 +123,7 @@ public class MainForm : Form
     {
         try
         {
+            FctAggregator.AppIcon.Apply(this);   // v2.9.4: 统一图标入口
             var ico = Path.Combine(AppContext.BaseDirectory, "app_icon.ico");
             if (File.Exists(ico)) Icon = new Icon(ico);
         }

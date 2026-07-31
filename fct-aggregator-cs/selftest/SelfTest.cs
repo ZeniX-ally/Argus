@@ -1056,8 +1056,7 @@ class SelfTest
                     Check(xmls.All(n => n.StartsWith(FctDistributor.TemplateGenerator.EmbeddedPrefix)),
                           "EmbeddedPrefix 与实际资源名对得上（否则模板名会显示成一串命名空间）");
                     Check(names.Any(n => n.EndsWith("app_icon.ico", StringComparison.OrdinalIgnoreCase)),
-                          "内嵌图标仍在（取数/TDMS 工具靠 EndsWith(\"app_icon.ico\") 找它）");
-                }
+                          "内嵌图标仍在（取数/TDMS 工具靠 EndsWith(\"app_icon.ico\") 找它）");                }
             }
 
             // 名字重名的类确实靠命名空间隔开了（合并前有 10 组同名类）
@@ -1206,6 +1205,47 @@ class SelfTest
             var st2 = FctFetcher.XlsxWriter.Styles2();
             Check(st1 != st2, "各工具的 styles.xml 仍是各自的调色板（只合并了外壳，没统一长相）");
             Check(st1.Contains("styleSheet") && st2.Contains("styleSheet"), "样式部件格式正常");
+        }
+
+        // ---------- 应用图标（v2.9.4）----------
+        Console.WriteLine("\n【图标】必须能从嵌入资源拿到多尺寸图标（不能退成系统灰图）");
+        {
+            // v2.9.4 前：四处读 BaseDir\app_icon.ico，而打包脚本从未把它放进发布包
+            // → 窗口退到 exe 内嵌图、托盘退到 SystemIcons.Application（灰色通用图标）。
+            var ico = AppIcon.Load();
+            Check(ico != null, "AppIcon.Load() 能拿到图标");
+            Check(!ReferenceEquals(ico, SystemIcons.Application),
+                  "**拿到的是应用图标而不是系统灰图**（嵌入资源读取成功）");
+            var small = AppIcon.Load(16);
+            Check(small.Width == 16 && small.Height == 16, $"可按尺寸取图标（托盘用 16×16，实得 {small.Width}×{small.Height}）");
+            Check(ReferenceEquals(AppIcon.Load(), ico), "图标已缓存（不会每个窗口重新解一遍 160KB 的 ico）");
+
+            // 直接验图标文件本身：多分辨率 ICO 容器头
+            var icoPath = new[]
+            {
+                "app_icon.ico",
+                Path.Combine("..", "app_icon.ico"),
+                @"F:\Programe\G4_9-QA\fct-aggregator-cs\app_icon.ico",
+            }.FirstOrDefault(File.Exists);
+            if (icoPath == null) Console.WriteLine("    (跳过 ico 文件校验：没找到 app_icon.ico)");
+            else
+            {
+                var bytes = File.ReadAllBytes(icoPath);
+                int reserved = BitConverter.ToUInt16(bytes, 0);
+                int type = BitConverter.ToUInt16(bytes, 2);
+                int count = BitConverter.ToUInt16(bytes, 4);
+                Check(reserved == 0 && type == 1, "app_icon.ico 是合法 ICO 容器");
+                Check(count >= 4, $"**图标包含 {count} 个尺寸**（任务栏/托盘/大图标各自有清楚的那一份）");
+                var sizes = new List<int>();
+                for (int i = 0; i < count; i++)
+                {
+                    int w = bytes[6 + 16 * i];
+                    sizes.Add(w == 0 ? 256 : w);
+                }
+                Check(sizes.Contains(16) && sizes.Contains(32) && sizes.Contains(256),
+                      $"关键尺寸齐全：{string.Join("/", sizes)}");
+                Check(bytes.Length > 20000, $"不是占位图（{bytes.Length / 1024} KB，旧的占位图只有 285 字节）");
+            }
         }
 
         // ---------- 导出 ----------

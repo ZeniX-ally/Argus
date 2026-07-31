@@ -45,6 +45,9 @@
     <!-- v2.8.0 GUI 重构：主窗口布局要能被自检验证（停靠顺序写错很容易错而不报错） -->
     <Compile Include="..\Theme.cs" />
     <Compile Include="..\Xlsx.cs" />
+    <Compile Include="..\AppIcon.cs" />
+    <!-- 与主程序一致：图标作为嵌入资源，否则 AppIcon 会退到系统灰图（断言就白做了） -->
+    <EmbeddedResource Include="..\app_icon.ico" />
     <Compile Include="..\UiWidgets.cs" />
     <Compile Include="..\MainForm.cs" />
     <Compile Include="..\DeviceStatusPanel.cs" />
