@@ -1,7 +1,7 @@
 # FCT-Aggregator 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v2.9.2（FCT 工具套件：单 exe + 四个工具内嵌为页面 + 九页风格统一）
+**当前版本**：v2.9.3（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 重复功能已合并）
 **技术栈**：C# / .NET 8 / WinForms / SQLite
 **文档更新**：2026-07-30
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除，
@@ -81,7 +81,8 @@ fct-aggregator-cs/
 ├── FeishuNotifier.cs         # 飞书群机器人卡片推送
 ├── FctIni.cs                 # FCT.ini 解析 + COM 口在线检测（共享读取模式）
 ├── MainForm.cs               # 主窗口外壳：侧边导航 / 顶栏胶囊 / KPI 总览 / 状态栏（v2.8.0 重构）
-├── Theme.cs                  # 视觉规范单一来源：颜色 / 字体 / 圆角 / DrawCard·DrawChip·MakeButton
+├── Theme.cs                  # 视觉规范单一来源：颜色 / 字体 / 圆角 / DrawCard·DrawChip·MakeButton·Apply
+├── Xlsx.cs                   # FctShared.Xlsx：共享的 OOXML 写出器（四处导出共用外壳，样式各自保留）
 ├── UiWidgets.cs              # 自绘控件：NavButton(带角标) / KpiCard / ChipBar / SectionPanel
 ├── DeviceStatusPanel.cs      # 设备状态页
 ├── MaintenancePanel.cs       # 维修记录/待办页（看板/列表切换）+ 新增/编辑表单 MaintenanceForm
@@ -621,6 +622,25 @@ v2.8.0 第一版就踩了这个坑，靠自检的几何断言（量 `Left/Top/Wi
 所以 `SelfTest` 里保留了一组「GUI 布局」断言，改布局后必须跑。
 
 辅助工具：`tools/snap_gui.ps1` —— 解压完整包、灌真实库、启动后 `Ctrl+1..5` 逐页截图到 `.snap\`。
+
+### 8.9 重复功能合并（v2.9.3）
+
+| 原重复 | 现状 |
+|---|---|
+| 4 份手写 xlsx 写出器 | `FctShared.Xlsx`（`Xlsx.cs`）一份**外壳**：zip/部件/sheet XML/转义/列宽/冻结/合并；各工具只留自己的 `S_*` 与 `Styles()`，`Cell`/`Sheet` 用 `using` 别名 → 调用点几乎不动，报表长相不变 |
+| `StationDetector` ×2 | 删掉数据分发工具里那份（IP 表逐条核对一致），统一调 `FctAggregator.StationDetector` |
+| `XmlViewerForm` ×2 | 删掉主程序 112 行简版，统一用 `FctFailRanker.XmlViewerForm`（功能超集） |
+
+**为什么不统一 `styles.xml`**：四家样式表分别是 7/4/17/2 种样式、配色不同，
+统一等于改几百处样式号且报表外观会变。共享写出器因此把 `stylesXml` 作为参数收进来 ——
+**外壳一份，长相各自**。
+
+刻意保留的同名类（不同职责，别合）：`FailItem`（多 `StepType`、扫描口径不同）、
+`Exporter`（xlsx 汇总 vs csv/json 波形）、`XmlParser`/`XmlScanner`/`XmlTimeScanner`/`Scanner`
+（解析单文件 / 扫描排名 / 只读时间戳 / 定位文件）。
+
+⚠ 共享写出器里两个必须保留的细节：XML 非法控制字符要丢弃（否则 Excel 报"文件已损坏"）；
+工作表名的 `\ / ? * [ ] :` 换下划线，但 `<` `>` **合法**、只做 XML 转义。
 
 ### 8.8 风格统一：递归主题器（v2.9.2）
 

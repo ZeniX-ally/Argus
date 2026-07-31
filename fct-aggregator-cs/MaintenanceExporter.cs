@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Text;
 
 namespace FctAggregator;
@@ -53,55 +52,46 @@ public static class MaintenanceExporter
         return v;
     }
 
-    // ==================== XLSX(零依赖 OOXML) ====================
-    public static void ExportXlsx(string path, IEnumerable<MaintenanceRecord> records)
-    {
-        var rows = records.Select(RowOf).ToList();
-        if (File.Exists(path)) File.Delete(path);
-        using var fs = new FileStream(path, FileMode.CreateNew);
-        using var zip = new ZipArchive(fs, ZipArchiveMode.Create);
 
-        AddEntry(zip, "[Content_Types].xml",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
-            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>" +
-            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" +
-            "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>" +
-            "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>" +
-            "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>" +
-            "</Types>");
 
-        AddEntry(zip, "_rels/.rels",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
-            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>" +
-            "</Relationships>");
 
-        AddEntry(zip, "xl/workbook.xml",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" " +
-            "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">" +
-            "<sheets><sheet name=\"维修记录\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
-
-        AddEntry(zip, "xl/_rels/workbook.xml.rels",
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
-            "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>" +
-            "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>" +
-            "</Relationships>");
-
-        AddEntry(zip, "xl/styles.xml", Styles());
-        AddEntry(zip, "xl/worksheets/sheet1.xml", SheetXml(rows));
-    }
-
-    private static void AddEntry(ZipArchive zip, string name, string content)
-    {
-        var e = zip.CreateEntry(name, CompressionLevel.Optimal);
-        using var w = new StreamWriter(e.Open(), new UTF8Encoding(false));
-        w.Write(content);
-    }
 
     // 样式 0=普通(左对齐,边框), 1=表头(白粗,蓝底,居中,边框)
+    /// <summary>
+    /// 导出 xlsx。v2.9.3：打包外壳改用共享的 <see cref="FctShared.Xlsx"/>
+    /// （原来这里自己写了一遍 zip/Content_Types/sheet XML，与三个工具重复），
+    /// 样式与列宽仍是本导出自己的，输出格式不变。
+    /// </summary>
+    public static void ExportXlsx(string path, IEnumerable<MaintenanceRecord> records)
+    {
+        const int S_TEXT = 0, S_HEADER = 1;
+        double[] widths = { 6, 24, 14, 22, 30, 10, 10, 12, 30, 24, 20, 20 };
+
+        var sh = new FctShared.Xlsx.Sheet { Name = "维修记录", FreezeRows = 1 };
+        sh.ColWidths.AddRange(widths);
+
+        var head = new List<FctShared.Xlsx.Cell>();
+        foreach (var h in Headers) head.Add(FctShared.Xlsx.T(h, S_HEADER));
+        sh.Rows.Add(head);
+
+        foreach (var m in records)
+        {
+            var vals = RowOf(m);
+            var row = new List<FctShared.Xlsx.Cell>();
+            for (int c = 0; c < vals.Length; c++)
+            {
+                // ID 列写成数值，其余写文本（与合并前一致）
+                if (c == 0 && int.TryParse(vals[c], out var num))
+                    row.Add(FctShared.Xlsx.N(num, S_TEXT));
+                else
+                    row.Add(FctShared.Xlsx.T(vals[c], S_TEXT));
+            }
+            sh.Rows.Add(row);
+        }
+
+        FctShared.Xlsx.Write(path, new[] { sh }, Styles());
+    }
+
     private static string Styles() =>
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
         "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
@@ -130,62 +120,9 @@ public static class MaintenanceExporter
         "</cellXfs>" +
         "</styleSheet>";
 
-    private static string SheetXml(List<string[]> rows)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
 
-        // 列宽(须与 Headers 等长)
-        double[] widths = { 6, 24, 14, 22, 30, 10, 10, 12, 30, 24, 20, 20 };
-        sb.Append("<cols>");
-        for (int c = 0; c < widths.Length; c++)
-            sb.Append($"<col min=\"{c + 1}\" max=\"{c + 1}\" width=\"{widths[c].ToString(System.Globalization.CultureInfo.InvariantCulture)}\" customWidth=\"1\"/>");
-        sb.Append("</cols>");
 
-        sb.Append("<sheetData>");
-        // 表头行
-        sb.Append("<row r=\"1\">");
-        for (int c = 0; c < Headers.Length; c++)
-            sb.Append($"<c r=\"{ColName(c)}1\" s=\"1\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{XmlEsc(Headers[c])}</t></is></c>");
-        sb.Append("</row>");
-        // 数据行
-        for (int i = 0; i < rows.Count; i++)
-        {
-            int rowNum = i + 2;
-            sb.Append($"<row r=\"{rowNum}\">");
-            var row = rows[i];
-            for (int c = 0; c < row.Length; c++)
-            {
-                var refStr = $"{ColName(c)}{rowNum}";
-                // ID 列写为数值, 其余写文本
-                if (c == 0 && int.TryParse(row[c], out var num))
-                    sb.Append($"<c r=\"{refStr}\" s=\"0\"><v>{num}</v></c>");
-                else
-                    sb.Append($"<c r=\"{refStr}\" s=\"0\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{XmlEsc(row[c])}</t></is></c>");
-            }
-            sb.Append("</row>");
-        }
-        sb.Append("</sheetData></worksheet>");
-        return sb.ToString();
-    }
 
-    private static string ColName(int index)
-    {
-        var sb = new StringBuilder();
-        index++;
-        while (index > 0)
-        {
-            int rem = (index - 1) % 26;
-            sb.Insert(0, (char)('A' + rem));
-            index = (index - 1) / 26;
-        }
-        return sb.ToString();
-    }
 
-    private static string XmlEsc(string? s)
-    {
-        s ??= "";
-        return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
-    }
+
 }

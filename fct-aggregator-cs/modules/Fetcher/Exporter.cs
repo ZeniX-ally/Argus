@@ -1,3 +1,6 @@
+using Cell = FctShared.Xlsx.Cell;    // v2.9.3: xlsx 外壳已抽到 FctShared.Xlsx
+using Sheet = FctShared.Xlsx.Sheet;
+
 namespace FctFetcher;
 
 /// <summary>输出捞取清单 xlsx：捞取清单 / 失败项明细 / 失败项排名。</summary>
@@ -9,7 +12,7 @@ public static class Exporter
         Directory.CreateDirectory(outDir);
         var path = Path.Combine(outDir, $"fetch_{start:yyyyMMdd}-{end:yyyyMMdd}.xlsx");
 
-        var sheets = new List<XlsxWriter.Sheet>
+        var sheets = new List<Sheet>
         {
             BuildMain(recs),
             BuildDetail(recs),
@@ -19,9 +22,9 @@ public static class Exporter
         return path;
     }
 
-    private static XlsxWriter.Sheet BuildMain(List<Record> recs)
+    private static Sheet BuildMain(List<Record> recs)
     {
-        var sh = new XlsxWriter.Sheet { Name = "捞取清单" };
+        var sh = new Sheet { Name = "捞取清单" };
         string[] hd = { "SN", "结果", "站点", "型号", "日期", "类别", "前缀", "失败项数",
                         "失败项", "CSV", "TDMS数", "TDMS", "XML", "测试时间", "USER" };
         sh.ColWidths.AddRange(new double[] { 34, 8, 8, 11, 11, 9, 7, 9, 52, 46, 9, 52, 60, 24, 10 });
@@ -29,7 +32,7 @@ public static class Exporter
 
         foreach (var r in recs)
         {
-            sh.Rows.Add(new List<XlsxWriter.Cell>
+            sh.Rows.Add(new List<Cell>
             {
                 XlsxWriter.T(r.Sn, XlsxWriter.S_TEXT_C),
                 XlsxWriter.T(r.Result, XlsxWriter.S_TEXT_C),
@@ -51,16 +54,16 @@ public static class Exporter
         return sh;
     }
 
-    private static XlsxWriter.Sheet BuildDetail(List<Record> recs)
+    private static Sheet BuildDetail(List<Record> recs)
     {
-        var sh = new XlsxWriter.Sheet { Name = "失败项明细" };
+        var sh = new Sheet { Name = "失败项明细" };
         string[] hd = { "SN", "站点", "日期", "失败项", "测量值", "下限", "上限", "单位" };
         sh.ColWidths.AddRange(new double[] { 34, 8, 11, 46, 16, 12, 12, 8 });
         sh.Rows.Add(hd.Select(XlsxWriter.H).ToList());
 
         foreach (var r in recs)
             foreach (var it in r.FailItems)
-                sh.Rows.Add(new List<XlsxWriter.Cell>
+                sh.Rows.Add(new List<Cell>
                 {
                     XlsxWriter.T(r.Sn, XlsxWriter.S_TEXT_C),
                     XlsxWriter.T(r.Station, XlsxWriter.S_TEXT_C),
@@ -74,9 +77,9 @@ public static class Exporter
         return sh;
     }
 
-    private static XlsxWriter.Sheet BuildRank(List<Record> recs)
+    private static Sheet BuildRank(List<Record> recs)
     {
-        var sh = new XlsxWriter.Sheet { Name = "失败项排名" };
+        var sh = new Sheet { Name = "失败项排名" };
         string[] hd = { "排名", "失败项", "次数", "影响SN数" };
         sh.ColWidths.AddRange(new double[] { 8, 52, 10, 12 });
         sh.Rows.Add(hd.Select(XlsxWriter.H).ToList());
@@ -90,7 +93,7 @@ public static class Exporter
 
         int rank = 1;
         foreach (var x in ranks)
-            sh.Rows.Add(new List<XlsxWriter.Cell>
+            sh.Rows.Add(new List<Cell>
             {
                 XlsxWriter.N(rank++),
                 XlsxWriter.T(x.Name),

@@ -34,6 +34,7 @@ FCT-Aggregator.exe fetch --help       # 取数工具命令行
 fct-aggregator-cs/
 ├── FctAggregator.csproj      唯一工程（WinExe，StartupObject = FctAggregator.Program）
 ├── *.cs                      主程序：采集引擎 / 待办看板 / GUI 外壳(Theme+UiWidgets)
+├── Xlsx.cs                   FctShared.Xlsx：共享 xlsx 写出器（四处导出共用，样式各自保留）
 ├── modules/                  合入的四个工具，各自保留 namespace
 │   ├── Distributor/ (tpl/)   FctDistributor
 │   ├── FailRanker/           FctFailRanker
@@ -71,6 +72,7 @@ dotnet publish FctAggregator.csproj -c Release -o dist
   侧栏要最后 Add。写反不报错，只是布局悄悄错位 —— 自检里有几何断言盯着。
 - **五个 `Main` 靠 `<StartupObject>` 消歧**，别删各工具的 `Main`（里面有 CLI）。
 - **内嵌的 Form 里别用 `FindForm()`**：它在 Form 自身上返回 this，拿顶层窗要用 `TopLevelControl`。
+- **要导 Excel 就用 `FctShared.Xlsx`**：外壳共享，自己只提供 `styles.xml` 与样式号，别再手写 zip/部件。
 - **新面板别自己写颜色字号**：取 `Theme` 里的令牌；改完让 `Theme.Apply` 走一遍即可统一。
   主题器**不许改布局**（自检会逐控件比对 `Bounds`）；自绘控件请加进 `Theme.IsSkipped` 或挂 `Tag = Theme.SkipTag`。
 - **WinExe 里 CLI 要输出**：`AttachConsole(-1)` 之后必须 `Console.SetOut(...)`。

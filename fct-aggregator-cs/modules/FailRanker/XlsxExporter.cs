@@ -1,6 +1,9 @@
 using System.IO.Compression;
 using System.Text;
 
+using Cell = FctShared.Xlsx.Cell;    // v2.9.3: xlsx 外壳已抽到 FctShared.Xlsx
+using Sheet = FctShared.Xlsx.Sheet;
+
 namespace FctFailRanker;
 
 /// <summary>
@@ -29,23 +32,6 @@ public static class XlsxExporter
     private const int S_ZEBRA_N2 = 15; // 斑马纹 数值居中两位小数
     private const int S_NUM_L    = 16; // 数值左(明细失败项数用,居中即可) -> 复用居中
 
-    private class Sheet
-    {
-        public string Name = "";
-        public List<Row> Rows = new();
-        public List<double> ColWidths = new();       // 列宽(字符数)
-        public List<(int r1, int c1, int r2, int c2)> Merges = new();  // 合并单元格(0基)
-    }
-    private class Row { public List<Cell> Cells = new(); }
-    private class Cell
-    {
-        public string? Text;
-        public double? Number;
-        public int Style = S_NORMAL;
-        public static Cell T(string? s, int style = S_NORMAL) => new() { Text = s ?? "", Style = style };
-        public static Cell N(double n, int style = S_NUM_C) => new() { Number = n, Style = style };
-        public static Cell Empty() => new() { Text = "", Style = S_NORMAL };
-    }
 
     private static readonly string[] RankHeaders = { "排名", "不良项名称", "出现次数", "受影响产品数", "占比(%)", "测量值", "规格", "单位" };
     private static readonly double[] RankWidths  = { 8, 46, 12, 16, 12, 28, 24, 10 };
@@ -62,7 +48,7 @@ public static class XlsxExporter
         // 标题(跨5列居中)
         AddTitle(s1, "FCT 不良项排名报表", 5);
         AddSubtitle(s1, $"统计时间段：{start:yyyy-MM-dd}  ~  {end:yyyy-MM-dd}      生成时间：{DateTime.Now:yyyy-MM-dd HH:mm}", 5);
-        s1.Rows.Add(new Row());
+        s1.Rows.Add(new List<Cell>());
 
         // 概览小表 (2列: 指标 | 数值), 居中放在前两列
         AddSection(s1, "概览", 5);
@@ -73,7 +59,7 @@ public static class XlsxExporter
         AddKV(s1, "INTERRUPTED(中断)", summary.Interrupted);
         AddKVd(s1, "良率(%)", summary.Yield);
         AddKV(s1, "不良项累计次数", summary.TotalFailOccurrences);
-        s1.Rows.Add(new Row());
+        s1.Rows.Add(new List<Cell>());
 
         AddSection(s1, "不良项排名（按出现次数降序）", 5);
         AddRankTable(s1, ranks);
@@ -83,12 +69,12 @@ public static class XlsxExporter
         var byModel = CsvExporter.AggregateByModel(records);
         var s2 = new Sheet { Name = "各型号排名", ColWidths = RankWidths.ToList() };
         AddTitle(s2, "各型号不良项排名", 5);
-        s2.Rows.Add(new Row());
+        s2.Rows.Add(new List<Cell>());
         foreach (var g in byModel)
         {
             AddGroupSection(s2, $"型号 {g.Key}", g.Summary, 5);
             AddRankTable(s2, g.Ranks);
-            s2.Rows.Add(new Row());
+            s2.Rows.Add(new List<Cell>());
         }
         sheets.Add(s2);
 
@@ -96,12 +82,12 @@ public static class XlsxExporter
         var byStation = CsvExporter.AggregateByStation(records);
         var s3 = new Sheet { Name = "各机台排名", ColWidths = RankWidths.ToList() };
         AddTitle(s3, "各机台不良项排名", 5);
-        s3.Rows.Add(new Row());
+        s3.Rows.Add(new List<Cell>());
         foreach (var g in byStation)
         {
             AddGroupSection(s3, $"机台 {g.Key}", g.Summary, 5);
             AddRankTable(s3, g.Ranks);
-            s3.Rows.Add(new Row());
+            s3.Rows.Add(new List<Cell>());
         }
         sheets.Add(s3);
 
@@ -112,10 +98,10 @@ public static class XlsxExporter
             ColWidths = new List<double> { 14, 10, 12, 34, 16, 8, 10, 50, 46 },
         };
         AddTitle(s4, "测试明细清单", 9);
-        s4.Rows.Add(new Row());
+        s4.Rows.Add(new List<Cell>());
         string[] detHeaders = { "测试日期", "类别", "型号", "SN", "机台", "结果", "失败项数", "失败项列表(值/规格)", "文件名" };
-        var hrow = new Row();
-        foreach (var h in detHeaders) hrow.Cells.Add(Cell.T(h, S_HEADER));
+        var hrow = new List<Cell>();
+        foreach (var h in detHeaders) hrow.Add(Cell.T(h, S_HEADER));
         s4.Rows.Add(hrow);
         int zi = 0;
         foreach (var rec in records
@@ -125,30 +111,30 @@ public static class XlsxExporter
             bool zebra = (zi++ % 2 == 1);
             int st = zebra ? S_ZEBRA_T : S_TEXT_C;
             int sn = zebra ? S_ZEBRA_N : S_NUM_C;
-            var row = new Row();
-            row.Cells.Add(Cell.T(rec.TestDate, st));
-            row.Cells.Add(Cell.T(rec.Category, st));
-            row.Cells.Add(Cell.T(rec.Model, st));
-            row.Cells.Add(Cell.T(rec.Sn, zebra ? S_ZEBRA_T : S_NORMAL));  // SN 左对齐
-            row.Cells.Add(Cell.T(rec.Station, st));
-            row.Cells.Add(Cell.T(rec.Result, st));
-            row.Cells.Add(Cell.N(rec.FailItems.Count, sn));
-            row.Cells.Add(Cell.T(string.Join(" | ", rec.FailItems.Select(f => f.ToDetail())), zebra ? S_ZEBRA_T : S_NORMAL));  // 失败项列表(含值/规格)
-            row.Cells.Add(Cell.T(rec.Filename, zebra ? S_ZEBRA_T : S_NORMAL));
+            var row = new List<Cell>();
+            row.Add(Cell.T(rec.TestDate, st));
+            row.Add(Cell.T(rec.Category, st));
+            row.Add(Cell.T(rec.Model, st));
+            row.Add(Cell.T(rec.Sn, zebra ? S_ZEBRA_T : S_NORMAL));  // SN 左对齐
+            row.Add(Cell.T(rec.Station, st));
+            row.Add(Cell.T(rec.Result, st));
+            row.Add(Cell.N(rec.FailItems.Count, sn));
+            row.Add(Cell.T(string.Join(" | ", rec.FailItems.Select(f => f.ToDetail())), zebra ? S_ZEBRA_T : S_NORMAL));  // 失败项列表(含值/规格)
+            row.Add(Cell.T(rec.Filename, zebra ? S_ZEBRA_T : S_NORMAL));
             s4.Rows.Add(row);
         }
         sheets.Add(s4);
 
-        WriteXlsx(path, sheets);
+        FctShared.Xlsx.Write(path, sheets, Styles());
     }
 
     // ---- 组装辅助 ----
     private static void AddTitle(Sheet sh, string text, int span)
     {
         int r = sh.Rows.Count;
-        var row = new Row();
-        row.Cells.Add(Cell.T(text, S_TITLE));
-        for (int i = 1; i < span; i++) row.Cells.Add(Cell.T("", S_TITLE));
+        var row = new List<Cell>();
+        row.Add(Cell.T(text, S_TITLE));
+        for (int i = 1; i < span; i++) row.Add(Cell.T("", S_TITLE));
         sh.Rows.Add(row);
         sh.Merges.Add((r, 0, r, span - 1));
     }
@@ -156,9 +142,9 @@ public static class XlsxExporter
     private static void AddSubtitle(Sheet sh, string text, int span)
     {
         int r = sh.Rows.Count;
-        var row = new Row();
-        row.Cells.Add(Cell.T(text, S_SUBTITLE));
-        for (int i = 1; i < span; i++) row.Cells.Add(Cell.T("", S_SUBTITLE));
+        var row = new List<Cell>();
+        row.Add(Cell.T(text, S_SUBTITLE));
+        for (int i = 1; i < span; i++) row.Add(Cell.T("", S_SUBTITLE));
         sh.Rows.Add(row);
         sh.Merges.Add((r, 0, r, span - 1));
     }
@@ -166,9 +152,9 @@ public static class XlsxExporter
     private static void AddSection(Sheet sh, string text, int span)
     {
         int r = sh.Rows.Count;
-        var row = new Row();
-        row.Cells.Add(Cell.T(text, S_SECTION));
-        for (int i = 1; i < span; i++) row.Cells.Add(Cell.T("", S_SECTION));
+        var row = new List<Cell>();
+        row.Add(Cell.T(text, S_SECTION));
+        for (int i = 1; i < span; i++) row.Add(Cell.T("", S_SECTION));
         sh.Rows.Add(row);
         sh.Merges.Add((r, 0, r, span - 1));
     }
@@ -177,32 +163,32 @@ public static class XlsxExporter
     {
         int r = sh.Rows.Count;
         var text = $"{title}    ｜    FAIL {sum.Fail} 台    中断 {sum.Interrupted}    良率 {sum.Yield:F2}%";
-        var row = new Row();
-        row.Cells.Add(Cell.T(text, S_SECTION));
-        for (int i = 1; i < span; i++) row.Cells.Add(Cell.T("", S_SECTION));
+        var row = new List<Cell>();
+        row.Add(Cell.T(text, S_SECTION));
+        for (int i = 1; i < span; i++) row.Add(Cell.T("", S_SECTION));
         sh.Rows.Add(row);
         sh.Merges.Add((r, 0, r, span - 1));
     }
 
     private static void AddKV(Sheet sh, string k, int v)
     {
-        var row = new Row();
-        row.Cells.Add(Cell.T(k, S_KEY));
-        row.Cells.Add(Cell.N(v, S_VAL));
+        var row = new List<Cell>();
+        row.Add(Cell.T(k, S_KEY));
+        row.Add(Cell.N(v, S_VAL));
         sh.Rows.Add(row);
     }
     private static void AddKVd(Sheet sh, string k, double v)
     {
-        var row = new Row();
-        row.Cells.Add(Cell.T(k, S_KEY));
-        row.Cells.Add(Cell.N(Math.Round(v, 2), S_NUM_C2 == 0 ? S_VAL : S_NUM_C2));
+        var row = new List<Cell>();
+        row.Add(Cell.T(k, S_KEY));
+        row.Add(Cell.N(Math.Round(v, 2), S_NUM_C2 == 0 ? S_VAL : S_NUM_C2));
         sh.Rows.Add(row);
     }
 
     private static void AddRankTable(Sheet sh, List<CsvExporter.FailRank> ranks)
     {
-        var hrow = new Row();
-        foreach (var h in RankHeaders) hrow.Cells.Add(Cell.T(h, S_HEADER));
+        var hrow = new List<Cell>();
+        foreach (var h in RankHeaders) hrow.Add(Cell.T(h, S_HEADER));
         sh.Rows.Add(hrow);
 
         int rank = 1;
@@ -214,87 +200,31 @@ public static class XlsxExporter
             int nStyle = top ? S_TOP_NUM  : (zebra ? S_ZEBRA_N : S_NUM_C);
             int n2Style = top ? S_TOP_NUM2 : (zebra ? S_ZEBRA_N2 : S_NUM_C2);
 
-            var row = new Row();
-            row.Cells.Add(Cell.N(rank, nStyle));
-            row.Cells.Add(Cell.T(r.Item, top ? S_TOP_TEXT : (zebra ? S_ZEBRA_T : S_NORMAL)));  // 名称左对齐
-            row.Cells.Add(Cell.N(r.Count, nStyle));
-            row.Cells.Add(Cell.N(r.AffectedUnits, nStyle));
-            row.Cells.Add(Cell.N(Math.Round(r.Percent, 2), n2Style));
-            row.Cells.Add(Cell.T(r.Values, zebra ? S_ZEBRA_T : S_NORMAL));    // 测量值左对齐
-            row.Cells.Add(Cell.T(r.Limits, zebra ? S_ZEBRA_T : S_NORMAL));    // 规格左对齐
-            row.Cells.Add(Cell.T(r.Units, zebra ? S_ZEBRA_T : S_TEXT_C));     // 单位居中
+            var row = new List<Cell>();
+            row.Add(Cell.N(rank, nStyle));
+            row.Add(Cell.T(r.Item, top ? S_TOP_TEXT : (zebra ? S_ZEBRA_T : S_NORMAL)));  // 名称左对齐
+            row.Add(Cell.N(r.Count, nStyle));
+            row.Add(Cell.N(r.AffectedUnits, nStyle));
+            row.Add(Cell.N(Math.Round(r.Percent, 2), n2Style));
+            row.Add(Cell.T(r.Values, zebra ? S_ZEBRA_T : S_NORMAL));    // 测量值左对齐
+            row.Add(Cell.T(r.Limits, zebra ? S_ZEBRA_T : S_NORMAL));    // 规格左对齐
+            row.Add(Cell.T(r.Units, zebra ? S_ZEBRA_T : S_TEXT_C));     // 单位居中
             sh.Rows.Add(row);
             rank++;
         }
     }
 
-    // ==================== OOXML 打包 ====================
-    private static void WriteXlsx(string path, List<Sheet> sheets)
-    {
-        if (File.Exists(path)) File.Delete(path);
-        using var fs = new FileStream(path, FileMode.CreateNew);
-        using var zip = new ZipArchive(fs, ZipArchiveMode.Create);
 
-        AddEntry(zip, "[Content_Types].xml", ContentTypes(sheets.Count));
-        AddEntry(zip, "_rels/.rels", RootRels());
-        AddEntry(zip, "xl/workbook.xml", Workbook(sheets));
-        AddEntry(zip, "xl/_rels/workbook.xml.rels", WorkbookRels(sheets.Count));
-        AddEntry(zip, "xl/styles.xml", Styles());
-        for (int i = 0; i < sheets.Count; i++)
-            AddEntry(zip, $"xl/worksheets/sheet{i + 1}.xml", SheetXml(sheets[i]));
-    }
 
-    private static void AddEntry(ZipArchive zip, string name, string content)
-    {
-        var e = zip.CreateEntry(name, CompressionLevel.Optimal);
-        using var w = new StreamWriter(e.Open(), new UTF8Encoding(false));
-        w.Write(content);
-    }
 
-    private static string ContentTypes(int sheetCount)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">");
-        sb.Append("<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>");
-        sb.Append("<Default Extension=\"xml\" ContentType=\"application/xml\"/>");
-        sb.Append("<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>");
-        sb.Append("<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>");
-        for (int i = 1; i <= sheetCount; i++)
-            sb.Append($"<Override PartName=\"/xl/worksheets/sheet{i}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
-        sb.Append("</Types>");
-        return sb.ToString();
-    }
 
-    private static string RootRels() =>
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
-        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>" +
-        "</Relationships>";
 
-    private static string Workbook(List<Sheet> sheets)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" ");
-        sb.Append("xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets>");
-        for (int i = 0; i < sheets.Count; i++)
-            sb.Append($"<sheet name=\"{XmlEsc(sheets[i].Name)}\" sheetId=\"{i + 1}\" r:id=\"rId{i + 1}\"/>");
-        sb.Append("</sheets></workbook>");
-        return sb.ToString();
-    }
 
-    private static string WorkbookRels(int sheetCount)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
-        for (int i = 1; i <= sheetCount; i++)
-            sb.Append($"<Relationship Id=\"rId{i}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{i}.xml\"/>");
-        sb.Append($"<Relationship Id=\"rId{sheetCount + 1}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>");
-        sb.Append("</Relationships>");
-        return sb.ToString();
-    }
+
+
+
+
+
 
     /// <summary>
     /// 样式表: fonts / fills / borders / cellXfs。
@@ -392,71 +322,9 @@ public static class XlsxExporter
         sb.Append("</xf>");
     }
 
-    private static string SheetXml(Sheet sheet)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
 
-        // 列宽
-        if (sheet.ColWidths.Count > 0)
-        {
-            sb.Append("<cols>");
-            for (int c = 0; c < sheet.ColWidths.Count; c++)
-                sb.Append($"<col min=\"{c + 1}\" max=\"{c + 1}\" width=\"{sheet.ColWidths[c].ToString(System.Globalization.CultureInfo.InvariantCulture)}\" customWidth=\"1\"/>");
-            sb.Append("</cols>");
-        }
 
-        sb.Append("<sheetData>");
-        for (int r = 0; r < sheet.Rows.Count; r++)
-        {
-            var row = sheet.Rows[r];
-            int rowNum = r + 1;
-            // 标题行给点高度
-            sb.Append($"<row r=\"{rowNum}\">");
-            for (int c = 0; c < row.Cells.Count; c++)
-            {
-                var cell = row.Cells[c];
-                var refStr = $"{ColName(c)}{rowNum}";
-                if (cell.Number.HasValue)
-                    sb.Append($"<c r=\"{refStr}\" s=\"{cell.Style}\"><v>{cell.Number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}</v></c>");
-                else
-                    sb.Append($"<c r=\"{refStr}\" s=\"{cell.Style}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">{XmlEsc(cell.Text)}</t></is></c>");
-            }
-            sb.Append("</row>");
-        }
-        sb.Append("</sheetData>");
 
-        // 合并单元格
-        if (sheet.Merges.Count > 0)
-        {
-            sb.Append($"<mergeCells count=\"{sheet.Merges.Count}\">");
-            foreach (var (r1, c1, r2, c2) in sheet.Merges)
-                sb.Append($"<mergeCell ref=\"{ColName(c1)}{r1 + 1}:{ColName(c2)}{r2 + 1}\"/>");
-            sb.Append("</mergeCells>");
-        }
 
-        sb.Append("</worksheet>");
-        return sb.ToString();
-    }
 
-    private static string ColName(int index)
-    {
-        var sb = new StringBuilder();
-        index++;
-        while (index > 0)
-        {
-            int rem = (index - 1) % 26;
-            sb.Insert(0, (char)('A' + rem));
-            index = (index - 1) / 26;
-        }
-        return sb.ToString();
-    }
-
-    private static string XmlEsc(string? s)
-    {
-        s ??= "";
-        return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
-                .Replace("\"", "&quot;");
-    }
 }

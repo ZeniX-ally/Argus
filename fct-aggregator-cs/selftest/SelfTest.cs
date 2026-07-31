@@ -1130,6 +1130,84 @@ class SelfTest
             holder.Dispose(); kpi.Dispose(); card.Dispose(); tagged.Dispose();
         }
 
+        // ---------- 去重后的 xlsx 写出器（v2.9.3）----------
+        Console.WriteLine("\n【去重】四份 xlsx 写出器合并为 FctShared.Xlsx，输出必须仍然合法");
+        {
+            // 合并的是"打包外壳"，各工具的 styles.xml 原样保留 —— 所以这里验的是
+            // ① 生成的包结构完整、每个 XML 都能被严格解析；② 样式部件确实还是各家自己的。
+            var dir = Path.Combine(work, "xlsx");
+            Directory.CreateDirectory(dir);
+
+            // 直接用共享写出器造一份，含中文、特殊字符、数字、合并单元格、冻结行
+            var sh = new FctShared.Xlsx.Sheet { Name = "测试<表>/x:1", FreezeRows = 1 };
+            sh.ColWidths.AddRange(new[] { 20.0, 12.0, 12.0 });
+            sh.Rows.Add(new List<FctShared.Xlsx.Cell>
+            {
+                FctShared.Xlsx.T("项目 & <标记>"), FctShared.Xlsx.T("值"), FctShared.Xlsx.T("备注"),
+            });
+            sh.Rows.Add(new List<FctShared.Xlsx.Cell>
+            {
+                FctShared.Xlsx.T("含\"引号\"与'撇号'"), FctShared.Xlsx.N(3.14159), FctShared.Xlsx.Empty(),
+            });
+            sh.Merges.Add((0, 1, 0, 2));
+            var shared = Path.Combine(dir, "shared.xlsx");
+            FctShared.Xlsx.Write(shared, new[] { sh }, FctDistributor.XlsxWriter.Styles2());
+
+            Check(new FileInfo(shared).Length > 800, $"共享写出器生成 xlsx（{new FileInfo(shared).Length} 字节）");
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(shared))
+            {
+                foreach (var need in new[] { "[Content_Types].xml", "_rels/.rels", "xl/workbook.xml",
+                                             "xl/_rels/workbook.xml.rels", "xl/styles.xml", "xl/worksheets/sheet1.xml" })
+                    if (!zip.Entries.Any(e => e.FullName == need)) Check(false, $"缺部件 {need}");
+                Check(true, "包部件齐全");
+                foreach (var e in zip.Entries)
+                {
+                    using var st = e.Open();
+                    try { System.Xml.Linq.XDocument.Load(st); }
+                    catch (Exception ex) { Check(false, $"{e.FullName} 不是合法 XML: {ex.Message}"); }
+                }
+                Check(true, "所有部件都是严格合法的 XML（转义没写漏）");
+
+                using var sr = new StreamReader(zip.GetEntry("xl/worksheets/sheet1.xml")!.Open());
+                var body = sr.ReadToEnd();
+                Check(body.Contains("&amp;") && body.Contains("&lt;标记&gt;"), "特殊字符已正确转义");
+                Check(body.Contains("<pane ySplit=\"1\""), "冻结行已写入");
+                Check(body.Contains("mergeCell"), "合并单元格已写入");
+                Check(body.Contains("3.14159"), "数值按不变文化写出（小数点不会变成逗号）");
+
+                using var sr2 = new StreamReader(zip.GetEntry("xl/workbook.xml")!.Open());
+                var wb = sr2.ReadToEnd();
+                // Excel 真正禁止的是 \ / ? * [ ] : —— 这些换成下划线；< > 合法，只需 XML 转义
+                Check(wb.Contains("_x_1") && !wb.Contains("/x:1"),
+                      "工作表名：非法字符（/ :）已换成下划线");
+                Check(!wb.Contains("<表>"), "工作表名里的尖括号已做 XML 转义（不会把 workbook.xml 搞坏）");
+            }
+
+            // 维修记录导出（走的也是共享写出器）仍然可读
+            var recs = d.ListMaintenance("", 50);
+            var mx = Path.Combine(dir, "维修.xlsx");
+            MaintenanceExporter.ExportXlsx(mx, recs);
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(mx))
+            {
+                foreach (var e in zip.Entries)
+                {
+                    using var st = e.Open();
+                    try { System.Xml.Linq.XDocument.Load(st); }
+                    catch (Exception ex) { Check(false, $"维修导出 {e.FullName} XML 非法: {ex.Message}"); }
+                }
+                using var sr = new StreamReader(zip.GetEntry("xl/worksheets/sheet1.xml")!.Open());
+                var body = sr.ReadToEnd();
+                Check(body.Contains("故障项目") && body.Contains("更新时间"), "维修导出表头仍完整");
+                Check(body.Contains("<pane ySplit=\"1\""), "维修导出仍冻结表头");
+            }
+
+            // 三个工具的样式部件各不相同 = 报表长相没有被"统一"掉
+            var st1 = FctDistributor.XlsxWriter.Styles2();
+            var st2 = FctFetcher.XlsxWriter.Styles2();
+            Check(st1 != st2, "各工具的 styles.xml 仍是各自的调色板（只合并了外壳，没统一长相）");
+            Check(st1.Contains("styleSheet") && st2.Contains("styleSheet"), "样式部件格式正常");
+        }
+
         // ---------- 导出 ----------
         var records = d.ListMaintenance("", 500);
         var xlsx = Path.Combine(work, "维修记录.xlsx");

@@ -44,6 +44,7 @@
     <Compile Include="..\FctIni.cs" />
     <!-- v2.8.0 GUI 重构：主窗口布局要能被自检验证（停靠顺序写错很容易错而不报错） -->
     <Compile Include="..\Theme.cs" />
+    <Compile Include="..\Xlsx.cs" />
     <Compile Include="..\UiWidgets.cs" />
     <Compile Include="..\MainForm.cs" />
     <Compile Include="..\DeviceStatusPanel.cs" />

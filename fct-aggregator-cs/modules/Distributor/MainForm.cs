@@ -173,7 +173,7 @@ public class MainForm : Form
         for (int i = 1; i <= 7; i++) _clbStations.Items.Add($"FCT{i}");
         _clbStations.Visible = false;
 
-        var detected = StationDetector.Detect();
+        var detected = FctAggregator.StationDetector.DetectStation();   // v2.9.3: 与主程序共用一份 IP 映射表
         _lblDetect.Left = 400; _lblDetect.Top = 129; _lblDetect.Width = 250; _lblDetect.Height = 20;
         if (detected != null)
         {
@@ -1161,31 +1161,4 @@ public class MainForm : Form
     }
 }
 
-/// <summary>按本机 IP 识别机台号（与 FCT-Aggregator 的映射表一致）。</summary>
-public static class StationDetector
-{
-    private static readonly Dictionary<string, string> IpToStation = new()
-    {
-        ["172.28.55.11"] = "FCT1",
-        ["172.28.55.12"] = "FCT2",
-        ["172.28.55.13"] = "FCT3",
-        ["172.28.55.14"] = "FCT4",
-        ["172.28.55.15"] = "FCT5",
-        ["172.28.55.16"] = "FCT6",
-        ["172.28.55.18"] = "FCT7",
-    };
 
-    public static string? Detect()
-    {
-        try
-        {
-            foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
-                foreach (var ua in ni.GetIPProperties().UnicastAddresses)
-                    if (IpToStation.TryGetValue(ua.Address.ToString(), out var st))
-                        return st;
-        }
-        catch { }
-        return null;
-    }
-
-}

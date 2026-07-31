@@ -67,7 +67,7 @@ public class MainForm : Form
     private const int OwnPageCount = 5;
 
     /// <summary>
-    /// 工具（v2.9.2 起**内嵌**在主窗口里，不再弹独立窗口）。
+    /// 工具（v2.9.3 起**内嵌**在主窗口里，不再弹独立窗口）。
     /// key 同时是 CLI 子命令名（<c>FCT-Aggregator.exe distribute</c> 仍能单独开窗）。
     /// </summary>
     private static readonly (string key, string label, Func<Form> factory)[] Tools =
@@ -87,7 +87,7 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Zenix-Ally | FCT 工具套件 v2.9.2";
+        Text = "Zenix-Ally | FCT 工具套件 v2.9.3";
         // 内嵌的工具自带最小尺寸（最大的数据分发是 1040×790），窗口得能装下；
         // 装不下时由 ToolHost 的 AutoScroll 兼底。
         Width = 1360; Height = 920;
@@ -201,7 +201,7 @@ public class MainForm : Form
         _maintPage = new MaintenancePanel(_engine) { Dock = DockStyle.Fill, Visible = false };
         _debugPage = new DebugPanel(_engine) { Dock = DockStyle.Fill, Visible = false };
         _failPage = new FailListPanel(_engine) { Dock = DockStyle.Fill, Visible = false };
-        // v2.9.2：主程序的面板也过一道主题器，把漏刷的默认控件（输入框边框、
+        // v2.9.3：主程序的面板也过一道主题器，把漏刷的默认控件（输入框边框、
         // ListView 底色、普通按钮）拉齐；自绘控件与看板已在 Theme.Apply 里跳过
         foreach (Control page in new Control[] { _dashboardPage, _devicePage, _maintPage, _debugPage, _failPage })
             Theme.Apply(page);
@@ -243,7 +243,7 @@ public class MainForm : Form
 
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v2.9.2", ForeColor = Color.FromArgb(120, 134, 154),
+            Dock = DockStyle.Bottom, Height = 26, Text = "v2.9.3", ForeColor = Color.FromArgb(120, 134, 154),
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };
@@ -256,7 +256,7 @@ public class MainForm : Form
             b.Click += (_, _) => ShowPage(idx);
             _navButtons.Add(b);
         }
-        // ===== 工具箱（v2.9.2：也是切页，不再弹独立窗口）=====
+        // ===== 工具箱（v2.9.3：也是切页，不再弹独立窗口）=====
         var toolButtons = new List<NavButton>();
         for (int i = Tools.Length - 1; i >= 0; i--)
         {

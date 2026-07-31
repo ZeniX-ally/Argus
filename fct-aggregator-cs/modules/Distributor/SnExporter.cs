@@ -1,5 +1,8 @@
 using System.Text;
 
+using Cell = FctShared.Xlsx.Cell;    // v2.9.3: xlsx 外壳已抽到 FctShared.Xlsx
+using Sheet = FctShared.Xlsx.Sheet;
+
 namespace FctDistributor;
 
 /// <summary>
@@ -122,7 +125,7 @@ public static class SnExporter
         if (excluded > 0)
             log?.Invoke($"[导出] 已排除 {excluded} 个非金/银板文件（台账只收 ...272 金板 与 ...274 银板）");
 
-        var sheet = new XlsxWriter.Sheet { Name = "金银板SN台账" };
+        var sheet = new Sheet { Name = "金银板SN台账" };
         sheet.AddHeader(("机台号", 12), ("日期", 14),
                         ("金板 SN", 36), ("标注", 18),
                         ("银板 SN", 36), ("标注", 18));
@@ -144,12 +147,12 @@ public static class SnExporter
                 int sc = zebra ? XlsxWriter.S_ZEBRA_C : XlsxWriter.S_CENTER;
 
                 var row = sheet.NewRow();
-                row.Add(XlsxWriter.Cell.T(g.Key.Station, sc));
-                row.Add(XlsxWriter.Cell.T(FormatDate(g.Key.DateDir), sc));
-                row.Add(XlsxWriter.Cell.T(i < golds.Count ? golds[i].Sn : "", st));
-                row.Add(XlsxWriter.Cell.T(i < golds.Count ? Label(Kind.Golden) : "", sc));
-                row.Add(XlsxWriter.Cell.T(i < silvers.Count ? silvers[i].Sn : "", st));
-                row.Add(XlsxWriter.Cell.T(i < silvers.Count ? Label(Kind.Silvery) : "", sc));
+                row.Add(Cell.T(g.Key.Station, sc));
+                row.Add(Cell.T(FormatDate(g.Key.DateDir), sc));
+                row.Add(Cell.T(i < golds.Count ? golds[i].Sn : "", st));
+                row.Add(Cell.T(i < golds.Count ? Label(Kind.Golden) : "", sc));
+                row.Add(Cell.T(i < silvers.Count ? silvers[i].Sn : "", st));
+                row.Add(Cell.T(i < silvers.Count ? Label(Kind.Silvery) : "", sc));
                 rows++;
             }
         }

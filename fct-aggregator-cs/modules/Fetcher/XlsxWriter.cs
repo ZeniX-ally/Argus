@@ -1,12 +1,16 @@
-using System.Globalization;
-using System.IO.Compression;
 using System.Text;
+using Cell = FctShared.Xlsx.Cell;
+using Sheet = FctShared.Xlsx.Sheet;
 
 namespace FctFetcher;
 
 /// <summary>
-/// 零依赖生成 .xlsx (标准 OOXML)，与 fct-fail-ranker/XlsxExporter 同一套骨架，
-/// 但只保留本工具需要的 4 种样式，避免无谓复杂度。
+/// 取数打包工具的 xlsx 样式与门面。
+///
+/// v2.9.3：OOXML 打包外壳（zip / Content_Types / workbook / sheet XML / 转义 /
+/// 列宽 / 冻结行 / 合并单元格）已抽到共享的 <see cref="FctShared.Xlsx"/>，四处共用一份；
+/// 这里只留**本工具自己的 4 种样式**与 T/N/H 便捷方法，报表长相不变。
+/// <c>Cell</c> / <c>Sheet</c> 现在是 <see cref="FctShared.Xlsx"/> 的类型（using 别名）。
 /// </summary>
 public static class XlsxWriter
 {
@@ -15,93 +19,20 @@ public static class XlsxWriter
     public const int S_TEXT_C = 2;   // 文本居中
     public const int S_NUM_C = 3;    // 数值居中
 
-    public sealed class Cell
-    {
-        public string Text = "";
-        public double? Number;
-        public int Style = S_NORMAL;
-    }
+    public static Cell T(string? s, int style = S_NORMAL) => FctShared.Xlsx.T(s, style);
+    public static Cell N(double n, int style = S_NUM_C) => FctShared.Xlsx.N(n, style);
+    public static Cell H(string s) => FctShared.Xlsx.T(s, S_HEADER);
 
-    public sealed class Sheet
-    {
-        public string Name = "Sheet1";
-        public List<List<Cell>> Rows = new();
-        public List<double> ColWidths = new();
-        public bool FreezeHeader = true;
-    }
-
-    public static Cell T(string? s, int style = S_NORMAL) => new() { Text = s ?? "", Style = style };
-    public static Cell N(double n, int style = S_NUM_C) => new() { Number = n, Style = style };
-    public static Cell H(string s) => new() { Text = s, Style = S_HEADER };
-
+    /// <summary>写出 xlsx；表头默认冻结（与合并前行为一致）。</summary>
     public static void Write(string path, List<Sheet> sheets)
     {
-        var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        if (File.Exists(path)) File.Delete(path);
-
-        using var fs = new FileStream(path, FileMode.CreateNew);
-        using var zip = new ZipArchive(fs, ZipArchiveMode.Create);
-        Add(zip, "[Content_Types].xml", ContentTypes(sheets.Count));
-        Add(zip, "_rels/.rels", RootRels());
-        Add(zip, "xl/workbook.xml", Workbook(sheets));
-        Add(zip, "xl/_rels/workbook.xml.rels", WorkbookRels(sheets.Count));
-        Add(zip, "xl/styles.xml", Styles());
-        for (int i = 0; i < sheets.Count; i++)
-            Add(zip, $"xl/worksheets/sheet{i + 1}.xml", SheetXml(sheets[i]));
+        foreach (var sh in sheets)
+            if (sh.FreezeRows == 0 && sh.Rows.Count > 0) sh.FreezeRows = 1;
+        FctShared.Xlsx.Write(path, sheets, Styles());
     }
 
-    private static void Add(ZipArchive zip, string name, string content)
-    {
-        var e = zip.CreateEntry(name, CompressionLevel.Optimal);
-        using var w = new StreamWriter(e.Open(), new UTF8Encoding(false));
-        w.Write(content);
-    }
-
-    private static string ContentTypes(int n)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">");
-        sb.Append("<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>");
-        sb.Append("<Default Extension=\"xml\" ContentType=\"application/xml\"/>");
-        sb.Append("<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>");
-        sb.Append("<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>");
-        for (int i = 1; i <= n; i++)
-            sb.Append($"<Override PartName=\"/xl/worksheets/sheet{i}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
-        sb.Append("</Types>");
-        return sb.ToString();
-    }
-
-    private static string RootRels() =>
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
-        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>" +
-        "</Relationships>";
-
-    private static string Workbook(List<Sheet> sheets)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" ");
-        sb.Append("xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets>");
-        for (int i = 0; i < sheets.Count; i++)
-            sb.Append($"<sheet name=\"{XmlEsc(sheets[i].Name)}\" sheetId=\"{i + 1}\" r:id=\"rId{i + 1}\"/>");
-        sb.Append("</sheets></workbook>");
-        return sb.ToString();
-    }
-
-    private static string WorkbookRels(int n)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
-        for (int i = 1; i <= n; i++)
-            sb.Append($"<Relationship Id=\"rId{i}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{i}.xml\"/>");
-        sb.Append($"<Relationship Id=\"rId{n + 1}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>");
-        sb.Append("</Relationships>");
-        return sb.ToString();
-    }
+    /// <summary>自检用：把样式部件暴露出来做对拍。</summary>
+    internal static string Styles2() => Styles();
 
     private static string Styles()
     {
@@ -150,93 +81,5 @@ public static class XlsxWriter
         sb.Append($"<xf fontId=\"{font}\" fillId=\"{fill}\" borderId=\"{border}\" ");
         sb.Append("applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\">");
         sb.Append($"<alignment horizontal=\"{hAlign}\" vertical=\"center\" wrapText=\"0\"/></xf>");
-    }
-
-    private static string SheetXml(Sheet sh)
-    {
-        var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
-
-        if (sh.FreezeHeader && sh.Rows.Count > 1)
-        {
-            sb.Append("<sheetViews><sheetView workbookViewId=\"0\">");
-            sb.Append("<pane ySplit=\"1\" topLeftCell=\"A2\" activePane=\"bottomLeft\" state=\"frozen\"/>");
-            sb.Append("</sheetView></sheetViews>");
-        }
-
-        if (sh.ColWidths.Count > 0)
-        {
-            sb.Append("<cols>");
-            for (int c = 0; c < sh.ColWidths.Count; c++)
-                sb.Append($"<col min=\"{c + 1}\" max=\"{c + 1}\" width=\"" +
-                          sh.ColWidths[c].ToString(CultureInfo.InvariantCulture) +
-                          "\" customWidth=\"1\"/>");
-            sb.Append("</cols>");
-        }
-
-        sb.Append("<sheetData>");
-        for (int r = 0; r < sh.Rows.Count; r++)
-        {
-            var row = sh.Rows[r];
-            sb.Append($"<row r=\"{r + 1}\">");
-            for (int c = 0; c < row.Count; c++)
-            {
-                var cell = row[c];
-                var refStr = $"{ColName(c)}{r + 1}";
-                if (cell.Number.HasValue)
-                {
-                    sb.Append($"<c r=\"{refStr}\" s=\"{cell.Style}\"><v>");
-                    sb.Append(cell.Number.Value.ToString(CultureInfo.InvariantCulture));
-                    sb.Append("</v></c>");
-                }
-                else if (cell.Text.Length > 0)
-                {
-                    sb.Append($"<c r=\"{refStr}\" s=\"{cell.Style}\" t=\"inlineStr\"><is><t xml:space=\"preserve\">");
-                    sb.Append(XmlEsc(cell.Text));
-                    sb.Append("</t></is></c>");
-                }
-                else
-                {
-                    sb.Append($"<c r=\"{refStr}\" s=\"{cell.Style}\"/>");
-                }
-            }
-            sb.Append("</row>");
-        }
-        sb.Append("</sheetData></worksheet>");
-        return sb.ToString();
-    }
-
-    private static string ColName(int index)
-    {
-        var sb = new StringBuilder();
-        int i = index;
-        do
-        {
-            sb.Insert(0, (char)('A' + i % 26));
-            i = i / 26 - 1;
-        } while (i >= 0);
-        return sb.ToString();
-    }
-
-    /// <summary>XML 转义 + 剔除 OOXML 不允许的控制字符(否则 Excel 报文件损坏)。</summary>
-    private static string XmlEsc(string s)
-    {
-        var sb = new StringBuilder(s.Length + 16);
-        foreach (var ch in s)
-        {
-            switch (ch)
-            {
-                case '&': sb.Append("&amp;"); break;
-                case '<': sb.Append("&lt;"); break;
-                case '>': sb.Append("&gt;"); break;
-                case '"': sb.Append("&quot;"); break;
-                case '\'': sb.Append("&apos;"); break;
-                default:
-                    if (ch == '\t' || ch == '\n' || ch == '\r' || ch >= 0x20) sb.Append(ch);
-                    break;
-            }
-        }
-        return sb.ToString();
     }
 }
