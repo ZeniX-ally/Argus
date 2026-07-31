@@ -39,6 +39,11 @@
     <Compile Remove="selftest-distributor\**" />
     <None Remove="selftest-distributor\**" />
     <EmbeddedResource Remove="selftest-distributor\**" />
+    <!-- tools\xlsxdump\ 同理：它是独立小工程（xlsx 长相核对），
+         不排除的话它的 obj\AssemblyInfo.cs 会被默认 glob 当成主程序源码 -> CS0579 -->
+    <Compile Remove="tools\**" />
+    <None Remove="tools\**" />
+    <EmbeddedResource Remove="tools\**" />
 
     <!-- 分发工具的内置模板（TemplateGenerator.LoadEmbedded 按 .xml 结尾扫描） -->
     <EmbeddedResource Include="modules\Distributor\tpl\*.xml" />

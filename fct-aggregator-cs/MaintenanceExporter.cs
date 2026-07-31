@@ -60,7 +60,13 @@ public static class MaintenanceExporter
     /// <summary>
     /// 导出 xlsx。v2.9.3：打包外壳改用共享的 <see cref="FctShared.Xlsx"/>
     /// （原来这里自己写了一遍 zip/Content_Types/sheet XML，与三个工具重复），
-    /// 样式与列宽仍是本导出自己的，输出格式不变。
+    /// 样式与列宽仍是本导出自己的。
+    ///
+    /// ⚠ 与 v2.9.2 的**唯一**长相差异：<c>FreezeRows = 1</c>（冻结表头）是 v2.9.3 新增的，
+    /// 旧版没有冻结窗格。12 列多行滚动时看不见表头，属改进，故保留；
+    /// 2026-07-31 用 <c>tools\xlsx_check.ps1 -Compare</c> 做过新旧逐单元格对比，
+    /// 除此一处外调色板 / 列宽 / 每个单元格的值与样式号完全一致。
+    /// 另外三个导出口（分发 / FAIL 排行 / 取数）比对结果是**一字节不差**。
     /// </summary>
     public static void ExportXlsx(string path, IEnumerable<MaintenanceRecord> records)
     {

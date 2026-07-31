@@ -1197,7 +1197,8 @@ class SelfTest
                 using var sr = new StreamReader(zip.GetEntry("xl/worksheets/sheet1.xml")!.Open());
                 var body = sr.ReadToEnd();
                 Check(body.Contains("故障项目") && body.Contains("更新时间"), "维修导出表头仍完整");
-                Check(body.Contains("<pane ySplit=\"1\""), "维修导出仍冻结表头");
+                Check(body.Contains("<pane ySplit=\"1\""),
+                      "维修导出冻结表头（v2.9.3 新增；v2.9.2 无冻结，是刻意保留的唯一长相变化）");
             }
 
             // 三个工具的样式部件各不相同 = 报表长相没有被"统一"掉
@@ -1282,6 +1283,21 @@ class SelfTest
                   "导出里没有漏译的英文 key（单一字典生效）");
             var cols = System.Text.RegularExpressions.Regex.Matches(body, "<col ").Count;
             Check(cols == 12, $"列宽定义 {cols} 个（应与 12 列一致）");
+
+            // 长相锁定（v2.9.3 xlsx 写出器去重的回归防线）：
+            // 去重只验了「结构合法」，配色/列宽靠人眼一次性确认。确认过的值就钉在这里，
+            // 以后谁改到列宽或表头色自检会直接抦下来。对比工具：tools\xlsx_check.ps1 -Compare
+            var wantWidths = new[] { "6", "24", "14", "22", "30", "10", "10", "12", "30", "24", "20", "20" };
+            var gotWidths = System.Text.RegularExpressions.Regex.Matches(body, "<col [^>]*width=\"([^\"]+)\"")
+                .Select(m => m.Groups[1].Value).ToArray();
+            Check(gotWidths.SequenceEqual(wantWidths),
+                  $"12 个列宽值与人眼确认过的一致（{string.Join("/", gotWidths)}）");
+
+            using var sr2 = new StreamReader(zip.GetEntry("xl/styles.xml")!.Open());
+            var styles = sr2.ReadToEnd();
+            Check(styles.Contains("4472C4"), "表头底色仍是 #4472C4 深蓝（调色板未被共享写出器带跑）");
+            Check(styles.Contains("FFFFFF") && styles.Contains("<b/>"), "表头仍是白色粗体");
+            Check(styles.Contains("微软雅黑"), "字体仍是微软雅黑");
         }
 
         // CSV 结构(沿用 v2.1.0): 标题行 + 导出时间 + 空行 + 表头 + 数据
