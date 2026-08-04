@@ -833,9 +833,13 @@ class SelfTest
             Check(t.CountPendingTodos() >= 2, "CountPendingTodos 与视图一致");
 
             // 确认 -> 关联维修记录 -> 待办离开列表
+            var events2 = new List<(string from, string to)>();
+            t.MaintenanceStatusChanged += (_, from, to) => events2.Add((from, to));
             var railItem = t.ListTodoView().First(x => x.Title == "5V_Rail");
             var mid = t.AcknowledgeTodo(railItem.Id, "张三", "critical", "in_progress");
             Check(mid > 0, $"确认待办已建维修记录 #{mid}");
+            Check(events2.Count == 1 && events2[0].from == "" && events2[0].to == "in_progress",
+                  $"确认落到非待办列等同状态变更、触发推送（{events2.Count} 次: '{events2[0].from}' -> {events2[0].to}）");
             var rec = t.ListMaintenance("in_progress", 10).FirstOrDefault(x => x.Id == mid);
             Check(rec != null && rec.FailItem == "5V_Rail", "维修记录的故障项 = 合并后的大项名");
             Check(rec != null && rec.Notes.Contains("6.1.1.1 5V_Rail"), "备注里留了原始测试项清单（可追溯）");

@@ -55,7 +55,7 @@ fct-aggregator-cs/
 
 ```powershell
 dotnet build FctAggregator.csproj -c Release          # 编译（要求 0 警告 0 错误；产物在 bin\Release\net8.0-windows\）
-dotnet run --project selftest\SelfTest.csproj -c Release   # 全量自检（必须全绿；当前 331 项断言）
+dotnet run --project selftest\SelfTest.csproj -c Release   # 全量自检（必须全绿；当前 332 项断言）
 
 # ⚠ 2026-08-01 起产物统一收敛到 bin\Release\net8.0-windows\（铺平，无 package_v*/ 子目录）：
 #   程序文件 + config.json + 启动.bat + 文档 + data\ + logs\ + Argus-v3.2.0.zip（完整）+ Argus-v3.2.0-update.zip（覆盖）

@@ -993,6 +993,13 @@ public class Database
         };
         var id = CreateMaintenance(rec);
 
+        // 新建记录状态不是默认 open 时（如直接拖到「已完成」），等同状态变更，触发推送
+        if (!string.Equals(rec.Status, MaintenanceMeta.DefaultStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            rec.Id = id;
+            NotifyStatusChanged(rec, "", rec.Status);
+        }
+
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
