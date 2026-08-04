@@ -13,6 +13,13 @@ public sealed class MainForm : Form
     private readonly ToolStripButton _btnClearSel = new("清空勾选");
     private readonly ToolStripComboBox _cboOrder = new();
     private readonly ToolStripLabel _lblFile = new("未打开文件");
+    private readonly ToolStripButton _btnCollapseTree = new("隐藏通道树");
+    private readonly ToolStripButton _btnCollapseBottom = new("收起数据/属性");
+
+    // 分栏（保存为字段以便折叠/展开切换）
+    private readonly SplitContainer _split = new();
+    private readonly SplitContainer _rsplit = new();
+    private int _savedBottomDist = 400;   // 底部面板收起前的高度，用于展开时还原
 
     private readonly TextBox _search = new();
     private readonly TreeView _tree = new();
@@ -60,24 +67,26 @@ public sealed class MainForm : Form
             _btnExportSel, _btnExportSum, new ToolStripSeparator(),
             _btnClearSel, new ToolStripSeparator(),
             new ToolStripLabel("排序:"), _cboOrder, new ToolStripSeparator(),
+            _btnCollapseTree, _btnCollapseBottom, new ToolStripSeparator(),
             _lblFile,
         });
         _btnOpen.Click += (_, _) => PickFile();
         _btnExportSel.Click += (_, _) => ExportSelected();
         _btnExportSum.Click += (_, _) => ExportSummary();
         _btnClearSel.Click += (_, _) => ClearChecks();
+        _btnCollapseTree.Click += (_, _) => ToggleTree();
+        _btnCollapseBottom.Click += (_, _) => ToggleBottom();
         Controls.Add(_tool);
 
         // ---- 主分栏 ----
-        var split = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Vertical,
-            SplitterDistance = 380,
-            FixedPanel = FixedPanel.Panel1,
-        };
-        Controls.Add(split);
-        split.BringToFront();
+        _split.Orientation = Orientation.Vertical;
+        _split.Dock = DockStyle.Fill;
+        _split.FixedPanel = FixedPanel.Panel1;
+        _split.Panel1Collapsed = false;
+        Controls.Add(_split);
+        _split.BringToFront();
+
+        var split = _split;
 
         // 左：搜索 + 树
         var left = new Panel { Dock = DockStyle.Fill };
@@ -95,13 +104,13 @@ public sealed class MainForm : Form
         _tree.BringToFront();
         split.Panel1.Controls.Add(left);
 
-        // 右：上波形 + 下数据/属性
-        var rsplit = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal,
-            SplitterDistance = 400,
-        };
+        // 右：上波形 + 下数据/属性（波形占更大部分，底部可收起）
+        // 注意：SplitterDistance / Panel2MinSize 不能在此设置 —— 控件尚未布局，
+        // 尺寸还是默认 150，面板最小高度校验会抛 InvalidOperationException，
+        // 所以都挪到 Load 事件里等布局完成后再设。
+        _rsplit.Dock = DockStyle.Fill;
+        _rsplit.Orientation = Orientation.Horizontal;
+        var rsplit = _rsplit;
         split.Panel2.Controls.Add(rsplit);
 
         _wave.Dock = DockStyle.Fill;
@@ -157,6 +166,15 @@ public sealed class MainForm : Form
         {
             if (e.Data?.GetData(DataFormats.FileDrop) is string[] fs && fs.Length > 0)
                 LoadFile(fs[0]);
+        };
+
+        // 初始分栏比例：必须在布局完成后设置（构造期控件还是默认 150 尺寸，
+        // 直接设 SplitterDistance 会抛 InvalidOperationException）
+        Load += (_, _) =>
+        {
+            _rsplit.Panel2MinSize = 180;     // 先设最小尺寸，再设分割位置
+            _split.SplitterDistance = 380;
+            _rsplit.SplitterDistance = 470;
         };
 
         UpdateButtons();
@@ -367,6 +385,43 @@ public sealed class MainForm : Form
         _checked.Clear();
         RefreshWave();
         UpdateButtons();
+    }
+
+    /// <summary>折叠/展开左侧通道树，把横向空间让给波形图。</summary>
+    private void ToggleTree()
+    {
+        if (_split.Panel1Collapsed)
+        {
+            _split.Panel1Collapsed = false;
+            // 还原上次宽度；窗口若被改过大小则夹取到合法区间
+            int max = Math.Max(_split.Panel1MinSize, _split.Width - _split.Panel2MinSize);
+            _split.SplitterDistance = Math.Clamp(380, _split.Panel1MinSize, max);
+            _btnCollapseTree.Text = "隐藏通道树";
+        }
+        else
+        {
+            _split.Panel1Collapsed = true;
+            _btnCollapseTree.Text = "显示通道树";
+        }
+    }
+
+    /// <summary>折叠/展开底部数据/属性面板，把高度让给波形图。</summary>
+    private void ToggleBottom()
+    {
+        if (_rsplit.Panel2Collapsed)
+        {
+            _rsplit.Panel2Collapsed = false;
+            // 还原上次高度；窗口若被改过大小则夹取到合法区间
+            int max = Math.Max(_rsplit.Panel1MinSize, _rsplit.Height - _rsplit.Panel2MinSize);
+            _rsplit.SplitterDistance = Math.Clamp(_savedBottomDist, _rsplit.Panel1MinSize, max);
+            _btnCollapseBottom.Text = "收起数据/属性";
+        }
+        else
+        {
+            _savedBottomDist = Math.Max(_rsplit.Panel1MinSize, _rsplit.SplitterDistance);
+            _rsplit.Panel2Collapsed = true;
+            _btnCollapseBottom.Text = "展开数据/属性";
+        }
     }
 
     private const int MaxSeries = 8;

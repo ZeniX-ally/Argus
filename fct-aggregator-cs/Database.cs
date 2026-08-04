@@ -324,7 +324,8 @@ public class Database
             SELECT
                 COUNT(CASE WHEN result='PASS' THEN 1 END),
                 COUNT(CASE WHEN result='FAIL' THEN 1 END),
-                COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END)
+                COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
+                COUNT(DISTINCT sn)
             FROM test_records {where}";
         cmd.Parameters.AddWithValue("@d", dateYmd);
         if (!string.IsNullOrEmpty(stationId))
@@ -336,6 +337,7 @@ public class Database
             s.Pass = r.GetInt32(0);
             s.Fail = r.GetInt32(1);
             s.Interrupted = r.GetInt32(2);
+            s.TodayProductCount = r.GetInt32(3);
         }
         return s;
     }
@@ -1280,6 +1282,8 @@ public class Database
 public class StatsData
 {
     public int Pass, Fail, Interrupted, Invalid, ProductCount;
+    /// <summary>当日产品数（SN 去重，FetchDailyStats 专用，v3.1.0.3 主页改版）。</summary>
+    public int TodayProductCount;
 }
 
 public class FailRecord

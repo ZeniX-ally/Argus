@@ -7,7 +7,7 @@
     AttachConsole + Console.SetOut 接回来，这里就是防它再退化。）
 #>
 # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
-param([string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.0.1.zip")
+param([string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.1.0.zip")
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 

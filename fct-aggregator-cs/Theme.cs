@@ -46,6 +46,8 @@ public static class Theme
     /// <summary>KPI 大数字。</summary>
     public static readonly Font Number = new(Family, 21F, FontStyle.Bold);
     public static readonly Font NumberSmall = new(Family, 15F, FontStyle.Bold);
+    /// <summary>统计明细的大数字（介于 KPI 与正文之间，v3.1.0.3 主页简约改版用）。</summary>
+    public static readonly Font NumberMid = new(Family, 17F, FontStyle.Bold);
     public static readonly Font Mono = new("Consolas", 9F);
 
     // ==================== 尺寸 ====================

@@ -121,7 +121,35 @@ static class Program
         var engine = new Engine(cfg);
         engine.Start();
 
+        // 开启动画（v3.1.0）：splash 先于主窗口播放；主窗口显示 450ms 后收起（视觉无缝）
+        var splashImg = SplashForm.TryLoadEmbedded();
+        SplashForm? splash = null;
+        if (splashImg != null)
+        {
+            splash = new SplashForm(splashImg);
+            splash.Start();
+        }
+
+        // 预构造主窗口（布局就绪即可零延迟显示）
         var form = new MainForm(engine);
+
+        if (splash != null)
+        {
+            form.Shown += (_, _) =>
+            {
+                // 主窗口已显示：450ms 后隐藏 splash（此时动画通常已缩成圆点或接近尾声）
+                var t = new System.Windows.Forms.Timer { Interval = 450 };
+                t.Tick += (_, _) =>
+                {
+                    t.Stop();
+                    t.Dispose();
+                    splash!.Hide();
+                    splash.Dispose();
+                };
+                t.Start();
+            };
+        }
+
         Application.Run(form);
 
         engine.Stop();

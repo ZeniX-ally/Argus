@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <Compile Include="SelfTest.cs" />
+    <Compile Include="..\SplashForm.cs" />
     <Compile Include="..\Database.cs" />
     <Compile Include="..\MaintenanceStatus.cs" />
     <Compile Include="..\MaintenanceExporter.cs" />

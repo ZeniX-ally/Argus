@@ -22,9 +22,9 @@
     <AssemblyName>Argus</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
     <StartupObject>FctAggregator.Program</StartupObject>
-    <Version>3.0.1</Version>
-    <AssemblyVersion>3.0.1.0</AssemblyVersion>
-    <FileVersion>3.0.1.0</FileVersion>
+    <Version>3.1.0</Version>
+    <AssemblyVersion>3.1.0.0</AssemblyVersion>
+    <FileVersion>3.1.0.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
@@ -48,6 +48,8 @@
 
     <!-- 取数/TDMS 工具从嵌入资源里找图标（按 EndsWith("app_icon.ico") 匹配，一份就够） -->
     <EmbeddedResource Include="app_icon.ico" />
+    <!-- v3.1.0 开启动画素材（SplashForm 按 EndsWith("argus_splash.png") 匹配） -->
+    <EmbeddedResource Include="assets\splash\argus_splash.png" />
 
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />

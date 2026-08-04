@@ -45,8 +45,7 @@ public class MainForm : Form
     // ===== 主页 =====
     private readonly Dictionary<string, KpiCard> _kpi = new();
     private readonly Dictionary<string, Label> _statValues = new();
-    private RichTextBox _logBox = null!;
-    private int _logSynced = 0;
+    private SectionPanel _detailPanel = null!;   // 累计数据卡片（今日为主、累计为辅）
 
     // ===== 页面 =====
     private Panel _dashboardPage = null!;
@@ -97,7 +96,10 @@ public class MainForm : Form
         // 内嵌工具自带最小尺寸，窗口得能装下；装不下时由 ToolHost 的 AutoScroll 兜底。
         // v3.0.0：数据分发（1040×790，原来最大的那个）移出后，剩下最大是 TDMS 波形 1000×640，
         // 所以最小窗口从 1240×860 降到 1200×720 —— 1366×768 的机台不再出横向滚动条。
-        Width = 1360; Height = 920;
+        // v3.1.0：默认尺寸与开启动画素材同分辨率（1408×768），屏幕更小时自动收窄（如 1366×768 机台）
+        var wa = Screen.PrimaryScreen!.WorkingArea;
+        Width = Math.Min(1408, wa.Width);
+        Height = Math.Min(768, wa.Height);
         MinimumSize = new Size(1200, 720);
         StartPosition = FormStartPosition.CenterScreen;
         // v3.0.1：去掉系统标题栏，改自绘炭黑标题栏（与侧栏一体）；最大化不盖任务栏
@@ -200,6 +202,7 @@ public class MainForm : Form
         topBar.Controls.Add(_chips);
         topBar.Controls.Add(refreshHost);
         topBar.Controls.Add(_pageTitle);
+
         Controls.Add(topBar);
 
         // ===== 侧边导航（最后 Add = 最先停靠 → 占满整列高）=====
@@ -250,32 +253,13 @@ public class MainForm : Form
     }
 
     /// <summary>
-    /// 无边框窗口的边缘拖拽缩放（WM_NCHITTEST）：鼠标在窗口 6px 边缘时返回对应命中区域。
-    /// 最大化时不缩放（系统此时也不让调）。
+    /// 无边框窗口处理（v3.1.0）。
+    /// ⚠ v3.1.0.1：**不再拦截 WM_NCHITTEST 做边缘 resize** —— 实测拖动标题栏（HTCAPTION move loop）期间
+    ///   系统持续发 WM_NCHITTEST，返回 HTLEFT/HTTOP 等边缘命中会干扰移动处理，造成严重拖动延迟。
+    ///   需要缩放窗口请用：双击最大化 / 顶栏按钮 / Alt+空格菜单。
     /// </summary>
     protected override void WndProc(ref Message m)
     {
-        const int WM_NCHITTEST = 0x84;
-        const int HTCLIENT = 1, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12,
-                  HTTOPLEFT = 13, HTTOPRIGHT = 14, HTBOTTOM = 15,
-                  HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
-        if (m.Msg == WM_NCHITTEST && WindowState != FormWindowState.Maximized)
-        {
-            base.WndProc(ref m);
-            if (m.Result == (IntPtr)HTCLIENT)
-            {
-                int l = m.LParam.ToInt32();
-                var pt = PointToClient(new Point((short)(l & 0xFFFF), (short)((l >> 16) & 0xFFFF)));
-                const int EDGE = 6;
-                bool left = pt.X <= EDGE, right = pt.X >= Width - EDGE;
-                bool top = pt.Y <= EDGE, bottom = pt.Y >= Height - EDGE;
-                m.Result = (IntPtr)(
-                    left ? (top ? HTTOPLEFT : bottom ? HTBOTTOMLEFT : HTLEFT)
-                    : right ? (top ? HTTOPRIGHT : bottom ? HTBOTTOMRIGHT : HTRIGHT)
-                    : top ? HTTOP : bottom ? HTBOTTOM : HTCLIENT);
-            }
-            return;
-        }
         base.WndProc(ref m);
     }
 
@@ -284,6 +268,7 @@ public class MainForm : Form
     {
         _nav = new Panel { Dock = DockStyle.Left, Width = Theme.NavWidth, BackColor = Theme.NavBg };
 
+        // 侧栏品牌区（v3.0.1 曾移到顶栏居中，因 Dock 布局 z 序问题显示错位，还原回侧栏）
         var brand = new Panel { Dock = DockStyle.Top, Height = 68, BackColor = Theme.NavBg };
         brand.Paint += (_, e) =>
         {
@@ -305,7 +290,7 @@ public class MainForm : Form
 
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v3.0.0", ForeColor = Theme.NavText,
+            Dock = DockStyle.Bottom, Height = 26, Text = "v3.1.0", ForeColor = Theme.NavText,
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };
@@ -370,7 +355,7 @@ public class MainForm : Form
     {
         var page = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap, Theme.Gap, Theme.Gap, 0) };
 
-        // ---- 顶部 KPI 一排 ----
+        // ---- 今日（主）：一排 5 张大卡，当日数据放最显眼位置 ----
         var kpiRow = new TableLayoutPanel
         {
             Dock = DockStyle.Top, Height = 92, ColumnCount = 5, RowCount = 1, BackColor = Theme.Bg,
@@ -382,93 +367,63 @@ public class MainForm : Form
             _kpi[key] = c;
             kpiRow.Controls.Add(c, col, 0);
         }
-        AddKpi("product", "产品总数（SN 去重）", Theme.Primary, 0);
-        AddKpi("pass", "PASS 良品", Theme.Success, 1);
-        AddKpi("fail", "FAIL 不良", Theme.Danger, 2);
-        AddKpi("yield", "良率", Theme.Info, 3);
-        AddKpi("todo", "待办（未确认不良）", Theme.Warning, 4);
+        AddKpi("today_product", "今日产品数（SN 去重）", Theme.Primary, 0);
+        AddKpi("today_pass", "今日 PASS", Theme.Success, 1);
+        AddKpi("today_fail", "今日 FAIL", Theme.Danger, 2);
+        AddKpi("today_yield", "今日良率", Theme.Info, 3);
+        AddKpi("today_interrupted", "今日中断", Theme.Warning, 4);
         // 最后一张不要右边距
-        _kpi["todo"].Margin = new Padding(0);
+        _kpi["today_interrupted"].Margin = new Padding(0);
 
-        // ---- 今日一排 ----
-        var todayRow = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top, Height = 76, ColumnCount = 4, RowCount = 1, BackColor = Theme.Bg,
-            Padding = new Padding(0, Theme.Gap, 0, 0),
-        };
-        for (int i = 0; i < 4; i++) todayRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        void AddToday(string key, string title, Color accent, int col)
-        {
-            var c = new KpiCard(title, accent, big: false) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, 0) };
-            _kpi[key] = c;
-            todayRow.Controls.Add(c, col, 0);
-        }
-        AddToday("today_pass", "今日 PASS", Theme.Success, 0);
-        AddToday("today_fail", "今日 FAIL", Theme.Danger, 1);
-        AddToday("today_interrupted", "今日中断", Theme.Neutral, 2);
-        AddToday("today_yield", "今日良率", Theme.Info, 3);
-        _kpi["today_yield"].Margin = new Padding(0);
-
-        // ---- 下半：左明细 + 右日志 ----
+        // ---- 累计（次）：3×2 大数字格，总数据放次要位置 ----
         var lower = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(0, Theme.Gap, 0, Theme.Gap) };
 
-        var detail = new SectionPanel("统计明细") { Dock = DockStyle.Left, Width = 300, Margin = new Padding(0) };
-        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, BackColor = Theme.Surface };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
-        var rows = new (string label, string key)[]
+        var detail = new SectionPanel("累计数据") { Dock = DockStyle.Fill, Margin = new Padding(0) };
+        _detailPanel = detail;
+        var grid = new TableLayoutPanel
         {
-            ("中断 (INTERRUPTED)", "interrupted"),
-            ("Invalid", "invalid"),
-            ("解析错误", "parse_error"),
-            ("XML 文件总数", "xml"),
-            ("维修记录（未完）", "maint_open"),
-            ("待办累计次数 Top", "todo_top"),
+            Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, BackColor = Theme.Surface,
         };
-        int r = 0;
-        foreach (var (label, key) in rows)
+        for (int i = 0; i < 3; i++) grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        var stats = new (string label, string key)[]
         {
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-            grid.Controls.Add(new Label
+            ("产品总数（SN 去重）", "product"),
+            ("PASS 累计", "pass"),
+            ("FAIL 累计", "fail"),
+            ("良率累计", "yield"),
+            ("中断累计", "interrupted"),
+            ("待办（未确认不良）", "todo"),
+        };
+        int cell = 0;
+        foreach (var (label, key) in stats)
+        {
+            var box = new Panel
             {
-                Text = label, Dock = DockStyle.Fill, ForeColor = Theme.TextSub, Font = Theme.Body,
-                TextAlign = ContentAlignment.MiddleLeft,
-            }, 0, r);
-            var val = new Label
-            {
-                Text = "—", Dock = DockStyle.Fill, ForeColor = Theme.TextMain, Font = Theme.BodyBold,
-                TextAlign = ContentAlignment.MiddleRight,
+                Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(22, 8, 22, 8),
             };
-            grid.Controls.Add(val, 1, r);
-            _statValues[key] = val;
-            r++;
+            var title = new Label
+            {
+                Text = label, Dock = DockStyle.Top, Height = 22, ForeColor = Theme.TextSub,
+                Font = Theme.Small, TextAlign = ContentAlignment.MiddleLeft,
+            };
+            var value = new Label
+            {
+                Text = "—", Dock = DockStyle.Fill, ForeColor = Theme.TextMain,
+                Font = Theme.NumberMid, TextAlign = ContentAlignment.MiddleLeft,
+            };
+            box.Controls.Add(value);
+            box.Controls.Add(title);
+            _statValues[key] = value;
+            grid.Controls.Add(box, cell % 3, cell / 3);
+            cell++;
         }
-        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        grid.Controls.Add(new Label { Text = "" }, 0, r);
         detail.Content.Controls.Add(grid);
 
-        var logs = new SectionPanel("实时日志") { Dock = DockStyle.Fill, Margin = new Padding(0) };
-        logs.Hint = "（最新在下方）";
-        _logBox = new RichTextBox
-        {
-            Dock = DockStyle.Fill, ReadOnly = true, BackColor = Theme.Surface, BorderStyle = BorderStyle.None,
-            Font = Theme.Mono, WordWrap = false, TabStop = false,
-        };
-        var logTools = new Panel { Dock = DockStyle.Bottom, Height = 36, BackColor = Theme.Surface };
-        var btnClear = Theme.MakeButton("清空日志", 88);
-        btnClear.Dock = DockStyle.Right;
-        btnClear.Click += (_, _) => { Logger.ClearGuiLogs(); _logBox.Clear(); _logSynced = 0; };
-        logTools.Controls.Add(btnClear);
-        logs.Content.Controls.Add(_logBox);
-        logs.Content.Controls.Add(logTools);
-
-        var spacer = new Panel { Dock = DockStyle.Left, Width = Theme.Gap, BackColor = Theme.Bg };
-        lower.Controls.Add(logs);
-        lower.Controls.Add(spacer);
         lower.Controls.Add(detail);
 
         page.Controls.Add(lower);
-        page.Controls.Add(todayRow);
         page.Controls.Add(kpiRow);
         lower.BringToFront();
         return page;
@@ -569,7 +524,6 @@ public class MainForm : Form
     // ==================================================================
     //  定时刷新
     // ==================================================================
-    private int _lastFailSeen = -1;
     private int _tickCount = 0;
     private int _pendingTodo = 0;
     private int _openMaint = 0;
@@ -581,8 +535,7 @@ public class MainForm : Form
         UpdateChips();
         UpdateProgress();
         UpdateKpi();
-        UpdateLogs();
-        if (_tickCount % 5 == 1) UpdateTodoBadge();     // 查库的活儿 5 秒一次就够
+        if (_tickCount % 10 == 1) UpdateTodoBadge();    // 查库的活儿 10 秒一次就够（拖动时减少撞库卡顿）
         UpdateStatusBar();
         AutoRefreshMaintenance();
     }
@@ -644,23 +597,20 @@ public class MainForm : Form
             if (_statValues.TryGetValue(k, out var l) && l.Text != v) l.Text = v;
         }
 
-        SetKpi("product", s.ProductCount.ToString("N0"), $"XML {s.XmlCount:N0} 个");
-        SetKpi("pass", s.Pass.ToString("N0"));
-        SetKpi("fail", s.Fail.ToString("N0"), s.Interrupted > 0 ? $"中断 {s.Interrupted}" : "");
-        SetKpi("yield", $"{s.YieldRate:F1}%");
-        SetKpi("todo", _pendingTodo.ToString("N0"), _pendingTodo > 0 ? "点左侧「待办 / 维修」处理" : "暂无待处理");
-
+        // 今日（主）—— 今日产品卡副标题带累计，串起两个层次
+        SetKpi("today_product", s.TodayProductCount.ToString("N0"), $"累计 {s.ProductCount:N0}");
         SetKpi("today_pass", s.TodayPass.ToString("N0"));
         SetKpi("today_fail", s.TodayFail.ToString("N0"));
-        SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
         SetKpi("today_yield", $"{s.TodayYield:F1}%");
+        SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
 
+        // 累计（次）
+        SetVal("product", s.ProductCount.ToString("N0"));
+        SetVal("pass", s.Pass.ToString("N0"));
+        SetVal("fail", s.Fail.ToString("N0"));
+        SetVal("yield", $"{s.YieldRate:F1}%");
         SetVal("interrupted", s.Interrupted.ToString("N0"));
-        SetVal("invalid", s.Invalid.ToString("N0"));
-        SetVal("parse_error", s.ParseError.ToString("N0"));
-        SetVal("xml", s.XmlCount.ToString("N0"));
-        SetVal("maint_open", _openMaint.ToString("N0"));
-        SetVal("todo_top", _todoTop);
+        SetVal("todo", _pendingTodo.ToString("N0"));
     }
 
     /// <summary>待办角标 / 未完成维修数 / 次数最高的待办（查库，低频）。</summary>
@@ -687,37 +637,20 @@ public class MainForm : Form
         var left = $"结果目录: {_cfg.ResultsRoot}     库: {db}     待办 {_pendingTodo} 条     未完成维修 {_openMaint} 条";
         if (s.Status == "error") left = "⚠ 结果目录不存在，数据采集未运行！  " + left;
         if (_statusLeft.Text != left) _statusLeft.Text = left;
-        var right = $"更新于 {DateTime.Now:HH:mm:ss}     Ctrl+1~5 切页 / 6~9 工具 / R 刷新";
-        _statusRight.Text = right;
+        // ⚠ 右侧只到「分钟」：HH:mm:ss 每秒变化会让状态栏每秒重绘一次，
+        //   拖动窗口时每秒撞上一次小卡顿（点击后拖动轻微延迟的来源之一）
+        var right = $"更新于 {DateTime.Now:HH:mm}     Ctrl+1~5 切页 / 6~9 工具 / R 刷新";
+        if (_statusRight.Text != right) _statusRight.Text = right;
     }
 
-    private void UpdateLogs()
-    {
-        var logs = Logger.SnapshotGuiLogs();
-        if (_logSynced >= logs.Count)
-        {
-            if (_logSynced > logs.Count) { _logBox.Clear(); _logSynced = 0; } // 被清空过
-            if (_logSynced >= logs.Count) return;
-        }
-        var batch = logs.Skip(_logSynced).Take(200).ToList();
-        _logSynced += batch.Count;
-        foreach (var line in batch)
-        {
-            Color color = Theme.TextMain;
-            if (line.Contains("[ERROR]")) color = Theme.Danger;
-            else if (line.Contains("[WARNING]")) color = Theme.Warning;
-            else if (line.Contains("[INFO]")) color = Theme.Primary;
-            _logBox.SelectionStart = _logBox.TextLength;
-            _logBox.SelectionColor = color;
-            _logBox.AppendText(line + Environment.NewLine);
-        }
-        _logBox.SelectionStart = _logBox.TextLength;
-        _logBox.ScrollToCaret();
-    }
+    private int _lastFailSeen = -1;
+    private DateTime _lastMaintAutoRefresh = DateTime.MinValue;
 
     /// <summary>
     /// FAIL 总数一变就刷待办看板 —— 新不良无需手动点刷新就会出现在「待办」列。
-    /// 只在该页可见时重载，避免后台白白查库。
+    /// ⚠ 节流：看板全量 Reload 很贵（SyncTodoItems + 区间聚合 + 600 张自绘卡重建 + 每卡注册 ToolTip），
+    ///   FAIL 风暴 / 历史扫描期间 FAIL 每批增长，若不节流每秒全刷一次 → 点击维修页后拖动窗口严重卡顿。
+    ///   现在：FAIL 变化后至少间隔 3 秒才刷一次，且只在看板页可见时刷。
     /// </summary>
     private void AutoRefreshMaintenance()
     {
@@ -725,11 +658,19 @@ public class MainForm : Form
         if (_lastFailSeen < 0) { _lastFailSeen = fail; return; }
         if (fail == _lastFailSeen) return;
         _lastFailSeen = fail;
-        if (_maintPage.Visible)
-        {
-            try { _maintPage.Refresh2(); }
-            catch (Exception ex) { Logger.Warning($"待办看板自动刷新失败: {ex.Message}"); }
-        }
+        if (!_maintPage.Visible) return;
+        if ((DateTime.Now - _lastMaintAutoRefresh).TotalSeconds < 3) return;
+        _lastMaintAutoRefresh = DateTime.Now;
+        try { _maintPage.Refresh2(); }
+        catch (Exception ex) { Logger.Warning($"待办看板自动刷新失败: {ex.Message}"); }
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        // ⚠ v3.1.0.2：**禁用 AnimateWindow(AW_CENTER)** —— 实测系统窗口动画会干扰后续拖动
+        //   合成（点击后拖动窗口严重延迟）。过渡改为纯逻辑：splash 圆点 → 主窗口直接显示
+        //   （splash 在主窗口显示 450ms 后被隐藏，视觉上仍连贯）。
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

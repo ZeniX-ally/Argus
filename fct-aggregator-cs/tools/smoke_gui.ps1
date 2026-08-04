@@ -5,7 +5,7 @@
 #>
 param(
     # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
-    [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.0.1.zip",
+    [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.1.0.zip",
     [string]$ExpectTitle = 'Argus'
 )
 $ErrorActionPreference = 'Stop'
@@ -26,13 +26,13 @@ $exe = Join-Path $tmp 'Argus.exe'
 $proc = Start-Process -FilePath $exe -PassThru
 $fail = 0
 
-# 等窗口出现（最多 20s）
+# 等真正的主窗口出现（最多 30s）：跳过开启动画的无边框 splash（空标题），直到标题含 Argus
 $title = $null
-for ($i = 0; $i -lt 40; $i++) {
+for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Milliseconds 500
     if ($proc.HasExited) { break }
     $proc.Refresh()
-    if ($proc.MainWindowHandle -ne 0) { $title = $proc.MainWindowTitle; break }
+    if ($proc.MainWindowHandle -ne 0 -and $proc.MainWindowTitle -like '*Argus*') { $title = $proc.MainWindowTitle; break }
 }
 
 if ($proc.HasExited) {

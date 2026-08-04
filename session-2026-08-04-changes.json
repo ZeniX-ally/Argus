@@ -1,0 +1,87 @@
+{
+  "$schema_note": "本会话（2026-08-04）工作记录。给下一次接手的人/AI 看：做了什么、为什么、踩了哪些坑、还剩什么。",
+  "meta": {
+    "date": "2026-08-04",
+    "repo": "F:/Programe/Argus",
+    "branch": "main",
+    "version": "v3.0.1 -> v3.1.0",
+    "agent_model": "deepseek-v4-flash (inferai)"
+  },
+  "big_changes": {
+    "splash_animation": {
+      "what": "v3.1.0 开启动画（SplashForm.cs）从「已写好未接线」补完整",
+      "impl": [
+        "SplashForm 新增 TryLoadEmbedded()：按 EndsWith(argus_splash.png) 从嵌入资源取图，失败返回 null 不阻塞启动",
+        "Program.cs 接线：splash.Start() 先播 → 预构造 MainForm → Shown 后 450ms 隐藏并释放 splash",
+        "smoke_gui.ps1 等待逻辑改：等「标题含 Argus」的主窗口（跳过无边框空标题的 splash）"
+      ],
+      "why_450ms": "MainForm.OnShown 注释约定的纯逻辑过渡：splash 圆点 → 主窗口直接显示，不用 AnimateWindow（实测会干扰拖动合成）"
+    },
+    "homepage_redesign": {
+      "what": "主页改版：今日为主、累计为辅",
+      "detail": "上排 5 张今日大卡（产品数/PASS/FAIL/良率/中断，产品卡副标题带累计）；下排累计数据 3×2 大数字格（产品/PASS/FAIL/良率/中断/待办）；移除实时日志区；窗口默认 1408×768 自适应屏幕",
+      "db_change": "FetchDailyStats 新增 COUNT(DISTINCT sn) -> StatsData.TodayProductCount"
+    },
+    "fail_dual_view": {
+      "what": "FAIL 记录页树形/表格双视图（FailListPanel 重写）",
+      "detail": "表格默认 4 列（失败项/SN/型号/时间）按失败项聚合倒序、高频标红(≥5)/橙(≥2)；树形按失败项分组带次数；共用搜索框多关键词即时过滤；双击行/SN 开 XML（文件缺失时弹提示）",
+      "selftest": "新增 14 条断言：默认表格、行数、聚合倒序、组内时间倒序、切树形、根节点数、组节点 Tag=失败项名/子节点 Tag=XML 路径、计数标签、切回表格"
+    },
+    "drag_smoothness": {
+      "what": "拖动流畅性修整（本版改版重头）",
+      "impl": [
+        "WndProc 不再拦截 WM_NCHITTEST 做边缘 resize（HTCAPTION move loop 期间持续发 NCHITTEST 干扰移动）",
+        "禁用 AnimateWindow(AW_CENTER) 系统窗口动画",
+        "待办看板自动刷新节流 3s 且只看板页可见时刷",
+        "状态栏时间精确到分钟（HH:mm 不再每秒重绘）",
+        "今日待办角标查询 5s -> 10s 一次",
+        "TitleBar 控制按钮改矢量绘制（─□✕ 字形宽度不一致）"
+      ]
+    },
+    "tdms_panels": {
+      "what": "TDMS 工具可折叠左通道树/底部数据面板",
+      "impl": "SplitContainer 提为字段；ToggleTree/ToggleBottom 折叠恢复；初始 SplitterDistance 挪到 Load 事件（构造期控件默认 150 尺寸会抛 InvalidOperationException）"
+    },
+    "version_bump": {
+      "what": "3.0.1 -> 3.1.0",
+      "touched": ["csproj Version/AssemblyVersion/FileVersion", "make_package.ps1 $ver", "smoke 三脚本 zip 名", "README 断言数 297->324、zip 名", "更新日志新增 v3.1.0 段", "版本更新说明.md 重写为 v3.1.0", "覆盖说明.md 重写为 v3.1.0", "MainForm 侧栏版本标签 v3.0.0->v3.1.0"]
+    }
+  },
+  "testing": {
+    "build": "主程序 0 警告 0 错误；分发器 0 警告 0 错误",
+    "selftest": "主程序 297 -> 324 项全绿（新增开启动画 11 + 主页 2 + FAIL 双视图 14）；分发器全绿",
+    "smoke": "smoke_gui 通过（splash 不挡主窗口）；smoke_cli 14 项通过；smoke_notify 通过（桌面提示+待办登记+按机台建库）",
+    "package": "make_package.ps1 用 pwsh 跑通：Argus-v3.1.0.zip 2392KB + Argus-v3.1.0-update.zip 2397KB（更新包断言通过）"
+  },
+  "tooling_pitfalls_this_session": [
+    "make_package.ps1 用 Windows PowerShell 5.1 跑会 ParserError（UTF-8 无 BOM 被按 ANSI 读，中文注释里的字节序列破坏了解析）—— 用 pwsh 7 跑正常；smoke 脚本同理。以后打包/冒烟统一 pwsh",
+    "自检断言数别凭感觉写进更新日志：上次写『FAIL 双视图若干』实际没加断言，本次补上 14 条并改文档为 324",
+    "FieldInfo.Value 不存在，是 FieldInfo.GetValue(instance)；写自检反射别犯",
+    "Database 没有 Dispose/Close（连接按需开关），自检里别调"
+  ],
+  "pending": [
+    {
+      "item": "自绘标题栏/开启动画视觉确认",
+      "detail": "矢量控制按钮（关闭叉/最大化框/最小化线）与新 splash 动画我看不了图，请人眼确认：按钮 hover、圆点过渡、1408×768 默认尺寸在机台上的表现"
+    },
+    {
+      "item": "fct-distributor 发布路径仍为旧逻辑",
+      "detail": "主程序已收敛 bin\\Release\\net8.0-windows；分发器还是 dist/，用户未要求同步"
+    },
+    {
+      "item": "机台升级 Mutex 坑",
+      "detail": "现场升级 v3.1.0 前必须先退出旧版程序；更新包内覆盖说明已写明"
+    },
+    {
+      "item": "开启动画在真机台的启动耗时",
+      "detail": "splash 固定播到 5.6s（0.7 渐强 + 5.0 保持 + 0.6 缩小）；若机台启动很快，主窗口会在动画中途出现、450ms 后收起 splash —— 属于预期行为，但视觉是否够顺滑需现场确认"
+    }
+  ],
+  "how_to_continue": {
+    "build": "cd F:/Programe/Argus/fct-aggregator-cs; dotnet build FctAggregator.csproj -c Release",
+    "test": "cd fct-aggregator-cs\\selftest; dotnet run --project SelfTest.csproj -c Release（期望 324 全绿）",
+    "package": "pwsh -NoProfile -File tools\\make_package.ps1（Windows PowerShell 5.1 会 ParserError，必须 pwsh）",
+    "smoke": "pwsh -NoProfile -File tools\\smoke_gui.ps1 / smoke_cli.ps1 / smoke_notify.ps1",
+    "distribute": "cd ../fct-distributor; dotnet build -c Release; dotnet run --project selftest\\SelfTest.csproj -c Release"
+  }
+}

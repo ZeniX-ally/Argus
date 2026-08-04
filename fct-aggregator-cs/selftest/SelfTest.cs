@@ -945,23 +945,22 @@ class SelfTest
                 var kpi = (Dictionary<string, KpiCard>)typeof(MainForm).GetField("_kpi",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
                     .GetValue(form)!;
-                Check(kpi.Count == 9, $"KPI 卡共 {kpi.Count} 张（5 主 + 4 今日）");
-                var main5 = new[] { "product", "pass", "fail", "yield", "todo" };
-                Check(main5.All(k => kpi.ContainsKey(k)), "主 KPI 齐全：产品数/PASS/FAIL/良率/待办");
-                Check(main5.All(k => kpi[k].Width >= 150),
-                      $"KPI 卡宽度正常（最小 {main5.Min(k => kpi[k].Width)}px，没被挤成一条）");
+                Check(kpi.Count == 5, $"KPI 卡共 {kpi.Count} 张（今日为主：产品/PASS/FAIL/良率/中断）");
+                var today5 = new[] { "today_product", "today_pass", "today_fail", "today_yield", "today_interrupted" };
+                Check(today5.All(k => kpi.ContainsKey(k)), "今日 KPI 齐全：今日产品数/PASS/FAIL/良率/中断");
+                Check(today5.All(k => kpi[k].Width >= 150),
+                      $"今日 KPI 卡宽度正常（最小 {today5.Min(k => kpi[k].Width)}px，没被挤成一条）");
 
-                // 主页内部：KPI 一排 → 今日一排 → 下半（明细 + 日志），不能错位/重叠
-                var kpiRow = kpi["product"].Parent!;
-                var todayRow = kpi["today_pass"].Parent!;
-                var logBox = Field<RichTextBox>("_logBox")!;
+                // 主页内部：今日 KPI 一排 → 累计数据（3×2 大数字格），不能错位/重叠
+                var kpiRow = kpi["today_product"].Parent!;
+                var detail = (SectionPanel)typeof(MainForm).GetField("_detailPanel",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .GetValue(form)!;
                 int ScreenY(Control c) => c.PointToScreen(Point.Empty).Y;
-                Check(kpiRow != todayRow && ScreenY(kpiRow) < ScreenY(todayRow),
-                      $"今日卡在主 KPI 卡下方（{ScreenY(kpiRow)} < {ScreenY(todayRow)}）");
-                Check(ScreenY(todayRow) + todayRow.Height <= ScreenY(logBox) + 2,
-                      $"日志区在今日卡下方、不重叠（{ScreenY(todayRow) + todayRow.Height} <= {ScreenY(logBox)}）");
-                Check(logBox.Height > 120 && logBox.Width > 400,
-                      $"日志区有足够空间（{logBox.Width}×{logBox.Height}）");
+                Check(ScreenY(kpiRow) + kpiRow.Height <= ScreenY(detail) + 2,
+                      $"累计数据在今日 KPI 卡下方、不重叠（{ScreenY(kpiRow) + kpiRow.Height} <= {ScreenY(detail)}）");
+                Check(detail.Height > 200 && detail.Width > 400,
+                      $"累计数据有足够空间（{detail.Width}×{detail.Height}）");
 
                 var showPage = typeof(MainForm).GetMethod("ShowPage",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
@@ -1035,6 +1034,100 @@ class SelfTest
             }
             DesktopNotifier.Shutdown();     // 自检里也会建托盘图标，记得收
             Check(true, "退出时托盘图标已回收（Shutdown 可重复调）");
+
+            // ---------- FAIL 记录页：树形/表格双视图（v3.1.0）----------
+            Console.WriteLine("\n【FAIL 记录页】表格/树形双视图 · 聚合倒序 · 搜索过滤");
+            {
+                var engF = new Engine(new AppConfig
+                {
+                    StationId = "FCT9",
+                    ResultsRoot = Path.Combine(work, "NoSuchResults"),
+                    WebhookUrl = "",
+                });
+                string todayF = DateTime.Today.ToString("yyyyMMdd");
+                engF.Db.InsertOne(new TestRecord { StationId = "FCT9", Model = "M1", Category = "Offline",
+                    TestDate = todayF, Sn = "SN-A", Result = "FAIL", XmlPath = "X:\\a.xml",
+                    FailReason = "5V_Rail", BatchTimestamp = "2026-08-01T10:00:00" });
+                engF.Db.InsertOne(new TestRecord { StationId = "FCT9", Model = "M2", Category = "Offline",
+                    TestDate = todayF, Sn = "SN-B", Result = "FAIL", XmlPath = "X:\\b.xml",
+                    FailReason = "5V_Rail", BatchTimestamp = "2026-08-01T09:00:00" });
+                engF.Db.InsertOne(new TestRecord { StationId = "FCT9", Model = "M3", Category = "Offline",
+                    TestDate = todayF, Sn = "SN-C", Result = "FAIL", XmlPath = "X:\\c.xml",
+                    FailReason = "Check_CAN_Bus", BatchTimestamp = "2026-08-01T08:00:00" });
+
+                var panel = new FailListPanel(engF);
+                panel.Size = new Size(980, 520);
+                panel.Refresh2();
+
+                // 字段探针
+                var grid = (DataGridView)typeof(FailListPanel).GetField("_grid",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(panel)!;
+                var tree = (TreeView)typeof(FailListPanel).GetField("_tree",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(panel)!;
+                var cntLabel = (Label)typeof(FailListPanel).GetField("_countLabel",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(panel)!;
+
+                // 默认表格视图
+                Check(grid.Visible && !tree.Visible, "默认表格视图（grid 可见、tree 隐藏）");
+                Check(grid.Rows.Count == 3, $"表格行数 = FAIL 条数（{grid.Rows.Count} == 3）");
+                // 按失败项聚合倒序：5V_Rail(2次) 排前，Check_CAN_Bus(1次) 排后
+                Check(grid.Rows[0].Cells[0].Value?.ToString() == "5V_Rail" &&
+                      grid.Rows[2].Cells[0].Value?.ToString() == "Check_CAN_Bus",
+                      $"表格按失败项次数倒序（{grid.Rows[0].Cells[0].Value} / {grid.Rows[2].Cells[0].Value}）");
+                Check(grid.Rows[0].Cells[1].Value?.ToString() == "SN-A", "同一失败项内按时间倒序（新 SN-A 在前）");
+
+                // 切树形
+                var treeMode = typeof(FailListPanel).GetField("_treeMode",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                typeof(FailListPanel).GetMethod("SetView",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .Invoke(panel, new object?[] { true });
+                Check((bool)treeMode.GetValue(panel)! && grid.Visible == false && tree.Visible == true,
+                      "切树形后：_treeMode=true、grid 隐藏、tree 可见");
+                Check(tree.Nodes.Count == 2, $"树根节点 = 失败项个数（{tree.Nodes.Count} == 2）");
+                Check(tree.Nodes[0].Text.Contains("5V_Rail") && tree.Nodes[0].Text.Contains("2"),
+                      $"高频失败项分组置顶带次数（{tree.Nodes[0].Text}）");
+                Check(tree.Nodes[0].Nodes.Count == 2, $"树形组「5V_Rail」下 2 个子SN（{tree.Nodes[0].Nodes.Count}）");
+                Check(tree.Nodes[0].Tag?.ToString() == "5V_Rail" && tree.Nodes[0].Nodes[0].Tag?.ToString() == "X:\\a.xml",
+                      "组节点 Tag=失败项名、子节点 Tag=XML 路径（双击能开对文件）");
+
+                // 计数
+                Check(cntLabel.Text.Contains("共 3 条 FAIL") && cntLabel.Text.Contains("2 个失败项"),
+                      $"计数标签含条数与失败项个数（{cntLabel.Text}）");
+
+                // 切回表格（按钮走真实点击路径）
+                typeof(FailListPanel).GetMethod("SetView",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .Invoke(panel, new object?[] { false });
+                Check((bool)treeMode.GetValue(panel)! == false && grid.Visible == true, "切回表格视图");
+
+                panel.Dispose();
+            }
+
+            // ---------- 开启动画（v3.1.0）----------
+            Console.WriteLine("\n【开启动画】SplashForm 构造 + 时间线纯函数");
+            using (var img1px = new Bitmap(1, 1))
+            {
+                using var splash = new SplashForm(img1px);
+                Check(true, "SplashForm 可无 UI 构造");
+                Check(splash.Width <= SplashForm.ImgW && splash.Height <= SplashForm.ImgH,
+                      $"窗口 ≤ 图片分辨率（{splash.Width}x{splash.Height} ≤ {SplashForm.ImgW}x{SplashForm.ImgH}，1:1 原尺寸）");
+                Check(Math.Abs((double)splash.Width / splash.Height - (double)SplashForm.ImgW / SplashForm.ImgH) < 0.01,
+                      "窗口比例 = 图片比例（不变形）");
+            }
+            double Op(double t) => SplashForm.Compute(t).opacity;
+            double Sc(double t) => SplashForm.Compute(t).scale;
+            Check(Math.Abs(Op(0.0)) < 0.001 && Math.Abs(Sc(0.0) - 1.0) < 0.001,
+                  "t=0 透明 + scale=1（渐强起点，透明度走窗口 Opacity）");
+            Check(Math.Abs(Op(0.35) - 0.875) < 0.01 && Math.Abs(Sc(0.35) - 1.0) < 0.001,
+                  $"t=0.35s EaseOut 渐强中（opacity≈0.875，实得 {Op(0.35):F3}）");
+            Check(Math.Abs(Op(0.7) - 1.0) < 0.001 && Math.Abs(Sc(0.7) - 1.0) < 0.001, "t=0.7s 渐强完成（全亮）");
+            Check(Math.Abs(Op(3.0) - 1.0) < 0.001, "t=3.0s 保持全亮（等待 5 秒）");
+            Check(Math.Abs(Sc(5.0) - 1.0) < 0.001, "t=5.0s 缩小尚未开始（scale=1）");
+            Check(Math.Abs(Sc(5.3) - 0.88125) < 0.01, $"t=5.3s EaseIn 缩到 ~0.88（实得 {Sc(5.3):F3}）");
+            Check(Math.Abs(Sc(5.6) - 0.05) < 0.001 && Math.Abs(Op(5.6)) < 0.001,
+                  $"t=5.6s 缩成圆点（scale=0.05, opacity=0，实得 {Sc(5.6):F3}/{Op(5.6):F3}）");
+            Check(Math.Abs(Sc(10) - 0.05) < 0.001, "t=10s 状态不再变化（已完成）");
         }
 
         // ---------- 工具箱（v2.9.0 合入；v3.0.0 数据分发已拆出去）----------

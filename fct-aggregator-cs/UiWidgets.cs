@@ -252,17 +252,20 @@ public sealed class TitleBar : Control
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         using (var b = new SolidBrush(Theme.NavBg)) g.FillRectangle(b, ClientRectangle);
 
-        // 三个控制按钮
-        DrawBtn(g, 0, Hit.Min, "─");
-        DrawBtn(g, 1, Hit.Max, _maximized ? "❐" : "□");
-        DrawBtn(g, 2, Hit.Close, "✕");
+        // 三个控制按钮（从右到左：关闭 ✕ / 最大化 □ / 最小化 ─，与 HitAt 点击映射一致）
+        // ⚠ 用矢量绘制而非字体字形：─□✕ 是不同宽度的字形，渲染大小不一致；
+        //   矢量统一图标框（关闭 10×10 叉、最大化 12×10 矩形、最小化 12px 横线）。
+        DrawBtn(g, 0, Hit.Close);
+        DrawBtn(g, 1, Hit.Max);
+        DrawBtn(g, 2, Hit.Min);
 
         // 底部细分隔线
         using var pen = new Pen(Color.FromArgb(44, 50, 58));
         g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
     }
 
-    private void DrawBtn(Graphics g, int idx, Hit h, string glyph)
+    /// <summary>绘制一个控制按钮：hover 背景 + 统一尺寸的矢量图标。</summary>
+    private void DrawBtn(Graphics g, int idx, Hit h)
     {
         var x = Width - BtnW * (idx + 1);
         var r = new Rectangle(x, 0, BtnW, Height);
@@ -272,8 +275,26 @@ public sealed class TitleBar : Control
             g.FillRectangle(bg, r);
         }
         var color = (_hit == h && h == Hit.Close) ? Color.White : Theme.NavText;
-        TextRenderer.DrawText(g, glyph, new Font("Segoe UI", 10F), r, color,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        using var pen = new Pen(color, 1.5f) { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round };
+        int cx = r.X + r.Width / 2;
+        int cy = r.Height / 2;
+        switch (h)
+        {
+            case Hit.Min:   // 最小化：一条 12px 横线
+                g.DrawLine(pen, cx - 6, cy, cx + 6, cy);
+                break;
+            case Hit.Max when _maximized:   // 还原：两个错位小矩形
+                g.DrawRectangle(pen, cx - 7, cy - 3, 9, 8);
+                g.DrawRectangle(pen, cx - 3, cy - 7, 9, 8);
+                break;
+            case Hit.Max:   // 最大化：12×10 空心矩形
+                g.DrawRectangle(pen, cx - 6, cy - 5, 12, 10);
+                break;
+            case Hit.Close:   // 关闭：10×10 叉
+                g.DrawLine(pen, cx - 5, cy - 5, cx + 5, cy + 5);
+                g.DrawLine(pen, cx + 5, cy - 5, cx - 5, cy + 5);
+                break;
+        }
     }
 }
 
@@ -282,12 +303,18 @@ internal static class Win32
 {
     public const int WM_NCLBUTTONDOWN = 0xA1;
     public const int HTCAPTION = 0x2;
+    /// <summary>窗口从中心展开（开启动画「圆点放大成主页面」用）。</summary>
+    public const int AW_CENTER = 0x0010;
+    public const int AW_ACTIVATE = 0x00020000;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     public static extern bool ReleaseCapture();
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern bool AnimateWindow(IntPtr hWnd, int time, int flags);
 }
 
 /// <summary>

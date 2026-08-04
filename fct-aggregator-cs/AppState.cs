@@ -18,8 +18,8 @@ public static class AppState
 
     // 累计统计
     public static int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount, XmlCount;
-    // 今日统计
-    public static int TodayPass, TodayFail, TodayInterrupted;
+    // 今日统计（v3.1.0.3：主页改为今日为主、累计为辅）
+    public static int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
 
     public static void SetStatus(string s) { lock (_lock) Status = s; }
 
@@ -53,6 +53,7 @@ public static class AppState
             Invalid = g.Invalid; ProductCount = g.ProductCount;
             XmlCount = xmlOnDisk;
             TodayPass = d.Pass; TodayFail = d.Fail; TodayInterrupted = d.Interrupted;
+            TodayProductCount = d.TodayProductCount;
         }
     }
 
@@ -78,6 +79,7 @@ public static class AppState
                 Pass = Pass, Fail = Fail, Interrupted = Interrupted, Invalid = Invalid,
                 ParseError = ParseError, ProductCount = ProductCount, XmlCount = XmlCount,
                 TodayPass = TodayPass, TodayFail = TodayFail, TodayInterrupted = TodayInterrupted,
+                TodayProductCount = TodayProductCount,
             };
         }
     }
@@ -89,7 +91,7 @@ public class StatsSnapshot
     public int ModelsCount;
     public bool WebhookConfigured, HistoricalScanComplete;
     public int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount, XmlCount;
-    public int TodayPass, TodayFail, TodayInterrupted;
+    public int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
     public double YieldRate => Pass + Fail > 0 ? Pass * 100.0 / (Pass + Fail) : 0.0;
     public double TodayYield => TodayPass + TodayFail > 0 ? TodayPass * 100.0 / (TodayPass + TodayFail) : 0.0;
 }
