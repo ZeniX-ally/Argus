@@ -290,7 +290,7 @@ public class MainForm : Form
 
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v3.1.0", ForeColor = Theme.NavText,
+            Dock = DockStyle.Bottom, Height = 26, Text = "v3.2.0", ForeColor = Theme.NavText,
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };

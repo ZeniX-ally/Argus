@@ -252,6 +252,9 @@ Excel 导出**不依赖**任何第三方库（手写 OOXML）。
   - `CountMaintenanceByStatus()` —— 单条 `GROUP BY status`，供看板列头真实计数（**不受 limit 影响**）
   - `UpdateMaintenance(m)` —— 全字段 UPDATE（含 `created_at`），`updated_at = datetime('now','localtime')`
   - `UpdateMaintenanceStatus(id, status)` —— 只改状态，供看板拖拽使用
+  - `GetMaintenance(id)` —— 按 id 取单条（v3.2.0，状态变更推送取快照用）
+  - `MaintenanceStatusChanged` 事件 —— `UpdateMaintenance*` 在**状态实际变化**时触发
+    `(记录, 旧key, 新key)`；`Engine` 构造期订阅 → 后台 `Task.Run` 推飞书（v3.2.0 待办推送，卡面与 FAIL 告警一致）。同一状态重复设置不触发
   - `FailItemSources(stationId, limit = 2000)` —— FAIL 源行（`FailItemSource`，**无 Sn 字段**），供故障项挑选
   - `DistinctResolvers(limit = 30)` —— 历史维修人（按使用次数倒序、已去重去空）
 - 维修人员名单（v2.3.0）：`RosterResolvers()` / `ListResolvers()`（= 名单 ∪ 历史）/

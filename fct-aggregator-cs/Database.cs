@@ -8,6 +8,16 @@ public class Database
     private readonly string _connString;
     private readonly string _dbPath;
 
+    /// <summary>维修记录状态变更事件：参数 = (记录, 旧状态key, 新状态key)。引擎订阅后推送飞书。</summary>
+    public event Action<MaintenanceRecord, string, string>? MaintenanceStatusChanged;
+
+    private void NotifyStatusChanged(MaintenanceRecord rec, string from, string to)
+    {
+        if (string.Equals(from, to, StringComparison.OrdinalIgnoreCase)) return;
+        try { MaintenanceStatusChanged?.Invoke(rec, from, to); }
+        catch (Exception ex) { Logger.Warning($"状态变更回调异常: {ex.Message}"); }
+    }
+
     public Database(string dbPath)
     {
         _dbPath = dbPath;
@@ -429,44 +439,104 @@ public class Database
         return dict;
     }
 
-    /// <summary>只改状态(看板拖放用)。</summary>
+    /// <summary>只改状态(看板拖放用)。状态实际变化时触发 <see cref="MaintenanceStatusChanged"/>。</summary>
     public bool UpdateMaintenanceStatus(int id, string status)
     {
-        using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE maintenance_records SET status=@s, updated_at=datetime('now','localtime') WHERE id=@id";
-        cmd.Parameters.AddWithValue("@s", status);
-        cmd.Parameters.AddWithValue("@id", id);
-        return cmd.ExecuteNonQuery() > 0;
+        string from;
+        using (var conn = Open())
+        {
+            using var sel = conn.CreateCommand();
+            sel.CommandText = "SELECT status FROM maintenance_records WHERE id=@id";
+            sel.Parameters.AddWithValue("@id", id);
+            from = sel.ExecuteScalar() as string ?? "";
+            if (string.Equals(from, status, StringComparison.OrdinalIgnoreCase)) return true;   // 无变化不算失败
+        }
+        using (var conn = Open())
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "UPDATE maintenance_records SET status=@s, updated_at=datetime('now','localtime') WHERE id=@id";
+            cmd.Parameters.AddWithValue("@s", status);
+            cmd.Parameters.AddWithValue("@id", id);
+            if (cmd.ExecuteNonQuery() == 0) return false;
+        }
+        var snapshot = GetMaintenance(id);
+        if (snapshot != null) NotifyStatusChanged(snapshot, from, status);
+        return true;
     }
 
     /// <summary>
     /// 全字段更新(编辑表单 / 拖到「已完成」时补填维修人与措施用)。
     /// 含 created_at(编辑表单允许改「记录日期」); updated_at 置为当前时间。
+    /// 状态实际变化时触发 <see cref="MaintenanceStatusChanged"/>。
     /// </summary>
     public bool UpdateMaintenance(MaintenanceRecord m)
     {
-        using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
+        string from;
+        using (var conn = Open())
+        {
+            using var sel = conn.CreateCommand();
+            sel.CommandText = "SELECT status FROM maintenance_records WHERE id=@id";
+            sel.Parameters.AddWithValue("@id", m.Id);
+            from = sel.ExecuteScalar() as string ?? "";
+        }
+        using (var conn = Open())
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
             UPDATE maintenance_records SET
                 equipment_model=@model, equipment_sn=@sn, fail_item=@item, fail_reason=@reason,
                 severity=@sev, status=@status, resolver=@resolver, resolution=@reso, notes=@notes,
                 created_at=COALESCE(NULLIF(@created,''), created_at),
                 updated_at=datetime('now','localtime')
             WHERE id=@id";
-        cmd.Parameters.AddWithValue("@model", (object?)m.EquipmentModel ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sn", (object?)m.EquipmentSn ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@item", m.FailItem);
-        cmd.Parameters.AddWithValue("@reason", (object?)m.FailReason ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sev", m.Severity);
-        cmd.Parameters.AddWithValue("@status", m.Status);
-        cmd.Parameters.AddWithValue("@resolver", (object?)m.Resolver ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@reso", (object?)m.Resolution ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@notes", (object?)m.Notes ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@created", (object?)(m.CreatedAt ?? ""));
-        cmd.Parameters.AddWithValue("@id", m.Id);
-        return cmd.ExecuteNonQuery() > 0;
+            cmd.Parameters.AddWithValue("@model", (object?)m.EquipmentModel ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@sn", (object?)m.EquipmentSn ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@item", m.FailItem);
+            cmd.Parameters.AddWithValue("@reason", (object?)m.FailReason ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@sev", m.Severity);
+            cmd.Parameters.AddWithValue("@status", m.Status);
+            cmd.Parameters.AddWithValue("@resolver", (object?)m.Resolver ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@reso", (object?)m.Resolution ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@notes", (object?)m.Notes ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@created", (object?)(m.CreatedAt ?? ""));
+            cmd.Parameters.AddWithValue("@id", m.Id);
+            if (cmd.ExecuteNonQuery() == 0) return false;
+        }
+        if (!string.Equals(from, m.Status, StringComparison.OrdinalIgnoreCase))
+        {
+            var snapshot = GetMaintenance(m.Id);
+            if (snapshot != null) NotifyStatusChanged(snapshot, from, m.Status);
+        }
+        return true;
+    }
+
+    /// <summary>按 id 取单条维修记录；不存在返回 null。</summary>
+    public MaintenanceRecord? GetMaintenance(int id)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"SELECT id, station_id, equipment_model, equipment_sn, fail_item, fail_reason,
+            severity, status, resolver, resolution, notes, created_at, updated_at
+            FROM maintenance_records WHERE id=@id";
+        cmd.Parameters.AddWithValue("@id", id);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new MaintenanceRecord
+        {
+            Id = r.GetInt32(0),
+            StationId = r.IsDBNull(1) ? "" : r.GetString(1),
+            EquipmentModel = r.IsDBNull(2) ? "" : r.GetString(2),
+            EquipmentSn = r.IsDBNull(3) ? "" : r.GetString(3),
+            FailItem = r.IsDBNull(4) ? "" : r.GetString(4),
+            FailReason = r.IsDBNull(5) ? "" : r.GetString(5),
+            Severity = r.IsDBNull(6) ? "major" : r.GetString(6),
+            Status = r.IsDBNull(7) ? "open" : r.GetString(7),
+            Resolver = r.IsDBNull(8) ? "" : r.GetString(8),
+            Resolution = r.IsDBNull(9) ? "" : r.GetString(9),
+            Notes = r.IsDBNull(10) ? "" : r.GetString(10),
+            CreatedAt = r.IsDBNull(11) ? "" : r.GetString(11),
+            UpdatedAt = r.IsDBNull(12) ? "" : r.GetString(12),
+        };
     }
 
     /// <summary>

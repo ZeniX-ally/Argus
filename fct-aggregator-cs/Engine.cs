@@ -42,6 +42,21 @@ public class Engine
         Logger.Info($"Webhook: {(AppState.WebhookConfigured ? "已配置" : "未配置")}");
         Logger.Info($"FCT.ini 路径(config): {cfg.FctIniPath}");
         Logger.Info($"程序目录(BaseDir): {AppConfig.BaseDir}");
+
+        // 待办/维修状态变更 → 飞书推送（v3.2.0：卡片格式与 FAIL 告警一致）
+        // 订阅在构造期：所有改状态的路径（看板拖放/列表右键/编辑表单/补填）都经 Database 的
+        // UpdateMaintenance* 两个方法，事件在「状态真的变了」时才触发，天然去重。
+        _db.MaintenanceStatusChanged += (rec, from, to) =>
+        {
+            try
+            {
+                Logger.Info($"[飞书推送] 待办 #{rec.Id} 状态: {MaintenanceMeta.ZhOf(from)} -> {MaintenanceMeta.ZhOf(to)}");
+                // 状态变更发生在 UI 线程（拖放/菜单），网络 POST 放后台，避免卡界面
+                var url = _cfg.WebhookUrl;
+                Task.Run(() => FeishuNotifier.SendStatusChangeAlert(url, rec, from, to));
+            }
+            catch (Exception ex) { Logger.Error($"[错误] 待办状态变更推送失败: {ex.Message}"); }
+        };
     }
 
     public void Start()

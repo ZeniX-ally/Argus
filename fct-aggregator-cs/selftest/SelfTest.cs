@@ -218,6 +218,44 @@ class SelfTest
         Check(draggedAfter.Status == "resolved" && draggedAfter.FailItem == dragged.FailItem,
               "拖动只改状态，其它字段不动");
 
+        // ---------- 状态变更事件（v3.2.0 待办推送） ----------
+        {
+            var events = new List<(string from, string to)>();
+            d.MaintenanceStatusChanged += (_, from, to) => events.Add((from, to));
+
+            // 状态真变 -> 触发一次，带旧/新状态
+            var ev = d.ListMaintenance("unknown", 500).First();
+            events.Clear();
+            Check(d.UpdateMaintenanceStatus(ev.Id, "in_progress"), "更新另一条状态返回 true");
+            Check(events.Count == 1, $"状态变更事件触发一次（实得 {events.Count}）");
+            Check(events[0].from == "unknown" && events[0].to == "in_progress",
+                  $"事件带旧/新状态（{events[0].from} -> {events[0].to}）");
+
+            // 同状态再设一次 -> 不触发
+            events.Clear();
+            d.UpdateMaintenanceStatus(ev.Id, "in_progress");
+            Check(events.Count == 0, "同状态重复设置不触发事件（去重）");
+
+            // 编辑表单改状态也触发
+            var ed2 = d.ListMaintenance("in_progress", 500).First(m => m.Id == ev.Id);
+            var done2 = ed2.Clone();
+            done2.Status = "resolved";
+            done2.Resolver = "王五";
+            done2.Resolution = "已换料";
+            events.Clear();
+            Check(d.UpdateMaintenance(done2), "UpdateMaintenance（全字段）返回 true");
+            Check(events.Count == 1 && events[0].from == "in_progress" && events[0].to == "resolved",
+                  $"全字段更新改状态也触发事件（{events.Count} 次: {events[0].from} -> {events[0].to}）");
+
+            // 只改内容不改状态 -> 不触发
+            var ed3 = d.GetMaintenance(ev.Id)!;
+            var noChange = ed3.Clone();
+            noChange.Notes = "只改备注";
+            events.Clear();
+            d.UpdateMaintenance(noChange);
+            Check(events.Count == 0, "只改内容不触发状态变更事件");
+        }
+
         // ---------- CreateMaintenance: 往期日期时 updated_at 不能是「现在」 ----------
         var oldRec = new MaintenanceRecord
         {

@@ -13,7 +13,7 @@
 #>
 param(
     # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
-    [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.1.0.zip"
+    [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.0.zip"
 )
 $ErrorActionPreference = 'Stop'
 

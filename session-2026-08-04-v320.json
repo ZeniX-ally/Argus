@@ -1,0 +1,50 @@
+{
+  "$schema_note": "本会话（2026-08-04 追加）工作记录：待办状态变更推送飞书。给下一次接手的人/AI 看：做了什么、为什么、踩了哪些坑、还剩什么。",
+  "meta": {
+    "date": "2026-08-04",
+    "repo": "F:/Programe/Argus",
+    "branch": "main",
+    "version": "v3.1.0 -> v3.2.0",
+    "agent_model": "deepseek-v4-flash (inferai)"
+  },
+  "big_changes": {
+    "todo_status_push": {
+      "what": "待办/维修记录状态变更 -> 推送飞书（卡面与 FAIL 告警一致）",
+      "impl": [
+        "Database 新增 MaintenanceStatusChanged 事件：UpdateMaintenanceStatus / UpdateMaintenance 在状态实际变化时触发 (记录快照, 旧key, 新key)",
+        "去重：同状态重复设置不触发（UpdateMaintenanceStatus 内先 SELECT 旧状态比较；UpdateMaintenance 同理）",
+        "新增 Database.GetMaintenance(id) 取单条快照",
+        "Engine 构造期订阅事件，Task.Run 后台推送（状态变更发生在 UI 线程，网络不卡界面）",
+        "FeishuNotifier 抽出共用 PostCard()（payload + 3 次重试），新增 BuildStatusChangeCard()",
+        "卡片：header 机台·型号·待办状态变更（蓝色）+ 两列（机台|型号、状态变更|严重度）+ 故障项/SN 整行 + 维修人/措施 + note 记录#id·更新时间"
+      ],
+      "trigger_paths": "看板拖卡片 / 列表右键 / 编辑表单 / 拖到已完成补填 —— 全部经 Database 两个更新方法，天然统一",
+      "no_webhook": "webhook 未配置时 SendStatusChangeAlert 首行直接 return，与 FAIL 告警一致"
+    }
+  },
+  "testing": {
+    "selftest": "324 -> 331 项全绿（新增 7 条：触发一次/带旧新状态/同状态去重/全字段更新触发/只改内容不触发）",
+    "smoke": "smoke_gui 通过；smoke_cli 通过；make_package 用 pwsh 跑通（Argus-v3.2.0.zip 2395KB + update 2399KB）"
+  },
+  "tooling_pitfalls_this_session": [
+    "UpdateMaintenanceStatus 改语义时注意：同状态设置不能返回 false（UI 把 false 当『记录可能被删除』提示）—— 无变化返回 true 但不触发事件",
+    "状态变更回调在 UI 线程触发，POST 必须 Task.Run 后台化，否则拖卡片会卡",
+    "版本更新说明.md 是历史累积文件：新增版本段时要保留旧段，别把 3.1.0 的内容误标成 3.0.1（本次整理过一次标题）"
+  ],
+  "pending": [
+    {
+      "item": "飞书实际推送验证",
+      "detail": "自检/冒烟只验证事件触发与构建；真实 webhook 收到卡片需现场配好 webhook_url 后人工看一眼（格式是否好看、字段是否齐全）"
+    },
+    {
+      "item": "历史遗留",
+      "detail": "自绘标题栏/开启动画视觉确认；fct-distributor 发布路径未同步；机台升级前需退出旧版"
+    }
+  ],
+  "how_to_continue": {
+    "build": "cd F:/Programe/Argus/fct-aggregator-cs; dotnet build FctAggregator.csproj -c Release",
+    "test": "cd fct-aggregator-cs\\selftest; dotnet run --project SelfTest.csproj -c Release（期望 331 全绿）",
+    "package": "pwsh -NoProfile -File tools\\make_package.ps1（Windows PowerShell 5.1 会 ParserError，必须 pwsh）",
+    "smoke": "pwsh -NoProfile -File tools\\smoke_gui.ps1 / smoke_cli.ps1 / smoke_notify.ps1"
+  }
+}
