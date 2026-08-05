@@ -17,7 +17,16 @@
     ⚠ 必须写在 .props 而不是 .targets：
       DefaultItemExcludes 要在 SDK 生成默认 Compile glob 之前就追加进去才有效。
       （命令行 -p:DefaultItemExcludes=... 反而无效：全局属性会覆盖掉 SDK 自己的追加。）
+
+    ⚠ 2026-08-08 补坑：排除 obj-linux/ bin-linux/ 必须写在**无条件**分支！
+      之前只写在非 Windows 分支，Linux 构建完留下的 obj-linux/ 会在 Windows 构建时
+      被默认 glob 当成源码 -> CS0579 特性重复（实测踩中）。
   -->
+
+  <!-- 无条件：两边都排除对方的产物目录，防止互相污染 -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj-linux/**;bin-linux/**</DefaultItemExcludes>
+  </PropertyGroup>
 
   <PropertyGroup Condition="'$(OS)' != 'Windows_NT'">
     <!-- Linux 用独立的中间/输出目录 -->

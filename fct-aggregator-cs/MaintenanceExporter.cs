@@ -44,9 +44,16 @@ public static class MaintenanceExporter
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
     }
 
+    /// <summary>
+    /// CSV 字段转义。⚠ CWE-1236 公式注入防护: Excel/WPS 会把 = + - @ 开头的单元格当公式执行,
+    /// 维修措施/备注/故障描述是自由文本(可能来自 XML 或手工录入), 首字符命中时加单引号前缀。
+    /// </summary>
     private static string Esc(string? v)
     {
         v ??= "";
+        if (v.Length > 0 && (v[0] == '=' || v[0] == '+' || v[0] == '-' || v[0] == '@' ||
+                             v[0] == '\t' || v[0] == '\r'))
+            v = "'" + v;
         if (v.Contains(',') || v.Contains('"') || v.Contains('\n') || v.Contains('\r'))
             return "\"" + v.Replace("\"", "\"\"") + "\"";
         return v;

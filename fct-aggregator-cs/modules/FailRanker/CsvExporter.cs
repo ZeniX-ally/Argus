@@ -263,9 +263,14 @@ public static class CsvExporter
     }
 
     /// <summary>CSV 字段转义: 含逗号/引号/换行时加双引号并转义内部引号。</summary>
+    /// ⚠ CWE-1236 公式注入防护: Excel/WPS 会把以 = + - @ 开头的单元格当公式/DDE 执行,
+    /// 数据来自产线 XML(外部可控, 分发器还能投放文件), 首字符命中时加单引号前缀强制文本。
     private static string Esc(string? v)
     {
         v ??= "";
+        if (v.Length > 0 && (v[0] == '=' || v[0] == '+' || v[0] == '-' || v[0] == '@' ||
+                             v[0] == '\t' || v[0] == '\r'))
+            v = "'" + v;
         if (v.Contains(',') || v.Contains('"') || v.Contains('\n') || v.Contains('\r'))
             return "\"" + v.Replace("\"", "\"\"") + "\"";
         return v;

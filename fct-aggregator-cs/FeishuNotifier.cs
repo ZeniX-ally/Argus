@@ -27,6 +27,12 @@ public static class FeishuNotifier
     /// <summary>卡片 POST + 重试（两种推送共用）。tag 仅用于最终失败日志定位。</summary>
     private static async Task PostCard(string webhookUrl, object card, string tag)
     {
+        // 飞书机器人只支持 https；若误配成 http:// 会明文泄露 webhook token（含密钥的完整 URL）
+        if (!webhookUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            Logger.Error($"[飞书推送] 拒绝发送: webhook 必须 https://（当前前缀 {webhookUrl[..Math.Min(24, webhookUrl.Length)]}…）| {tag}");
+            return;
+        }
         var payload = new { msg_type = "interactive", card };
         var json = JsonSerializer.Serialize(payload);
 
