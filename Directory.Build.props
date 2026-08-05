@@ -1,0 +1,32 @@
+<Project>
+
+  <!--
+    Linux 侧构建隔离（由 pi 添加，2026-08-04）
+
+    目的：在 Linux 上用 dotnet 编译本仓库时，不与 Windows 侧的 obj/ bin/ 互相污染。
+    只在非 Windows 生效，Windows 上编译行为完全不变（本文件相当于不存在）。
+
+    ⚠ 为什么需要它：
+      1. net8.0-windows 目标在非 Windows 上编译必须 EnableWindowsTargeting=true，
+         否则报 NETSDK1100「无法生成面向 Windows 的项目」。
+      2. 如果 Linux 和 Windows 共用 obj/，两边生成的 AssemblyInfo.cs 会同时被
+         默认 glob 当成源码 -> CS0579「特性重复」（和 csproj 里 selftest/tools 同一个坑）。
+         这里把 Linux 的中间产物挪到 obj-linux/，并把 obj/ bin/ 明确加进
+         DefaultItemExcludes，两边就彻底分开了。
+
+    ⚠ 必须写在 .props 而不是 .targets：
+      DefaultItemExcludes 要在 SDK 生成默认 Compile glob 之前就追加进去才有效。
+      （命令行 -p:DefaultItemExcludes=... 反而无效：全局属性会覆盖掉 SDK 自己的追加。）
+  -->
+
+  <PropertyGroup Condition="'$(OS)' != 'Windows_NT'">
+    <!-- Linux 用独立的中间/输出目录 -->
+    <BaseIntermediateOutputPath>$(MSBuildProjectDirectory)/obj-linux/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildProjectDirectory)/bin-linux/</BaseOutputPath>
+    <!-- 非 Windows 上编译 net8.0-windows 必须开 -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- 把 Windows 侧产物目录排除在源码 glob 之外 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**;dist/**</DefaultItemExcludes>
+  </PropertyGroup>
+
+</Project>

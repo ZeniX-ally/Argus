@@ -37,3 +37,7 @@ desktop.ini
 
 # 发布产物与历史包（v2.9.0 起移出仓库，只留最新一版在 _releases/）
 _releases/
+
+# ---- Linux 侧构建产物（Directory.Build.props 把非 Windows 的中间产物隔离到这里）----
+obj-linux/
+bin-linux/
