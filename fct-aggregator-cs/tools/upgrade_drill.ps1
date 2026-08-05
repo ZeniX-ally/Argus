@@ -19,7 +19,7 @@ param(
     # 默认拿 v2.4.0 作基线：它还没有 todo_items / app_meta 两张表，
     # 能真正考到「升级时自动建新表且不动旧数据」这条路径。
     [string]$OldZip = "$PSScriptRoot\..\..\_releases\aggregator\FCT-Aggregator-v2.4.0.zip",
-    [string]$NewUpdateZip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.0.1-update.zip",
+    [string]$NewUpdateZip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.1-update.zip",
     # 默认 skip_historical_scan=true（演练跑得快）。
     # ⚠ 加上 -FullScan 则模拟现场默认配置（false）：只有这条路径会在启动时
     #   把历史不良并入待办登记表（SyncTodos 挂在「历史扇描后」）。
@@ -151,7 +151,7 @@ foreach ($t in 'todo_items', 'app_meta') {
     Assert ($null -ne $after.$t) "表 $t 已就位（$note）"
 }
 $verAfter = (Get-Item $exe).VersionInfo.FileVersion
-Assert ($verAfter -eq '3.0.0.0' -and $verAfter -ne $verBefore) "程序已真的被更新（$verBefore -> $verAfter）"
+Assert ($verAfter -eq '3.2.1.0' -and $verAfter -ne $verBefore) "程序已真的被更新（$verBefore -> $verAfter）"
 # 待办登记：只有跑了历史扇描才会把**旧**不良并进来（新不良走实时那条路）
 if ($FullScan) {
     Assert ($after.todo_items -gt 0) "历史不良已登记进待办（todo_items=$($after.todo_items)）"

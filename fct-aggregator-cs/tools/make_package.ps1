@@ -12,7 +12,7 @@
 $ErrorActionPreference = 'Stop'
 # 路径自己推（仓库目录 2026-07-31 从 G4_9-QA 改名成 Argus，写死绝对路径会静静失效）
 $root = (Resolve-Path "$PSScriptRoot\..").Path
-$ver  = '3.2.0'
+$ver  = '3.2.1'
 $out  = Join-Path $root 'bin\Release\net8.0-windows'
 
 # 程序文件（不含 pdb / config.json）

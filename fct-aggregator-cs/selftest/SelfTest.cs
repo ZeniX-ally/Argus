@@ -1416,6 +1416,27 @@ class SelfTest
         Check(new FileInfo(xlsx).Length > 1500, $"xlsx 已生成（{new FileInfo(xlsx).Length} 字节）");
         Check(new FileInfo(csv).Length > 500, $"csv 已生成（{new FileInfo(csv).Length} 字节）");
 
+        // CWE-1236 CSV 公式注入防护（v3.2.1 安全审计）：= + - @ 开头的值必须被加单引号前缀
+        var csvInjPath = Path.Combine(work, "注入.csv");
+        MaintenanceExporter.ExportCsv(csvInjPath, new[]
+        {
+            new MaintenanceRecord
+            {
+                FailItem = "=cmd|'/C calc'!A0",
+                FailReason = "+SUM(1,2)",
+                EquipmentSn = "-1+1",
+                Resolver = "@evil",
+                Notes = "正常备注",
+                Severity = "major",
+                Status = "open",
+            },
+        });
+        var csvBody = File.ReadAllText(csvInjPath);
+        Check(csvBody.Contains("'=cmd|'/C calc'!A0"), "CSV 公式注入防护：= 开头加单引号前缀");
+        Check(csvBody.Contains("'+SUM(1,2)"), "CSV 公式注入防护：+ 开头加单引号前缀");
+        Check(csvBody.Contains("'@evil"), "CSV 公式注入防护：@ 开头加单引号前缀");
+        Check(!csvBody.Contains("\"=cmd"), "CSV 公式注入防护：= 开头未被引号包裹（引号包裹对公式无效）");
+
         using (var zip = System.IO.Compression.ZipFile.OpenRead(xlsx))
         {
             foreach (var need in new[] { "[Content_Types].xml", "_rels/.rels", "xl/workbook.xml",
