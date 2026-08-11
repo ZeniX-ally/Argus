@@ -1582,7 +1582,245 @@ class SelfTest
     }
 
         Console.WriteLine($"\n产物留存（可用 Excel 打开人工确认）:\n  {xlsx}\n  {csv}");
+
+        // ==================== 机台聚合推送器（Phase 1） ====================
+        Console.WriteLine("\n【机台聚合推送】FAIL 事件文件 / 心跳 / 断线补偿 / 续推");
+        RunAggPusherTests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
+    }
+
+    // ==================== 机台聚合推送器（Phase 1） ====================
+
+    static TestRecord MakeFailRec(string work, string station, string xml, string sn, string? reason, string result = "FAIL")
+        => new TestRecord
+        {
+            StationId = station,
+            Model = "E3002781",
+            Category = "Online",
+            TestDate = "20260811",
+            Sn = sn,
+            Result = result,
+            XmlPath = xml,
+            FailReason = reason,
+            BatchTimestamp = "2026-08-11 12:00:00",
+            HasFailItems = result == "FAIL",
+        };
+
+    static bool WaitUntil(Func<bool> cond, int timeoutMs)
+    {
+        var end = Environment.TickCount64 + timeoutMs;
+        while (Environment.TickCount64 < end)
+        {
+            if (cond()) return true;
+            Thread.Sleep(100);
+        }
+        return cond();
+    }
+
+    static int CountFailFiles(string dir)
+    {
+        try
+        {
+            return Directory.Exists(dir) ? Directory.GetFiles(dir, "fail-*.json").Length : 0;
+        }
+        catch { return 0; }
+    }
+
+    static void RunAggPusherTests(string work)
+    {
+        var aggRoot = Path.Combine(work, "agg");
+        Directory.CreateDirectory(aggRoot);
+
+        // ---- ① 配置未启用时不动作 ----
+        var shareA = Path.Combine(aggRoot, "shareA");
+        var dataA = Path.Combine(aggRoot, "dataA");
+        var dbA = new Database(Path.Combine(aggRoot, "dbA.db"));
+        var pA = new AgentPusher(new AppConfig { StationId = "FCT1", AggEnabled = false, AggShareRoot = shareA },
+            "FCT1", dbA, dataA, retrySec: 1, heartbeatSec: 2);
+        pA.Init();
+        Check(!pA.Active, "聚合推送：未启用配置下不激活");
+        dbA.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "agg-a1.xml"), "SN-A1", "自检不良A1"));
+        Thread.Sleep(800);
+        Check(!Directory.Exists(shareA), "聚合推送：未启用时共享目录不产生任何文件");
+        Check(!File.Exists(pA.StatePath) && !File.Exists(pA.QueuePath), "聚合推送：未启用时不写 agg_state/agg_queue");
+        pA.Stop();
+
+        // ---- ② 写文件成功（先入库后启动 = 续推扫描路径） ----
+        var shareB = Path.Combine(aggRoot, "shareB");
+        var dataB = Path.Combine(aggRoot, "dataB");
+        var dbB = new Database(Path.Combine(aggRoot, "dbB.db"));
+        for (int i = 0; i < 3; i++)
+            dbB.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, $"agg-b{i}.xml"), $"SN-B{i}", $"自检不良B{i}"));
+        var failsB = dbB.FetchFailRecordsAfter(0);
+        Check(failsB.Count == 3, $"聚合推送：先入库 3 条 FAIL（实得 {failsB.Count}）");
+        var pB = new AgentPusher(new AppConfig { StationId = "FCT1", AggEnabled = true, AggShareRoot = shareB },
+            "FCT1", dbB, dataB, retrySec: 1, heartbeatSec: 2);
+        pB.Init();
+        var dirB = Path.Combine(shareB, "FCT1");
+        Check(WaitUntil(() => CountFailFiles(dirB) == 3, 10000), "聚合推送：启动续推扫描补齐 3 个 fail 文件");
+        var idsB = failsB.Select(f => f.Id).OrderBy(x => x).ToList();
+        foreach (var (rec, id) in failsB)
+        {
+            var path = Path.Combine(dirB, $"fail-{id}.json");
+            Check(File.Exists(path), $"聚合推送：fail-{id}.json 已写入");
+            if (File.Exists(path))
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+                var r = doc.RootElement;
+                Check(r.GetProperty("machine").GetString() == "FCT1" && r.GetProperty("type").GetString() == "fail"
+                      && r.GetProperty("seq").GetInt64() == id && !string.IsNullOrEmpty(r.GetProperty("ts").GetString()),
+                      $"fail-{id}.json 字段 machine/type/seq/ts 正确");
+                Check(r.GetProperty("data").GetProperty("sn").GetString() == rec.Sn
+                      && r.GetProperty("data").GetProperty("result").GetString() == "FAIL",
+                      $"fail-{id}.json data 内 sn/result 正确");
+            }
+        }
+        Check(Directory.GetFiles(dirB, "*.tmp").Length == 0, "聚合推送：无 .tmp 残留（先写临时再改名）");
+        Check(WaitUntil(() =>
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pB.StatePath));
+                return doc.RootElement.GetProperty("max_seq").GetInt64() == idsB[^1];
+            }
+            catch { return false; }
+        }, 5000), $"agg_state.json max_seq={idsB[^1]} 正确");
+        Check(pB.LastSeq == idsB[^1], $"LastSeq = {idsB[^1]}（已推送最大 seq）");
+        dbB.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "agg-bpass.xml"), "SN-BP", null, "PASS"));
+        Thread.Sleep(800);
+        Check(CountFailFiles(dirB) == 3, "聚合推送：PASS 记录不生成 fail 文件");
+
+        // ---- ③ seq 单调 + 去重 ----
+        for (int i = 0; i < 2; i++)
+            dbB.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, $"agg-b3-{i}.xml"), $"SN-B3{i}", $"自检不良B3{i}"));
+        var allFails = dbB.FetchFailRecordsAfter(0).Select(f => f.Id).OrderBy(x => x).ToList();
+        Check(WaitUntil(() => CountFailFiles(dirB) == allFails.Count, 10000),
+              $"聚合推送：事件驱动实时推送（共 {allFails.Count} 个文件）");
+        var diskSeqs = Directory.GetFiles(dirB, "fail-*.json")
+            .Select(f => long.Parse(Path.GetFileNameWithoutExtension(f)["fail-".Length..]))
+            .OrderBy(x => x).ToList();
+        Check(diskSeqs.SequenceEqual(allFails), "seq 与 test_records 自增 id 一一对应（单调、无重复）");
+        var dup = failsB[0];
+        var dupPath = Path.Combine(dirB, $"fail-{dup.Id}.json");
+        var before = File.ReadAllText(dupPath);
+        pB.EnqueueFail(dup.Rec, dup.Id);
+        Thread.Sleep(800);
+        Check(File.ReadAllText(dupPath) == before && CountFailFiles(dirB) == allFails.Count,
+              "重复 seq 幂等跳过（文件不重写、不新增）");
+        Check(pB.QueuedCount == 0 && pB.LastSeq == allFails[^1], "去重后队列为空、LastSeq 不变");
+        pB.Stop();
+
+        // ---- ④ 断线补偿 ----
+        var shareBad = Path.Combine(aggRoot, "shareBad");
+        File.WriteAllText(shareBad, "占位文件：让共享根不可建目录");
+        var shareGood = Path.Combine(aggRoot, "shareGood");
+        var dataD = Path.Combine(aggRoot, "dataD");
+        var dbD = new Database(Path.Combine(aggRoot, "dbD.db"));
+        var pD = new AgentPusher(new AppConfig { StationId = "FCT1", AggEnabled = true, AggShareRoot = shareBad },
+            "FCT1", dbD, dataD, retrySec: 1, heartbeatSec: 60);
+        pD.Init();
+        for (int i = 0; i < 2; i++)
+            dbD.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, $"agg-d{i}.xml"), $"SN-D{i}", $"自检不良D{i}"));
+        var idsD = dbD.FetchFailRecordsAfter(0).Select(f => f.Id).OrderBy(x => x).ToList();
+        Check(idsD.Count == 2, $"聚合推送：断线前入库 2 条 FAIL（实得 {idsD.Count}）");
+        Check(WaitUntil(() => pD.QueuedCount == 2, 3000), "写共享失败 -> 事件全部进内存队列");
+        Check(!Directory.Exists(shareGood), "断线期间共享目录无任何文件");
+        Check(WaitUntil(() =>
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pD.QueuePath));
+                var evs = doc.RootElement.GetProperty("events");
+                return evs.GetArrayLength() == 2
+                       && evs[0].GetProperty("seq").GetInt64() == idsD[0]
+                       && evs[1].GetProperty("seq").GetInt64() == idsD[1]
+                       && evs[0].GetProperty("type").GetString() == "fail"
+                       && evs[0].GetProperty("json").GetString()!.Contains("\"type\":\"fail\"");
+            }
+            catch { return false; }
+        }, 5000), "agg_queue.json 落盘 2 条未推送事件（含原始 JSON，重启不丢队）");
+        pD.ShareRoot = shareGood;
+        var dirD = Path.Combine(shareGood, "FCT1");
+        Check(WaitUntil(() => CountFailFiles(dirD) == 2, 10000), "共享恢复后自动补推 2 个 fail 文件");
+        Check(WaitUntil(() => pD.QueuedCount == 0 && pD.LastSeq == idsD[^1], 5000),
+              $"补推完成：队列清空、LastSeq={idsD[^1]}");
+        Check(WaitUntil(() =>
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pD.StatePath));
+                return doc.RootElement.GetProperty("max_seq").GetInt64() == idsD[^1];
+            }
+            catch { return false; }
+        }, 5000), "agg_state.json 更新 max_seq");
+        pD.Stop();
+
+        // ---- ⑤ 心跳 ----
+        var shareE = Path.Combine(aggRoot, "shareE");
+        var dataE = Path.Combine(aggRoot, "dataE");
+        var dbE = new Database(Path.Combine(aggRoot, "dbE.db"));
+        var pE = new AgentPusher(new AppConfig { StationId = "FCT1", AggEnabled = true, AggShareRoot = shareE },
+            "FCT1", dbE, dataE, retrySec: 1, heartbeatSec: 2);
+        pE.Init();
+        dbE.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "agg-e0.xml"), "SN-E0", "自检不良E0"));
+        var idE = dbE.FetchFailRecordsAfter(0)[0].Id;
+        var hb = Path.Combine(shareE, "FCT1", "heartbeat.json");
+        // 启动瞬间会先写一次 last_seq=0 的心跳，等 FAIL 入队后 next 周期心跳才带上真实 seq
+        Check(WaitUntil(() => File.Exists(hb), 10000), "心跳文件 heartbeat.json 已生成");
+        Check(WaitUntil(() =>
+        {
+            if (!File.Exists(hb)) return false;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(hb));
+                var r = doc.RootElement;
+                return r.GetProperty("type").GetString() == "heartbeat"
+                       && r.GetProperty("machine").GetString() == "FCT1"
+                       && r.GetProperty("last_seq").GetInt64() == idE
+                       && !string.IsNullOrEmpty(r.GetProperty("ts").GetString());
+            }
+            catch { return false; }
+        }, 10000), $"心跳字段正确且 last_seq={idE}（最近已推送 seq）");
+        string hb1 = File.ReadAllText(hb);
+        Check(WaitUntil(() => File.Exists(hb) && File.ReadAllText(hb) != hb1, 10000), "心跳按周期持续覆盖更新");
+        pE.Stop();
+
+        // ---- ⑥ 重启恢复：读 agg_queue.json 补推 + 续推扫描合并去重 ----
+        var share6Bad = Path.Combine(aggRoot, "share6Bad");
+        File.WriteAllText(share6Bad, "占位文件：让共享根不可建目录");
+        var share6Good = Path.Combine(aggRoot, "share6Good");
+        var data6 = Path.Combine(aggRoot, "data6");
+        var db6 = new Database(Path.Combine(aggRoot, "db6.db"));
+        var p6a = new AgentPusher(new AppConfig { StationId = "FCT1", AggEnabled = true, AggShareRoot = share6Bad },
+            "FCT1", db6, data6, retrySec: 1, heartbeatSec: 60);
+        p6a.Init();
+        for (int i = 0; i < 2; i++)
+            db6.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, $"agg-f{i}.xml"), $"SN-F{i}", $"自检不良F{i}"));
+        Check(WaitUntil(() => p6a.QueuedCount == 2, 3000), "重启前：2 条事件滞留队列");
+        p6a.Stop();
+        Check(File.Exists(Path.Combine(data6, "agg_queue.json")), "停止时 agg_queue.json 落盘");
+        // 模拟重启：同一个 data 目录 + 同一个 db，共享恢复
+        var p6b = new AgentPusher(new AppConfig { StationId = "FCT1", AggEnabled = true, AggShareRoot = share6Good },
+            "FCT1", db6, data6, retrySec: 1, heartbeatSec: 60);
+        p6b.Init();
+        var dir6 = Path.Combine(share6Good, "FCT1");
+        var ids6 = db6.FetchFailRecordsAfter(0).Select(f => f.Id).OrderBy(x => x).ToList();
+        Check(WaitUntil(() => CountFailFiles(dir6) == 2, 10000), "重启后补推 2 个 fail 文件（队列补推 + 数据库续推兜底）");
+        Check(WaitUntil(() => p6b.QueuedCount == 0 && p6b.LastSeq == ids6[^1], 5000),
+              $"补推完成：队列清空、LastSeq={ids6[^1]}（状态续推起点正确）");
+        Check(WaitUntil(() =>
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(p6b.QueuePath));
+                return doc.RootElement.GetProperty("events").GetArrayLength() == 0;
+            }
+            catch { return false; }
+        }, 5000), "补推后 agg_queue.json 清空");
+        p6b.Stop();
+
+        Console.WriteLine("    聚合推送自检完成");
     }
 }

@@ -22,6 +22,10 @@ public class AppConfig
     /// 已登记的待办**永久保留**，不会因窗口滑动而消失。config.json: todo_scan_days。
     /// </summary>
     public int TodoScanDays { get; set; } = 30;
+    /// <summary>机台聚合推送开关（Phase 1：FAIL 事件文件 + 心跳）。config.json: agg_enabled。</summary>
+    public bool AggEnabled { get; set; } = false;
+    /// <summary>共享目录根（如 \\192.168.x.x\ArgusAgg）。config.json: agg_share_root。</summary>
+    public string AggShareRoot { get; set; } = "";
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -55,6 +59,9 @@ public class AppConfig
                 if (root.TryGetProperty("todo_scan_days", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var days) && days >= 1)
                     cfg.TodoScanDays = days;
+                // 机台聚合推送：缺省关，只有显式写 true 才开
+                if (root.TryGetProperty("agg_enabled", out v)) cfg.AggEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("agg_share_root", out v)) cfg.AggShareRoot = v.GetString() ?? "";
                 return cfg;
             }
             else

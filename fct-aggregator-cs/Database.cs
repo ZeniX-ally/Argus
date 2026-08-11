@@ -18,6 +18,17 @@ public class Database
         catch (Exception ex) { Logger.Warning($"状态变更回调异常: {ex.Message}"); }
     }
 
+    /// <summary>test_records 成功写入事件：参数 = (记录, 数据库自增id)，仅含真正插入的行。
+    /// 聚合推送器订阅后推送事件文件；本事件回调异常不影响入库主流程。</summary>
+    public event Action<List<(TestRecord Rec, long Id)>>? RecordsInserted;
+
+    private void NotifyRecordsInserted(List<(TestRecord, long)> rows)
+    {
+        if (rows.Count == 0) return;
+        try { RecordsInserted?.Invoke(rows); }
+        catch (Exception ex) { Logger.Warning($"插入事件回调异常: {ex.Message}"); }
+    }
+
     public Database(string dbPath)
     {
         _dbPath = dbPath;
@@ -252,7 +263,8 @@ public class Database
         return result;
     }
 
-    /// <summary>批量插入(忽略重复 xml_path)。返回插入数。</summary>
+    /// <summary>批量插入(忽略重复 xml_path)。返回插入数。
+    /// 真正插入的行通过 <see cref="RecordsInserted"/> 通知(带自增 id，供聚合推送做 seq)。</summary>
     public int BatchInsert(IEnumerable<TestRecord> records)
     {
         var list = records.ToList();
@@ -260,6 +272,7 @@ public class Database
         using var conn = Open();
         using var tx = conn.BeginTransaction();
         int inserted = 0;
+        var insertedRows = new List<(TestRecord, long)>();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             INSERT OR IGNORE INTO test_records
@@ -295,9 +308,18 @@ public class Database
             pTs.Value = (object?)rec.BatchTimestamp ?? DBNull.Value;
             pHasFail.Value = rec.HasFailItems ? 1 : 0;
             pSize.Value = (object?)rec.FileSize ?? DBNull.Value;
-            inserted += cmd.ExecuteNonQuery();
+            if (cmd.ExecuteNonQuery() > 0)
+            {
+                inserted++;
+                // last_insert_rowid 是连接级的：同一连接、同一事务内取刚插入行的自增 id（OR IGNORE 忽略的行不会推进它）
+                using var idCmd = conn.CreateCommand();
+                idCmd.Transaction = tx;
+                idCmd.CommandText = "SELECT last_insert_rowid()";
+                insertedRows.Add((rec, Convert.ToInt64(idCmd.ExecuteScalar())));
+            }
         }
         tx.Commit();
+        NotifyRecordsInserted(insertedRows);
         return inserted;
     }
 
@@ -1323,6 +1345,42 @@ public class Database
                 r.IsDBNull(2) ? "" : r.GetString(2),
                 r.IsDBNull(3) ? "" : r.GetString(3),
                 r.IsDBNull(4) ? "" : r.GetString(4)));
+        return list;
+    }
+
+    /// <summary>聚合推送续推用：取 id 大于 afterId 的 FAIL 记录（按 id 升序，最多 limit 条）。</summary>
+    public List<(TestRecord Rec, long Id)> FetchFailRecordsAfter(long afterId, int limit = 5000)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT id, station_id, model, category, test_date, sn, result, xml_path,
+                   fail_reason, tester, panel_status, batch_timestamp, has_fail_items, file_size
+              FROM test_records WHERE result='FAIL' AND id > @a ORDER BY id ASC LIMIT @n";
+        cmd.Parameters.AddWithValue("@a", afterId);
+        cmd.Parameters.AddWithValue("@n", limit);
+        var list = new List<(TestRecord, long)>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var rec = new TestRecord
+            {
+                StationId = r.GetString(1),
+                Model = r.IsDBNull(2) ? "" : r.GetString(2),
+                Category = r.IsDBNull(3) ? "" : r.GetString(3),
+                TestDate = r.IsDBNull(4) ? "" : r.GetString(4),
+                Sn = r.IsDBNull(5) ? null : r.GetString(5),
+                Result = r.IsDBNull(6) ? "" : r.GetString(6),
+                XmlPath = r.IsDBNull(7) ? "" : r.GetString(7),
+                FailReason = r.IsDBNull(8) ? null : r.GetString(8),
+                Tester = r.IsDBNull(9) ? null : r.GetString(9),
+                PanelStatus = r.IsDBNull(10) ? null : r.GetString(10),
+                BatchTimestamp = r.IsDBNull(11) ? null : r.GetString(11),
+                HasFailItems = !r.IsDBNull(12) && r.GetInt32(12) != 0,
+                FileSize = r.IsDBNull(13) ? null : r.GetInt64(13),
+            };
+            list.Add((rec, r.GetInt64(0)));
+        }
         return list;
     }
 

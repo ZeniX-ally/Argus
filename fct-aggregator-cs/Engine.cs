@@ -8,6 +8,7 @@ public class Engine
     private readonly AppConfig _cfg;
     private readonly Database _db;
     private readonly string _stationId;
+    private readonly AgentPusher _pusher;
     private readonly List<FileSystemWatcher> _watchers = new();
     private volatile bool _initialScanComplete = false;
     private CancellationTokenSource _cts = new();
@@ -15,6 +16,7 @@ public class Engine
     public Database Db => _db;
     public string ResolvedStationId => _stationId;
     public AppConfig Config => _cfg;
+    public AgentPusher Pusher => _pusher;
 
     public Engine(AppConfig cfg)
     {
@@ -33,6 +35,10 @@ public class Engine
         Directory.CreateDirectory(dataDir);
         var dbFile = Path.Combine(dataDir, $"{(string.IsNullOrEmpty(sid) ? "fct" : sid)}.db");
         _db = new Database(dbFile);
+
+        // 机台聚合推送器（Phase 1）：FAIL 事件文件 + 心跳；未配置时静默不动作
+        _pusher = new AgentPusher(cfg, _stationId, _db);
+        _pusher.Init();
 
         AppState.StationId = sid;
         AppState.WebhookConfigured = !string.IsNullOrEmpty(cfg.WebhookUrl);
@@ -107,6 +113,7 @@ public class Engine
 
     public void Stop()
     {
+        _pusher.Stop();
         _cts.Cancel();
         foreach (var w in _watchers) { try { w.EnableRaisingEvents = false; w.Dispose(); } catch { } }
         _watchers.Clear();
