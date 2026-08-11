@@ -239,7 +239,14 @@ public sealed class MainForm : Form
         _cfg.Categories = _chkOnline.Checked
             ? new[] { "Offline", "Online" }
             : new[] { "Offline" };
-        try { _cfg.Save(Program.ConfigPath); } catch { /* 保存失败不阻塞 */ }
+        try { _cfg.Save(Program.ConfigPath); }
+        catch (Exception ex)
+        {
+            Log($"[警告] 配置保存失败(未写入磁盘), 本次运行使用内存中的配置: {ex.Message}");
+            MessageBox.Show(
+                $"配置保存失败, 未写入磁盘, 请检查 {Program.ConfigPath} 内容。\n\n{ex.Message}",
+                "配置保存失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
 
         _btnRun.Enabled = false;
         _log.Clear();

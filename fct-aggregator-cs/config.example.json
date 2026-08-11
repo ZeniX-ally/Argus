@@ -1,7 +1,7 @@
 {
     "station_id": "",
     "results_root": "D:/Results",
-    "fct_ini_path": "C:\\FTS\\Apps\\XPT\\Cfg\\FCT.ini",
+    "fct_ini_path": "C:\\FTS\\Apps\\PEU\\Cfg\\FCT.ini",
     "webhook_url": "",
     "auto_start": false,
     "skip_historical_scan": false,

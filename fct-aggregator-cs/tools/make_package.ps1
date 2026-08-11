@@ -6,13 +6,13 @@
 #     程序文件 + config.json + 启动.bat + app_icon.ico + 文档 + data\ + logs\ + 两个 zip
 #   两个 zip 从临时 staging 生成，完整 zip 与更新 zip 的区别：
 #     完整包：含 config.json（webhook 按要求写死）、data\、logs\
-#     更新包：无 config.json / *.pdb / data\ / logs\，多一份 覆盖说明.md
+#     更新包：含 config.json（配置模板）、无 *.pdb / data\ / logs\，多一份 覆盖说明.md
 #
 # ⚠ dotnet clean / Rebuild 会清掉本目录内容，打好的 zip 请及时拷走归档。
 $ErrorActionPreference = 'Stop'
 # 路径自己推（仓库目录 2026-07-31 从 G4_9-QA 改名成 Argus，写死绝对路径会静静失效）
 $root = (Resolve-Path "$PSScriptRoot\..").Path
-$ver  = '3.2.1'
+$ver  = '3.2.2'
 $out  = Join-Path $root 'bin\Release\net8.0-windows'
 
 # 程序文件（不含 pdb / config.json）
@@ -49,6 +49,56 @@ function Resolve-DistFile([string]$name) {
     return $hit.FullName
 }
 
+<#
+  把 win 平台的 runtimes 树拷进 staging（保持相对路径，deps.json 按此路径加载）。
+  ⚠ 踩过的坑（v3.2.2 现场报错）：System.IO.Ports 的 NuGet 包把**实现**放在
+     runtimes\win\lib\net8.0\System.IO.Ports.dll（87728B），根目录那个 35488B 只是
+     reference assembly（编译期空壳）。只拷根目录 → 运行时按 deps.json 找 runtimes 路径
+     → FileNotFoundException「Could not load file or assembly 'System.IO.Ports'」。
+     e_sqlite3.dll 同理：真正会被加载的是 runtimes\win-x64\native\ 下那份。
+  所以整个 runtimes\win* 目录树必须随包走。
+#>
+function Copy-WinRuntimes([string]$stage) {
+    $winRoot = Join-Path $out 'runtimes'
+    if (-not (Test-Path $winRoot)) { throw "$out 下没有 runtimes\（dotnet build 产物不完整）" }
+    # ⚠ 必须先建目标目录：目标不存在时 Copy-Item -Recurse 会把源目录名吞掉
+    #   （runtimes\win 会被展开成 runtimes\lib\...，丢 win 层级 -> 运行时照样找不到）
+    $rtDest = Join-Path $stage 'runtimes'
+    New-Item -ItemType Directory -Path $rtDest -Force | Out-Null
+    foreach ($d in (Get-ChildItem $winRoot -Directory)) {
+        if ($d.Name -match '^win') {
+            Copy-Item $d.FullName $rtDest -Recurse -Force
+        }
+    }
+}
+
+<#
+  校验：deps.json 声明的**所有** win 平台运行时文件（rid 以 win 开头）必须都已入包。
+  这是对 Copy-WinRuntimes 的兜底——以后新增 NuGet 包也不会再漏。
+#>
+function Assert-DepsWinFiles([string]$stage) {
+    $depsPath = Join-Path $out 'Argus.deps.json'
+    if (-not (Test-Path $depsPath)) { throw "$depsPath 不存在" }
+    $deps = Get-Content $depsPath -Raw | ConvertFrom-Json
+    $missing = @()
+    # ⚠ runtimeTargets 在 targets.<框架>.包节点 里，不在顶层——之前遍历错层级导致校验空转
+    foreach ($tf in $deps.targets.PSObject.Properties) {
+        foreach ($p in $tf.Value.PSObject.Properties) {
+            $node = $p.Value
+            if (-not $node -or -not $node.runtimeTargets) { continue }
+            foreach ($rt in $node.runtimeTargets.PSObject.Properties) {
+                $rel = $rt.Name; $rid = $rt.Value.rid
+                if ($rel -like 'runtimes/*' -and $rid -like 'win*') {
+                    $local = Join-Path $stage ($rel -replace '/', '\')
+                    if (-not (Test-Path $local)) { $missing += "$rel (rid=$rid)" }
+                }
+            }
+        }
+    }
+    if ($missing.Count -gt 0) { throw "包内缺少 deps.json 声明的 win 运行时文件: $($missing -join '; ')" }
+    Write-Host "[OK] deps.json 的 win 运行时文件已全部入包"
+}
+
 # ==================== 1) 铺平到 $out ====================
 # 程序文件已在 build 时生成在 $out；补上随包文件与 data/logs 目录
 foreach ($f in $rootFiles) { Copy-Item (Join-Path $root $f) $out }
@@ -60,6 +110,8 @@ $stage = Join-Path $env:TEMP "fct_pkg_$PID"
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stage }
+Copy-WinRuntimes $stage
+Assert-DepsWinFiles $stage
 foreach ($f in ($rootFiles + $docs)) { Copy-Item (Join-Path $root $f) $stage }
 New-Item -ItemType Directory -Path (Join-Path $stage 'data'), (Join-Path $stage 'logs') -Force | Out-Null
 
@@ -67,12 +119,18 @@ $zipFull = Join-Path $out "Argus-v$ver.zip"
 if (Test-Path $zipFull) { Remove-Item $zipFull -Force }
 Compress-Archive -Path "$stage\*" -DestinationPath $zipFull -Force
 
-# ==================== 3) 更新 zip（无 config/data/logs/pdb，多覆盖说明）====================
+# ==================== 3) 更新 zip（含 config.json 模板，无 data/logs/pdb，多覆盖说明）====================
+# ⚠ v3.2.2 起更新包**带 config.json**：现场 config 可能被旧版取数打包 bug 冲掉，
+#   需要随包恢复（fct_ini_path=PEU 等已就位）。部署端会做**合并覆盖**：
+#   保留现场 station_id（库名不变），现场特有字段并入，原 config 自动备份。
 $stageUpd = Join-Path $env:TEMP "fct_pkg_upd_$PID"
 Remove-Item $stageUpd -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $stageUpd -Force | Out-Null
 foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stageUpd }
-Copy-Item (Join-Path $root '启动.bat') $stageUpd                        # 启动脚本可覆盖，config.json 不可
+Copy-WinRuntimes $stageUpd
+Assert-DepsWinFiles $stageUpd
+Copy-Item (Join-Path $root '启动.bat') $stageUpd
+Copy-Item (Join-Path $root 'config.json') $stageUpd                        # 配置模板（部署端合并，不盲盖）
 Copy-Item (Join-Path $root 'app_icon.ico') $stageUpd                     # 图标也跟着更新
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $stageUpd }
 Copy-Item (Join-Path $root '覆盖说明.md') $stageUpd      # 覆盖包专属：升级步骤说明
@@ -82,7 +140,8 @@ if (Test-Path $zipUpd) { Remove-Item $zipUpd -Force }
 Compress-Archive -Path "$stageUpd\*" -DestinationPath $zipUpd -Force
 
 # ==================== 4) 断言：更新包绝不能含这些 ====================
-$forbidden = @('config.json', '*.pdb')
+# config.json 现在**有意包含**（配置模板），其余仍禁止
+$forbidden = @('*.pdb')
 foreach ($pat in $forbidden) {
     $hit = Get-ChildItem $stageUpd -Recurse -File -Filter $pat -ErrorAction SilentlyContinue
     if ($hit) { throw "更新包里出现了不该有的文件: $($hit.Name -join ', ')" }
@@ -90,7 +149,7 @@ foreach ($pat in $forbidden) {
 foreach ($sub in @('data', 'logs')) {
     if (Test-Path (Join-Path $stageUpd $sub)) { throw "更新包里出现了 $sub\ 目录" }
 }
-Write-Host "[OK] 更新包已确认不含 config.json / *.pdb / data\ / logs\"
+Write-Host "[OK] 更新包已确认含 config.json 模板、不含 *.pdb / data\ / logs\"
 
 # ==================== 5) 清理 staging ====================
 Remove-Item $stage, $stageUpd -Recurse -Force -ErrorAction SilentlyContinue

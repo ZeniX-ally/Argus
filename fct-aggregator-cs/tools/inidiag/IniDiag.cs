@@ -16,7 +16,7 @@ public static class IniDiag
         {
             // 与主程序同一条路：config.json 的 fct_ini_path，空则用默认
             var cfg = AppConfig.Load();
-            path = string.IsNullOrEmpty(cfg.FctIniPath) ? @"C:\FTS\Apps\XPT\Cfg\FCT.ini" : cfg.FctIniPath;
+            path = string.IsNullOrEmpty(cfg.FctIniPath) ? @"C:\FTS\Apps\PEU\Cfg\FCT.ini" : cfg.FctIniPath;
             Console.WriteLine($"config.json 的 fct_ini_path = \"{cfg.FctIniPath}\"");
         }
         Console.WriteLine($"请求解析路径 = \"{path}\"");

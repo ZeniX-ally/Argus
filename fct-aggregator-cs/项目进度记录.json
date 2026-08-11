@@ -1,4 +1,4 @@
-{
+﻿{
   "project": "FCT-Aggregator",
   "description": "FCT 测试数据聚合软件 - 监控测试机产生的 XML 结果文件, 解析分类入库统计, FAIL 告警推送飞书, 设备状态查看, 维修记录管理",
   "conversation_summary": "本次对话从 Python 版(v1.0.2)的问题排查开始, 经历功能修复、多轮优化、真实数据适配, 最终因杀毒软件(SentinelOne)查杀问题, 用 C# / .NET 8 完整重构为 v2.0.0",
@@ -133,7 +133,7 @@
   "config_json_template": {
     "station_id": "留空则按机台IP自动识别(172.28.55.11~18 -> FCT1~7)",
     "results_root": "D:/Results (测试结果目录)",
-    "fct_ini_path": "C:\\FTS\\Apps\\XPT\\Cfg\\FCT.ini",
+    "fct_ini_path": "C:\\\\FTS\\\\Apps\\\\PEU\\Cfg\\FCT.ini",
     "webhook_url": "飞书群机器人地址(实际地址见本地 config.json，含 token 不入库)",
     "skip_historical_scan": false,
     "log_level": "INFO"

@@ -137,7 +137,7 @@ public class DebugPanel : Panel
 
     private void TestDevices()
     {
-        var data = FctIni.Parse(string.IsNullOrEmpty(_engine.Config.FctIniPath) ? @"C:\FTS\Apps\XPT\Cfg\FCT.ini" : _engine.Config.FctIniPath);
+        var data = FctIni.Parse(string.IsNullOrEmpty(_engine.Config.FctIniPath) ? @"C:\FTS\Apps\PEU\Cfg\FCT.ini" : _engine.Config.FctIniPath);
         if (!data.Found) { Print(data.Error ?? "FCT.ini 未找到"); return; }
         Print($"型号: {string.Join(", ", data.Models)}");
         Print($"软件版本: {string.Join(", ", data.FwVersions.Select(v => v.Version))}");

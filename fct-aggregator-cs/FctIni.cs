@@ -63,8 +63,8 @@ public static class FctIni
     private static IEnumerable<string> CandidatePaths(string configured)
     {
         if (!string.IsNullOrWhiteSpace(configured)) yield return configured;
-        yield return @"C:\FTS\Apps\XPT\Cfg\FCT.ini";
-        yield return @"D:\FTS\Apps\XPT\Cfg\FCT.ini";
+        yield return @"C:\FTS\Apps\PEU\Cfg\FCT.ini";
+        yield return @"D:\FTS\Apps\PEU\Cfg\FCT.ini";
         yield return @"C:\FTS\Cfg\FCT.ini";
     }
 

@@ -41,7 +41,7 @@ Write-Host ""
 Write-Host "[2] 逐个检查候选路径（程序内置顺序）" -ForegroundColor Cyan
 $cands = @()
 if ($configured) { $cands += $configured }
-$cands += @('C:\FTS\Apps\XPT\Cfg\FCT.ini', 'D:\FTS\Apps\XPT\Cfg\FCT.ini', 'C:\FTS\Cfg\FCT.ini')
+$cands += @('C:\FTS\Apps\PEU\Cfg\FCT.ini', 'D:\FTS\Apps\PEU\Cfg\FCT.ini', 'C:\FTS\Cfg\FCT.ini')
 foreach ($p in $cands) {
     $dir = Split-Path $p -Parent
     if (Test-Path $p) {

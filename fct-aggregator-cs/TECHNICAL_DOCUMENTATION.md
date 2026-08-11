@@ -1,4 +1,4 @@
-# Argus 技术文档（C# 版）
+﻿# Argus 技术文档（C# 版）
 
 **项目**：FCT 测试结果聚合系统（工控机端）
 **当前版本**：v3.0.0（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 去重 + 正式图标；**数据分发已独立成 FCT-Distributor**）
@@ -461,7 +461,7 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 |----|------|------|
 | `station_id` | `""` | 留空则按 IP 自动识别 |
 | `results_root` | `D:\Results` | 测试结果根目录 |
-| `fct_ini_path` | `C:\FTS\Apps\XPT\Cfg\FCT.ini` | 设备状态页数据源 |
+| `fct_ini_path` | `C:\FTS\Apps\PEU\Cfg\FCT.ini` | 设备状态页数据源 |
 | `webhook_url` | `""` | 飞书群机器人；空则不推送 |
 | `skip_historical_scan` | `false` | true 则只做实时监控 |
 | `log_level` | `INFO` | DEBUG / INFO / WARNING / ERROR |

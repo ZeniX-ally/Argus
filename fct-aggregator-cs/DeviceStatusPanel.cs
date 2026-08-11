@@ -196,7 +196,7 @@ public class DeviceStatusPanel : Panel
     private string IniPath()
     {
         var p = _cfg.FctIniPath;
-        return string.IsNullOrEmpty(p) ? @"C:\FTS\Apps\XPT\Cfg\FCT.ini" : p;
+        return string.IsNullOrEmpty(p) ? @"C:\FTS\Apps\PEU\Cfg\FCT.ini" : p;
     }
 
     /// <summary>刷新: 只更新文字/颜色, 不重建控件(防闪烁)。</summary>

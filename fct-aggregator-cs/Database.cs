@@ -33,6 +33,11 @@ public class Database
     {
         var c = new SqliteConnection(_connString);
         c.Open();
+        // 多线程并发写（历史扫描 BatchInsert + 实时事件 Task.Run + SyncTodoItems）
+        // 默认 busy_timeout=0 会立刻锁失败; WAL 让读写不互斥, 写之间靠 busy 等待协调
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;";
+        cmd.ExecuteNonQuery();
         return c;
     }
 
@@ -203,6 +208,13 @@ public class Database
             {
                 Logger.Info($"[迁移] 已存在当日备份, 直接迁移: {Path.GetFileName(bak)}");
                 return true;
+            }
+            // WAL 模式下未 checkpoint 的数据在 -wal 文件里, 先落盘再复制, 否则备份会缺数据
+            using (var conn = Open())
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+                cmd.ExecuteNonQuery();
             }
             // 释放连接池持有的文件句柄, 确保 File.Copy 拿到完整快照
             SqliteConnection.ClearAllPools();
@@ -779,7 +791,7 @@ public class Database
     }
 
     /// <summary>时间戳统一成 `yyyy-MM-dd HH:mm:ss`，否则字符串比较会因 `T` / 纯日期而错乱。</summary>
-    private static string NormalizeTs(string ts)
+    internal static string NormalizeTs(string ts)
     {
         ts = (ts ?? "").Trim();
         if (ts.Length == 0) return "";
@@ -1262,12 +1274,14 @@ public class Database
     /// FAIL 记录的「可作为维修依据」的来源行 —— **不含 SN**（维修记录不再关心 SN）。
     /// fail_reason 只是**首个**失败项；要拿全部失败项需要再解析 xml_path（由 UI 侧按需深扫）。
     /// </summary>
-    public List<FailItemSource> FailItemSources(string stationId = "", int limit = 2000)
+    public List<FailItemSource> FailItemSources(string stationId = "", int days = 0, int limit = 2000)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         var where = "WHERE result='FAIL'";
         if (!string.IsNullOrEmpty(stationId)) where += " AND station_id=@s";
+        string? cutoff = null;
+        if (days > 0) { cutoff = DateTime.Today.AddDays(-days).ToString("yyyyMMdd"); where += " AND test_date >= @c"; }
         cmd.CommandText = $@"
             SELECT COALESCE(fail_reason,''), COALESCE(model,''), COALESCE(station_id,''),
                    COALESCE(batch_timestamp,''), COALESCE(test_date,''), COALESCE(xml_path,'')
@@ -1275,6 +1289,7 @@ public class Database
              ORDER BY id DESC
              LIMIT @lim";
         if (!string.IsNullOrEmpty(stationId)) cmd.Parameters.AddWithValue("@s", stationId);
+        if (cutoff != null) cmd.Parameters.AddWithValue("@c", cutoff);
         cmd.Parameters.AddWithValue("@lim", limit);
         var list = new List<FailItemSource>();
         using var r = cmd.ExecuteReader();

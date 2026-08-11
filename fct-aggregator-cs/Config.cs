@@ -9,7 +9,7 @@ public class AppConfig
 {
     public string StationId { get; set; } = "";
     public string ResultsRoot { get; set; } = @"D:\Results";
-    public string FctIniPath { get; set; } = @"C:\FTS\Apps\XPT\Cfg\FCT.ini";
+    public string FctIniPath { get; set; } = @"C:\FTS\Apps\PEU\Cfg\FCT.ini";
     public string WebhookUrl { get; set; } = "";
     public bool SkipHistoricalScan { get; set; } = false;
     public string LogLevel { get; set; } = "INFO";

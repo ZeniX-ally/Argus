@@ -66,7 +66,7 @@ public class FailItemPickerForm : Form
         {
             Left = 12, Top = 10, Width = 840, Height = 34,
             Text = "勾选一个或多个故障项 → 【确定】即可写入维修记录的「故障项目」。\r\n" +
-                   "列表已按故障项去重（不显示 SN）；「深扫 XML」可把每条记录里除首项以外的失败项也找出来。",
+                   "统计范围：近 " + ScanDays + " 天内的 FAIL（每条记录只取第一条失败项，已按故障项去重）；「深扫 XML」从源文件复核一遍。",
             ForeColor = Color.FromArgb(90, 100, 115),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
@@ -153,16 +153,28 @@ public class FailItemPickerForm : Form
 
     // ==================== 取数 ====================
 
+    /// <summary>时间窗口（天）：只统计近 N 天内的 FAIL。与待办同步 todo_scan_days 一致。</summary>
+    private int ScanDays => _engine.Config.TodoScanDays;
+
+    /// <summary>型号识别：借鉴 Processor 的入库规则 —— 文件名 SN 前 8 位优先，fallback 目录型号。</summary>
+    private static string ResolveModel(FailItemSource src)
+    {
+        if (string.IsNullOrWhiteSpace(src.XmlPath)) return src.Model ?? "";
+        var info = Processor.ParsePath(src.XmlPath);
+        if (info == null) return src.Model ?? "";
+        return info.ModelFromName ?? info.Model;
+    }
+
     private string StationFilter() =>
         _onlyThisStation.Checked ? _engine.ResolvedStationId : "";
 
-    /// <summary>秒出：库里现成的 fail_reason（每条 FAIL 的首个失败项）。</summary>
+    /// <summary>秒出：库里现成的 fail_reason（每条 FAIL 的首个失败项），近 N 天。</summary>
     private void LoadFast()
     {
         _stats.Clear();
         try
         {
-            foreach (var src in _engine.Db.FailItemSources(StationFilter()))
+            foreach (var src in _engine.Db.FailItemSources(StationFilter(), ScanDays))
             {
                 if (string.IsNullOrWhiteSpace(src.FirstFailItem)) continue;
                 Bump(src.FirstFailItem, src, fromXml: false);
@@ -186,16 +198,19 @@ public class FailItemPickerForm : Form
             _stats[item] = st;
         }
         st.Count++;
-        var when = string.IsNullOrWhiteSpace(src.Timestamp) ? src.TestDate : src.Timestamp;
+        // 时间统一规范化（与待办同步同口径）：yyyyMMdd -> yyyy-MM-dd 00:00:00，带 T 的转成空格。
+        // 否则 batch_timestamp(带T) 与 test_date(纯数字) 混在一起字符串比较会错乱 → “最近出现”显示错
+        var when = Database.NormalizeTs(string.IsNullOrWhiteSpace(src.Timestamp) ? src.TestDate : src.Timestamp);
         if (string.CompareOrdinal(when, st.LastSeen) > 0) st.LastSeen = when;
-        if (!string.IsNullOrWhiteSpace(src.Model)) st.Models.Add(src.Model);
+        var model = ResolveModel(src);
+        if (!string.IsNullOrWhiteSpace(model)) st.Models.Add(model);
         if (!string.IsNullOrWhiteSpace(src.StationId)) st.Stations.Add(src.StationId);
     }
 
-    /// <summary>深扫：解析每条 FAIL 的 XML，把全部失败项补进来。后台线程 + 可取消 + 进度限流。</summary>
+    /// <summary>深扫：解析近 N 天内每条 FAIL 的 XML，只取第一条失败项补进来（与库里 fail_reason 口径一致）。后台线程 + 可取消 + 进度限流。</summary>
     private async void StartDeepScan()
     {
-        var sources = _engine.Db.FailItemSources(StationFilter());
+        var sources = _engine.Db.FailItemSources(StationFilter(), ScanDays);
         var withXml = sources.Where(s => !string.IsNullOrWhiteSpace(s.XmlPath)).ToList();
         if (withXml.Count == 0)
         {
@@ -232,16 +247,17 @@ public class FailItemPickerForm : Form
 
                     var data = XmlParser.ParseReport(src.XmlPath);
                     if (data.Error) continue;
-                    foreach (var t in data.Tests)
+                    // 只取**第一条** FAIL：与库 fail_reason（每条记录的首个失败项）口径一致。
+                    // 排除逻辑沿用 XmlParser（Get Unit Information 等不入 Tests）。
+                    var firstFail = data.Tests.FirstOrDefault(t =>
+                        t.Status.Contains("Fail", StringComparison.OrdinalIgnoreCase));
+                    if (firstFail == null) continue;
+                    var name = firstFail.Name.Trim();
+                    if (name.Length == 0) continue;
+                    lock (found)
                     {
-                        if (!t.Status.Contains("Fail", StringComparison.OrdinalIgnoreCase)) continue;
-                        var name = t.Name.Trim();
-                        if (name.Length == 0) continue;
-                        lock (found)
-                        {
-                            found.Add((name, src));
-                            if (seen.Add(name)) added++;
-                        }
+                        found.Add((name, src));
+                        if (seen.Add(name)) added++;
                     }
                     // 限流：每 300ms 报一次，别把 UI 消息队列打爆
                     if (sw.ElapsedMilliseconds >= 300)
@@ -260,7 +276,7 @@ public class FailItemPickerForm : Form
             MessageBox.Show("深扫失败: " + ex.Message, "提示");
         }
 
-        // 深扫结果重建统计：XML 里的失败项是完整的，直接用它覆盖「首项」口径
+        // 深扫结果重建统计：XML 里每条只取第一条失败项，与库 fail_reason 口径一致，用它覆盖「首项」口径
         if (found.Count > 0)
         {
             _stats.Clear();
@@ -331,10 +347,10 @@ public class FailItemPickerForm : Form
     {
         int shown = _list.Items.Count;
         _status.Text =
-            $"去重后共 {_stats.Count} 个故障项（当前显示 {shown} 个），已勾选 {_checked.Count} 个\r\n" +
+            $"去重后共 {_stats.Count} 个故障项（近 {ScanDays} 天，当前显示 {shown} 个），已勾选 {_checked.Count} 个\r\n" +
             (_stats.Values.Any(s => s.FromXml)
-                ? "来源：XML 深扫（含每条记录的全部失败项）"
-                : "来源：数据库 fail_reason（每条 FAIL 只取首个失败项）—— 需要更全请点【深扫 XML】");
+                ? "来源：XML 深扫（每条记录只取第一条失败项）"
+                : $"来源：数据库 fail_reason（每条 FAIL 只取首个失败项，近 {ScanDays} 天）—— 需要复核源文件请点【深扫 XML】");
     }
 
     private void SetFilteredChecked(bool on)
