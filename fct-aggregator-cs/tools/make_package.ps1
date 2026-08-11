@@ -5,8 +5,14 @@
 #   产物直接铺平到 bin\Release\net8.0-windows（build 标准输出）：
 #     程序文件 + config.json + 启动.bat + app_icon.ico + 文档 + data\ + logs\ + 两个 zip
 #   两个 zip 从临时 staging 生成，完整 zip 与更新 zip 的区别：
-#     完整包：含 config.json（webhook 按要求写死）、data\、logs\
-#     更新包：含 config.json（配置模板）、无 *.pdb / data\ / logs\，多一份 覆盖说明.md
+#     完整包：含 config.json（webhook 置空，机台现场填）、data\、logs\
+#     更新包：含 config.json（配置模板，webhook 同样置空）、无 *.pdb / data\ / logs\，多一份 覆盖说明.md
+#
+# ⚠ 2026-08-11 安全治理：webhook_url 是飞书机器人凭据，**禁止进入任何发布产物**。
+#   包内 config.json 一律经 Write-PackageConfig 生成（webhook_url 置空）——
+#   即使工作区 config.json 配了真实 token，打包也不外泄。
+#   现场部署由 deploy_update.ps1 合并配置：现场已有 webhook 则保留现场值，
+#   现场为空（含全新安装）则保持空，由机台侧填入后生效。
 #
 # ⚠ dotnet clean / Rebuild 会清掉本目录内容，打好的 zip 请及时拷走归档。
 $ErrorActionPreference = 'Stop'
@@ -31,8 +37,21 @@ $progFiles = @(
 )
 # 仓库根目录里的随包文件（不是构建产物）
 # ⚠ app_icon.ico 必须带上：v2.9.4 前它没进包，导致现场托盘图标一直是系统灰图
-$rootFiles = @('启动.bat', 'config.json', 'app_icon.ico')
+# ⚠ config.json 不在此列表：webhook 是凭据，由 Write-PackageConfig 置空后单独入包
+$rootFiles = @('启动.bat', 'app_icon.ico')
 $docs = @('版本更新说明.md', '更新日志.md')
+
+<#
+  生成包内 config.json 模板：webhook_url 一律置空。
+  ⚠ 2026-08-11 安全治理：webhook 是飞书机器人凭据，不允许进任何发布产物/构建目录。
+    部署端合并配置时保留现场值（deploy_update.ps1 的 keepKey 列表含 webhook_url），
+    现场为空才用模板值（模板值就是空，全新安装由机台侧填入）。
+#>
+function Write-PackageConfig([string]$destPath) {
+    $cfg = Get-Content (Join-Path $root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $cfg.webhook_url = ''
+    $cfg | ConvertTo-Json -Depth 6 | Set-Content $destPath -Encoding UTF8
+}
 
 <#
   把程序文件从 $out 里找出来。
@@ -103,6 +122,7 @@ function Assert-DepsWinFiles([string]$stage) {
 # 程序文件已在 build 时生成在 $out；补上随包文件与 data/logs 目录
 foreach ($f in $rootFiles) { Copy-Item (Join-Path $root $f) $out }
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $out }
+Write-PackageConfig (Join-Path $out 'config.json')          # webhook 置空（凭据不进构建产物）
 New-Item -ItemType Directory -Path (Join-Path $out 'data'), (Join-Path $out 'logs') -Force | Out-Null
 
 # ==================== 2) 完整 zip（staging 组装）====================
@@ -113,6 +133,7 @@ foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stage }
 Copy-WinRuntimes $stage
 Assert-DepsWinFiles $stage
 foreach ($f in ($rootFiles + $docs)) { Copy-Item (Join-Path $root $f) $stage }
+Write-PackageConfig (Join-Path $stage 'config.json')        # 完整包模板同样置空 webhook
 New-Item -ItemType Directory -Path (Join-Path $stage 'data'), (Join-Path $stage 'logs') -Force | Out-Null
 
 $zipFull = Join-Path $out "Argus-v$ver.zip"
@@ -122,7 +143,7 @@ Compress-Archive -Path "$stage\*" -DestinationPath $zipFull -Force
 # ==================== 3) 更新 zip（含 config.json 模板，无 data/logs/pdb，多覆盖说明）====================
 # ⚠ v3.2.2 起更新包**带 config.json**：现场 config 可能被旧版取数打包 bug 冲掉，
 #   需要随包恢复（fct_ini_path=PEU 等已就位）。部署端会做**合并覆盖**：
-#   保留现场 station_id（库名不变），现场特有字段并入，原 config 自动备份。
+#   保留现场 station_id（库名不变）+ webhook_url（凭据，模板里是空值），现场特有字段并入，原 config 自动备份。
 $stageUpd = Join-Path $env:TEMP "fct_pkg_upd_$PID"
 Remove-Item $stageUpd -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $stageUpd -Force | Out-Null
@@ -130,7 +151,7 @@ foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stageUpd }
 Copy-WinRuntimes $stageUpd
 Assert-DepsWinFiles $stageUpd
 Copy-Item (Join-Path $root '启动.bat') $stageUpd
-Copy-Item (Join-Path $root 'config.json') $stageUpd                        # 配置模板（部署端合并，不盲盖）
+Write-PackageConfig (Join-Path $stageUpd 'config.json')     # 配置模板（webhook 置空，部署端合并时保留现场值）
 Copy-Item (Join-Path $root 'app_icon.ico') $stageUpd                     # 图标也跟着更新
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $stageUpd }
 Copy-Item (Join-Path $root '覆盖说明.md') $stageUpd      # 覆盖包专属：升级步骤说明

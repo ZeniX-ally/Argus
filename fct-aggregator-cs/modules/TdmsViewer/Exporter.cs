@@ -72,7 +72,12 @@ public static class Exporter
     private static string F(double v) => v.ToString("R", CultureInfo.InvariantCulture);
 
     private static string Esc(string s)
-        => s.Contains(',') || s.Contains('"') || s.Contains('\n')
-            ? "\"" + s.Replace("\"", "\"\"") + "\""
-            : s;
+    {
+        if (s.Length > 0 && (s[0] == '=' || s[0] == '+' || s[0] == '-' || s[0] == '@' ||
+                             s[0] == '\t' || s[0] == '\r'))
+            s = "'" + s;
+        if (s.Contains(',') || s.Contains('"') || s.Contains('\n') || s.Contains('\r'))
+            return "\"" + s.Replace("\"", "\"\"") + "\"";
+        return s;
+    }
 }

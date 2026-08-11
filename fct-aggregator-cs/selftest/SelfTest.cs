@@ -909,7 +909,7 @@ class SelfTest
             MainForm? form = null;
             try
             {
-                form = new MainForm(eng2);
+                form = new MainForm(eng2, true);   // debug 模式 = 全量导航，布局断言不因隐藏调试项缩水
                 Check(true, "MainForm 可构造（新外壳不会一启动就崩）");
             }
             catch (Exception ex)
@@ -1073,6 +1073,37 @@ class SelfTest
 
                 form.Hide();
                 form.Dispose();
+            }
+
+            // ---------- 调试工具默认隐藏（v3.2.3：--debug 才显示）----------
+            Console.WriteLine("\n【调试工具隐藏】不带 --debug 时侧边栏无调试入口，导航结构不塌");
+            {
+                var engD = new Engine(new AppConfig
+                {
+                    StationId = "FCT9",
+                    ResultsRoot = Path.Combine(work, "NoSuchResults"),
+                    WebhookUrl = "",
+                });
+                using var f2 = new MainForm(engD);   // 默认 debugMode=false = 生产形态
+                f2.Show();
+                f2.PerformLayout();
+                Application.DoEvents();
+                var nav2 = (Panel)typeof(MainForm).GetField("_nav",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .GetValue(f2)!;
+                var btns = nav2.Controls.OfType<NavButton>().Where(b => b.PageIndex >= 0)
+                              .OrderBy(b => b.PageIndex).ToList();
+                Check(btns.Count == 7, $"生产模式侧边导航 {btns.Count} 项（调试工具已隐藏，剩 4 页 + 3 工具）");
+                Check(!btns.Any(b => b.PageIndex == 4), "生产模式侧边栏无「调试工具」入口");
+                // 页面结构保留：反射切到调试页不崩，但导航项里没有可高亮的调试按钮
+                var sp2 = typeof(MainForm).GetMethod("ShowPage",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                sp2.Invoke(f2, new object?[] { 4 });
+                Application.DoEvents();
+                Check(!nav2.Controls.OfType<NavButton>().Any(b => b.PageIndex == 4 && b.Active),
+                      "生产模式调试页无导航高亮（确认无入口）");
+                Check(f2.Visible && nav2.Visible, "隐藏调试项后主窗口与导航一切正常");
+                f2.Hide();
             }
             DesktopNotifier.Shutdown();     // 自检里也会建托盘图标，记得收
             Check(true, "退出时托盘图标已回收（Shutdown 可重复调）");
@@ -1430,11 +1461,24 @@ class SelfTest
                 Severity = "major",
                 Status = "open",
             },
+            new MaintenanceRecord
+            {
+                FailItem = "\tTAB-LED",
+                FailReason = "\rCR-LED",
+                EquipmentSn = "SN-OK",
+                Resolver = "张三",
+                Notes = "正常备注2",
+                Severity = "major",
+                Status = "open",
+            },
         });
         var csvBody = File.ReadAllText(csvInjPath);
         Check(csvBody.Contains("'=cmd|'/C calc'!A0"), "CSV 公式注入防护：= 开头加单引号前缀");
         Check(csvBody.Contains("'+SUM(1,2)"), "CSV 公式注入防护：+ 开头加单引号前缀");
+        Check(csvBody.Contains("'-1+1"), "CSV 公式注入防护：- 开头加单引号前缀");
         Check(csvBody.Contains("'@evil"), "CSV 公式注入防护：@ 开头加单引号前缀");
+        Check(csvBody.Contains("'\tTAB-LED"), "CSV 公式注入防护：\\t 开头加单引号前缀");
+        Check(csvBody.Contains("\"'\rCR-LED\""), "CSV 公式注入防护：\\r 开头加单引号前缀（含 \\r 被引号包裹）");
         Check(!csvBody.Contains("\"=cmd"), "CSV 公式注入防护：= 开头未被引号包裹（引号包裹对公式无效）");
 
         using (var zip = System.IO.Compression.ZipFile.OpenRead(xlsx))

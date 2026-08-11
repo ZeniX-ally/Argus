@@ -22,14 +22,16 @@
     <AssemblyName>Argus</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
     <StartupObject>FctAggregator.Program</StartupObject>
-    <Version>3.2.2</Version>
-    <AssemblyVersion>3.2.2.0</AssemblyVersion>
-    <FileVersion>3.2.2.0</FileVersion>
+    <Version>3.2.3</Version>
+    <AssemblyVersion>3.2.3.0</AssemblyVersion>
+    <FileVersion>3.2.3.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
     <!-- 单文件、框架依赖发布时体积最小 -->
     <SelfContained>false</SelfContained>
+    <!-- 依赖锁定：还原时生成 packages.lock.json，保证可复现构建 -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -51,7 +53,10 @@
     <!-- v3.1.0 开启动画素材（SplashForm 按 EndsWith("argus_splash.png") 匹配） -->
     <EmbeddedResource Include="assets\splash\argus_splash.png" />
 
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
+    <!-- CVE-2025-6965/70873 修复:8.0.x 传递依赖仍是 SQLitePCLRaw 2.1.6(SQLite 3.41.2,低于修复线 3.50.2),
+         显式覆盖到 2.1.12(自带 SQLite 3.53.3) -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
     <!-- TDMS 波形查看（原 fct-tdms-viewer 的依赖） -->
     <PackageReference Include="TDMSReader" Version="3.1.0" />

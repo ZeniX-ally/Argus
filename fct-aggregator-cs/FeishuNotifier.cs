@@ -94,7 +94,7 @@ public static class FeishuNotifier
         if (r.FailedTests.Count > 0)
             elements.Add(new { tag = "markdown", content = BuildFailItems(r) });
         else if (!string.IsNullOrWhiteSpace(r.FailReason))
-            elements.Add(new { tag = "markdown", content = $"**失败项**\n{r.FailReason}" });
+            elements.Add(new { tag = "markdown", content = $"**失败项**\n{Escape(r.FailReason)}" });
 
         elements.Add(new
         {
@@ -195,10 +195,11 @@ public static class FeishuNotifier
         return ts.Replace('T', ' ');
     }
 
-    /// <summary>飞书 lark_md 转义：粗体符号与竖线（避免测试项名里的 * 意外触发粗体）。</summary>
+    /// <summary>飞书 lark_md 转义：粗体符号、竖线、链接方括号与反引号代码块（避免恶意测试项名/失败原因渲染成可点击链接）。</summary>
     private static string Escape(string? s)
     {
         s ??= "";
-        return s.Replace("*", "\\*").Replace("|", "\\|");
+        return s.Replace("*", "\\*").Replace("|", "\\|")
+                .Replace("[", "\\[").Replace("]", "\\]").Replace("`", "\\`");
     }
 }

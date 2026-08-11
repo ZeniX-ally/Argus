@@ -49,6 +49,12 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        // ===== 启动参数 =====
+        // --debug（大小写不敏感）：显示侧边栏「调试工具」入口（清库/推送测试/自启开关，产线不应能进）。
+        // 先剥离再分发子命令，否则 "--debug" 会被当成未知子命令拒掉。
+        bool debugMode = args.Any(a => a.Equals("--debug", StringComparison.OrdinalIgnoreCase));
+        args = args.Where(a => !a.Equals("--debug", StringComparison.OrdinalIgnoreCase)).ToArray();
+
         // ===== 子命令（CLI）=====
         if (args.Length > 0)
         {
@@ -131,7 +137,7 @@ static class Program
         }
 
         // 预构造主窗口（布局就绪即可零延迟显示）
-        var form = new MainForm(engine);
+        var form = new MainForm(engine, debugMode);
 
         if (splash != null)
         {

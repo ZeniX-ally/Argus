@@ -18,7 +18,7 @@
     与新版可同时运行并同写一个数据库。本工具会一并清理这些残留。
 
     == 不动的东西 ==
-    data\（数据库）、logs\ 原样保留；config.json 按包内模板**合并更新**（保留 station_id 与现场自定义字段，原文件先备份）。
+    data\（数据库）、logs\ 原样保留；config.json 按包内模板**合并更新**（保留 station_id/results_root/webhook_url 与现场自定义字段，原文件先备份）。
 
 .PARAMETER Zip
     更新包 zip。留空则在脚本所在目录、当前目录里找版本号最高的 Argus-v*-update.zip。
@@ -214,7 +214,7 @@ $pkgCfgPath = Join-Path $stage 'config.json'
 $pkgHasConfig = Test-Path $pkgCfgPath
 if ($pkgHasConfig) {
     Write-Host "  包内含 config.json（配置模板：fct_ini_path=PEU 等）" -ForegroundColor DarkYellow
-    Write-Host "  部署时将合并更新现场配置：保留 station_id 与现场自定义字段，原配置先备份" -ForegroundColor DarkYellow
+    Write-Host "  部署时将合并更新现场配置：保留 station_id/results_root/webhook_url 与现场自定义字段，原配置先备份" -ForegroundColor DarkYellow
 } else {
     Warn2 "包里没有 config.json —— 现场若缺该文件，将用程序默认配置启动"
 }
@@ -391,7 +391,7 @@ foreach ($k in $KeepAlways) {
     if (Test-Path (Join-Path $dest $k)) { Write-Host "    - $k（包内不含它）" -ForegroundColor Green }
 }
 if ($pkgHasConfig -and (Test-Path (Join-Path $dest 'config.json'))) {
-    Write-Host "    - config.json：将按包内模板合并更新（保留 station_id 与现场自定义字段，原文件先备份）" -ForegroundColor DarkYellow
+    Write-Host "    - config.json：将按包内模板合并更新（保留 station_id/results_root/webhook_url 与现场自定义字段，原文件先备份）" -ForegroundColor DarkYellow
 }
 foreach ($sub in @('data', 'logs')) {
     $sp = Join-Path $dest $sub
@@ -523,8 +523,9 @@ if (Test-Path (Join-Path $stage 'runtimes')) {
 }
 Ok "已覆盖 $copied 个程序文件 + runtimes 运行时树（config.json 另行合并处理）"
 
-# 4.4 config.json 合并部署：包内模板为基准，保留现场 station_id 与现场自定义字段
-# （避免 station_id 丢失 -> 库名由 {sid}.db 退回 fct.db -> 现场看起来“历史数据消失”）
+# 4.4 config.json 合并部署：包内模板为基准，保留现场 station_id/results_root/webhook_url 与现场自定义字段
+# （避免 station_id 丢失 -> 库名由 {sid}.db 退回 fct.db -> 现场看起来“历史数据消失”；
+#   webhook_url 是凭据，模板里为空值，现场已配置则必须保留现场，避免升级把推送打没）
 if ($pkgHasConfig) {
     $siteCfg = Join-Path $dest 'config.json'
     if (Test-Path $siteCfg) {
@@ -539,12 +540,13 @@ if ($pkgHasConfig) {
                 }
             }
             # 机台特有值必须保留现场：station_id（库名）、results_root（各机台扫描路径不同，
-            # 模板里的 D:/Results 是开发机路径，覆盖到现场会扫错目录）
-            foreach ($keepKey in @('station_id', 'results_root')) {
+            # 模板里的 D:/Results 是开发机路径，覆盖到现场会扫错目录）、
+            # webhook_url（凭据：现场已配好则保留现场，现场为空才用模板值——模板值也是空）
+            foreach ($keepKey in @('station_id', 'results_root', 'webhook_url')) {
                 if ($site.$keepKey) { $pkg.$keepKey = $site.$keepKey }
             }
             $pkg | ConvertTo-Json -Depth 6 | Set-Content $siteCfg -Encoding UTF8
-            Ok "config.json 已合并更新：station_id/results_root 保留现场值，模板字段（fct_ini_path/webhook 等）已生效"
+            Ok "config.json 已合并更新：station_id/results_root/webhook_url 保留现场值，模板字段（fct_ini_path 等）已生效"
         } catch {
             # 现场 config.json 无法解析（乱码/损坏）时**保留原文件不动**，宁缺毋滥：
             # 至少不丢 station_id（库名）。模板内容留在备份里供人工合并。

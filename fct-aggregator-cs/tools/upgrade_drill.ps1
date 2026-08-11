@@ -154,12 +154,13 @@ if (Test-Path $pkgCfg) {
             $pkg | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
         }
     }
-    # 机台特有值保留现场：station_id（库名）、results_root（各机台路径不同）
-    foreach ($keepKey in @('station_id', 'results_root')) {
+    # 机台特有值保留现场：station_id（库名）、results_root（各机台路径不同）、
+    # webhook_url（凭据：现场已配好则保留现场，现场为空才用模板值——模板值也是空）
+    foreach ($keepKey in @('station_id', 'results_root', 'webhook_url')) {
         if ($site.$keepKey) { $pkg.$keepKey = $site.$keepKey }
     }
     $pkg | ConvertTo-Json -Depth 6 | Set-Content $cfgPath -Encoding UTF8
-    Write-Host "  config.json 已按部署规则合并（station_id/results_root 保留现场，模板字段生效）"
+    Write-Host "  config.json 已按部署规则合并（station_id/results_root/webhook_url 保留现场，模板字段生效）"
 }
 # 覆盖程序文件（config.json 已合并完毕，跳过它；runtimes 树要带上）
 Get-ChildItem $updTmp -File | Where-Object { $_.Name -ne 'config.json' } |
@@ -181,6 +182,7 @@ Assert ($cfgNow.station_id -eq 'FCT9') 'config.json 合并后 station_id 保留�
 Assert ($cfgNow.'_现场备注' -eq '这行是现场加的，升级后必须还在') 'config.json 里的现场自定义字段仍在'
 Assert ($cfgNow.todo_scan_days -eq 30) 'todo_scan_days 采用包内模板值 30（模板优先，现场独有字段才保留）'
 Assert ($cfgNow.fct_ini_path -eq 'C:\FTS\Apps\PEU\Cfg\FCT.ini') 'fct_ini_path 已按包内模板更新为 PEU'
+Assert ($cfgNow.webhook_url -eq '') 'webhook_url 保持空：包内模板不夹带真实凭据（现场为空则保持空，不泄露 token）'
 
 $after = python (Join-Path $PSScriptRoot 'upgrade_drill_db.py') $db | ConvertFrom-Json
 Write-Host "  升级后各表行数: $($after | ConvertTo-Json -Compress)"

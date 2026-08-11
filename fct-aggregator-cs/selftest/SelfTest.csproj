@@ -15,6 +15,8 @@
     <AssemblyName>FctAggregator.SelfTest</AssemblyName>
     <StartupObject>SelfTest</StartupObject>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- 依赖锁定：还原时生成 packages.lock.json，保证可复现构建 -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -60,7 +62,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
+    <!-- CVE-2025-6965/70873 修复:8.0.x 传递依赖仍是 SQLitePCLRaw 2.1.6(SQLite 3.41.2,低于修复线 3.50.2),
+         显式覆盖到 2.1.12(自带 SQLite 3.53.3) -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
     <PackageReference Include="TDMSReader" Version="3.1.0" />
   </ItemGroup>

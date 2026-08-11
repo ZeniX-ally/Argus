@@ -85,12 +85,22 @@ public class MainForm : Form
 
     private int _page = 0;
 
+    /// <summary>
+    /// --debug 启动参数：显示侧边栏「调试工具」入口。
+    /// 默认 false（生产形态）——调试页有清空数据库/推送测试/自启开关，产线操作员不应能进。
+    /// </summary>
+    private readonly bool _debugMode;
+
+    /// <summary>「调试工具」在 <see cref="PageTitles"/> 里的页索引。</summary>
+    private const int DebugPageIndex = 4;
+
     /// <summary>侧栏品牌图标（32×32 原生帧 1:1 绘制，不缩放不模糊）。</summary>
     private readonly Icon _brandIcon = AppIcon.Load(32);
 
-    public MainForm(Engine engine)
+    public MainForm(Engine engine, bool debugMode = false)
     {
         _engine = engine;
+        _debugMode = debugMode;
         _cfg = AppConfig.Instance;
         Text = "Argus";
         // 内嵌工具自带最小尺寸，窗口得能装下；装不下时由 ToolHost 的 AutoScroll 兜底。
@@ -298,6 +308,8 @@ public class MainForm : Form
         // 同一个规则：后 Add 的先停靠。想让“总览”在最上面，就把它最后 Add。
         for (int i = PageTitles.Length - 1; i >= 0; i--)
         {
+            // 调试工具默认隐藏：不带 --debug 就不建按钮（页面结构保留，只是没入口）
+            if (i == DebugPageIndex && !_debugMode) continue;
             var idx = i;
             var b = new NavButton(NavLabel(i), i);
             b.Click += (_, _) => ShowPage(idx);
@@ -487,7 +499,9 @@ public class MainForm : Form
         if (!e.Control) return;
         int idx = e.KeyCode switch
         {
-            Keys.D1 => 0, Keys.D2 => 1, Keys.D3 => 2, Keys.D4 => 3, Keys.D5 => 4,
+            Keys.D1 => 0, Keys.D2 => 1, Keys.D3 => 2, Keys.D4 => 3,
+            // 调试页默认隐藏：Ctrl+5 只在 --debug 模式响应，否则操作员还能摸进调试面板
+            Keys.D5 => _debugMode ? DebugPageIndex : -1,
             _ => -1,
         };
         if (idx >= 0) { ShowPage(idx); e.Handled = true; return; }
