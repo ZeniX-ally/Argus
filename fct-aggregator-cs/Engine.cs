@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace FctAggregator;
 
 /// <summary>
@@ -12,6 +14,12 @@ public class Engine
     private readonly List<FileSystemWatcher> _watchers = new();
     private volatile bool _initialScanComplete = false;
     private CancellationTokenSource _cts = new();
+
+    // 未稳定文件重试：写入超时(WaitForStable 10s)不直接丢弃，延迟重试几轮再放弃（防大文件/慢盘实时路径永久漏数据）
+    private const int MaxStableRetries = 3;
+    private const int StableRetryDelayMs = 30000;
+    private readonly ConcurrentQueue<(string Path, int Attempt, long DueAt)> _retryQueue = new();
+    private Thread? _retryThread;
 
     public Database Db => _db;
     public string ResolvedStationId => _stationId;
@@ -82,6 +90,10 @@ public class Engine
         AppState.SetStatus("running");
         Logger.Info($"发现型号目录: {string.Join(", ", models)}");
 
+        // 未稳定文件重试后台线程（每 5s 检查一次到期项）
+        _retryThread = new Thread(RetryLoop) { IsBackground = true, Name = "stable-retry" };
+        _retryThread.Start();
+
         // 挂载实时监控(每个 category/model 目录)
         foreach (var model in models)
             foreach (var cat in new[] { "Online", "Offline" })
@@ -115,6 +127,7 @@ public class Engine
     {
         _pusher.Stop();
         _cts.Cancel();
+        try { _retryThread?.Join(3000); } catch { }
         foreach (var w in _watchers) { try { w.EnableRaisingEvents = false; w.Dispose(); } catch { } }
         _watchers.Clear();
     }
@@ -243,19 +256,31 @@ public class Engine
     private void OnFileCreated(object sender, FileSystemEventArgs e) => ScheduleProcess(e.FullPath);
     private void OnFileRenamed(object sender, RenamedEventArgs e) => ScheduleProcess(e.FullPath);
 
-    private void ScheduleProcess(string path)
+    private void ScheduleProcess(string path) => ScheduleProcess(path, 0);
+
+    private void ScheduleProcess(string path, int attempt)
     {
         Task.Run(() =>
         {
-            try { ProcessRealtime(path); }
+            try { ProcessRealtime(path, attempt); }
             catch (Exception ex) { Logger.Error($"[错误] 处理异常: {path} | {ex.Message}"); }
         });
     }
 
-    private void ProcessRealtime(string path)
+    private void ProcessRealtime(string path, int attempt)
     {
         if (!path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) return;
-        if (!WaitForStable(path)) { Logger.Warning($"[跳过] 文件未稳定: {path}"); return; }
+        if (!WaitForStable(path))
+        {
+            if (attempt < MaxStableRetries)
+            {
+                _retryQueue.Enqueue((path, attempt, Environment.TickCount64 + StableRetryDelayMs));
+                Logger.Warning($"[重试] 文件未稳定，{StableRetryDelayMs / 1000}s 后重试({attempt + 1}/{MaxStableRetries}): {path}");
+            }
+            else
+                Logger.Warning($"[跳过] 文件持续未稳定，已达重试上限({MaxStableRetries}): {path}");
+            return;
+        }
 
         var processor = new Processor(_cfg, _stationId);
         var rec = processor.ParseAndClassify(path);
@@ -284,32 +309,73 @@ public class Engine
                 // 先弹本机桌面提示（不依赖网络，就算 webhook 没配也能看到）
                 try { DesktopNotifier.NotifyFail(rec); }
                 catch (Exception ex) { Logger.Warning($"桌面提示失败: {ex.Message}"); }
+                // 飞书 POST 放后台：同步等待最坏 10s 超时 × 3 次重试 ≈ 30s+，FAIL 风暴时会把实时处理线程堵住
                 try
                 {
-                    FeishuNotifier.SendFailAlert(_cfg.WebhookUrl, rec).GetAwaiter().GetResult();
-                    Logger.Info($"[飞书推送] FAIL / {rec.Model} / {rec.Sn}");
+                    var url = _cfg.WebhookUrl;
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await FeishuNotifier.SendFailAlert(url, rec);
+                            Logger.Info($"[飞书推送] FAIL / {rec.Model} / {rec.Sn}");
+                        }
+                        catch (Exception ex) { Logger.Error($"[错误] 飞书推送失败: {Path.GetFileName(rec.XmlPath)} | {ex.Message}"); }
+                    });
                 }
-                catch (Exception ex) { Logger.Error($"[错误] 飞书推送失败: {path} | {ex.Message}"); }
+                catch (Exception ex) { Logger.Warning($"飞书推送任务启动失败: {ex.Message}"); }
             }
         }
     }
 
-    /// <summary>等待文件大小稳定(避免读到写一半的文件)。</summary>
+    /// <summary>
+    /// 等待文件大小稳定(避免读到写一半的文件)。
+    /// ⚠ 坑：首次采样(prev=-1)必然"不同"，所以"连续 <paramref name="stableChecks"/> 次相同"
+    /// 实际要采样 stableChecks+1 次 —— 旧实现稳定检查 2 次要 3 次采样(1.5s)，
+    /// 每个实时事件都白等 1.5s。修法：先做一次"基线"采样当 prev，再进入稳定计数。
+    /// </summary>
     private bool WaitForStable(string path, int stableChecks = 2, int intervalMs = 500, int timeoutMs = 10000)
     {
-        long prev = -1;
+        long prev;
+        try { prev = new FileInfo(path).Length; }
+        catch { return false; }
+
         int same = 0;
         var start = Environment.TickCount64;
         while (same < stableChecks)
         {
-            if (Environment.TickCount64 - start > timeoutMs) return false;
             long size;
-            try { size = new FileInfo(path).Length; } catch { return false; }
-            if (size == 0) { same = 0; prev = size; Thread.Sleep(intervalMs); continue; }
-            if (size == prev) same++;
+            try { size = new FileInfo(path).Length; }
+            catch { return false; }
+            if (size == 0) { same = 0; prev = size; }
+            else if (size == prev) same++;
             else { same = 0; prev = size; }
+
+            if (Environment.TickCount64 - start > timeoutMs) return false;
             Thread.Sleep(intervalMs);
         }
         return true;
+    }
+
+    /// <summary>未稳定文件重试线程：每 5s 扫一遍到期项重新入处理队列。</summary>
+    private void RetryLoop()
+    {
+        try
+        {
+            while (!_cts.IsCancellationRequested)
+            {
+                var now = Environment.TickCount64;
+                var due = new List<(string Path, int Attempt)>();
+                while (_retryQueue.TryPeek(out var head) && head.DueAt <= now)
+                {
+                    if (!_retryQueue.TryDequeue(out var item)) break;
+                    due.Add((item.Path, item.Attempt + 1));
+                }
+                foreach (var (p, attempt) in due)
+                    if (File.Exists(p)) ScheduleProcess(p, attempt);
+                Thread.Sleep(5000);
+            }
+        }
+        catch (Exception ex) { Logger.Error($"[重试线程] 异常: {ex.Message}"); }
     }
 }

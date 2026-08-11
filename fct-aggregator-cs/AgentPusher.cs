@@ -183,7 +183,6 @@ public class AgentPusher
                     if (++pushed % 200 == 0) CheckHeartbeat();
                 }
 
-                bool changed = false;
                 lock (_lock)
                 {
                     if (ok)
