@@ -1,6 +1,7 @@
 using System.Xml;
 using System.Windows.Forms;
 using System.Drawing.Drawing2D;
+using FctAggregator;
 
 namespace FctFailRanker;
 
@@ -526,7 +527,7 @@ public class XmlViewerForm : Form
             switch (reader.Name)
             {
                 case "BATCH":
-                    d.Timestamp = reader.GetAttribute("TIMESTAMP") ?? "";
+                    d.Timestamp = TimeUtil.Normalize(reader.GetAttribute("TIMESTAMP") ?? "");
                     break;
                 case "FACTORY":
                     d.User = reader.GetAttribute("USER") ?? "";

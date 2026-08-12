@@ -300,7 +300,7 @@ public class MainForm : Form
 
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v3.2.2", ForeColor = Theme.NavText,
+            Dock = DockStyle.Bottom, Height = 26, Text = "v3.3.0", ForeColor = Theme.NavText,
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };
@@ -665,12 +665,15 @@ public class MainForm : Form
     /// ⚠ 节流：看板全量 Reload 很贵（SyncTodoItems + 区间聚合 + 600 张自绘卡重建 + 每卡注册 ToolTip），
     ///   FAIL 风暴 / 历史扫描期间 FAIL 每批增长，若不节流每秒全刷一次 → 点击维修页后拖动窗口严重卡顿。
     ///   现在：FAIL 变化后至少间隔 3 秒才刷一次，且只在看板页可见时刷。
+    /// v3.3.0 兜底：FAIL 计数未变但距上次刷新超过 15s 也刷一次 ——
+    ///   刷新触发依赖 RefreshStats 链路，兜底保证“新 fail 出现在待办列”不依赖任何计数变化。
     /// </summary>
     private void AutoRefreshMaintenance()
     {
         var fail = AppState.Snapshot().Fail;
         if (_lastFailSeen < 0) { _lastFailSeen = fail; return; }
-        if (fail == _lastFailSeen) return;
+        var stale = (DateTime.Now - _lastMaintAutoRefresh).TotalSeconds > 15;
+        if (fail == _lastFailSeen && !stale) return;
         _lastFailSeen = fail;
         if (!_maintPage.Visible) return;
         if ((DateTime.Now - _lastMaintAutoRefresh).TotalSeconds < 3) return;

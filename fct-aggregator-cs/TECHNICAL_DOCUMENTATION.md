@@ -388,7 +388,7 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 | `fail_item` NOT NULL | 故障项目 |
 | `fail_reason` | 故障描述 |
 | `severity` | `critical` 严重 / `major` 一般 / `minor` 轻微（默认 major） |
-| `status` | `unknown` 未知问题 / `investigating` 正在排查 / `open` 待办 / `in_progress` 进行中 / `resolved` 已完成（默认 `open`）<br>legacy：`closed` 已关闭 —— v2.2.0 起不再产生，Init() 会迁移为 `resolved` |
+| `status` | `unknown` 未知问题 / `open` 待办 / `in_progress` 持续跟踪 / `resolved` 已完成（默认 `open`）<br>legacy：`closed` 已关闭 —— v2.2.0 起不再产生，Init() 会迁移为 `resolved`；`investigating` 正在排查 —— v3.3.0 起不再产生，归并显示为「待办」 |
 | `resolver` / `resolution` / `notes` | 维修人 / 措施 / 备注 |
 | `created_at` / `updated_at` | 时间戳（创建时间可在表单手动指定） |
 
@@ -482,7 +482,7 @@ GUI `ConcurrentQueue`（`[HH:mm:ss] [LEVEL] msg`，超 5000 行丢头）。级�
 |----|------|
 | **主页** | 上：今日一排 5 大卡（产品数/PASS/FAIL/良率/中断，**当日为主**）；下：累计数据 3×2 大数字格（产品总数/PASS/FAIL/良率/中断/待办，**累计为辅**）；无日志滚码区 |
 | **设备状态** | FCT.ini 解析结果：型号、固件版本、COM/USB 设备（在线小灯）、A2L 文件；一屏无滚动、刷新不闪烁 |
-| **维修记录** | 【看板】（默认）5 列：未知问题 / 正在排查 / 待办（含未确认不良卡）/ 进行中 / 已完成，列头带真实计数，**拖卡片即改状态**（拖到已完成弹补填框）；双击卡片编辑<br>【列表】表格 + 状态筛选 + 双击编辑 + 右键（编辑 / 标记为 5 个状态 / 删除），含「最后更新」列<br>【从FAIL选故障项】去重后的测试项多选 → 一次建 N 条（可合并为 1 条）<br>导出 xlsx / csv（看板导已加载全部，列表导当前筛选） |
+| **维修记录** | 【看板】（默认）4 列：未知问题 / 待办（含未确认不良卡）/ 持续跟踪 / 已完成，列头带真实计数，**拖卡片即改状态**（拖到任意列都弹全字段编辑框，可记录详细原因）；双击卡片编辑<br>【列表】表格 + 状态筛选 + 双击编辑 + 右键（编辑 / 标记为 4 个状态 / 删除），含「最后更新」列<br>【从FAIL选故障项】去重后的测试项多选 → 一次建 N 条（可合并为 1 条）<br>导出 xlsx / csv（看板导已加载全部，列表导当前筛选） |
 | **FAIL记录** | 本机全部 FAIL（SN / 首个失败项 / 型号 / 时间），双击 → `XmlViewerForm` 报告（完整测试流程，失败项标红） |
 | **调试** | 推送测试、数据库状态、机台检测、型号发现、设备状态、最近 10 条 FAIL、今日统计、最大 SN、查看配置、开机自启开关、清空数据库 |
 
@@ -571,7 +571,7 @@ MaintenanceBoard : Panel            外层 AutoScroll(横向) + TableLayoutPanel
 | **复发自动重现** | 维修记录被拖到「已完成」后不再算活跃，同故障项再 FAIL 就**自动回到待办**（无需人工重开） |
 | 呈现位置（v2.5.0） | 看板「待办」列（`open`）**列顶**，用 `TodoCard`（暖色底 + 虚线框 + 「未确认」红标）与记录卡区分；列头红徽章 `新 N` = 未确认数 |
 | 确认动作 | `TodoConfirmForm`（轻量：维修人 + 严重度）→ `AcknowledgeTodo()` → 建一条 `status='open'` 记录 → 看板「待办」列 |
-| 拖出待办列 | = 确认 + 落库后 `UpdateMaintenanceStatus(id, 目标列)`，一步到位（例如直接拖到「进行中」） |
+| 拖出待办列 | = 确认 + 弹全字段编辑框（预置目标状态），保存后 `AcknowledgeTodo(todoId, rec)` 一步到位（例如直接拖到「持续跟踪」） |
 | 维修人候选 | 同样读 `ListResolvers()`（名单 ∪ 历史），手敲的新名字逐人 `AddResolver()`，与主表单一致 |
 | 机台过滤 | 不再过滤 —— 库文件本身已按机台拆分（`data\{station}.db`），再按机台过滤是重复条件 |
 | 自动出现 | `MainForm.Tick()` 监视 `AppState.Fail` 变化，页面可见时自动 `Refresh2()`，新不良无需手动刷新 |

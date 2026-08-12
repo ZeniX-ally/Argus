@@ -1,3 +1,4 @@
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -82,6 +83,18 @@ static class Program
 
                 case "rank":
                     return RunToolGui(() => new FctFailRanker.MainForm());
+
+                case "agg":
+                    // 纯 Web 服务模式：无窗体常驻，浏览器访问 http://机台IP:端口 看板
+                    if (rest.Any(a => a.Equals("--web", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        EnsureConsole();
+                        return RunAggWebService();
+                    }
+                    // 聚合端看板：共享目录宿主机专用。AggShareRoot 为空时由窗体自报"未配置"，不在此报错。
+                    return RunToolGui(() => new AggCenterForm(
+                        AppConfig.Instance.AggShareRoot,
+                        Path.Combine(AppConfig.BaseDir, "data", "agg_center.db")));
 
                 case "-h":
                 case "--help":
@@ -172,6 +185,74 @@ static class Program
         return 0;
     }
 
+    /// <summary>
+    /// 聚合端纯 Web 服务模式（argus agg --web）：聚合监听 + HttpListener 看板，无窗体常驻。
+    /// 主线程阻塞等待 Ctrl+C 优雅退出；Ctrl+C 只置标志，退出路径统一走 using Dispose 停全部组件。
+    /// </summary>
+    private static int RunAggWebService()
+    {
+        var cfg = AppConfig.Instance;
+        try { Logger.SetLevel(cfg.LogLevel); } catch { }
+
+        using var db = new AggDatabase(Path.Combine(AppConfig.BaseDir, "data", "agg_center.db"));
+        try { db.Open(); }
+        catch (Exception ex) { Logger.Error($"[聚合服务] 聚合库打开失败（后续插入会再试）: {ex.Message}"); }
+
+        using var watcher = new AggWatcher(cfg.AggShareRoot, db, heartbeatTimeoutSec: 90, pollSec: 10);
+        using var server = new WebAggServer(cfg.AggHttpPort, watcher, db, cfg.ResultsRoot, cfg.AggShareRoot);
+
+        watcher.Start();
+        server.Start();
+
+        if (server.Listening)
+        {
+            Console.WriteLine("聚合服务已启动，浏览器访问:");
+            foreach (var ip in LocalIPv4Addresses())
+                Console.WriteLine($"  http://{ip}:{cfg.AggHttpPort}/");
+            Console.WriteLine($"  监听端口 {cfg.AggHttpPort}，聚合库 {db.DbPath}");
+            if (string.IsNullOrEmpty(cfg.AggShareRoot))
+                Console.WriteLine("  警告: 未配置 agg_share_root，文件监听未启用（HTTP 推送仍可用）");
+            Console.WriteLine("  按 Ctrl+C 退出");
+        }
+        else
+        {
+            Console.WriteLine("警告: 聚合服务启动失败——端口被占用或缺少监听权限（尝试以管理员身份运行）");
+        }
+
+        // Ctrl+C 优雅退出：e.Cancel 拦截默认终止，置标志让主循环退出，随后走 using Dispose
+        var running = true;
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            running = false;
+        };
+        while (running) Thread.Sleep(500);
+
+        watcher.Stop();
+        server.Stop();
+        Console.WriteLine("聚合服务已退出");
+        return 0;
+    }
+
+    /// <summary>枚举本机 IPv4 非回环地址（打印浏览器访问地址用）；失败返回空表。</summary>
+    private static List<string> LocalIPv4Addresses()
+    {
+        var list = new List<string>();
+        try
+        {
+            foreach (var addr in Dns.GetHostAddresses(Dns.GetHostName()))
+            {
+                if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(addr))
+                    list.Add(addr.ToString());
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[聚合服务] 枚举本机 IP 失败: {ex.Message}");
+        }
+        return list;
+    }
+
     private static void PrintUsage()
     {
         Console.WriteLine("""
@@ -179,6 +260,8 @@ FCT 工具套件 (Argus.exe)
 
   Argus.exe                    主程序：采集聚合 / 待办维修 / 工具箱
   Argus.exe rank               FAIL 排行（窗口）
+  Argus.exe agg               多机台聚合看板（共享目录宿主）
+  Argus.exe agg --web         聚合服务(无窗口,浏览器访问机台IP:端口)
   Argus.exe tdms [文件.tdms]   TDMS 波形查看（窗口）
   Argus.exe tdms --help        TDMS 工具的命令行用法
   Argus.exe fetch --help       取数打包工具的命令行用法

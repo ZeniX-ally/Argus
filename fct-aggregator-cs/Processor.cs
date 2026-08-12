@@ -23,6 +23,8 @@ public class Processor
     {
         public string Category = "", Model = "", TestDate = "", Filename = "";
         public string? Sn, ModelFromName;
+        /// <summary>文件名里的时间段(第 7 段, 17 位 yyyyMMddHHmmssfff)。BATCH 时间缺失时的兜底。</summary>
+        public string? FileTime;
     }
 
     public static PathInfo? ParsePath(string path)
@@ -45,6 +47,12 @@ public class Processor
         {
             info.Sn = parts[5];
             if (info.Sn.Length >= 8) info.ModelFromName = info.Sn[..8];
+        }
+        // 第 7 段 = 17 位时间戳(yyyyMMddHHmmssfff); 14 位也兼容
+        if (parts.Length >= 7)
+        {
+            var ft = parts[6];
+            if (ft.Length is 14 or 17 && ft.All(char.IsDigit)) info.FileTime = ft;
         }
         return info;
     }
@@ -82,9 +90,6 @@ public class Processor
             if (Classifier.IsDebug(user)) return null;
             result = "PASS";
             panelStatus = "Passed";
-            // PASS 不深度解析, 用目录日期(yyyyMMdd)转为日期戳供"今日"统计
-            if (info.TestDate.Length == 8)
-                batchTs = $"{info.TestDate[..4]}-{info.TestDate[4..6]}-{info.TestDate[6..8]}T00:00:00";
         }
         else
         {
@@ -103,11 +108,14 @@ public class Processor
             if (string.IsNullOrEmpty(snFromName)) snFromName = pr.Sn;
         }
 
-        // batch_timestamp 保底: 若解析不到(或格式异常), 用目录日期, 保证当日统计能匹配
-        // 统一规范为 yyyy-MM-dd 开头(前10位供当日统计用)
-        if (string.IsNullOrEmpty(batchTs) || batchTs.Length < 10)
+        // batch_timestamp 保底链: XML BATCH TIMESTAMP(可解析) → 文件名时间段(17/14位) → 目录日期。
+        // ⚠ 旧实现用 Length<10 判有效性: "2026-07-22T12:47:00.213+08:00" 长度够但格式怪时也过了,
+        //   保底只在"真正解析不出时间"时触发, 保证显示/推送/待办的时间永远能读。
+        if (string.IsNullOrEmpty(batchTs) || TimeUtil.Normalize(batchTs).Length == 0)
         {
-            if (info.TestDate.Length == 8)
+            if (info.FileTime != null)
+                batchTs = TimeUtil.Normalize(info.FileTime);
+            else if (info.TestDate.Length == 8)
                 batchTs = $"{info.TestDate[..4]}-{info.TestDate[4..6]}-{info.TestDate[6..8]}T00:00:00";
         }
 

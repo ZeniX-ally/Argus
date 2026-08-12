@@ -36,6 +36,7 @@
     <Compile Include="..\BoardCard.cs" />
     <Compile Include="..\TodoCard.cs" />
     <Compile Include="..\TodoGrouping.cs" />
+    <Compile Include="..\TimeUtil.cs" />
     <Compile Include="..\CardPreview.cs" />
     <Compile Include="..\DesktopNotifier.cs" />
     <Compile Include="..\Engine.cs" />
@@ -60,6 +61,12 @@
     <!-- v2.9.0：四个合入的工具（各自 namespace，同名类不打架）。
          它们的 Program 都有 Main，所以本工程也要显式指定 StartupObject -->
     <Compile Include="..\modules\**\*.cs" />
+    <!-- Phase 2 聚合端：看板/库/监听器（测试用例由协作方在 SelfTest.cs 里加） -->
+    <Compile Include="..\AggCenterForm.cs" />
+    <Compile Include="..\AggDatabase.cs" />
+    <Compile Include="..\AggWatcher.cs" />
+    <Compile Include="..\HttpIngest.cs" />
+    <Compile Include="..\WebAggServer.cs" />
   </ItemGroup>
 
   <ItemGroup>

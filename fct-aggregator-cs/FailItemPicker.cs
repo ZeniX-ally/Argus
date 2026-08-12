@@ -362,12 +362,7 @@ public class FailItemPickerForm : Form
         Rebind();
     }
 
-    private static string ShortTime(string? ts)
-    {
-        if (string.IsNullOrWhiteSpace(ts)) return "—";
-        if (!DateTime.TryParse(ts, out var dt)) return ts.Length > 16 ? ts[..16] : ts;
-        return dt.ToString("MM-dd HH:mm");
-    }
+    private static string ShortTime(string? ts) => TimeUtil.Short(ts);
 
     // ==================== 自检用 ====================
 

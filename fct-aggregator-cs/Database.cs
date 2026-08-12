@@ -681,6 +681,14 @@ public class Database
         var groups = new Dictionary<(string, string), TodoAgg>();
         if (maxId > watermark)
         {
+            // 被用户显式删除的 (大项, 机台) 永久不再登记（v3.3.0）
+            var dismissed = new HashSet<(string, string)>();
+            using (var dc = conn.CreateCommand())
+            {
+                dc.CommandText = "SELECT fail_item, station_id FROM dismissed_todos";
+                using var dr = dc.ExecuteReader();
+                while (dr.Read()) dismissed.Add((dr.GetString(0), dr.GetString(1)));
+            }
             using var c = conn.CreateCommand();
             c.CommandText = @"
                 SELECT fail_reason, station_id, COALESCE(model,''),
@@ -697,9 +705,13 @@ public class Database
             while (r.Read())
             {
                 var item = r.IsDBNull(0) ? "" : r.GetString(0);
-                var key = TodoGrouping.KeyOf(item);
+                // 单条隔离：某一条异常格式的 fail_reason 不能拖垮整批待办登记（v3.3.0）
+                string key;
+                try { key = TodoGrouping.KeyOf(item); }
+                catch (Exception ex) { Logger.Warning($"[待办] 合并键计算失败，跳过该项: {ex.Message} | {item}"); continue; }
                 if (key.Length == 0) continue;
                 var station = r.IsDBNull(1) ? "" : r.GetString(1);
+                if (dismissed.Contains((key, station))) continue;   // 已删除的待办不再复现
                 var model = r.IsDBNull(2) ? "" : r.GetString(2);
                 var ts = NormalizeTs(r.IsDBNull(3) ? "" : r.GetString(3));
 
@@ -812,16 +824,9 @@ public class Database
         public readonly List<string> Variants = new();
     }
 
-    /// <summary>时间戳统一成 `yyyy-MM-dd HH:mm:ss`，否则字符串比较会因 `T` / 纯日期而错乱。</summary>
-    internal static string NormalizeTs(string ts)
-    {
-        ts = (ts ?? "").Trim();
-        if (ts.Length == 0) return "";
-        if (ts.Length == 8 && ts.All(char.IsDigit))                  // yyyyMMdd
-            return $"{ts[..4]}-{ts[4..6]}-{ts[6..8]} 00:00:00";
-        if (DateTime.TryParse(ts, out var dt)) return dt.ToString("yyyy-MM-dd HH:mm:ss");
-        return ts.Replace('T', ' ');
-    }
+    /// <summary>时间戳统一成 `yyyy-MM-dd HH:mm:ss`，否则字符串比较会因 `T` / 纯日期而错乱。
+    /// 委托 <see cref="TimeUtil.Normalize"/>（统一入口，支持 8/14/17 位数字与 ISO 带时区格式）。</summary>
+    internal static string NormalizeTs(string ts) => TimeUtil.Normalize(ts);
 
     /// <summary>
     /// 状态对账（幂等，每次同步后跑）：
@@ -923,8 +928,10 @@ public class Database
                 if (to != null) { where += " AND test_date <= @b"; }
                 cmd.CommandText = $@"
                     SELECT fail_reason, station_id, COUNT(*),
-                           MIN(COALESCE(NULLIF(batch_timestamp,''), test_date)),
-                           MAX(COALESCE(NULLIF(batch_timestamp,''), test_date))
+                           MIN(COALESCE(NULLIF(batch_timestamp,''),
+                                        substr(test_date,1,4)||'-'||substr(test_date,5,2)||'-'||substr(test_date,7,2)||' 00:00:00')),
+                           MAX(COALESCE(NULLIF(batch_timestamp,''),
+                                        substr(test_date,1,4)||'-'||substr(test_date,5,2)||'-'||substr(test_date,7,2)||' 00:00:00'))
                       FROM test_records {where}
                      GROUP BY fail_reason, station_id";
                 if (from != null) cmd.Parameters.AddWithValue("@a", from.Value.ToString("yyyyMMdd"));
@@ -932,7 +939,9 @@ public class Database
                 using var r = cmd.ExecuteReader();
                 while (r.Read())
                 {
-                    var key = TodoGrouping.KeyOf(r.IsDBNull(0) ? "" : r.GetString(0));
+                    string key;
+                    try { key = TodoGrouping.KeyOf(r.IsDBNull(0) ? "" : r.GetString(0)); }
+                    catch (Exception ex) { Logger.Warning($"[待办] 区间统计合并键计算失败，跳过该项: {ex.Message}"); continue; }
                     if (key.Length == 0) continue;
                     var station = r.IsDBNull(1) ? "" : r.GetString(1);
                     var cnt = r.GetInt32(2);
@@ -1000,13 +1009,46 @@ public class Database
     }
 
     /// <summary>
-    /// 确认待办 → 建一条维修记录并与待办行**双向关联**，返回维修记录 ID。
+    /// 确认待办 → 用调用方填好的完整记录建维修记录并与待办行**双向关联**，返回维修记录 ID。
     ///
     /// 关联之后：
     ///   · 待办行 state=ack，不再出现在待办列；
     ///   · 记录被拖到「已完成」→ state=resolved；同故障项再出不良 → 自动回到 pending（复发）；
-    ///   · 记录被删 → 自动回到 pending（**待办删不掉**）。
+    ///   · 记录被删 → 自动回到 pending。
+    ///
+    /// v3.3.0：确认即进入状态流（无 → 目标状态），**无论落到哪一列都触发状态变更推送**。
     /// </summary>
+    public int AcknowledgeTodo(int todoId, MaintenanceRecord rec)
+    {
+        TodoItem? todo = GetTodoItem(todoId);
+        if (todo == null) throw new InvalidOperationException($"待办 #{todoId} 不存在（可能已被处理）");
+
+        if (string.IsNullOrWhiteSpace(rec.StationId)) rec.StationId = todo.StationId;
+        if (string.IsNullOrWhiteSpace(rec.FailItem)) rec.FailItem = todo.Title;
+        if (string.IsNullOrEmpty(rec.Status)) rec.Status = "open";
+        if (string.IsNullOrWhiteSpace(rec.Notes) && todo.VariantCount > 1)
+            rec.Notes = TodoGrouping.BuildSourceItemsNote(todo.Variants.Take(20));
+
+        var id = CreateMaintenance(rec);
+
+        // 确认 = 从「未确认」进入状态流，等同状态变更，总是推送（含确认后落在「待办」列）
+        rec.Id = id;
+        NotifyStatusChanged(rec, "", rec.Status);
+
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE todo_items
+               SET state='ack', maintenance_id=@mid, resolved_at=NULL,
+                   updated_at=datetime('now','localtime')
+             WHERE id=@id";
+        cmd.Parameters.AddWithValue("@mid", id);
+        cmd.Parameters.AddWithValue("@id", todoId);
+        cmd.ExecuteNonQuery();
+        return id;
+    }
+
+    /// <summary>确认待办（轻量：只给维修人/严重度/状态，其余字段走默认）。保留给自检与旧调用方。</summary>
     public int AcknowledgeTodo(int todoId, string resolver, string severity, string status = "open")
     {
         TodoItem? todo = GetTodoItem(todoId);
@@ -1025,26 +1067,45 @@ public class Database
             Resolver = resolver,
             Notes = todo.VariantCount > 1 ? TodoGrouping.BuildSourceItemsNote(todo.Variants.Take(20)) : "",
         };
-        var id = CreateMaintenance(rec);
+        return AcknowledgeTodo(todoId, rec);
+    }
 
-        // 新建记录状态不是默认 open 时（如直接拖到「已完成」），等同状态变更，触发推送
-        if (!string.Equals(rec.Status, MaintenanceMeta.DefaultStatus, StringComparison.OrdinalIgnoreCase))
-        {
-            rec.Id = id;
-            NotifyStatusChanged(rec, "", rec.Status);
-        }
-
+    /// <summary>
+    /// 删除一条待办（用户显式删除，v3.3.0 起支持）。
+    /// 行删除后该故障项不再出现在待办列；若它关联了维修记录，记录本身不受影响。
+    /// 删除会留下**永久标记**（dismissed_todos），此后同类新不良也不会再自动登记 —— 删除是永久的。
+    /// </summary>
+    public bool DeleteTodo(int todoId)
+    {
         using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            UPDATE todo_items
-               SET state='ack', maintenance_id=@mid, resolved_at=NULL,
-                   updated_at=datetime('now','localtime')
-             WHERE id=@id";
-        cmd.Parameters.AddWithValue("@mid", id);
-        cmd.Parameters.AddWithValue("@id", todoId);
-        cmd.ExecuteNonQuery();
-        return id;
+        string? key = null, station = null, model = null;
+        using (var sel = conn.CreateCommand())
+        {
+            sel.CommandText = "SELECT group_key, station_id, COALESCE(model,'') FROM todo_items WHERE id=@id";
+            sel.Parameters.AddWithValue("@id", todoId);
+            using var r = sel.ExecuteReader();
+            if (!r.Read()) return false;
+            key = r.GetString(0);
+            station = r.GetString(1);
+            model = r.GetString(2);
+        }
+        using (var del = conn.CreateCommand())
+        {
+            del.CommandText = "DELETE FROM todo_items WHERE id=@id";
+            del.Parameters.AddWithValue("@id", todoId);
+            del.ExecuteNonQuery();
+        }
+        // 永久标记：该 (大项, 机台) 不再自动登记新不良（含之后才出现的变体）
+        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(station))
+        {
+            using var ins = conn.CreateCommand();
+            ins.CommandText = "INSERT OR IGNORE INTO dismissed_todos(fail_item, station_id, model) VALUES(@k, @s, @m)";
+            ins.Parameters.AddWithValue("@k", key);
+            ins.Parameters.AddWithValue("@s", station);
+            ins.Parameters.AddWithValue("@m", (object?)model ?? "");
+            ins.ExecuteNonQuery();
+        }
+        return true;
     }
 
     public TodoItem? GetTodoItem(int id)

@@ -16,21 +16,26 @@ public class AggQueueItem
 }
 
 /// <summary>
-/// 机台聚合推送器（Phase 1：FAIL 事件文件 + 心跳；status 事件待 Phase 2）。
+/// 机台聚合推送器（Phase 2 增强：B2 双通道方案，smb 文件 / http 直推）。
 ///
 /// 事件驱动：Database 成功写入 test_records 后经 <see cref="Database.RecordsInserted"/> 通知，
-/// 把 FAIL 记录写成 {share}/{machine}/fail-{seq}.json 单行 JSON 文件；30 秒覆盖写心跳文件。
-/// seq 用 test_records 自增 id，聚合端按 (machine, seq) 去重。
+/// 把 FAIL 事件经 smb 通道写成 {share}/{machine}/fail-{seq}.json 单行 JSON 文件，
+/// 或经 http 通道 POST 到聚合端 HTTP 服务（agg_transport 选择，默认 smb，POST 正文与文件内容完全相同）。
+/// 30 秒一次心跳（文件版 / http 版 JSON 同构）。seq 用 test_records 自增 id，聚合端按 (machine, seq) 去重。
 ///
-/// 断线补偿：写共享失败的事件进内存队列，后台线程每 5 秒重试；队列同时落盘本地
+/// 断线补偿对两种通道统一生效：发送失败的事件进内存队列，后台线程每 5 秒重试；队列同时落盘本地
 /// data/agg_queue.json（防重启丢队，最多 5000 条，超限丢最老并记日志）；已推送最大 seq
 /// 持久化到 data/agg_state.json，重启后读状态续推 + 读队列补推 + 数据库兜底扫描。
+/// 只有最终发送动作不同（写文件 vs POST），队列/重试/续推扫描均不区分通道。
 /// 推送失败只记日志，绝不影响主程序（FAIL 已本地入库，聚合是增强不是依赖）。
 /// </summary>
 public class AgentPusher
 {
     private const int MaxQueue = 5000;
     private const int CatchUpBatch = 5000;
+
+    /// <summary>http 直推复用单例；Timeout 5 秒，聚合端必须本地网内，失败走断线补偿队列重试。</summary>
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
     private readonly AppConfig _cfg;
     private readonly Database _db;
@@ -46,7 +51,7 @@ public class AgentPusher
 
     private Thread? _worker;
     private volatile bool _stopping;
-    private long _maxSeq;        // 已成功推送文件的最大 seq（持久化）
+    private long _maxSeq;        // 已成功推送的最大 seq（持久化，smb/http 通用）
     private long _maxSeenSeq;    // 见过的最新 seq（含队列中，心跳 last_seq 用）
     private bool _queueDirty;
     private bool _stateDirty;
@@ -60,6 +65,12 @@ public class AgentPusher
     public string Machine => _machine;
     public string StatePath => Path.Combine(_dataDir, "agg_state.json");
     public string QueuePath => Path.Combine(_dataDir, "agg_queue.json");
+
+    /// <summary>当前通道：http=POST 直推，否则 smb 写共享文件。</summary>
+    public bool HttpMode => _cfg.AggTransport == "http";
+
+    /// <summary>日志通道前缀：区分 [聚合推送-http] / [聚合推送-smb]。</summary>
+    private string Chan => HttpMode ? "[聚合推送-http]" : "[聚合推送-smb]";
 
     /// <summary>已成功推送的最大 seq。</summary>
     public long LastSeq { get { lock (_lock) return _maxSeq; } }
@@ -78,16 +89,18 @@ public class AgentPusher
         _heartbeatMs = Math.Max(1, heartbeatSec) * 1000;
     }
 
-    /// <summary>启动时调用：读配置，enabled 且 share_root 非空才激活；激活后订阅入库事件并起后台线程。</summary>
+    /// <summary>启动时调用：读配置，enabled 且对应通道就绪（smb 要 share_root、http 要 http_url）才激活；激活后订阅入库事件并起后台线程。</summary>
     public void Init()
     {
         if (Active) return;
-        if (!_cfg.AggEnabled || string.IsNullOrEmpty(_cfg.AggShareRoot))
+        if (!_cfg.AggEnabled ||
+            (HttpMode ? string.IsNullOrEmpty(_cfg.AggHttpUrl) : string.IsNullOrEmpty(_cfg.AggShareRoot)))
         {
-            Logger.Info($"[聚合推送] 未启用(agg_enabled={_cfg.AggEnabled}, share_root='{_cfg.AggShareRoot}')，本机不推送");
+            Logger.Info($"[聚合推送] 未启用(agg_enabled={_cfg.AggEnabled}, transport={_cfg.AggTransport}, " +
+                        $"share_root='{_cfg.AggShareRoot}', http_url='{_cfg.AggHttpUrl}')，本机不推送");
             return;
         }
-        if (string.IsNullOrEmpty(_cfg.StationId)) Logger.Warning("[聚合推送] station_id 未配置，machine 使用 UNKNOWN");
+        if (string.IsNullOrEmpty(_cfg.StationId)) Logger.Warning($"{Chan} station_id 未配置，machine 使用 UNKNOWN");
         ShareRoot = _cfg.AggShareRoot;
         Active = true;
         try { Directory.CreateDirectory(_dataDir); } catch { }
@@ -96,7 +109,8 @@ public class AgentPusher
         _db.RecordsInserted += OnRecordsInserted;
         _worker = new Thread(WorkerLoop) { IsBackground = true, Name = "agg-pusher" };
         _worker.Start();
-        Logger.Info($"[聚合推送] 已启用: machine={_machine}, share_root={ShareRoot}, 续推起点 max_seq={_maxSeq}");
+        var target = HttpMode ? $"url={_cfg.AggHttpUrl}" : $"share_root={ShareRoot}";
+        Logger.Info($"{Chan} 已启用: machine={_machine}, {target}, 续推起点 max_seq={_maxSeq}");
     }
 
     /// <summary>停止：退订事件、停后台线程、落盘队列与状态。</summary>
@@ -179,7 +193,7 @@ public class AgentPusher
                 foreach (var item in work)
                 {
                     if (_stopping) { ok = false; break; }
-                    if (!TryPushFile(item)) { ok = false; break; }
+                    if (!TrySend(item)) { ok = false; break; }
                     if (++pushed % 200 == 0) CheckHeartbeat();
                 }
 
@@ -230,6 +244,27 @@ public class AgentPusher
 
     // ==================== 推送 / 心跳 ====================
 
+    /// <summary>按通道分发发送动作：smb=写文件，http=POST 结构化 JSON（队列/重试/续推不区分通道）。</summary>
+    private bool TrySend(AggQueueItem item) => HttpMode ? TryPost(item) : TryPushFile(item);
+
+    /// <summary>http 直推：把与文件内容完全相同的 JSON 行（无尾换行）POST 到聚合端，返回是否成功。</summary>
+    private bool TryPost(AggQueueItem item)
+    {
+        try
+        {
+            using var content = new StringContent(item.Json, Encoding.UTF8, "application/json");
+            var resp = _http.PostAsync(_cfg.AggHttpUrl, content).GetAwaiter().GetResult();
+            if (resp.IsSuccessStatusCode) return true;
+            Logger.Warning($"{Chan} POST 失败 seq={item.Seq}: HTTP {(int)resp.StatusCode}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"{Chan} POST 异常 seq={item.Seq}: {ex.Message}");
+            return false;
+        }
+    }
+
     private bool TryPushFile(AggQueueItem item)
     {
         try
@@ -245,7 +280,7 @@ public class AgentPusher
         }
         catch (Exception ex)
         {
-            Logger.Warning($"[聚合推送] 写共享失败 seq={item.Seq}: {ex.Message}");
+            Logger.Warning($"{Chan} 写共享失败 seq={item.Seq}: {ex.Message}");
             return false;
         }
     }
@@ -254,23 +289,39 @@ public class AgentPusher
     {
         if (Environment.TickCount64 - _lastHeartbeat < _heartbeatMs) return;
         _lastHeartbeat = Environment.TickCount64;
+        var json = BuildHeartbeatJson();
         try
         {
-            var dir = Path.Combine(ShareRoot, _machine);
-            Directory.CreateDirectory(dir);
-            long lastSeq;
-            lock (_lock) { lastSeq = _maxSeenSeq; }
-            var json = JsonSerializer.Serialize(new Dictionary<string, object>
+            if (HttpMode)
             {
-                ["machine"] = _machine,
-                ["type"] = "heartbeat",
-                ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                ["last_seq"] = lastSeq,
-                ["queued"] = QueuedCount,
-            });
-            File.WriteAllText(Path.Combine(dir, "heartbeat.json"), json + "\n", Encoding.UTF8);
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var resp = _http.PostAsync(_cfg.AggHttpUrl, content).GetAwaiter().GetResult();
+                if (!resp.IsSuccessStatusCode)
+                    Logger.Warning($"{Chan} 心跳 POST 失败: HTTP {(int)resp.StatusCode}");
+            }
+            else
+            {
+                var dir = Path.Combine(ShareRoot, _machine);
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "heartbeat.json"), json + "\n", Encoding.UTF8);
+            }
         }
-        catch (Exception ex) { Logger.Warning($"[聚合推送] 心跳写共享失败: {ex.Message}"); }
+        catch (Exception ex) { Logger.Warning($"{Chan} 心跳发送失败: {ex.Message}"); }
+    }
+
+    /// <summary>心跳 JSON（文件版 / http 版共用）：machine/type/ts/last_seq/queued。</summary>
+    private string BuildHeartbeatJson()
+    {
+        long lastSeq;
+        lock (_lock) { lastSeq = _maxSeenSeq; }
+        return JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["machine"] = _machine,
+            ["type"] = "heartbeat",
+            ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            ["last_seq"] = lastSeq,
+            ["queued"] = QueuedCount,
+        });
     }
 
     private string BuildFailJson(TestRecord rec, long id)

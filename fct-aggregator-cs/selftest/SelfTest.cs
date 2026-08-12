@@ -1,5 +1,9 @@
 using FctAggregator;
 using Microsoft.Data.Sqlite;
+using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
+using System.Text;
 
 /// <summary>
 /// 维修记录看板化(v2.2.0)的自检：拿真实 db 的副本跑，验证
@@ -9,6 +13,7 @@ using Microsoft.Data.Sqlite;
 class SelfTest
 {
     static int _fail;
+    static readonly HttpClient _http = new();   // Web 服务自检共用（复用连接池）
     static void Check(bool ok, string what)
     {
         Console.WriteLine((ok ? "[OK]   " : "[FAIL] ") + what);
@@ -108,14 +113,119 @@ class SelfTest
         var d2 = new Database(db);
         Check(true, "重复打开库（迁移幂等，无异常）");
 
+        // ---------- 时间统一解析（v3.3.0: 8/14/17 位数字 + ISO 带时区毫秒） ----------
+        Console.WriteLine("\n【时间识别】四种来源格式统一解析");
+        Check(TimeUtil.Normalize("2026-07-22T12:47:00.213+08:00") == "2026-07-22 12:47:00",
+              "ISO 带时区毫秒(BATCH TIMESTAMP)解析正确");
+        Check(TimeUtil.Normalize("2026-07-22T12:47:00") == "2026-07-22 12:47:00", "ISO 无时区解析正确");
+        Check(TimeUtil.Normalize("2026-07-22 12:47:00") == "2026-07-22 12:47:00", "标准格式原样归一");
+        Check(TimeUtil.Normalize("20260722124700283") == "2026-07-22 12:47:00", "17 位文件名时间解析正确(丢毫秒)");
+        Check(TimeUtil.Normalize("20260722124700") == "2026-07-22 12:47:00", "14 位时间解析正确");
+        Check(TimeUtil.Normalize("20260722") == "2026-07-22 00:00:00", "8 位目录日期解析正确");
+        Check(TimeUtil.Normalize("垃圾时间") == "", "无法识别的时间返回空(不再吐原始怪串)");
+        Check(TimeUtil.Normalize("") == "", "空时间返回空");
+        Check(TimeUtil.Short("2026-07-22T12:47:00.213+08:00") != "—", "Short 对 ISO 时间可识别");
+
+        // ---------- FCT.ini 自动识别（v3.3.0: 不依赖配置路径） ----------
+        Console.WriteLine("\n【FCT.ini 自动识别】FTS 树搜索 / 浅层全盘搜索");
+        {
+            var iniRoot = Path.Combine(work, "autoini");
+            var cfgDir = Path.Combine(iniRoot, "FTS", "Apps", "PEU", "Cfg");
+            Directory.CreateDirectory(cfgDir);
+            File.WriteAllText(Path.Combine(cfgDir, "FCT.ini"), "[Resource Name]\n8.2_SN=5V_Rail\n");
+            var hit = FctIni.SearchFtsTree(new DirectoryInfo(iniRoot), 8);
+            Check(hit != null && hit.EndsWith("FCT.ini", StringComparison.OrdinalIgnoreCase),
+                  "FTS 树搜索能命中深层 FCT.ini");
+            var shallow = FctIni.SearchShallow(new DirectoryInfo(work), 6);
+            Check(shallow != null, "浅层搜索也能命中(自动识别兜底路径)");
+            // 大小写: FctIni 用大小写不敏感匹配
+            Directory.CreateDirectory(Path.Combine(iniRoot, "FTS", "Cfg"));
+            File.WriteAllText(Path.Combine(iniRoot, "FTS", "Cfg", "fct.ini"), "x");
+            var hit2 = FctIni.SearchFtsTree(new DirectoryInfo(iniRoot), 8);
+            Check(hit2 != null && hit2.EndsWith("fct.ini", StringComparison.OrdinalIgnoreCase),
+                  "文件名大小写不敏感(fct.ini 也能识别)");
+        }
+
+        // ---------- 旧库兼容（v3.3.0：产线老库直开无痛升级） ----------
+        Console.WriteLine("\n【旧库兼容】产线老库直开: 缺新表 + investigating/closed 状态 + 旧时间格式");
+        {
+            var oldDb = Path.Combine(work, "legacy_fct.db");
+            File.Delete(oldDb);
+            // 1) 手工建「旧结构」库: 只有 test_records + maintenance_records,
+            //    没有 todo_items / app_meta / dismissed_todos（v2.4.0 时代的结构）
+            using (var c = new SqliteConnection($"Data Source={oldDb}"))
+            {
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = @"
+                    CREATE TABLE test_records (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, station_id TEXT NOT NULL, model TEXT, category TEXT,
+                        test_date TEXT NOT NULL, sn TEXT, result TEXT, xml_path TEXT UNIQUE, fail_reason TEXT,
+                        tester TEXT, panel_status TEXT, batch_timestamp TEXT, has_fail_items INTEGER, file_size INTEGER,
+                        created_at TEXT DEFAULT (datetime('now','localtime')));
+                    CREATE TABLE maintenance_records (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, station_id TEXT, equipment_model TEXT, equipment_sn TEXT,
+                        fail_item TEXT NOT NULL, fail_reason TEXT, severity TEXT DEFAULT 'major', status TEXT DEFAULT 'open',
+                        resolver TEXT, resolution TEXT, notes TEXT, created_at TEXT DEFAULT (datetime('now','localtime')),
+                        updated_at TEXT DEFAULT (datetime('now','localtime')));
+                    INSERT INTO test_records (station_id,model,category,test_date,sn,result,xml_path,fail_reason,batch_timestamp)
+                        VALUES ('FCT7','E3002781','Offline','20260801','SN-LG1','FAIL','X:\legacy1.xml','6.1.1.1 5V_Rail','2026-08-01T09:30:00.123+08:00');
+                    INSERT INTO test_records (station_id,model,category,test_date,sn,result,xml_path,fail_reason,batch_timestamp)
+                        VALUES ('FCT7','E3002781','Offline','20260801','SN-LG2','FAIL','X:\legacy2.xml','CAN_Bus_Test_CH1','20260801093015');
+                    INSERT INTO maintenance_records (station_id,fail_item,fail_reason,status,resolver,created_at,updated_at)
+                        VALUES ('FCT7','旧版正在排查项','老数据','investigating','张三','2026-07-20 08:00:00','2026-07-20 08:00:00');
+                    INSERT INTO maintenance_records (station_id,fail_item,fail_reason,status,resolver,created_at,updated_at)
+                        VALUES ('FCT7','旧版已关闭项','老数据','closed','李四','2026-07-01 08:00:00','2026-07-01 08:00:00');
+                ";
+                cmd.ExecuteNonQuery();
+            }
+            // 2) 新版 Database 直开: 不炸 + 自动补建新表
+            var ld = new Database(oldDb);
+            using (var c = new SqliteConnection($"Data Source={oldDb}"))
+            {
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table'";
+                using var r = cmd.ExecuteReader();
+                var tables = new HashSet<string>();
+                while (r.Read()) tables.Add(r.GetString(0));
+                foreach (var t in new[] { "todo_items", "app_meta", "dismissed_todos", "resolvers" })
+                    Check(tables.Contains(t), $"旧库打开后自动补建表 {t}");
+            }
+            // 3) 旧状态兼容: investigating 归并「待办」、closed 迁移「已完成」
+            var inv = ld.ListMaintenance("investigating", 50).FirstOrDefault();
+            Check(inv != null && MaintenanceMeta.Normalize(inv.Status) == "open",
+                  "旧 investigating 记录仍在库中, 归一化到「待办」列");
+            Check(ld.ListMaintenance("resolved", 50).Any(m => m.FailItem == "旧版已关闭项"),
+                  "旧 closed 记录迁移到「已完成」列");
+            // 4) 老数据待办登记 + 两种旧时间格式都能解析
+            var createdLegacy = ld.SyncTodoItems(90);
+            Check(createdLegacy >= 2, $"旧库历史不良可登记待办（新登记 {createdLegacy} 条）");
+            var legacyView = ld.ListTodoView();
+            Check(legacyView.Any(x => x.Title == "5V_Rail"), "旧库 5V_Rail 进待办列");
+            var lg1 = ld.AllFails("FCT7").FirstOrDefault(r => r.Sn == "SN-LG1");
+            Check(lg1 != null && TimeUtil.Normalize(lg1.Timestamp) == "2026-08-01 09:30:00",
+                  "旧库 ISO 带时区时间可解析显示");
+            var lg2 = ld.AllFails("FCT7").FirstOrDefault(r => r.Sn == "SN-LG2");
+            Check(lg2 != null && TimeUtil.Normalize(lg2.Timestamp) == "2026-08-01 09:30:15",
+                  "旧库 14 位数字时间可解析显示");
+            // 5) 待办删除在旧库上也能用（dismissed_todos 自动补建后写入标记）
+            var delLegacy = legacyView.First();
+            Check(ld.DeleteTodo(delLegacy.Id), "旧库上删除待办正常（自动补建 dismissed_todos 写永久标记）");
+            Check(!ld.ListTodoView().Any(x => x.Id == delLegacy.Id), "删除后离开待办列");
+        }
+
         // ---------- 五个状态各造几条 ----------
         var keys = MaintenanceMeta.Statuses.Select(s => s.Key).ToArray();
-        Check(keys.Length == 5 && keys[0] == "unknown" && keys[4] == "resolved",
-              $"状态体系 5 个且顺序正确: {string.Join(" -> ", MaintenanceMeta.Statuses.Select(s => s.Zh))}");
+        Check(keys.Length == 4 && keys[0] == "unknown" && keys[3] == "resolved",
+              $"状态体系 4 个且顺序正确: {string.Join(" -> ", MaintenanceMeta.Statuses.Select(s => s.Zh))}");
         Check(MaintenanceMeta.DefaultStatus == "open", "新建记录默认状态 = open(未完成)");
         Check(MaintenanceMeta.ZhOf("closed") == "已完成", "legacy closed 仍显示为「已完成」（外来 db 兜底）");
         Check(MaintenanceMeta.Normalize("closed") == "resolved", "legacy closed 归并到 resolved 列");
+        Check(MaintenanceMeta.Normalize("investigating") == "open", "legacy investigating 归并到 open（「正在排查」列已去掉）");
+        Check(MaintenanceMeta.ZhOf("investigating") == "待办", "legacy investigating 显示为「待办」");
         Check(MaintenanceMeta.Normalize("这是个野值") == "open", "未知状态归并到 open，不会漏卡片");
+        Check(MaintenanceMeta.ZhOf(MaintenanceMeta.Statuses[2].Key) == "持续跟踪", "「进行中」已改名「持续跟踪」");
 
         var ids = new Dictionary<string, int>();
         int seq = 0;
@@ -140,7 +250,7 @@ class SelfTest
                 if (i == 0) ids[k] = id;
                 seq++;
             }
-        Check(seq == 15, $"造了 {seq} 条测试记录（5 状态 × 3）");
+        Check(seq == 12, $"造了 {seq} 条测试记录（4 状态 × 3）");
 
         // ---------- CountMaintenanceByStatus ----------
         var counts = d.CountMaintenanceByStatus();
@@ -212,7 +322,7 @@ class SelfTest
         Check(!d.UpdateMaintenance(ghost), "更新不存在的记录返回 false（UI 会提示「可能已被删除」）");
 
         // ---------- UpdateMaintenanceStatus（纯拖动路径） ----------
-        var dragged = d.ListMaintenance("investigating", 500).First();
+        var dragged = d.ListMaintenance("unknown", 500).First();
         Check(d.UpdateMaintenanceStatus(dragged.Id, "resolved"), "UpdateMaintenanceStatus 返回 true（拖动改状态）");
         var draggedAfter = d.ListMaintenance("", 500).First(m => m.Id == dragged.Id);
         Check(draggedAfter.Status == "resolved" && draggedAfter.FailItem == dragged.FailItem,
@@ -719,13 +829,13 @@ class SelfTest
             }
             todoCard.Dispose(); recCard.Dispose();
 
-            // v2.5.1: 待办不可忽略/删除 —— 看板上不能再有任何忽略入口
+            // v2.5.1 起无忽略入口；v3.3.0 起待办支持显式删除（右键菜单）
             var boardMethods = typeof(MaintenanceBoard)
                 .GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public |
                             System.Reflection.BindingFlags.Instance)
                 .Select(x => x.Name).ToList();
             Check(!boardMethods.Any(x => x.Contains("Dismiss")),
-                  "**看板上已无忽略入口**（待办来自真实不良，不可忽略/删除）");
+                  "**看板上已无忽略入口**（不良只能确认/处理/删除，没有忽略）");
         }
         // ---------- 归一化 / 大项合并（v2.6.0） ----------
         Console.WriteLine("\n【待办·大项合并】同类测试项归一化");
@@ -843,7 +953,7 @@ class SelfTest
             var rec = t.ListMaintenance("in_progress", 10).FirstOrDefault(x => x.Id == mid);
             Check(rec != null && rec.FailItem == "5V_Rail", "维修记录的故障项 = 合并后的大项名");
             Check(rec != null && rec.Notes.Contains("6.1.1.1 5V_Rail"), "备注里留了原始测试项清单（可追溯）");
-            Check(rec != null && rec.Status == "in_progress", "可以确认时直接置为「进行中」");
+            Check(rec != null && rec.Status == "in_progress", "可以确认时直接置为「持续跟踪」");
             Check(!t.ListTodoView().Any(x => x.Title == "5V_Rail"), "确认后该项离开待办列");
 
             // 记录标为已完成 -> 仍不在待办
@@ -894,6 +1004,31 @@ class SelfTest
             t.SyncTodoItems(30);
             var railBoth = t.ListTodoView();
             Check(railBoth.Count(x => x.Title == "5V_Rail") == 2, "同故障项在两个机台各自一条待办");
+
+            // ---------- v3.3.0: 待办删除 / 确认到「待办」列也推送 ----------
+            {
+                // 确认落到默认「待办」列 -> 同样触发状态变更事件（“任何状态都推送”）
+                var can2 = t.ListTodoView().First(x => x.Title == "Check_CAN_Bus");
+                events2.Clear();
+                var mid3 = t.AcknowledgeTodo(can2.Id, "王五", "major", "open");
+                Check(mid3 > 0, $"确认到「待办」列也建记录 #{mid3}");
+                Check(events2.Count == 1 && events2[0].from == "" && events2[0].to == "open",
+                      $"确认到「待办」列也触发推送（{events2.Count} 次: '{events2[0].from}' -> {events2[0].to}）");
+                t.DeleteMaintenance(mid3);
+
+                // 删除待办：删后离开待办列，且不会因水位线后的新不良而复现
+                AddFail(t, St, "9.9.9_Delete_Me", "SN777", Today);
+                t.SyncTodoItems(30);
+                var delItem = t.ListTodoView().FirstOrDefault(x => x.Title == "Delete_Me");
+                Check(delItem != null, "待办删除前存在");
+                Check(t.DeleteTodo(delItem!.Id), "DeleteTodo 返回 true");
+                Check(!t.ListTodoView().Any(x => x.Title == "Delete_Me"), "删除后离开待办列");
+                AddFail(t, St, "9.9.9_Delete_Me", "SN778", Today);
+                t.SyncTodoItems(30);
+                Check(!t.ListTodoView().Any(x => x.Title == "Delete_Me"),
+                      "**已删除的待办不再复现**（水位线已过，删除是永久的）");
+                Check(t.DeleteTodo(999999) == false, "删除不存在的待办返回 false");
+            }
         }
 
         // ---------- GUI 布局（v2.8.0 重构）----------
@@ -1500,7 +1635,7 @@ class SelfTest
                                       "状态", "维修人", "维修措施", "备注", "创建时间", "更新时间" })
                 if (!body.Contains(h)) Check(false, $"表头缺列「{h}」");
             Check(true, "12 列表头齐全（新增「更新时间」）");
-            Check(body.Contains("未知问题") || body.Contains("正在排查"),
+            Check(body.Contains("未知问题") || body.Contains("待办"),
                   "新状态在导出里是中文（不是原始 unknown/investigating）");
             Check(!body.Contains(">unknown<") && !body.Contains(">investigating<"),
                   "导出里没有漏译的英文 key（单一字典生效）");
@@ -1586,6 +1721,18 @@ class SelfTest
         // ==================== 机台聚合推送器（Phase 1） ====================
         Console.WriteLine("\n【机台聚合推送】FAIL 事件文件 / 心跳 / 断线补偿 / 续推");
         RunAggPusherTests(work);
+
+        // ==================== 聚合端监听（Phase 2） ====================
+        Console.WriteLine("\n【聚合端监听】AggDatabase 幂等 / 初始扫描 / 增量事件 / 心跳离线");
+        RunAggWatcherTests(work);
+
+        // ==================== B2 双通道：机台端 HTTP 直推 + 聚合端 HTTP 接收（Phase 2 增强） ====================
+        Console.WriteLine("\n【HTTP 双通道】机台端直推 / 心跳 / 断线补偿 / 聚合端接收 / 全链路 / 路由");
+        RunHttpChannelTests(work);
+
+        // ==================== Web 聚合服务（Phase 3：纯 Web 模式） ====================
+        Console.WriteLine("\n【Web 聚合服务】页面与 API / 推送入库 / XML 下载白名单 / CSV 导出 / 路由错误码");
+        RunWebAggServerTests(work);
 
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
@@ -1822,5 +1969,799 @@ class SelfTest
         p6b.Stop();
 
         Console.WriteLine("    聚合推送自检完成");
+    }
+
+    // ==================== 聚合端监听（Phase 2） ====================
+    // 机台端推送格式（AgentPusher.cs）：
+    //   fail-{seq}.json  顶层 {machine, type:"fail", seq, ts, data:{id, station_id, model, category,
+    //                     test_date, sn, result, xml_path, fail_reason, tester, panel_status,
+    //                     batch_timestamp, has_fail_items(0/1), file_size}}
+    //   heartbeat.json   顶层 {machine, type:"heartbeat", ts, last_seq, queued}
+    // 机台端先写 .tmp 再 File.Move 改名，聚合端靠 FileSystemWatcher 的 Renamed 事件接住。
+
+    /// <summary>机台端同款 fail JSON（data 字段齐全）。写到 dir 下 fail-{seq}.json。</summary>
+    static void WriteFailJson(string dir, long seq, string machine)
+        => WriteFailJsonTo(Path.Combine(dir, $"fail-{seq}.json"), seq, machine);
+
+    /// <summary>机台端同款 fail JSON 字符串（无尾换行，与 AgentPusher http 直推的 body 完全同构）。
+    /// 文件版与 HTTP 版共用，保证两个通道的契约一致。</summary>
+    static string BuildFailJsonString(long seq, string machine)
+    {
+        var data = new Dictionary<string, object?>
+        {
+            ["id"] = seq,
+            ["station_id"] = machine,
+            ["model"] = "E3002781",
+            ["category"] = "Online",
+            ["test_date"] = "20260812",
+            ["sn"] = $"SN-{machine}-{seq}",
+            ["result"] = "FAIL",
+            ["xml_path"] = $"X:\\fct\\{machine}-{seq}.xml",
+            ["fail_reason"] = "自检不良",
+            ["tester"] = "SELFTEST",
+            ["panel_status"] = "0000",
+            ["batch_timestamp"] = "2026-08-12 09:00:00",
+            ["has_fail_items"] = 1,
+            ["file_size"] = 12345,
+        };
+        return System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["machine"] = machine,
+            ["type"] = "fail",
+            ["seq"] = seq,
+            ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            ["data"] = data,
+        });
+    }
+
+    /// <summary>机台端同款 fail JSON，但可指定 xml_path/sn/fail_reason（Web 服务 XML 下载白名单与 CSV 注入测试用）。</summary>
+    static string BuildFailJsonCustom(long seq, string machine, string xmlPath, string sn, string failReason)
+    {
+        var data = new Dictionary<string, object?>
+        {
+            ["id"] = seq,
+            ["station_id"] = machine,
+            ["model"] = "E3002781",
+            ["category"] = "Online",
+            ["test_date"] = "20260812",
+            ["sn"] = sn,
+            ["result"] = "FAIL",
+            ["xml_path"] = xmlPath,
+            ["fail_reason"] = failReason,
+            ["tester"] = "SELFTEST",
+            ["panel_status"] = "0000",
+            ["batch_timestamp"] = "2026-08-12 09:00:00",
+            ["has_fail_items"] = 1,
+            ["file_size"] = 12345,
+        };
+        return System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["machine"] = machine,
+            ["type"] = "fail",
+            ["seq"] = seq,
+            ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            ["data"] = data,
+        });
+    }
+
+    /// <summary>机台端同款 heartbeat JSON 字符串（machine/type/ts/last_seq/queued，无尾换行）。</summary>
+    static string BuildHeartbeatJsonString(string machine, long lastSeq, int queued)
+        => System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["machine"] = machine,
+            ["type"] = "heartbeat",
+            ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            ["last_seq"] = lastSeq,
+            ["queued"] = queued,
+        });
+
+    /// <summary>机台端同款 fail JSON，写到指定路径（.tmp 或最终名）。</summary>
+    static void WriteFailJsonTo(string path, long seq, string machine)
+    {
+        File.WriteAllText(path, BuildFailJsonString(seq, machine), System.Text.Encoding.UTF8);
+    }
+
+    /// <summary>机台端同款 heartbeat JSON（ts 可指定，离线判定用）。</summary>
+    static void WriteHeartbeat(string dir, string machine, string ts, long lastSeq, int queued)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["machine"] = machine,
+            ["type"] = "heartbeat",
+            ["ts"] = ts,
+            ["last_seq"] = lastSeq,
+            ["queued"] = queued,
+        }) + "\n";
+        File.WriteAllText(Path.Combine(dir, "heartbeat.json"), json, System.Text.Encoding.UTF8);
+    }
+
+    /// <summary>GetMachines 里按机台名找一台；没有返回 null。</summary>
+    static AggMachineStatus? FindMachine(AggWatcher w, string name)
+        => w.GetMachines().FirstOrDefault(m => string.Equals(m.Machine, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>删独立临时目录（watcher 已 Stop、db 已 Dispose 后调用；删不掉不阻断）。</summary>
+    static void TryDeleteDir(string dir)
+    {
+        try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+        catch { }
+    }
+
+    static void RunAggWatcherTests(string work)
+    {
+        var aggRoot = Path.Combine(work, "aggwatch");
+        Directory.CreateDirectory(aggRoot);
+
+        // ---- ① AggDatabase 幂等：同 (machine, seq) 只入库一次，字段回读 ----
+        using (var db1 = new AggDatabase(Path.Combine(aggRoot, "db1.db")))
+        {
+            var row1 = new AggFailRow
+            {
+                Machine = "FCT1", Seq = 5, Type = "fail",
+                Ts = "2026-08-12 08:00:00", IngestTs = "2026-08-12 08:00:01",
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260812",
+                Sn = "SN-FCT1-5", Result = "FAIL", XmlPath = "X:\\fct\\fct1-5.xml",
+                FailReason = "5V_Rail", Tester = "SELFTEST", PanelStatus = "0001",
+                BatchTimestamp = "2026-08-12 07:59:59", HasFailItems = true, FileSize = 12345,
+            };
+            Check(db1.InsertFail(row1) == 1, $"AggDatabase：首次插入 (FCT1,seq=5) 返回 1 新入库，回写 Id={row1.Id}");
+            Check(row1.Id > 0, "AggDatabase：插入成功回写自增 Id");
+            var dup1 = new AggFailRow { Machine = "FCT1", Seq = 5, Type = "fail", IngestTs = "2026-08-12 08:00:02" };
+            Check(db1.InsertFail(dup1) == 0, "AggDatabase：同 (machine,seq) 二次插入返回 0（幂等忽略）");
+            Check(db1.FailCount("") == 1 && db1.FailCount("FCT1") == 1,
+                  $"AggDatabase：全库计数 = 1（实得 {db1.FailCount("")}）");
+            var q1 = db1.QueryFails(10, "FCT1");
+            Check(q1.Count == 1, $"AggDatabase：QueryFails 只回 1 条（实得 {q1.Count}）");
+            if (q1.Count == 1)
+            {
+                var r = q1[0];
+                Check(r.Machine == "FCT1" && r.Seq == 5 && r.Type == "fail"
+                      && r.Ts == "2026-08-12 08:00:00" && r.IngestTs == "2026-08-12 08:00:01"
+                      && r.StationId == "FCT1" && r.Model == "E3002781" && r.Category == "Online"
+                      && r.TestDate == "20260812" && r.Sn == "SN-FCT1-5" && r.Result == "FAIL"
+                      && r.XmlPath == "X:\\fct\\fct1-5.xml" && r.FailReason == "5V_Rail"
+                      && r.Tester == "SELFTEST" && r.PanelStatus == "0001"
+                      && r.BatchTimestamp == "2026-08-12 07:59:59"
+                      && r.HasFailItems && r.FileSize == 12345,
+                      "AggDatabase：回读 17 个字段全部正确（字符串/时间/布尔/数字/路径）");
+            }
+        }
+
+        // ---- ② AggDatabase 跨机台：计数隔离 / machine 过滤 / ingest_ts 倒序 ----
+        using (var db2 = new AggDatabase(Path.Combine(aggRoot, "db2.db")))
+        {
+            AggFailRow Row2(string m, long seq, string ingest) => new()
+            {
+                Machine = m, Seq = seq, Type = "fail",
+                Ts = "2026-08-12 08:00:00", IngestTs = ingest,
+                StationId = m, Model = "E3002781", Sn = $"SN-{m}-{seq}", Result = "FAIL",
+            };
+            Check(db2.InsertFail(Row2("FCT1", 1, "2026-08-12 09:00:01")) == 1
+                  && db2.InsertFail(Row2("FCT1", 2, "2026-08-12 09:00:02")) == 1
+                  && db2.InsertFail(Row2("FCT2", 1, "2026-08-12 09:00:03")) == 1,
+                  "AggDatabase：FCT1 两条 + FCT2 一条全部入库");
+            Check(db2.FailCount("FCT1") == 2 && db2.FailCount("FCT2") == 1 && db2.FailCount("") == 3,
+                  "AggDatabase：计数按机台隔离（FCT1=2, FCT2=1, 全库=3）");
+            var fct2Rows = db2.QueryFails(10, "FCT2");
+            Check(fct2Rows.Count == 1 && fct2Rows[0].Machine == "FCT2" && fct2Rows[0].Seq == 1,
+                  "AggDatabase：QueryFails(machine=FCT2) 只回 FCT2 的记录");
+            var ordered2 = db2.QueryFails(10);
+            Check(ordered2.Count == 3
+                  && ordered2[0].IngestTs == "2026-08-12 09:00:03"
+                  && ordered2[1].IngestTs == "2026-08-12 09:00:02"
+                  && ordered2[2].IngestTs == "2026-08-12 09:00:01",
+                  "AggDatabase：QueryFails 按 ingest_ts DESC 排序（最新在前）");
+        }
+
+        // ---- ③ AggWatcher 初始扫描：启动时把已有 fail 文件全量入库 ----
+        var share3 = Path.Combine(aggRoot, "share3");
+        Directory.CreateDirectory(Path.Combine(share3, "FCT1"));
+        WriteFailJson(Path.Combine(share3, "FCT1"), 1, "FCT1");
+        WriteFailJson(Path.Combine(share3, "FCT1"), 2, "FCT1");
+        using (var db3 = new AggDatabase(Path.Combine(aggRoot, "db3.db")))
+        using (var w3 = new AggWatcher(share3, db3, heartbeatTimeoutSec: 90, pollSec: 1))
+        {
+            w3.Start();
+            Check(WaitUntil(() => w3.ProcessedFiles == 2 && w3.TotalFails == 2, 10000),
+                  $"初始扫描：2 个 fail 文件启动即入库（ProcessedFiles={w3.ProcessedFiles}, TotalFails={w3.TotalFails}）");
+            Check(WaitUntil(() =>
+            {
+                var st = FindMachine(w3, "FCT1");
+                return st != null && st.FailCount == 2 && st.LastFailAt.Length > 0;
+            }, 10000), "初始扫描：GetMachines 识别出 FCT1，FailCount=2，LastFailAt 非空");
+            var f3 = FindMachine(w3, "FCT1");
+            Check(f3 != null && f3.FirstSeenAt.Length > 0, "初始扫描：FirstSeenAt 有值（取 MIN(ingest_ts)）");
+            w3.Stop();
+        }
+        TryDeleteDir(share3);
+
+        // ---- ④ AggWatcher 增量：运行中 .tmp 写文件再 File.Move 改名（Renamed 事件接住） ----
+        var share4 = Path.Combine(aggRoot, "share4");
+        Directory.CreateDirectory(Path.Combine(share4, "FCT1"));
+        WriteFailJson(Path.Combine(share4, "FCT1"), 1, "FCT1");
+        WriteFailJson(Path.Combine(share4, "FCT1"), 2, "FCT1");
+        using (var db4 = new AggDatabase(Path.Combine(aggRoot, "db4.db")))
+        using (var w4 = new AggWatcher(share4, db4, heartbeatTimeoutSec: 90, pollSec: 1))
+        {
+            w4.Start();
+            Check(WaitUntil(() => w4.ProcessedFiles == 2, 10000), "增量前置：初始 2 个文件已入库");
+            var tmp = Path.Combine(share4, "FCT1", "fail-3.json.tmp");
+            WriteFailJsonTo(tmp, 3, "FCT1");                                  // 先写 .tmp（机台端两步写）
+            File.Move(tmp, Path.Combine(share4, "FCT1", "fail-3.json"));     // 再改名成最终名
+            Check(WaitUntil(() => w4.ProcessedFiles == 3 && w4.TotalFails == 3, 10000),
+                  $"增量：.tmp→Move 后 fail-3 入库（ProcessedFiles={w4.ProcessedFiles}, TotalFails={w4.TotalFails}）");
+            Check(db4.QueryFails(10).Any(r => r.Seq == 3 && r.Sn == "SN-FCT1-3"),
+                  "增量：seq=3 记录字段回读正确（sn=SN-FCT1-3）");
+            Check(!File.Exists(tmp), "增量：.tmp 已被改名，无残留");
+            w4.Stop();
+        }
+        TryDeleteDir(share4);
+
+        // ---- ⑤ AggWatcher 幂等：同 seq 文件再次出现不重复入库 ----
+        var share5 = Path.Combine(aggRoot, "share5");
+        Directory.CreateDirectory(Path.Combine(share5, "FCT1"));
+        WriteFailJson(Path.Combine(share5, "FCT1"), 1, "FCT1");
+        WriteFailJson(Path.Combine(share5, "FCT1"), 2, "FCT1");
+        using (var db5 = new AggDatabase(Path.Combine(aggRoot, "db5.db")))
+        using (var w5 = new AggWatcher(share5, db5, heartbeatTimeoutSec: 90, pollSec: 1))
+        {
+            w5.Start();
+            Check(WaitUntil(() => w5.ProcessedFiles == 2, 10000), "幂等前置：初始 2 个文件已入库");
+            // 同 seq 重发：删掉原文件再重写（必然触发 Created 事件）；随后写新 seq=3 当哨兵，
+            // 哨兵入库时重复文件必然已处理完 —— 若重复也被计数，ProcessedFiles 会变成 4
+            File.Delete(Path.Combine(share5, "FCT1", "fail-2.json"));
+            WriteFailJson(Path.Combine(share5, "FCT1"), 2, "FCT1");
+            WriteFailJson(Path.Combine(share5, "FCT1"), 3, "FCT1");
+            Check(WaitUntil(() => w5.ProcessedFiles == 3, 10000),
+                  $"幂等：重复 seq=2 文件被处理但不计数（哨兵 seq=3 到达后 ProcessedFiles=3，实得 {w5.ProcessedFiles}）");
+            Check(w5.TotalFails == 3 && db5.QueryFails(10, "FCT1").Count == 3,
+                  "幂等：全库 3 条、FCT1 3 条（重复文件未产生新行）");
+            w5.Stop();
+        }
+        TryDeleteDir(share5);
+
+        // ---- ⑥ AggWatcher 心跳：在线判定 + 超时判离线 ----
+        var share6 = Path.Combine(aggRoot, "share6");
+        Directory.CreateDirectory(Path.Combine(share6, "FCT1"));
+        WriteHeartbeat(Path.Combine(share6, "FCT1"), "FCT1",
+            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), lastSeq: 7, queued: 3);
+        using (var db6 = new AggDatabase(Path.Combine(aggRoot, "db6.db")))
+        using (var w6 = new AggWatcher(share6, db6, heartbeatTimeoutSec: 1, pollSec: 1))
+        {
+            w6.Start();
+            Check(WaitUntil(() =>
+            {
+                var st = FindMachine(w6, "FCT1");
+                return st != null && st.Online && st.LastSeq == 7 && st.Queued == 3;
+            }, 10000), "心跳：FCT1 上线（1s 超时阈值内判定），last_seq=7/queued=3 从心跳读出");
+            // 心跳 ts 改成 2 分钟前 → 超过 1s 超时阈值 → 下一轮轮询判离线
+            WriteHeartbeat(Path.Combine(share6, "FCT1"), "FCT1",
+                DateTime.Now.AddMinutes(-2).ToString("yyyy-MM-dd HH:mm:ss"), 7, 3);
+            Check(WaitUntil(() => FindMachine(w6, "FCT1") is { Online: false }, 10000),
+                  "心跳：ts 落后超时阈值后判离线（轮询 1s 内翻转）");
+            w6.Stop();
+        }
+        TryDeleteDir(share6);
+
+        // ---- ⑦ AggWatcher 新机台上线：运行中新建目录 + 心跳即被发现 ----
+        var share7 = Path.Combine(aggRoot, "share7");
+        Directory.CreateDirectory(Path.Combine(share7, "FCT1"));
+        WriteHeartbeat(Path.Combine(share7, "FCT1"), "FCT1",
+            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), 1, 0);
+        using (var db7 = new AggDatabase(Path.Combine(aggRoot, "db7.db")))
+        using (var w7 = new AggWatcher(share7, db7, heartbeatTimeoutSec: 30, pollSec: 1))
+        {
+            w7.Start();
+            Check(WaitUntil(() => FindMachine(w7, "FCT1") is { Online: true }, 10000),
+                  "新机台上线前置：FCT1 已在线");
+            Directory.CreateDirectory(Path.Combine(share7, "FCT2"));
+            WriteHeartbeat(Path.Combine(share7, "FCT2"), "FCT2",
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), 1, 0);
+            Check(WaitUntil(() =>
+            {
+                var st = FindMachine(w7, "FCT2");
+                return st != null && st.Online;
+            }, 10000), "新机台上线：运行中出现的 FCT2 目录 + 心跳被轮询发现且在线");
+            Check(w7.GetMachines().Count == 2, $"新机台上线：机台列表共 2 台（实得 {w7.GetMachines().Count}）");
+            w7.Stop();
+        }
+        TryDeleteDir(share7);
+
+        Console.WriteLine("    聚合端监听自检完成");
+    }
+
+    // ==================== B2 双通道：机台端 HTTP 直推 + 聚合端 HTTP 接收（Phase 2 增强） ====================
+    // 机台端 http 模式：AgentPusher(AggTransport=="http" && AggHttpUrl 非空) 把与 fail-{seq}.json
+    // 完全相同的 JSON（UTF-8、无尾换行）POST 到 AggHttpUrl 根路径，心跳同构 POST；
+    // 断线补偿复用队列：失败入 agg_queue.json，后台按 retrySec 重试。
+    // 聚合端：HttpIngest 路由 POST /api/fail、/api/heartbeat、/（按 body type 分发），
+    // 回调内容为机台 POST 的原始 JSON 字符串，交 AggWatcher.IngestFail/IngestHeartbeat 入库。
+    // 测试接收端用本文件自带的 HttpCollector（HttpListener 绑 127.0.0.1，Windows 无需管理员权限）。
+
+    /// <summary>用 TcpListener(0) 拿一个空闲端口（拿到后立即释放，随后交给 HttpListener/HttpIngest 绑定）。</summary>
+    static int GetFreePort()
+    {
+        using var t = new TcpListener(IPAddress.Loopback, 0);
+        t.Start();
+        var port = ((IPEndPoint)t.LocalEndpoint).Port;
+        t.Stop();
+        return port;
+    }
+
+    /// <summary>
+    /// 测试用 HTTP 接收端：后台线程 GetContext 循环收集 POST body（模拟聚合端，替代 HttpIngest 做白盒验证）。
+    /// 只绑 127.0.0.1 前缀，Windows 普通用户即可监听；GetContext 在 Stop/Close 后抛异常，catch 后正常退出线程。
+    /// </summary>
+    sealed class HttpCollector : IDisposable
+    {
+        private readonly HttpListener _listener;
+        private readonly Thread _thread;
+        private readonly List<string> _bodies = new();
+        private readonly object _lock = new();
+
+        public HttpCollector(int port)
+        {
+            _listener = new HttpListener();
+            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            _listener.Start();
+            _thread = new Thread(Loop) { IsBackground = true, Name = "http-collector" };
+            _thread.Start();
+        }
+
+        /// <summary>已收集的 body 条数。</summary>
+        public int Count { get { lock (_lock) return _bodies.Count; } }
+
+        /// <summary>已收集 body 的快照（按收到顺序）。</summary>
+        public string[] Snapshot() { lock (_lock) return _bodies.ToArray(); }
+
+        private void Loop()
+        {
+            while (true)
+            {
+                HttpListenerContext ctx;
+                try { ctx = _listener.GetContext(); }
+                catch { break; }   // 监听器 Stop/Close：GetContext 抛 ObjectDisposedException/HttpListenerException，正常退出
+                string body;
+                try
+                {
+                    using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+                    body = reader.ReadToEnd();
+                    ctx.Response.StatusCode = 200;
+                }
+                catch
+                {
+                    body = "";
+                    ctx.Response.StatusCode = 500;
+                }
+                try { ctx.Response.Close(); } catch { }
+                lock (_lock) _bodies.Add(body);
+            }
+        }
+
+        public void Dispose()
+        {
+            try { _listener.Stop(); } catch { }
+            try { _listener.Close(); } catch { }
+            try { _thread.Join(3000); } catch { }
+        }
+    }
+
+    static void RunHttpChannelTests(string work)
+    {
+        var httpRoot = Path.Combine(work, "httpchan");
+        Directory.CreateDirectory(httpRoot);
+
+        // ---- ① 机台端 http 模式推送：POST 与 fail-{seq}.json 完全相同的 JSON（无尾换行），不产生共享目录文件 ----
+        var root1 = Path.Combine(httpRoot, "http1");
+        Directory.CreateDirectory(root1);
+        int port1 = GetFreePort();
+        var db1h = new Database(Path.Combine(root1, "db1.db"));
+        var p1 = new AgentPusher(new AppConfig
+        {
+            StationId = "FCT1",
+            AggEnabled = true,
+            AggTransport = "http",
+            AggHttpUrl = $"http://127.0.0.1:{port1}/",   // AggShareRoot 留空：http 模式不该碰共享目录
+        }, "FCT1", db1h, Path.Combine(root1, "data1"), retrySec: 1, heartbeatSec: 60);
+        using (var col1 = new HttpCollector(port1))
+        {
+            p1.Init();
+            Check(p1.HttpMode && p1.Active, "http 推送：http 模式激活（transport=http 且 url 非空）");
+            db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-a.xml"), "SN-H1A", "自检不良H1A"));
+            db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-b.xml"), "SN-H1B", "自检不良H1B"));
+            Check(WaitUntil(() => col1.Count == 2, 10000), "http 推送：收到 2 条 POST body（两条 FAIL 事件）");
+            var rows1 = db1h.FetchFailRecordsAfter(0).OrderBy(x => x.Id).ToList();
+            Check(rows1.Count == 2, $"http 推送：库里 2 条 FAIL（实得 {rows1.Count}）");
+            var bodies1 = col1.Snapshot();
+            foreach (var rec in rows1)
+            {
+                var body = bodies1.FirstOrDefault(b => b.Contains($"\"sn\":\"{rec.Rec.Sn}\""));
+                Check(body != null, $"http 推送：SN={rec.Rec.Sn} 的 body 已收到");
+                if (body == null) continue;
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                var r = doc.RootElement;
+                Check(r.GetProperty("machine").GetString() == "FCT1"
+                      && r.GetProperty("type").GetString() == "fail"
+                      && r.GetProperty("seq").GetInt64() == rec.Id && r.GetProperty("seq").GetInt64() > 0
+                      && !string.IsNullOrEmpty(r.GetProperty("ts").GetString()),
+                      $"http 推送：body 顶层 machine/type/seq/ts 正确（seq={rec.Id}）");
+                Check(r.GetProperty("data").GetProperty("sn").GetString() == rec.Rec.Sn
+                      && r.GetProperty("data").GetProperty("fail_reason").GetString() == rec.Rec.FailReason
+                      && r.GetProperty("data").GetProperty("result").GetString() == "FAIL",
+                      $"http 推送：body data 内 sn/fail_reason/result 正确（SN={rec.Rec.Sn}）");
+                Check(!body.EndsWith('\n') && !body.EndsWith('\r'),
+                      $"http 推送：body 末尾无换行（{body.Length} 字符，与文件版一致）");
+            }
+            Check(!Directory.Exists(Path.Combine(root1, "share1")),
+                  "http 推送：不产生任何共享目录文件（share 目录不存在）");
+            p1.Stop();
+        }
+        TryDeleteDir(root1);
+
+        // ---- ② http 心跳：后台线程按周期 POST heartbeat（machine/type/ts/last_seq/queued） ----
+        var root2 = Path.Combine(httpRoot, "http2");
+        Directory.CreateDirectory(root2);
+        int port2 = GetFreePort();
+        var db2h = new Database(Path.Combine(root2, "db2.db"));
+        var p2 = new AgentPusher(new AppConfig
+        {
+            StationId = "FCT1",
+            AggEnabled = true,
+            AggTransport = "http",
+            AggHttpUrl = $"http://127.0.0.1:{port2}/",
+        }, "FCT1", db2h, Path.Combine(root2, "data2"), retrySec: 1, heartbeatSec: 1);
+        using (var col2 = new HttpCollector(port2))
+        {
+            p2.Init();
+            Check(WaitUntil(() => col2.Snapshot().Any(b => b.Contains("\"type\":\"heartbeat\"")), 10000),
+                  "http 心跳：后台线程按周期 POST 心跳");
+            var hb = col2.Snapshot().FirstOrDefault(b => b.Contains("\"type\":\"heartbeat\""));
+            if (hb != null)
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(hb);
+                var r = doc.RootElement;
+                Check(r.GetProperty("machine").GetString() == "FCT1"
+                      && r.GetProperty("type").GetString() == "heartbeat"
+                      && !string.IsNullOrEmpty(r.GetProperty("ts").GetString()),
+                      "http 心跳：machine/type/ts 字段正确");
+                Check(r.TryGetProperty("last_seq", out _) && r.TryGetProperty("queued", out _),
+                      "http 心跳：含 last_seq/queued 字段");
+            }
+            Check(WaitUntil(() => col2.Count >= 2, 8000), "http 心跳：后续周期持续 POST（累计 >= 2 条）");
+            p2.Stop();
+        }
+        TryDeleteDir(root2);
+
+        // ---- ③ http 断线补偿：断线期间事件进 agg_queue.json，接收端恢复后自动补推、队列清空 ----
+        var root3 = Path.Combine(httpRoot, "http3");
+        Directory.CreateDirectory(root3);
+        int port3 = GetFreePort();
+        var db3h = new Database(Path.Combine(root3, "db3.db"));
+        var p3 = new AgentPusher(new AppConfig
+        {
+            StationId = "FCT1",
+            AggEnabled = true,
+            AggTransport = "http",
+            AggHttpUrl = $"http://127.0.0.1:{port3}/",
+        }, "FCT1", db3h, Path.Combine(root3, "data3"), retrySec: 1, heartbeatSec: 60);
+        var col3 = new HttpCollector(port3);
+        try
+        {
+            p3.Init();
+            db3h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http3-a.xml"), "SN-H3A", "自检不良H3A"));
+            Check(WaitUntil(() => col3.Count == 1, 10000), "http 断线前置：在线时第 1 条已推送");
+            col3.Dispose();   // 模拟断线：接收端关闭，之后的 POST 全部失败
+            db3h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http3-b.xml"), "SN-H3B", "自检不良H3B"));
+            var id3b = db3h.FetchFailRecordsAfter(0)[1].Id;
+            Check(WaitUntil(() => p3.QueuedCount == 1, 3000), "http 断线：第 2 条滞留内存队列");
+            Check(WaitUntil(() =>
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(p3.QueuePath));
+                    var evs = doc.RootElement.GetProperty("events");
+                    for (int i = 0; i < evs.GetArrayLength(); i++)
+                        if (evs[i].GetProperty("seq").GetInt64() == id3b) return true;
+                    return false;
+                }
+                catch { return false; }
+            }, 5000), "http 断线：agg_queue.json 已落盘且含断线 seq（重启不丢队）");
+            // 重启接收端（同端口）；worker 按 retrySec=1 自动补推
+            using var col3b = new HttpCollector(port3);
+            Check(WaitUntil(() => col3b.Count == 1, 10000), "http 断线：接收端恢复后自动补推第 2 条");
+            var b3b = col3b.Snapshot().FirstOrDefault(b => b.Contains("\"sn\":\"SN-H3B\""));
+            Check(b3b != null && !b3b.EndsWith('\n'), "http 断线：补推的 body 是完整 JSON（无尾换行）");
+            Check(WaitUntil(() => p3.QueuedCount == 0 && p3.LastSeq == id3b, 5000),
+                  $"http 断线：补推完成队列清空、LastSeq={id3b}");
+            p3.Stop();
+        }
+        finally
+        {
+            try { col3.Dispose(); } catch { }
+        }
+        TryDeleteDir(root3);
+
+        // ---- ④ HttpIngest 接收：onFail/onHeartbeat 回调收到原始 JSON、内容与 POST 完全一致 ----
+        var root4 = Path.Combine(httpRoot, "http4");
+        Directory.CreateDirectory(root4);
+        int port4 = GetFreePort();
+        var recv4 = new List<string>();
+        var hb4 = new List<string>();
+        var lock4 = new object();
+        using (var ing4 = new HttpIngest(port4,
+            s => { lock (lock4) recv4.Add(s); },
+            s => { lock (lock4) hb4.Add(s); }))
+        {
+            ing4.Start();
+            Check(WaitUntil(() => ing4.Listening, 5000), "HttpIngest：Start 后进入监听状态");
+            using var client4 = new HttpClient();
+            var failJson4 = BuildFailJsonString(11, "FCT1");
+            var rFail = client4.PostAsync($"http://127.0.0.1:{port4}/api/fail",
+                new StringContent(failJson4, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rFail.StatusCode == HttpStatusCode.OK, $"HttpIngest：POST /api/fail 回 200（实得 {(int)rFail.StatusCode}）");
+            Check(WaitUntil(() => { lock (lock4) return recv4.Count == 1; }, 5000), "HttpIngest：onFail 回调收到 1 条");
+            Check(WaitUntil(() => ing4.ReceivedCount >= 1, 5000),
+                  $"HttpIngest：ReceivedCount={ing4.ReceivedCount}（合法请求才计数）");
+            string? got4;
+            lock (lock4) got4 = recv4.FirstOrDefault();
+            Check(got4 == failJson4, "HttpIngest：onFail 收到的内容与 POST 的 JSON 完全一致（原样透传）");
+            var hbJson4 = BuildHeartbeatJsonString("FCT1", 11, 0);
+            var rHb = client4.PostAsync($"http://127.0.0.1:{port4}/api/heartbeat",
+                new StringContent(hbJson4, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rHb.StatusCode == HttpStatusCode.OK, "HttpIngest：POST /api/heartbeat 回 200");
+            Check(WaitUntil(() => { lock (lock4) return hb4.Count == 1; }, 5000), "HttpIngest：onHeartbeat 回调收到 1 条");
+            string? gotHb4;
+            lock (lock4) gotHb4 = hb4.FirstOrDefault();
+            Check(gotHb4 == hbJson4, "HttpIngest：onHeartbeat 收到的内容与 POST 一致");
+        }
+        TryDeleteDir(root4);
+
+        // ---- ⑤ 聚合端全链路：watcher + ingest 接线，机台自动出现 / 在线 / 超时离线 / 重复 seq 幂等 ----
+        var root5 = Path.Combine(httpRoot, "http5");
+        var share5 = Path.Combine(root5, "share5");
+        // ⚠ 给「存在的空目录」而非不存在目录：AggWatcher.Start() 对不存在的 shareRoot 直接 return、
+        // 不启动心跳轮询线程，HTTP 机台的离线翻转（LastSeen 超时）就永远不发生。
+        // HTTP 机台不读共享文件，空目录同样验证「http 推送自动创建机台、不依赖共享目录」。
+        Directory.CreateDirectory(share5);
+        int port5 = GetFreePort();
+        using (var db5 = new AggDatabase(Path.Combine(root5, "agg5.db")))
+        using (var w5 = new AggWatcher(share5, db5, heartbeatTimeoutSec: 1, pollSec: 1))
+        using (var ing5 = new HttpIngest(port5, w5.IngestFail, w5.IngestHeartbeat))
+        {
+            ing5.Start();
+            w5.Start();
+            using var client5 = new HttpClient();
+            var failJson5 = BuildFailJsonString(21, "FCT1");
+            var r5a = client5.PostAsync($"http://127.0.0.1:{port5}/api/fail",
+                new StringContent(failJson5, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            var r5b = client5.PostAsync($"http://127.0.0.1:{port5}/api/heartbeat",
+                new StringContent(BuildHeartbeatJsonString("FCT1", 21, 0), Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(r5a.StatusCode == HttpStatusCode.OK && r5b.StatusCode == HttpStatusCode.OK,
+                  "http 全链路：POST /api/fail 与 /api/heartbeat 均回 200");
+            Check(WaitUntil(() =>
+            {
+                var st = FindMachine(w5, "FCT1");
+                return st != null && st.Online && st.FailCount == 1;
+            }, 10000), "http 全链路：HTTP 推送的机台自动出现在看板且在线、FailCount=1（无共享文件也创建）");
+            Check(WaitUntil(() => FindMachine(w5, "FCT1") is { Online: false }, 10000),
+                  "http 全链路：心跳超时(1s)后轮询判离线（LastSeen 统一在线判定）");
+            var r5c = client5.PostAsync($"http://127.0.0.1:{port5}/api/fail",
+                new StringContent(failJson5, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(r5c.StatusCode == HttpStatusCode.OK, "http 全链路：重复 seq 重发回 200");
+            Check(WaitUntil(() => FindMachine(w5, "FCT1")?.FailCount == 1, 5000),
+                  "http 全链路：重复 seq 幂等，FailCount 不增加");
+            w5.Stop();
+        }
+        TryDeleteDir(root5);
+
+        // ---- ⑥ 路由响应码：200 / 405 / 404 / 根路径按 body type 分发 ----
+        var root6 = Path.Combine(httpRoot, "http6");
+        Directory.CreateDirectory(root6);
+        int port6 = GetFreePort();
+        using (var ing6 = new HttpIngest(port6, _ => { }, _ => { }))
+        {
+            ing6.Start();
+            Check(WaitUntil(() => ing6.Listening, 5000), "路由：HttpIngest 已监听");
+            using var client6 = new HttpClient();
+            var baseUrl6 = $"http://127.0.0.1:{port6}";
+            var okJson6 = BuildFailJsonString(31, "FCT1");
+            var r200 = client6.PostAsync($"{baseUrl6}/api/fail",
+                new StringContent(okJson6, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(r200.StatusCode == HttpStatusCode.OK, "路由：POST /api/fail -> 200");
+            var r405 = client6.GetAsync($"{baseUrl6}/api/fail").GetAwaiter().GetResult();
+            Check(r405.StatusCode == HttpStatusCode.MethodNotAllowed, "路由：GET /api/fail -> 405");
+            var r404 = client6.PostAsync($"{baseUrl6}/nope",
+                new StringContent(okJson6, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(r404.StatusCode == HttpStatusCode.NotFound, "路由：POST /nope -> 404");
+            // 机台端把 fail/heartbeat 都 POST 到 AggHttpUrl 根路径：根路径必须按 body type 分发
+            var rRoot = client6.PostAsync($"{baseUrl6}/",
+                new StringContent(BuildFailJsonString(32, "FCT1"), Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rRoot.StatusCode == HttpStatusCode.OK, "路由：POST /（根路径）按 body type=fail 分发 -> 200");
+        }
+        TryDeleteDir(root6);
+
+        Console.WriteLine("    HTTP 双通道自检完成");
+    }
+
+    // ==================== Web 聚合服务（Phase 3：纯 Web 模式） ====================
+    // WebAggServer.cs 路由：GET /（看板页）、/api/machines、/api/fails?limit&machine、
+    // /api/file?id=|path=（XML 下载，白名单=resultsRoot 或 {BaseDir}/logs/app.log）、
+    // /api/export.csv（UTF-8 BOM + 公式注入防护）、/api/health；POST /api/fail、/api/heartbeat、/（按 body type 分发）；
+    // 未知路径 404；方法不符 405；body 超 1MB 413；id 非数字/无参数 400；穿越/越权/文件不存在 403；id 查无记录 404。
+    // JSON 字段为 PascalCase（AggFailRow/AggMachineStatus 是 public 字段，序列化开 IncludeFields）。
+    // 注意：POST 入库在服务端 Task.Run 异步完成，回 200 后必须 WaitUntil 等库。
+
+    static void RunWebAggServerTests(string work)
+    {
+        var webRoot = Path.Combine(work, "webagg");
+        var resultsRoot = Path.Combine(webRoot, "results");
+        var shareRoot = Path.Combine(webRoot, "share");
+        Directory.CreateDirectory(resultsRoot);
+        Directory.CreateDirectory(shareRoot);   // ⚠ 必须存在：AggWatcher.Start() 对不存在的 shareRoot 直接 return
+        int port = GetFreePort();
+        var baseUrl = $"http://127.0.0.1:{port}";
+
+        using (var db = new AggDatabase(Path.Combine(webRoot, "agg.db")))
+        using (var w = new AggWatcher(shareRoot, db, heartbeatTimeoutSec: 60, pollSec: 1))
+        using (var srv = new WebAggServer(port, w, db, resultsRoot, shareRoot))
+        {
+            w.Start();
+            srv.Start();
+            Check(WaitUntil(() => srv.Listening, 5000), "Web 服务：Start 后进入监听状态");
+
+            // ---- ① 页面与 API 可用 ----
+            var rPage = _http.GetAsync($"{baseUrl}/").GetAwaiter().GetResult();
+            Check(rPage.StatusCode == HttpStatusCode.OK && rPage.Content.Headers.ContentType?.MediaType == "text/html",
+                  "GET / -> 200 text/html（看板页）");
+            if (rPage.StatusCode == HttpStatusCode.OK)
+            {
+                var page = rPage.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                Check(page.Contains("Argus 多机台聚合看板"), "GET /：页面含看板标题元素");
+            }
+            var rHealth = _http.GetAsync($"{baseUrl}/api/health").GetAwaiter().GetResult();
+            Check(rHealth.StatusCode == HttpStatusCode.OK, "GET /api/health -> 200");
+            if (rHealth.StatusCode == HttpStatusCode.OK)
+            {
+                using var hdoc = System.Text.Json.JsonDocument.Parse(
+                    rHealth.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(hdoc.RootElement.TryGetProperty("ok", out var ok) && ok.GetBoolean(),
+                      "GET /api/health：JSON 为 {\"ok\":true}");
+            }
+            var rMach = _http.GetAsync($"{baseUrl}/api/machines").GetAwaiter().GetResult();
+            Check(rMach.StatusCode == HttpStatusCode.OK, "GET /api/machines -> 200");
+            if (rMach.StatusCode == HttpStatusCode.OK)
+            {
+                using var mdoc = System.Text.Json.JsonDocument.Parse(
+                    rMach.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(mdoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array
+                      && mdoc.RootElement.GetArrayLength() == 0,
+                      "GET /api/machines：空库时返回合法 JSON 数组 []");
+            }
+            var rFails0 = _http.GetAsync($"{baseUrl}/api/fails").GetAwaiter().GetResult();
+            Check(rFails0.StatusCode == HttpStatusCode.OK, "GET /api/fails -> 200");
+            if (rFails0.StatusCode == HttpStatusCode.OK)
+            {
+                using var fdoc = System.Text.Json.JsonDocument.Parse(
+                    rFails0.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(fdoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array
+                      && fdoc.RootElement.GetArrayLength() == 0,
+                      "GET /api/fails：空库时返回合法 JSON 数组 []");
+            }
+            Check(srv.ReceivedCount >= 4, $"Web 服务：合法请求计入 ReceivedCount（实得 {srv.ReceivedCount}）");
+
+            // ---- ② 推送路由 + 入库 ----
+            var failJson = BuildFailJsonCustom(41, "FCT1", "X:\\fct\\web41.xml", "SN-WEB-41", "5V_Rail");
+            var rPush = _http.PostAsync($"{baseUrl}/api/fail",
+                new StringContent(failJson, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rPush.StatusCode == HttpStatusCode.OK, "POST /api/fail（合法 fail JSON）-> 200");
+            long cntPush = 0;
+            Check(WaitUntil(() => { cntPush = db.FailCount(""); return cntPush == 1; }, 10000),
+                  $"推送入库：聚合库 FailCount=1（实得 {cntPush}）");
+            var rFails1 = _http.GetAsync($"{baseUrl}/api/fails").GetAwaiter().GetResult();
+            if (rFails1.StatusCode == HttpStatusCode.OK)
+            {
+                using var f1 = System.Text.Json.JsonDocument.Parse(
+                    rFails1.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                var arr = f1.RootElement;
+                Check(arr.GetArrayLength() == 1
+                      && arr[0].GetProperty("Machine").GetString() == "FCT1"
+                      && arr[0].GetProperty("Sn").GetString() == "SN-WEB-41"
+                      && arr[0].GetProperty("FailReason").GetString() == "5V_Rail"
+                      && arr[0].GetProperty("Result").GetString() == "FAIL",
+                      "GET /api/fails：回读该条记录字段正确（machine/sn/fail_reason/result）");
+            }
+            var rHb = _http.PostAsync($"{baseUrl}/api/heartbeat",
+                new StringContent(BuildHeartbeatJsonString("FCT1", 41, 0), Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rHb.StatusCode == HttpStatusCode.OK, "POST /api/heartbeat -> 200");
+            Check(WaitUntil(() => FindMachine(w, "FCT1") is { Online: true }, 10000),
+                  "POST /api/heartbeat：机台 FCT1 出现在看板且在线");
+            var rRootFail = _http.PostAsync($"{baseUrl}/",
+                new StringContent(BuildFailJsonCustom(42, "FCT2", "X:\\fct\\web42.xml", "SN-WEB-42", "注入测试"),
+                    Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rRootFail.StatusCode == HttpStatusCode.OK, "POST /（body type=fail）-> 200");
+            var rRootHb = _http.PostAsync($"{baseUrl}/",
+                new StringContent(BuildHeartbeatJsonString("FCT2", 42, 1), Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rRootHb.StatusCode == HttpStatusCode.OK, "POST /（body type=heartbeat）-> 200");
+            long cntRoot = 0;
+            Check(WaitUntil(() => { cntRoot = db.FailCount(""); return cntRoot == 2; }, 10000),
+                  $"POST / 分发：fail 已入库（FailCount={cntRoot}，FCT1+FCT2 各一条）");
+
+            // ---- ③ XML 下载白名单 ----
+            var xml = Path.Combine(resultsRoot, "rep-001.xml");
+            const string xmlContent = "<BATCH><STATUS>FAIL</STATUS></BATCH>";
+            File.WriteAllText(xml, xmlContent);
+            var rPushXml = _http.PostAsync($"{baseUrl}/api/fail",
+                new StringContent(BuildFailJsonCustom(43, "FCT1", xml, "SN-WEB-43", "XML 下载"),
+                    Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rPushXml.StatusCode == HttpStatusCode.OK, "XML 白名单：POST fail（xml_path 指向白名单内文件）-> 200");
+            long xmlId = 0;
+            Check(WaitUntil(() =>
+            {
+                var row = db.QueryFails(10, "FCT1").FirstOrDefault(r => r.Sn == "SN-WEB-43");
+                if (row == null) return false;
+                xmlId = row.Id;
+                return true;
+            }, 10000), "XML 白名单：带 xml_path 的记录已入库（取到 id）");
+            var rById = _http.GetAsync($"{baseUrl}/api/file?id={xmlId}").GetAwaiter().GetResult();
+            Check(rById.StatusCode == HttpStatusCode.OK, $"GET /api/file?id={xmlId} -> 200");
+            if (rById.StatusCode == HttpStatusCode.OK)
+                Check(rById.Content.ReadAsStringAsync().GetAwaiter().GetResult() == xmlContent,
+                      "GET /api/file?id=：内容与 resultsRoot 下文件一致");
+            var rByPath = _http.GetAsync($"{baseUrl}/api/file?path={Uri.EscapeDataString(xml)}").GetAwaiter().GetResult();
+            Check(rByPath.StatusCode == HttpStatusCode.OK, "GET /api/file?path=（白名单内绝对路径）-> 200");
+            var rTraversal = _http.GetAsync($"{baseUrl}/api/file?path=../secret.txt").GetAwaiter().GetResult();
+            Check(rTraversal.StatusCode == HttpStatusCode.Forbidden, "GET /api/file?path=../secret.txt（目录穿越）-> 403");
+            var outside = Path.Combine(webRoot, "secret.txt");
+            File.WriteAllText(outside, "秘密内容");
+            var rOutside = _http.GetAsync($"{baseUrl}/api/file?path={Uri.EscapeDataString(outside)}").GetAwaiter().GetResult();
+            Check(rOutside.StatusCode == HttpStatusCode.Forbidden, "GET /api/file?path={resultsRoot 外真实文件} -> 403");
+            var rGhost = _http.GetAsync($"{baseUrl}/api/file?id=999999").GetAwaiter().GetResult();
+            Check(rGhost.StatusCode == HttpStatusCode.NotFound, "GET /api/file?id=999999（记录不存在）-> 404");
+            var rBadId = _http.GetAsync($"{baseUrl}/api/file?id=abc").GetAwaiter().GetResult();
+            Check(rBadId.StatusCode == HttpStatusCode.BadRequest, "GET /api/file?id=abc（非数字）-> 400");
+
+            // ---- ④ CSV 导出 ----
+            var rCsv = _http.GetAsync($"{baseUrl}/api/export.csv").GetAwaiter().GetResult();
+            Check(rCsv.StatusCode == HttpStatusCode.OK, "GET /api/export.csv -> 200");
+            if (rCsv.StatusCode == HttpStatusCode.OK)
+            {
+                var bytes = rCsv.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                Check(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF,
+                      "CSV：以 UTF-8 BOM（EF BB BF）开头");
+                var csv = Encoding.UTF8.GetString(bytes);
+                Check(csv.Contains("时间") && csv.Contains("机台"), "CSV：表头含「时间」「机台」");
+                Check(csv.Contains("SN-WEB-41") && csv.Contains("5V_Rail"), "CSV：数据行含已入库的 sn/fail_reason");
+            }
+            var rInject = _http.PostAsync($"{baseUrl}/api/fail",
+                new StringContent(BuildFailJsonCustom(44, "FCT1", "X:\\fct\\web44.xml", "SN-WEB-44", "=cmd|' /C calc'!A0"),
+                    Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rInject.StatusCode == HttpStatusCode.OK, "CSV 注入：POST fail（fail_reason 以 = 开头）-> 200");
+            long cntInject = 0;
+            Check(WaitUntil(() => { cntInject = db.FailCount(""); return cntInject == 4; }, 10000),
+                  $"CSV 注入：注入记录已入库（FailCount={cntInject}）");
+            var rCsv2 = _http.GetAsync($"{baseUrl}/api/export.csv").GetAwaiter().GetResult();
+            if (rCsv2.StatusCode == HttpStatusCode.OK)
+            {
+                var csv2 = Encoding.UTF8.GetString(rCsv2.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult());
+                Check(csv2.Contains("'=cmd|' /C calc'!A0"),
+                      "CSV 注入：= 开头字段被加单引号前缀（'=cmd...），Excel 不执行公式");
+            }
+
+            // ---- ⑤ 路由错误码 ----
+            var r404 = _http.GetAsync($"{baseUrl}/api/nope").GetAwaiter().GetResult();
+            Check(r404.StatusCode == HttpStatusCode.NotFound, "GET /api/nope（未知路径）-> 404");
+            var r405put = _http.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"{baseUrl}/api/fail")).GetAwaiter().GetResult();
+            Check(r405put.StatusCode == HttpStatusCode.MethodNotAllowed, "PUT /api/fail（方法不符）-> 405");
+            var r405get = _http.GetAsync($"{baseUrl}/api/fail").GetAwaiter().GetResult();
+            Check(r405get.StatusCode == HttpStatusCode.MethodNotAllowed, "GET /api/fail（方法不符）-> 405");
+            var big = new string('x', 2 * 1024 * 1024);
+            var r413 = _http.PostAsync($"{baseUrl}/api/fail",
+                new StringContent(big, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(r413.StatusCode == HttpStatusCode.RequestEntityTooLarge, "POST /api/fail（body 超 1MB）-> 413");
+
+            srv.Stop();
+            w.Stop();
+        }
+        TryDeleteDir(webRoot);
+        Console.WriteLine("    Web 聚合服务自检完成");
     }
 }

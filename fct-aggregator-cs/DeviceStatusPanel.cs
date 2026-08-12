@@ -193,17 +193,12 @@ public class DeviceStatusPanel : Panel
         ForeColor = Theme.TextMain,
     };
 
-    private string IniPath()
-    {
-        var p = _cfg.FctIniPath;
-        return string.IsNullOrEmpty(p) ? @"C:\FTS\Apps\PEU\Cfg\FCT.ini" : p;
-    }
-
-    /// <summary>刷新: 只更新文字/颜色, 不重建控件(防闪烁)。</summary>
+    /// <summary>刷新: 只更新文字/颜色, 不重建控件(防闪烁)。
+    /// FCT.ini 自动识别: 配置路径存在则用, 否则自动找(FTS 树/全盘), 见 <see cref="FctIni.AutoFindIni"/>。</summary>
     public void Refresh2()
     {
         FctIniData data;
-        try { data = FctIni.Parse(IniPath()); }
+        try { data = FctIni.Parse(_cfg.FctIniPath); }
         catch (Exception ex)
         {
             ShowError($"解析异常: {ex.Message}");

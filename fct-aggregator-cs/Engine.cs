@@ -54,7 +54,7 @@ public class Engine
         Logger.Info($"服务启动 | station_id={(string.IsNullOrEmpty(sid) ? "Auto" : sid)} | results_root={cfg.ResultsRoot}");
         Logger.Info($"数据库: {dbFile}");
         Logger.Info($"Webhook: {(AppState.WebhookConfigured ? "已配置" : "未配置")}");
-        Logger.Info($"FCT.ini 路径(config): {cfg.FctIniPath}");
+        Logger.Info($"FCT.ini: {FctIni.AutoFindIni() ?? "未找到(设备状态页将显示诊断)"} | config={cfg.FctIniPath}");
         Logger.Info($"程序目录(BaseDir): {AppConfig.BaseDir}");
 
         // 待办/维修状态变更 → 飞书推送（v3.2.0：卡片格式与 FAIL 告警一致）

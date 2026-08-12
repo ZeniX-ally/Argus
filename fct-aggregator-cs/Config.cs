@@ -26,6 +26,12 @@ public class AppConfig
     public bool AggEnabled { get; set; } = false;
     /// <summary>共享目录根（如 \\192.168.x.x\ArgusAgg）。config.json: agg_share_root。</summary>
     public string AggShareRoot { get; set; } = "";
+    /// <summary>聚合推送通道：smb=写共享目录（默认，兼容旧配置），http=POST 到聚合端。config.json: agg_transport。</summary>
+    public string AggTransport { get; set; } = "smb";
+    /// <summary>http 模式聚合端地址（如 http://192.168.1.100:8080/）。config.json: agg_http_url。</summary>
+    public string AggHttpUrl { get; set; } = "";
+    /// <summary>聚合端 HTTP 监听端口（聚合端用，机台端不用管）。config.json: agg_http_port。</summary>
+    public int AggHttpPort { get; set; } = 8080;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -62,6 +68,16 @@ public class AppConfig
                 // 机台聚合推送：缺省关，只有显式写 true 才开
                 if (root.TryGetProperty("agg_enabled", out v)) cfg.AggEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("agg_share_root", out v)) cfg.AggShareRoot = v.GetString() ?? "";
+                // 聚合推送通道：空/未知一律回落 smb（兼容旧配置）；http 才切直推
+                if (root.TryGetProperty("agg_transport", out v))
+                {
+                    var t = (v.GetString() ?? "").Trim().ToLowerInvariant();
+                    cfg.AggTransport = t == "http" ? "http" : "smb";
+                }
+                if (root.TryGetProperty("agg_http_url", out v)) cfg.AggHttpUrl = v.GetString() ?? "";
+                if (root.TryGetProperty("agg_http_port", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var port) && port >= 1 && port <= 65535)
+                    cfg.AggHttpPort = port;
                 return cfg;
             }
             else

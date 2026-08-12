@@ -66,6 +66,105 @@ public static class FctIni
         yield return @"C:\FTS\Apps\PEU\Cfg\FCT.ini";
         yield return @"D:\FTS\Apps\PEU\Cfg\FCT.ini";
         yield return @"C:\FTS\Cfg\FCT.ini";
+        yield return @"C:\FTS\FCT.ini";
+    }
+
+    // ==================== 自动识别（v3.3.0：不依赖配置路径） ====================
+
+    private static string? _autoFound;
+    private static readonly object _autoLock = new();
+
+    /// <summary>
+    /// 自动识别电脑里的 FCT.ini（进程内缓存，只搜一次）：
+    ///   1) 常规已知路径快速命中
+    ///   2) 各固定盘符下的 FTS 安装树（深度 ≤ 8）
+    ///   3) 兜底：各盘浅层全盘搜索（深度 ≤ 5，跳过系统/用户目录）
+    /// 找不到返回 null。
+    /// </summary>
+    public static string? AutoFindIni()
+    {
+        lock (_autoLock) if (_autoFound != null) return _autoFound;
+
+        foreach (var p in CandidatePaths(""))
+            if (TryExists(p, out var real)) return CacheFound(real);
+
+        foreach (var d in DriveInfo.GetDrives())
+        {
+            if (d.DriveType != DriveType.Fixed || !d.IsReady) continue;
+            var hit = SearchFtsTree(d.RootDirectory, 8);
+            if (hit != null) return CacheFound(hit);
+        }
+
+        foreach (var d in DriveInfo.GetDrives())
+        {
+            if (d.DriveType != DriveType.Fixed || !d.IsReady) continue;
+            var hit = SearchShallow(d.RootDirectory, 5);
+            if (hit != null) return CacheFound(hit);
+        }
+        return null;
+    }
+
+    private static string? CacheFound(string p)
+    {
+        lock (_autoLock) _autoFound ??= p;
+        return _autoFound;
+    }
+
+    /// <summary>在目录树里按文件名找 FCT.ini（递归，深度受限；跳过系统目录；权限异常吞掉）。</summary>
+    public static string? SearchFtsTree(DirectoryInfo root, int maxDepth = 8)
+    {
+        if (!root.Exists || maxDepth <= 0) return null;
+        try
+        {
+            foreach (var f in root.EnumerateFiles())
+                if (string.Equals(f.Name, "FCT.ini", StringComparison.OrdinalIgnoreCase)) return f.FullName;
+            foreach (var d in root.EnumerateDirectories())
+            {
+                if (SkipDir(d.Name)) continue;
+                var hit = SearchFtsTree(d, maxDepth - 1);
+                if (hit != null) return hit;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>浅层全盘搜索（每层都找 FCT.ini，深度受限）。</summary>
+    public static string? SearchShallow(DirectoryInfo root, int maxDepth)
+    {
+        if (!root.Exists || maxDepth <= 0) return null;
+        try
+        {
+            foreach (var f in root.EnumerateFiles())
+                if (string.Equals(f.Name, "FCT.ini", StringComparison.OrdinalIgnoreCase)) return f.FullName;
+            if (maxDepth <= 1) return null;
+            foreach (var d in root.EnumerateDirectories())
+            {
+                if (SkipDir(d.Name)) continue;
+                var hit = SearchShallow(d, maxDepth - 1);
+                if (hit != null) return hit;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>跳过系统/海量目录（全盘搜索的性能与安全边界）。
+    /// 含 Linux/wine 开发环境的大目录，避免开发机自检/演示时扫出几十万目录。</summary>
+    private static bool SkipDir(string name) => name.ToLowerInvariant() is
+        "windows" or "$recycle.bin" or "system volume information" or "programdata" or
+        "users" or "appdata" or "documents and settings" or "recovery" or "perflogs" or
+        ".git" or "node_modules" or "msys64" or "cygwin64" or "windows kits" or "windowsapps" or
+        ".wine" or ".cache" or ".local" or ".config" or ".dotnet" or ".nuget" or ".m2" or
+        "proc" or "sys" or "dev" or "run" or "tmp" or "media" or "snap" or "var" or "usr" or "opt";
+
+    /// <summary>File.Exists 判存在（目录无权限时返回 false 不抛）。</summary>
+    private static bool TryExists(string p, out string real)
+    {
+        real = "";
+        try { if (File.Exists(p)) { real = p; return true; } }
+        catch { }
+        return false;
     }
 
     public static FctIniData Parse(string iniPath)
@@ -104,12 +203,20 @@ public static class FctIni
             }
         }
 
+        // 常规路径没命中 -> 自动识别（FTS 安装树 → 全盘有限深度）
+        if (found == null)
+        {
+            Logger.Info("[设备状态] 常规路径未命中，自动识别 FCT.ini…");
+            found = AutoFindIni();
+            if (found != null) Logger.Info($"[设备状态] 自动识别到 FCT.ini: {found}");
+        }
+
         var d = new FctIniData { IniPath = found ?? iniPath };
         if (found == null)
         {
-            var msg = "FCT.ini 未找到。已尝试以下路径:\n  " + string.Join("\n  ", tried);
+            var msg = "FCT.ini 未找到。已尝试常规路径与全盘自动识别:\n  " + string.Join("\n  ", tried);
             if (diag != null) msg += "\n\n诊断: " + diag;
-            msg += "\n\n请在 config.json 的 fct_ini_path 配置正确路径。";
+            msg += "\n\n若测试软件装在非默认位置，请在 config.json 的 fct_ini_path 配置正确路径。";
             d.Error = msg;
             Logger.Warning("[设备状态] FCT.ini 未找到" + (diag != null ? " | " + diag : ""));
             return d;

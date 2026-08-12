@@ -13,16 +13,21 @@ public static class MaintenanceMeta
 
     /// <summary>
     /// 全部可选状态，顺序 = 看板列顺序 = 处理流程顺序:
-    /// 未知问题(刚发现原因不明) → 正在排查(定位原因) → 待办(含未确认的不良 + 已确认待修) → 进行中(正在修) → 已完成。
+    /// 未知问题(刚发现原因不明) → 待办(含未确认的不良 + 已确认待修) → 持续跟踪(问题未彻底解决，继续盯) → 已完成。
     /// </summary>
     public static readonly StatusDef[] Statuses =
     {
         new("unknown",       "未知问题", Color.FromArgb(128, 108, 163)),
-        new("investigating", "正在排查", Color.FromArgb(202, 138, 4)),
         new("open",          "待办",     Color.FromArgb(37, 99, 165)),
-        new("in_progress",   "进行中",   Color.FromArgb(13, 138, 145)),
+        new("in_progress",   "持续跟踪", Color.FromArgb(13, 138, 145)),
         new("resolved",      "已完成",   Color.FromArgb(42, 128, 84)),
     };
+
+    /// <summary>
+    /// v3.2.x 及以前的旧状态 'investigating'(正在排查)。
+    /// v3.3.0 起该列已去掉，历史记录归并到「待办」。此常量与兜底映射仅用于老库兼容显示。
+    /// </summary>
+    public const string LegacyInvestigating = "investigating";
 
     /// <summary>新建记录的默认状态(待办)。</summary>
     public const string DefaultStatus = "open";
@@ -40,13 +45,15 @@ public static class MaintenanceMeta
     private static readonly Dictionary<string, StatusDef> ByKey =
         Statuses.ToDictionary(s => s.Key, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>状态 key → 中文名。未知 key 原样返回；legacy 'closed' 归为「已完成」。</summary>
+    /// <summary>状态 key → 中文名。未知 key 原样返回；legacy 'closed' 归为「已完成」，'investigating' 归为「待办」。</summary>
     public static string ZhOf(string? key)
     {
         if (string.IsNullOrEmpty(key)) return "";
         if (ByKey.TryGetValue(key, out var d)) return d.Zh;
         if (string.Equals(key, LegacyClosed, StringComparison.OrdinalIgnoreCase))
             return ByKey[DoneStatus].Zh;
+        if (string.Equals(key, LegacyInvestigating, StringComparison.OrdinalIgnoreCase))
+            return ByKey[DefaultStatus].Zh;
         return key;
     }
 
@@ -67,20 +74,23 @@ public static class MaintenanceMeta
             if (ByKey.TryGetValue(key, out var d)) return d.Accent;
             if (string.Equals(key, LegacyClosed, StringComparison.OrdinalIgnoreCase))
                 return ByKey[DoneStatus].Accent;
+            if (string.Equals(key, LegacyInvestigating, StringComparison.OrdinalIgnoreCase))
+                return ByKey[DefaultStatus].Accent;
         }
         return Color.FromArgb(113, 128, 150);
     }
 
-    /// <summary>把 legacy / 未知状态规范化为 5 个有效状态之一，供看板分列用。</summary>
+    /// <summary>把 legacy / 未知状态规范化为有效状态之一，供看板分列用。'investigating' 归并到「待办」。</summary>
     public static string Normalize(string? key)
     {
         if (string.IsNullOrEmpty(key)) return DefaultStatus;
         if (ByKey.TryGetValue(key, out var d)) return d.Key;
         if (string.Equals(key, LegacyClosed, StringComparison.OrdinalIgnoreCase)) return DoneStatus;
+        if (string.Equals(key, LegacyInvestigating, StringComparison.OrdinalIgnoreCase)) return DefaultStatus;
         return DefaultStatus;
     }
 
-    /// <summary>筛选下拉用: ["全部", 未知问题, 正在排查, 待办, 进行中, 已完成]。</summary>
+    /// <summary>筛选下拉用: ["全部", 未知问题, 待办, 持续跟踪, 已完成]。</summary>
     public static object[] FilterItems() =>
         new object[] { "全部" }.Concat(Statuses.Select(s => (object)s.Zh)).ToArray();
 

@@ -158,11 +158,6 @@ public abstract class BoardCardBase : Panel
         base.Dispose(disposing);
     }
 
-    /// <summary>时间显示: 今天只显示 "今天 HH:mm"，其余显示 MM-DD HH:mm。</summary>
-    protected static string ShortTime(string? ts)
-    {
-        if (string.IsNullOrWhiteSpace(ts)) return "—";
-        if (!DateTime.TryParse(ts, out var dt)) return ts.Length > 16 ? ts[..16] : ts;
-        return dt.Date == DateTime.Today ? dt.ToString("今天 HH:mm") : dt.ToString("MM-dd HH:mm");
-    }
+    /// <summary>时间显示: 今天只显示 "今天 HH:mm"，其余显示 MM-DD HH:mm。统一走 <see cref="TimeUtil.Short"/>。</summary>
+    protected static string ShortTime(string? ts) => TimeUtil.Short(ts);
 }

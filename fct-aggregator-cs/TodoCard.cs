@@ -8,16 +8,15 @@ namespace FctAggregator;
 /// 数据来自 `todo_items` 登记表（<see cref="Database.ListTodoView"/>）：
 ///   · **只扫近一个月**的不良入库（`todo_scan_days`），避免一次灌进几千张卡
 ///   · **同类测试项自动合并**（`6.1.1.1 5V_Rail` / `6.1.1.2 5V_Rail` / `..._CH1/CH2` → 一张卡）
-///   · **一旦登记就永久保留**：哪怕不良早已滑出扫描窗口，卡片仍在，直到被处理完
+///   · **一旦登记就永久保留**：哪怕不良早已滑出扫描窗口，卡片仍在，直到被处理/删除
 ///   · **按 fail 次数排序**并标注优先级（高/中/低），列顶就是最该先修的
 ///
 /// 交互：
-///   · 双击 = 确认问题（建维修记录，留在「待办」列）
+///   · 双击 = 确认问题（弹全字段框，建维修记录，留在「待办」列）
 ///   · 拖到其它列 = 确认问题并直接置为该列状态
-///   · 右键 = 确认 / 确认并置为某状态（**没有忽略、没有删除**）
+///   · 右键 = 确认 / 确认并置为某状态 / 删除
 ///
-/// v2.5.1 起策略：待办是真实 FAIL 数据的投影，不可忽略 / 不可删除，
-/// 唯一出口是确认 → 处理 → 拖到「已完成」。
+/// v3.3.0：待办卡支持右键删除（此前策略是不可忽略/不可删除）。
 /// </summary>
 public sealed class TodoCard : BoardCardBase
 {
@@ -63,7 +62,7 @@ public sealed class TodoCard : BoardCardBase
         if (!string.IsNullOrWhiteSpace(Item.StationId)) sb.AppendLine($"机台: {Item.StationId}");
         sb.AppendLine();
         sb.AppendLine("单击=预览详情(含合并清单、可复制) · 双击=确认问题 · 拖到其它列=确认并置为该状态");
-        sb.Append("⚠ 来自真实不良，不可忽略/删除；处理完拖到「已完成」它就不在了");
+        sb.Append("右键=确认/置状态/删除 · 处理完拖到「已完成」它就不在了");
         return sb.ToString();
     }
 
@@ -170,137 +169,7 @@ public sealed class TodoCard : BoardCardBase
         return (Item.Title,
                 $"未确认不良 · 优先级{Item.PriorityZh} · {Item.SortCount} 次",
                 rows,
-                "双击卡片=确认问题 · 拖到其它列=确认并置为该状态 · 不可忽略/删除");
-    }
-}
-
-// ==================================================================
-//  确认问题补填框（轻量版，只填维修人 + 严重度）
-// ==================================================================
-/// <summary>
-/// 从待办确认问题时弹出，补填维修人与严重度。
-/// 确定 → 创建一条维修记录并与待办行关联，进入看板工作流。
-/// </summary>
-public class TodoConfirmForm : Form
-{
-    public string Resolver => ResolverUtil.Normalize(_resolver.Text);
-    public string Severity => MaintenanceMeta.SeverityKeyOf(_severity.SelectedItem?.ToString());
-
-    private readonly ComboBox _resolver;
-    private readonly ComboBox _severity;
-
-    public TodoConfirmForm(TodoItem todo, Database? db = null, string? targetStatusZh = null)
-    {
-        Text = $"确认问题 — {todo.Title}";
-        Width = 480; Height = 300;
-        StartPosition = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false; MinimizeBox = false;
-        ShowInTaskbar = false;
-        Font = new Font("Microsoft YaHei UI", 9F);
-
-        var mergedLine = todo.VariantCount > 1
-            ? $"\n已合并 {todo.VariantCount} 个同类测试项（悬停卡片可看清单）"
-            : "";
-        var head = new Label
-        {
-            Dock = DockStyle.Top, Height = 88, Padding = new Padding(14, 8, 14, 0),
-            Text = $"故障项：{todo.Title}\n" +
-                   $"优先级 {todo.PriorityZh} · 区间内 {todo.RangeCount} 次 · 累计 {todo.TotalCount} 次\n" +
-                   $"最近 {ShortTime(todo.LastSeen)}（首次 {ShortTime(todo.FirstSeen)}）{mergedLine}",
-            Font = new Font("Microsoft YaHei UI", 9.5F),
-            ForeColor = Color.FromArgb(60, 70, 88),
-            AutoEllipsis = true,
-        };
-
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(14, 6, 14, 6),
-        };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-
-        _resolver = new ComboBox
-        {
-            Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDown,
-            Margin = new Padding(3, 5, 3, 5),
-            AutoCompleteMode = AutoCompleteMode.SuggestAppend,
-            AutoCompleteSource = AutoCompleteSource.ListItems,
-        };
-        if (db != null)
-        {
-            try
-            {
-                var pool = db.ListResolvers();
-                if (pool.Count > 0) _resolver.Items.AddRange(pool.Cast<object>().ToArray());
-            }
-            catch { }
-        }
-        _severity = new ComboBox
-        {
-            Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList,
-            Margin = new Padding(3, 5, 3, 5),
-        };
-        _severity.Items.AddRange(MaintenanceMeta.SeverityOrderZh.Cast<object>().ToArray());
-        // 次数多的默认按更严重来选（高优先级 -> 严重）
-        _severity.SelectedItem = todo.SortCount >= TodoGrouping.HighThreshold ? "严重" : "一般";
-        if (_severity.SelectedIndex < 0) _severity.SelectedIndex = 0;
-
-        layout.Controls.Add(MakeLabel("维修人员:"), 0, 0);
-        layout.Controls.Add(_resolver, 1, 0);
-        layout.Controls.Add(MakeLabel("严重程度:"), 0, 1);
-        layout.Controls.Add(_severity, 1, 1);
-
-        var buttons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom, Height = 46, FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(10, 8, 10, 8),
-        };
-        var ok = new Button { Text = "确认，建维修记录", Width = 148, Height = 28, DialogResult = DialogResult.None };
-        ok.Click += (_, _) =>
-        {
-            if (string.IsNullOrWhiteSpace(_resolver.Text))
-            {
-                MessageBox.Show("请填写或选择维修人员。", "提示");
-                return;
-            }
-            DialogResult = DialogResult.OK;
-            Close();
-        };
-        var cancel = new Button { Text = "取消", Width = 80, Height = 28, DialogResult = DialogResult.Cancel };
-        buttons.Controls.AddRange(new Control[] { ok, cancel });
-        AcceptButton = ok;
-        CancelButton = cancel;
-
-        var note = new Label
-        {
-            Dock = DockStyle.Bottom, Height = 20,
-            Padding = new Padding(14, 0, 14, 0),
-            ForeColor = Color.FromArgb(140, 150, 168),
-            Text = string.IsNullOrEmpty(targetStatusZh)
-                 ? "确定后自动创建「待办」维修记录；不良本身不可忽略，只能处理掉。"
-                 : $"确定后自动创建维修记录并置为「{targetStatusZh}」。",
-        };
-
-        Controls.Add(layout);
-        Controls.Add(note);
-        Controls.Add(buttons);
-        Controls.Add(head);
-    }
-
-    private static Label MakeLabel(string text) => new()
-    {
-        Text = text, Dock = DockStyle.Fill, AutoSize = false,
-        TextAlign = ContentAlignment.MiddleLeft,
-    };
-
-    private static string ShortTime(string? ts)
-    {
-        if (string.IsNullOrWhiteSpace(ts)) return "—";
-        if (!DateTime.TryParse(ts, out var dt)) return ts.Length > 16 ? ts[..16] : ts;
-        return dt.ToString("MM-dd HH:mm");
+                "双击卡片=确认问题 · 拖到其它列=确认并置为该状态 · 右键=更多操作(含删除)");
     }
 }
 

@@ -3,17 +3,17 @@ using System.Drawing.Drawing2D;
 namespace FctAggregator;
 
 /// <summary>
-/// 维修记录看板视图: 5 列(未知问题 / 正在排查 / 待办 / 进行中 / 已完成)，卡片可跨列拖动改状态。
+/// 维修记录看板视图: 4 列(未知问题 / 待办 / 持续跟踪 / 已完成)，卡片可跨列拖动改状态。
 /// 卡片全部自绘(不含子控件) —— 子控件会吞掉 MouseDown/MouseMove 导致拖拽拿不到事件，
-/// 且 5 列 × 上百张卡若每张挂 4~5 个 Label 会产生上千个窗口句柄。
+/// 且 4 列 × 上百张卡若每张挂 4~5 个 Label 会产生上千个窗口句柄。
 ///
 /// v2.5.0：**待办不再是独立页面**。「待办」列同时装两种卡：
 ///   · 上半部 <see cref="TodoCard"/> —— 新出现的不良（尚未确认，来自 test_records 聚合）
 ///   · 下半部 <see cref="MaintenanceCard"/> —— 已确认待修的维修记录
 /// 待办卡双击=确认建单、拖到别列=确认并置为该状态。
 ///
-/// v2.5.1：待办卡**不可忽略 / 不可删除** —— 它是真实 FAIL 数据的投影，
-/// 唯一出口是确认后处理掉（拖到「已完成」）。
+/// v3.3.0：待办卡支持右键删除；任何状态迁移(含确认待办)都弹**全字段编辑框**
+/// (可记录故障描述/措施/备注等详细原因)并触发飞书推送。
 /// </summary>
 public class MaintenanceBoard : Panel
 {
@@ -81,13 +81,17 @@ public class MaintenanceBoard : Panel
     /// <summary>当前「待办」列里未确认的不良数量(供外层显示角标)。</summary>
     public int PendingTodoCount { get; private set; }
 
-    // 待办时间区间（null = 不限，即“全部·永久保留”）
-    private DateTime? _todoFrom = DateTime.Today.AddDays(-29);
+    // 待办时间区间(null = 不限，即“全部·永久保留”)；非自定义区间每次 Reload 按今天重算，
+    // 否则跨天后快照过期 —— 新一天的 fail 因 test_date 超出旧区间而不显示（v3.3.0 修复）。
+    private bool _customRange;
+    private DateTime? _todoFrom = DateTime.Today.AddDays(-Math.Max(1, AppConfig.Instance.TodoScanDays) + 1);
     private DateTime? _todoTo = DateTime.Today;
 
-    /// <summary>设待办列的时间区间并重载（只影响显示，不删任何待办）。</summary>
-    public void SetTodoRange(DateTime? from, DateTime? to)
+    /// <summary>设待办列的时间区间并重载(只影响显示，不删任何待办)。
+    /// <paramref name="custom"/> = true 表示用户自定义区间（固定不随日期滑动）。</summary>
+    public void SetTodoRange(DateTime? from, DateTime? to, bool custom = false)
     {
+        _customRange = custom;
         _todoFrom = from;
         _todoTo = to;
         Reload();
@@ -97,6 +101,12 @@ public class MaintenanceBoard : Panel
     public void Reload()
     {
         CardPreviewForm.CloseCurrent();      // 卡片要重建了，旧预览内容会过期
+        // 默认「近 N 天」区间保持滑动窗口：每天自动前移，新 fail 不会因区间过期而看不见
+        if (!_customRange)
+        {
+            _todoFrom = DateTime.Today.AddDays(-Math.Max(1, AppConfig.Instance.TodoScanDays) + 1);
+            _todoTo = DateTime.Today;
+        }
         try
         {
             var todos = LoadTodos();
@@ -135,7 +145,8 @@ public class MaintenanceBoard : Panel
         }
     }
 
-    /// <summary>读未确认的不良(失败不影响看板其余部分)。</summary>
+    /// <summary>读未确认的不良(失败不影响看板其余部分)。
+    /// ⚠ 失败必须打 ERROR 级日志：待办列空白 + 日志可见才能定位“新 fail 不出现”的根因。</summary>
     private List<TodoItem> LoadTodos()
     {
         try
@@ -147,7 +158,7 @@ public class MaintenanceBoard : Panel
         }
         catch (Exception ex)
         {
-            Logger.Warning($"待办(未确认不良)加载失败: {ex.Message}");
+            Logger.Error($"[待办] 待办列表加载失败(待办列将为空): {ex}");
             return new List<TodoItem>();
         }
     }
@@ -236,8 +247,7 @@ public class MaintenanceBoard : Panel
         return items.Select(x => (x, counts.GetValueOrDefault(x))).ToList();
     }
 
-    /// <summary>未确认不良的右键菜单。
-    /// **没有忽略/删除** —— 待办是真实不良的投影，只能确认后处理掉。</summary>
+    /// <summary>未确认不良的右键菜单：确认 / 确认并置为某状态 / 删除。</summary>
     private ContextMenuStrip BuildTodoMenu(TodoItem todo)
     {
         var menu = new ContextMenuStrip { Font = Font };
@@ -253,28 +263,62 @@ public class MaintenanceBoard : Panel
             menu.Items.Add($"确认并置为 {def.Zh}", null, (_, _) => ConfirmTodo(todo, key));
         }
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("来自真实不良，不可忽略 / 删除") { Enabled = false });
+        menu.Items.Add("删除此待办", null, (_, _) => DeleteTodoItem(todo));
         return menu;
     }
 
-    /// <summary>确认一条未确认不良: 补填维修人/严重度 → 建维修记录(可直接落到目标列)。</summary>
+    /// <summary>删除一条未确认不良（v3.3.0 起支持）。
+    /// 删除后该故障项不再出现在待办列；若已关联维修记录，记录不受影响。</summary>
+    private void DeleteTodoItem(TodoItem todo)
+    {
+        var msg = $"确定删除待办「{todo.Title}」？\n\n" +
+                  $"该故障项累计 {todo.TotalCount} 次不良，删除后不再出现在待办列。\n" +
+                  "若它已关联维修记录，记录本身不受影响。";
+        if (MessageBox.Show(msg, "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        try
+        {
+            if (_engine.Db.DeleteTodo(todo.Id))
+            {
+                Logger.Info($"[待办] 删除待办 #{todo.Id}: {todo.Title}");
+                Reload();
+                Changed?.Invoke();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"[待办] 删除失败: {ex.Message}");
+            MessageBox.Show($"删除失败: {ex.Message}", "错误");
+        }
+    }
+
+    /// <summary>
+    /// 确认一条未确认不良: 弹**全字段框**(故障描述/严重度/维修人/措施/状态/备注)，
+    /// 确定后建维修记录(可直接落到目标列)，并触发状态变更推送。
+    /// </summary>
     private void ConfirmTodo(TodoItem todo, string targetStatus)
     {
         targetStatus = MaintenanceMeta.Normalize(targetStatus);
-        var zh = targetStatus == MaintenanceMeta.DefaultStatus ? null : MaintenanceMeta.ZhOf(targetStatus);
-        using var dlg = new TodoConfirmForm(todo, _engine.Db, zh);
+        // 预填: 故障项=大项标题, 严重度按次数预选, 状态=目标列
+        var preset = new MaintenanceRecord
+        {
+            StationId = todo.StationId,
+            FailItem = todo.Title,
+            Severity = todo.SortCount >= TodoGrouping.HighThreshold ? "critical" : "major",
+            Status = targetStatus,
+        };
+        using var dlg = new MaintenanceForm(_engine.ResolvedStationId, preset, null, ResolverCandidates(), _engine.Db);
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
         try
         {
-            // 确认 = 建记录 + 与待办行关联（记录被删 / 复发时待办会自动回到未确认）
-            var id = _engine.Db.AcknowledgeTodo(todo.Id, dlg.Resolver, dlg.Severity, targetStatus);
+            // 确认 = 建记录 + 与待办行关联(记录被删 / 复发时待办会自动回到未确认)
+            var id = _engine.Db.AcknowledgeTodo(todo.Id, dlg.Result);
             // 手敲的新名字自动进名单(与维修表单行为一致)
-            foreach (var who in ResolverUtil.Split(dlg.Resolver))
+            foreach (var who in ResolverUtil.Split(dlg.Result.Resolver))
             {
                 try { _engine.Db.AddResolver(who); } catch { }
             }
-            Logger.Info($"[待办] 确认不良 -> 维修记录 #{id}（{MaintenanceMeta.ZhOf(targetStatus)}）: {todo.Title}" +
+            Logger.Info($"[待办] 确认不良 -> 维修记录 #{id}（{MaintenanceMeta.ZhOf(dlg.Result.Status)}）: {todo.Title}" +
                         (todo.VariantCount > 1 ? $"（合并 {todo.VariantCount} 个同类项）" : ""));
             Reload();
             Changed?.Invoke();
@@ -286,7 +330,15 @@ public class MaintenanceBoard : Panel
         }
     }
 
-    /// <summary>卡片被拖到某一列: 落库 + 就地搬控件(不整页重建)。</summary>
+    /// <summary>历史维修人候选(给表单下拉用，失败不影响主流程)。</summary>
+    private List<string> ResolverCandidates()
+    {
+        try { return _engine.Db.ListResolvers(); }
+        catch (Exception ex) { Logger.Warning($"读取维修人候选失败: {ex.Message}"); return new List<string>(); }
+    }
+
+    /// <summary>卡片被拖到某一列: 弹全字段框确认(记录详细原因) → 落库 + 就地搬控件(不整页重建)。
+    /// 任何状态迁移都会触发飞书推送（Database 状态变更事件）。</summary>
     private void OnDropRequested(BoardCardBase dragged, string targetStatus)
     {
         // 未确认不良拖出待办列 = 确认 + 直接置为目标状态
@@ -301,51 +353,38 @@ public class MaintenanceBoard : Panel
         var from = MaintenanceMeta.Normalize(rec.Status);
         if (from == targetStatus) return;
 
+        // 状态迁移统一走全字段编辑框: 预置目标状态, 可补故障描述/措施/备注等详细原因;
+        // 取消 = 撤销本次迁移, 卡片留在原列
+        var edited = rec.Clone();
+        edited.Status = targetStatus;
+        using (var dlg = new MaintenanceForm(_engine.ResolvedStationId, edited, null, ResolverCandidates(), _engine.Db))
+        {
+            if (dlg.ShowDialog(this) == DialogResult.Cancel) return;
+            edited = dlg.Result;
+        }
+
         try
         {
-            bool ok;
-            if (targetStatus == MaintenanceMeta.DoneStatus)
-            {
-                // 拖到「已完成」: 弹轻量补填框(确定=写维修人与措施 / 跳过=只改状态 / 取消=撤销)
-                using var dlg = new QuickResolveForm(rec, _engine.Db);
-                var r = dlg.ShowDialog(this);
-                if (r == DialogResult.Cancel) return;
-                if (r == DialogResult.OK)
-                {
-                    var edited = rec.Clone();
-                    edited.Resolver = dlg.Resolver;
-                    edited.Resolution = dlg.Resolution;
-                    edited.Status = targetStatus;
-                    ok = _engine.Db.UpdateMaintenance(edited);
-                    if (ok)
-                    {
-                        rec.Resolver = edited.Resolver;
-                        rec.Resolution = edited.Resolution;
-                    }
-                }
-                else
-                {
-                    ok = _engine.Db.UpdateMaintenanceStatus(rec.Id, targetStatus);
-                }
-            }
-            else
-            {
-                ok = _engine.Db.UpdateMaintenanceStatus(rec.Id, targetStatus);
-            }
-
-            if (!ok)
+            if (!_engine.Db.UpdateMaintenance(edited))
             {
                 MessageBox.Show($"记录 #{rec.Id} 更新失败（可能已被删除）。", "提示");
                 Reload();
                 return;
             }
 
-            rec.Status = targetStatus;
+            var to = MaintenanceMeta.Normalize(edited.Status);
+            var oldStatus = rec.Status;
+            rec.Status = to;
+            rec.Resolver = edited.Resolver;
+            rec.Resolution = edited.Resolution;
+            rec.FailReason = edited.FailReason;
+            rec.Notes = edited.Notes;
+            rec.Severity = edited.Severity;
             rec.UpdatedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             _columns[from].RemoveCard(card);
-            _columns[targetStatus].InsertCardTop(card);
+            _columns[to].InsertCardTop(card);
             RefreshCounts();
-            Logger.Info($"维修记录 #{rec.Id} 状态: {MaintenanceMeta.ZhOf(from)} -> {MaintenanceMeta.ZhOf(targetStatus)}");
+            Logger.Info($"维修记录 #{rec.Id} 状态: {MaintenanceMeta.ZhOf(oldStatus)} -> {MaintenanceMeta.ZhOf(to)}");
             Changed?.Invoke();
         }
         catch (Exception ex)
@@ -783,106 +822,4 @@ internal static class MaintenanceDraw
         p.CloseFigure();
         return p;
     }
-}
-
-// ======================================================================
-//  拖到「已完成」时的轻量补填框
-// ======================================================================
-/// <summary>拖到「已完成」列时弹出，补填维修人与维修措施。确定 / 跳过 / 取消。</summary>
-public class QuickResolveForm : Form
-{
-    public string Resolver => ResolverUtil.Normalize(_resolver.Text);
-    public string Resolution => _resolution.Text.Trim();
-
-    private readonly TextBox _resolver;
-    private readonly TextBox _resolution;
-
-    public QuickResolveForm(MaintenanceRecord m, Database? db = null)
-    {
-        Text = $"标记为已完成 — #{m.Id}";
-        Width = 460; Height = 300;
-        StartPosition = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false; MinimizeBox = false;
-        ShowInTaskbar = false;
-        Font = new Font("Microsoft YaHei UI", 9F);
-
-        var head = new Label
-        {
-            Dock = DockStyle.Top, Height = 44, Padding = new Padding(14, 8, 14, 0),
-            Text = m.FailItem, Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold),
-            AutoEllipsis = true,
-        };
-
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(14, 0, 14, 6),
-        };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-        _resolver = new TextBox { Dock = DockStyle.Fill, Margin = new Padding(3, 5, 3, 5), Text = m.Resolver };
-        // 维修人一行右侧挂一个【选择】，同样可多选
-        var whoHost = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0),
-        };
-        whoHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        whoHost.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 62));
-        var btnPick = new Button
-        {
-            Dock = DockStyle.Fill, Text = "选择", Margin = new Padding(2, 5, 3, 5),
-            BackColor = Color.FromArgb(217, 231, 245), Enabled = db != null,
-        };
-        btnPick.Click += (_, _) =>
-        {
-            if (db == null) return;
-            using var pick = new ResolverPickerForm(db, _resolver.Text);
-            if (pick.ShowDialog(this) == DialogResult.OK) _resolver.Text = pick.Result;
-        };
-        whoHost.Controls.Add(_resolver, 0, 0);
-        whoHost.Controls.Add(btnPick, 1, 0);
-        _resolution = new TextBox
-        {
-            Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical,
-            Margin = new Padding(3, 5, 3, 5), Text = m.Resolution,
-        };
-
-        layout.Controls.Add(MakeLabel("维修人员:"), 0, 0);
-        layout.Controls.Add(whoHost, 1, 0);
-        layout.Controls.Add(MakeLabel("维修措施:"), 0, 1);
-        layout.Controls.Add(_resolution, 1, 1);
-
-        var buttons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom, Height = 46, FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(10, 8, 10, 8),
-        };
-        var ok = new Button { Text = "确定", Width = 84, Height = 28, DialogResult = DialogResult.OK };
-        var skip = new Button { Text = "跳过不填", Width = 84, Height = 28, DialogResult = DialogResult.Ignore };
-        var cancel = new Button { Text = "取消", Width = 84, Height = 28, DialogResult = DialogResult.Cancel };
-        buttons.Controls.AddRange(new Control[] { ok, skip, cancel });
-        AcceptButton = ok;
-        CancelButton = cancel;
-
-        var hint = new Label
-        {
-            Dock = DockStyle.Bottom, Height = 22, Padding = new Padding(14, 0, 14, 0),
-            ForeColor = Color.FromArgb(120, 132, 150),
-            Text = "「取消」将撤销本次状态变更，卡片留在原列。",
-        };
-
-        Controls.Add(layout);
-        Controls.Add(hint);
-        Controls.Add(buttons);
-        Controls.Add(head);
-    }
-
-    private static Label MakeLabel(string text) => new()
-    {
-        Text = text, Dock = DockStyle.Fill, AutoSize = false,
-        TextAlign = ContentAlignment.MiddleLeft,
-    };
 }

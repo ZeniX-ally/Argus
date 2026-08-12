@@ -12,6 +12,7 @@
 | FAIL 排行 v1.5.0 | 扫 FAIL 记录按不良项排名，导出 xlsx / csv，内置 XML 报告查看 | Ctrl+6 / `rank` |
 | 取数打包 v1.0.0 | 按日期区间捞 Results + TDMS，打包成 zip / 汇总 xlsx（带 CLI） | Ctrl+7 / `fetch` |
 | TDMS 波形 v1.1.0 | 打开 TDMS 记录看波形、导出 csv/json（带 CLI） | Ctrl+8 / `tdms` |
+| 聚合看板（Phase 2） | 多机台 FAIL 聚合：共享目录宿主实时看板（机台卡片 + FAIL 明细，双击看完整原因） | `agg` |
 
 ## 快速开始
 
@@ -21,6 +22,8 @@ Argus.exe                    # 主程序（左侧导航切页，工具箱在下�
 Argus.exe --help             # 全部子命令
 Argus.exe tdms x.tdms        # 直接看某个波形文件
 Argus.exe fetch --help       # 取数工具命令行
+# 聚合端：部署在共享目录宿主机（如 D:\ArgusAgg），config.json 的 agg_share_root 填共享目录根
+Argus.exe agg                # 多机台聚合看板（机台端推送数据，宿主看板只读汇总）
 ```
 快捷键：`Ctrl+1~5` 主程序页、`Ctrl+6~8` 三个工具页、`Ctrl+R` 刷新。
 三个工具是**内嵌页面**（`TopLevel=false` 的 Form）；命令行方式则以独立窗口打开。

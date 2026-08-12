@@ -113,7 +113,7 @@ public static class FeishuNotifier
     {
         var station = string.IsNullOrWhiteSpace(r.StationId) ? "未知机台" : r.StationId;
         var model = string.IsNullOrWhiteSpace(r.EquipmentModel) ? "—" : r.EquipmentModel;
-        var fromZh = MaintenanceMeta.ZhOf(fromStatus);
+        var fromZh = string.IsNullOrEmpty(fromStatus) ? "新登记" : MaintenanceMeta.ZhOf(fromStatus);
         var toZh = MaintenanceMeta.ZhOf(toStatus);
 
         var header = new
@@ -187,12 +187,11 @@ public static class FeishuNotifier
         return sb.ToString();
     }
 
-    /// <summary>2026-07-30T10:00:00 -> 2026-07-30 10:00:00（去掉 T）。解析失败原样返回。</summary>
+    /// <summary>时间统一格式（ISO 带时区/毫秒、14/17 位数字都能识别）。空 → "—"。</summary>
     private static string FmtTime(string? ts)
     {
-        if (string.IsNullOrWhiteSpace(ts)) return "—";
-        if (DateTime.TryParse(ts, out var dt)) return dt.ToString("yyyy-MM-dd HH:mm:ss");
-        return ts.Replace('T', ' ');
+        var n = TimeUtil.Normalize(ts);
+        return n.Length == 0 ? "—" : n;
     }
 
     /// <summary>飞书 lark_md 转义：粗体符号、竖线、链接方括号与反引号代码块（避免恶意测试项名/失败原因渲染成可点击链接）。</summary>

@@ -2,11 +2,12 @@ namespace FctAggregator;
 
 /// <summary>
 /// 维修记录页。两种视图:
-/// 看板(默认, 5 列可拖动改状态) / 列表(表格 + 状态筛选)。
+/// 看板(默认, 4 列可拖动改状态) / 列表(表格 + 状态筛选)。
 /// 功能: 新增 / 编辑 / 改状态 / 删除 / 导出 xlsx·csv。
 ///
 /// v2.5.0：原来的「待办」独立页已取消 —— 未确认的不良直接长在看板的「待办」列里，
 /// 不用再切页就能看到/处理（参见 <see cref="TodoCard"/>）。
+/// v3.3.0：状态变更一律弹全字段编辑框（可记录详细原因）并触发飞书推送。
 /// </summary>
 public class MaintenancePanel : Panel
 {
@@ -184,7 +185,7 @@ public class MaintenancePanel : Panel
             }
             _customFrom = dlg.From;
             _customTo = dlg.To;
-            _board.SetTodoRange(_customFrom, _customTo);
+            _board.SetTodoRange(_customFrom, _customTo, custom: true);
             Logger.Info($"[待办] 区间已设为 {_customFrom:yyyy-MM-dd} ~ {_customTo:yyyy-MM-dd}");
             return;
         }
@@ -369,30 +370,26 @@ public class MaintenancePanel : Panel
         return s.Length <= max ? s : s[..max] + "…";
     }
 
+    /// <summary>菜单「标记为 X」: 弹**全字段编辑框**(预置目标状态，可记录详细原因)，保存后触发推送。</summary>
     private void SetStatus(MaintenanceRecord m, string status)
     {
+        var edited = m.Clone();
+        edited.Status = MaintenanceMeta.Normalize(status);
+        using (var dlg = new MaintenanceForm(_engine.ResolvedStationId, edited, null, ResolverCandidates(), _engine.Db))
+        {
+            if (dlg.ShowDialog(this) == DialogResult.Cancel) return;
+            edited = dlg.Result;
+        }
         try
         {
-            // 与看板一致: 标记为「已完成」时也弹补填框
-            if (status == MaintenanceMeta.DoneStatus)
+            if (!_engine.Db.UpdateMaintenance(edited))
             {
-                using var dlg = new QuickResolveForm(m, _engine.Db);
-                var r = dlg.ShowDialog(this);
-                if (r == DialogResult.Cancel) return;
-                if (r == DialogResult.OK)
-                {
-                    var edited = m.Clone();
-                    edited.Resolver = dlg.Resolver;
-                    edited.Resolution = dlg.Resolution;
-                    edited.Status = status;
-                    _engine.Db.UpdateMaintenance(edited);
-                    Logger.Info($"维修记录 #{m.Id} 状态 -> {MaintenanceMeta.ZhOf(status)}（已补填维修人/措施）");
-                    Refresh2();
-                    return;
-                }
+                MessageBox.Show($"记录 #{m.Id} 更新失败（可能已被删除）。", "提示");
             }
-            _engine.Db.UpdateMaintenanceStatus(m.Id, status);
-            Logger.Info($"维修记录 #{m.Id} 状态: {MaintenanceMeta.ZhOf(m.Status)} -> {MaintenanceMeta.ZhOf(status)}");
+            else
+            {
+                Logger.Info($"维修记录 #{m.Id} 状态: {MaintenanceMeta.ZhOf(m.Status)} -> {MaintenanceMeta.ZhOf(edited.Status)}");
+            }
             Refresh2();
         }
         catch (Exception ex)
@@ -405,7 +402,7 @@ public class MaintenancePanel : Panel
     private void DeleteRecord(MaintenanceRecord m)
     {
         // 记录可以删，但它背后的**真实不良删不掉** —— 删完会自动回到「待办」列，
-        // 提前说清楚，避免现场以为“删了就干净了”。
+        // 提前说清楚，避免现场以为“删了就干净了”。（待办卡本身也支持右键删除，见 MaintenanceBoard）
         int failCount = 0;
         try { failCount = _engine.Db.CountFailRecords(m.FailItem, m.StationId); }
         catch (Exception ex) { Logger.Warning($"查故障项 FAIL 数失败: {ex.Message}"); }
@@ -477,53 +474,56 @@ public class MaintenancePanel : Panel
     }
 }
 
-/// <summary>
-/// 新增 / 编辑维修记录的对话框。
-///
-/// 三种用法：
-///   · `new MaintenanceForm(stationId, null, null, who)`        —— 手工新增一条
-///   · `new MaintenanceForm(stationId, rec,  null, who)`        —— 编辑（保留 Id）
-///   · `new MaintenanceForm(stationId, null, items, who)`       —— 从 FAIL 选来的 N 个故障项批量建单
-///
-/// v2.3.0 起：**设备型号 / 设备SN 不再录入**（DB 列保留，历史值不动）；
-/// 维修人员改为可下拉选历史值，不用每次手敲。
-/// </summary>
-public class MaintenanceForm : Form
-{
-    public MaintenanceRecord Result { get; }
-
-    private readonly bool _isEdit;
-    private readonly List<string> _batchItems;      // 批量模式下的故障项（>1 才算批量）
-    private readonly List<string> _resolverPool;
-
-    private TextBox _failItem = null!, _reason = null!;
-    private TextBox _resolution = null!, _notes = null!;
-    private TextBox _batchView = null!;
-    private ComboBox _severity = null!, _status = null!, _resolver = null!;
-    private readonly Database? _db;                 // 有它才能开【+ 人员】管理名单
-    private CheckBox _mergeOne = null!;
-    private DateTimePicker _date = null!;
-    private Control _resolverHost = null!;
-
-    private bool IsBatch => _batchItems.Count > 0;
-
-    public MaintenanceForm(string stationId,
-                           MaintenanceRecord? edit = null,
-                           IEnumerable<string>? failItems = null,
-                           IEnumerable<string>? resolvers = null,
-                           Database? db = null)
+    /// <summary>
+    /// 新增 / 编辑维修记录的对话框。
+    ///
+    /// 三种用法：
+    ///   · `new MaintenanceForm(stationId, null, null, who)`        —— 手工新增一条
+    ///   · `new MaintenanceForm(stationId, rec,  null, who)`        —— 编辑（保留 Id）
+    ///   · `new MaintenanceForm(stationId, null, items, who)`       —— 从 FAIL 选来的 N 个故障项批量建单
+    ///   · `new MaintenanceForm(stationId, preset, null, who)`      —— 预填新增（preset.Id=0，如确认待办）
+    ///
+    /// v2.3.0 起：**设备型号 / 设备SN 不再录入**（DB 列保留，历史值不动）；
+    /// 维修人员改为可下拉选历史值，不用每次手敲。
+    /// </summary>
+    public class MaintenanceForm : Form
     {
-        _db = db;
-        _isEdit = edit != null;
-        _batchItems = failItems?.Where(x => !string.IsNullOrWhiteSpace(x))
-                                .Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)
-                                .ToList() ?? new List<string>();
-        _resolverPool = resolvers?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
+        public MaintenanceRecord Result { get; }
 
-        // 编辑模式下操作副本, 用户点「取消」时不污染看板/列表里的原对象
-        Result = edit?.Clone() ?? new MaintenanceRecord { StationId = stationId, Status = MaintenanceMeta.DefaultStatus };
-        if (!_isEdit) Result.StationId = stationId;
-        if (IsBatch) Result.FailItem = _batchItems[0];
+        private readonly bool _isEdit;
+        private readonly List<string> _batchItems;      // 批量模式下的故障项（>1 才算批量）
+        private readonly List<string> _resolverPool;
+
+        private TextBox _failItem = null!, _reason = null!;
+        private TextBox _resolution = null!, _notes = null!;
+        private TextBox _batchView = null!;
+        private ComboBox _severity = null!, _status = null!, _resolver = null!;
+        private readonly Database? _db;                 // 有它才能开【+ 人员】管理名单
+        private CheckBox _mergeOne = null!;
+        private DateTimePicker _date = null!;
+        private Control _resolverHost = null!;
+
+        private bool IsBatch => _batchItems.Count > 0;
+
+        public MaintenanceForm(string stationId,
+                               MaintenanceRecord? edit = null,
+                               IEnumerable<string>? failItems = null,
+                               IEnumerable<string>? resolvers = null,
+                               Database? db = null)
+        {
+            _db = db;
+            // Id>0 才算编辑模式；Id=0 的预填记录（如确认待办）按新增模式处理
+            _isEdit = edit is { Id: > 0 };
+            _batchItems = failItems?.Where(x => !string.IsNullOrWhiteSpace(x))
+                                    .Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .ToList() ?? new List<string>();
+            _resolverPool = resolvers?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
+
+            // 编辑模式下操作副本, 用户点「取消」时不污染看板/列表里的原对象
+            Result = edit?.Clone() ?? new MaintenanceRecord { StationId = stationId, Status = MaintenanceMeta.DefaultStatus };
+            // 预填记录已有机台号时保留（确认待办用不良来源机台），否则用当前机台
+            if (!_isEdit && string.IsNullOrEmpty(Result.StationId)) Result.StationId = stationId;
+            if (IsBatch) Result.FailItem = _batchItems[0];
 
         Text = _isEdit ? $"编辑维修记录 #{Result.Id}"
              : IsBatch ? $"新增维修记录（{_batchItems.Count} 个故障项）"
