@@ -41,3 +41,8 @@ _releases/
 # ---- Linux 侧构建产物（Directory.Build.props 把非 Windows 的中间产物隔离到这里）----
 obj-linux/
 bin-linux/
+
+# ---- AI 会话/进度产物(不入库) ----
+session-*.json
+项目进度记录.json
+.mimosa/
