@@ -55,11 +55,11 @@ public class MainForm : Form
     private FailListPanel _failPage = null!;
     private System.Windows.Forms.Timer _timer = null!;
 
-    /// <summary>页索引 → 标题（顶栏显示）。0~4 主程序页，5~7 内嵌的工具页。</summary>
+    /// <summary>页索引 → 标题（顶栏显示）。0~4 主程序页，5~8 内嵌的工具页。</summary>
     private static readonly string[] PageTitles =
     {
         "总览", "待办 / 维修记录", "FAIL 记录", "设备状态", "调试工具",
-        "FAIL 排行", "取数打包", "TDMS 波形",
+        "FAIL 排行", "取数打包", "TDMS 波形", "聚合看板",
     };
 
     /// <summary>主程序自己的页面数（后面那三个是内嵌工具页）。</summary>
@@ -78,6 +78,12 @@ public class MainForm : Form
         ("rank",       "FAIL 排行", () => new FctFailRanker.MainForm()),
         ("fetch",      "取数打包", () => new FctFetcher.MainForm()),
         ("tdms",       "TDMS 波形", () => new FctTdmsViewer.MainForm()),
+        // v3.4.2：聚合看板内嵌进主程序 —— 任何机台都能点开成为聚合端。
+        // 惰加载 + 常驻：首次切过来才起监听（聚合库/共享目录/HTTP 8080），切走不停止，
+        // 主程序退出才收尾；与 `argus agg`（独立窗口模式）同源同配置。
+        ("agg",        "聚合看板", () => new AggCenterForm(
+            AppConfig.Instance.AggShareRoot,
+            Path.Combine(AppConfig.BaseDir, "data", "agg_center.db"))),
     };
 
     /// <summary>三个工具页（惰加载：第一次切过去才构造）。</summary>
@@ -89,7 +95,6 @@ public class MainForm : Form
     /// --debug 启动参数：显示侧边栏「调试工具」入口。
     /// 默认 false（生产形态）——调试页有清空数据库/推送测试/自启开关，产线操作员不应能进。
     /// </summary>
-    private readonly bool _debugMode;
 
     /// <summary>「调试工具」在 <see cref="PageTitles"/> 里的页索引。</summary>
     private const int DebugPageIndex = 4;
@@ -100,7 +105,6 @@ public class MainForm : Form
     public MainForm(Engine engine, bool debugMode = false)
     {
         _engine = engine;
-        _debugMode = debugMode;
         _cfg = AppConfig.Instance;
         Text = "Argus";
         // 内嵌工具自带最小尺寸，窗口得能装下；装不下时由 ToolHost 的 AutoScroll 兜底。
@@ -308,8 +312,7 @@ public class MainForm : Form
         // 同一个规则：后 Add 的先停靠。想让“总览”在最上面，就把它最后 Add。
         for (int i = PageTitles.Length - 1; i >= 0; i--)
         {
-            // 调试工具默认隐藏：不带 --debug 就不建按钮（页面结构保留，只是没入口）
-            if (i == DebugPageIndex && !_debugMode) continue;
+        // 调试工具默认显示（用户拍板：直接显示在菜单上；--debug 参数保留兼容，无副作用）
             var idx = i;
             var b = new NavButton(NavLabel(i), i);
             b.Click += (_, _) => ShowPage(idx);
@@ -501,11 +504,11 @@ public class MainForm : Form
         {
             Keys.D1 => 0, Keys.D2 => 1, Keys.D3 => 2, Keys.D4 => 3,
             // 调试页默认隐藏：Ctrl+5 只在 --debug 模式响应，否则操作员还能摸进调试面板
-            Keys.D5 => _debugMode ? DebugPageIndex : -1,
+            Keys.D5 => DebugPageIndex,
             _ => -1,
         };
         if (idx >= 0) { ShowPage(idx); e.Handled = true; return; }
-        // Ctrl+6..8 = 三个内嵌工具页
+        // Ctrl+6..9 = 四个内嵌工具页（FAIL 排行/取数打包/TDMS 波形/聚合看板）
         int tool = e.KeyCode switch
         {
             Keys.D6 => 0, Keys.D7 => 1, Keys.D8 => 2, Keys.D9 => 3,

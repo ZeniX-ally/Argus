@@ -16,6 +16,7 @@ namespace FctAggregator;
 ///   GET  /api/machines        机台状态列表 JSON（AggMachineStatus 数组）
 ///   GET  /api/fails?limit&machine  FAIL 明细 JSON（AggFailRow 数组；limit 默认 200，上限 1000）
 ///   GET  /api/file?id=|path=  XML 报告下载（白名单校验，见 <see cref="ResolveFile"/>）
+///   GET  /api/list?path=     目录浏览：resultsRoot 白名单内子目录列表（见 <see cref="ResolveDir"/>）
 ///   GET  /api/export.csv?limit&machine  FAIL 明细 CSV（UTF-8 BOM + CWE-1236 公式注入防护）
 ///   GET  /api/health          {"ok":true}（部署排查用）
 ///   POST /api/fail            机台 fail 推送
@@ -36,6 +37,7 @@ public class WebAggServer : IDisposable
     private const int DefaultLimit = 200;           // /api/fails 与 /api/export.csv 默认行数
     private const int MaxLimit = 1000;              // limit 参数上限
     private const string ForbiddenText = "拒绝访问：文件不在允许目录内";
+    private const string ForbiddenDirText = "拒绝访问：目录不在允许范围内";
 
     /// <summary>字段型模型类序列化必须 IncludeFields（AggFailRow/AggMachineStatus 都是 public 字段）。
     /// 命名保持默认（PascalCase 原字段名），页面 JS 按字段名取。</summary>
@@ -195,6 +197,11 @@ public class WebAggServer : IDisposable
                     else resp.StatusCode = 405;
                     break;
 
+                case "/api/list":
+                    if (method == "GET") { CountHit(); ServeList(ctx); }
+                    else resp.StatusCode = 405;
+                    break;
+
                 case "/api/export.csv":
                     if (method == "GET") { CountHit(); ServeCsv(ctx); }
                     else resp.StatusCode = 405;
@@ -231,7 +238,10 @@ public class WebAggServer : IDisposable
     {
         var page = DashboardHtml
             .Replace("%%SHARE_ROOT%%", WebUtility.HtmlEncode(_shareRoot))
-            .Replace("%%DB_PATH%%", WebUtility.HtmlEncode(_db.DbPath));
+            .Replace("%%DB_PATH%%", WebUtility.HtmlEncode(_db.DbPath))
+            .Replace("%%RESULTS_ROOT%%", WebUtility.HtmlEncode(_resultsRoot))
+            // JS 字符串上下文：反斜杠/引号必须转义，否则 "C:\Results" 里的 \R 会被 JS 当转义符吃掉
+            .Replace("%%RESULTS_ROOT_JS%%", (_resultsRoot ?? "").Replace("\\", "\\\\").Replace("\"", "\\\""));
         Respond(ctx, 200, "text/html; charset=utf-8", Encoding.UTF8.GetBytes(page));
     }
 
@@ -365,6 +375,77 @@ public class WebAggServer : IDisposable
         Respond(ctx, 200, ContentTypeFor(full!), data);
     }
 
+    /// <summary>
+    /// 目录浏览：?path= 为空列出 resultsRoot 本身；否则列出该目录（相对路径按 resultsRoot 解析）。
+    /// 白名单规则见 <see cref="ResolveDir"/>；只列直接子项（不递归），目录在前文件在后，
+    /// 各自按名称排序（StringComparer.OrdinalIgnoreCase）。每项带完整 Path，
+    /// 前端可直接回传 /api/list（进目录）或 /api/file（下载）。
+    /// </summary>
+    private void ServeList(HttpListenerContext ctx)
+    {
+        var pathParam = ctx.Request.QueryString["path"] ?? "";
+        var target = string.IsNullOrEmpty(pathParam) ? _resultsRoot : pathParam;
+
+        var status = ResolveDir(target, out var full);
+        if (status == 400) { RespondText(ctx, 400, "参数错误：路径非法"); return; }
+        if (status == 403) { RespondText(ctx, 403, ForbiddenDirText); return; }
+        if (status == 404) { RespondText(ctx, 404, "目录不存在"); return; }
+
+        List<ListEntry> entries;
+        try
+        {
+            entries = new List<ListEntry>();
+            // 目录 + 文件分开枚举各自排序，保证「目录在前文件在后」的语义
+            var dirs = Directory.EnumerateDirectories(full!)
+                .OrderBy(d => d, StringComparer.OrdinalIgnoreCase);
+            var files = Directory.EnumerateFiles(full!)
+                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+            foreach (var d in dirs)
+            {
+                var di = new DirectoryInfo(d);
+                entries.Add(new ListEntry
+                {
+                    Name = di.Name,
+                    IsDir = true,
+                    Size = 0,                                        // 目录大小不给（免去递归统计）
+                    Modified = di.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                    Path = di.FullName,
+                });
+            }
+            foreach (var f in files)
+            {
+                var fi = new FileInfo(f);
+                entries.Add(new ListEntry
+                {
+                    Name = fi.Name,
+                    IsDir = false,
+                    Size = fi.Length,
+                    Modified = fi.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                    Path = fi.FullName,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 读取目录失败 {full}: {ex.Message}");
+            RespondText(ctx, 500, "读取目录失败");
+            return;
+        }
+
+        Respond(ctx, 200, "application/json; charset=utf-8",
+            JsonSerializer.SerializeToUtf8Bytes(entries, JsonOpts));
+    }
+
+    /// <summary>目录浏览列表项（/api/list 用）：public 属性，默认序列化即可（IncludeFields 不影响属性）。</summary>
+    private sealed class ListEntry
+    {
+        public string Name { get; set; } = "";
+        public bool IsDir { get; set; }
+        public long Size { get; set; }
+        public string Modified { get; set; } = "";
+        public string Path { get; set; } = "";
+    }
+
     /// <summary>limit/machine 参数解析：limit 默认 200，非法/<=0 回落默认，>1000 截断；machine 空串转 null。</summary>
     private static (int limit, string? machine) ReadLimitMachine(HttpListenerContext ctx)
     {
@@ -463,6 +544,41 @@ public class WebAggServer : IDisposable
         return 200;
     }
 
+    /// <summary>
+    /// 目录白名单校验（/api/list 用）。与 <see cref="ResolveFile"/> 同思路，区别：
+    ///   1. 相对路径先按 resultsRoot 解析（/api/list?path=sub 等价于 resultsRoot\sub）；
+    ///   2. 根目录本身放行（path 为空或指向 resultsRoot 自己）；
+    ///   3. 目标是**目录**才算数：不存在/是文件 → 404（前端据此提示）。
+    /// 返回：200=放行（out 完整目录路径），400=路径非法，403=不在白名单，404=目录不存在。</summary>
+    private int ResolveDir(string path, out string? full)
+    {
+        full = null;
+        // 相对路径（如 "20260812"、"sub/dir"）一律按 resultsRoot 解析，不依赖服务进程工作目录
+        string target;
+        try { target = !string.IsNullOrEmpty(path) && !Path.IsPathRooted(path) ? Path.Combine(_resultsRoot, path) : path; }
+        catch { return 400; }
+        try { full = Path.GetFullPath(target); }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 路径非法 '{path}': {ex.Message}");
+            return 400;
+        }
+
+        if (string.IsNullOrEmpty(_resultsRoot)) return 403;   // 未配置白名单根：拒绝全部
+
+        string root;
+        try { root = Path.GetFullPath(_resultsRoot); }
+        catch { return 400; }
+        // 根目录本身放行（path 为空时 full == root），其余必须位于根下
+        if (!string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
+        {
+            var rootSep = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+            if (!full.StartsWith(rootSep, StringComparison.OrdinalIgnoreCase)) return 403;
+        }
+        if (!Directory.Exists(full)) return 404;
+        return 200;
+    }
+
     /// <summary>按扩展名给 Content-Type：.xml→application/xml；文本类→text/plain；其余八进制流。</summary>
     private static string ContentTypeFor(string path)
     {
@@ -524,9 +640,11 @@ public class WebAggServer : IDisposable
 
     /// <summary>
     /// 看板首页 HTML：内嵌常量，无任何外部资源（内联 CSS+JS），可直接用浏览器打开。
-    /// %%SHARE_ROOT%% / %%DB_PATH%% 两个占位符在响应时替换（转义后展示）。
-    /// JS 用 fetch 拉 /api/machines + /api/fails 渲染，3s 自动刷新（可关），
-    /// 全部动态文本经 esc() 转义防 XSS。
+    /// %%SHARE_ROOT%% / %%DB_PATH%% / %%RESULTS_ROOT%%（HTML 展示）/ %%RESULTS_ROOT_JS%%（JS 字符串）
+    /// 四个占位符在响应时替换（转义后展示）。
+    /// 顶部「看板 | 文件」两个页签 JS 切换：看板页 fetch /api/machines + /api/fails 渲染，
+    /// 3s 自动刷新（可关）；文件页 fetch /api/list 渲染目录列表（面包屑导航、目录点击进入、
+    /// 文件点击新窗口下载）。全部动态文本经 esc() 转义防 XSS。
     /// </summary>
     private const string DashboardHtml = """
 <!DOCTYPE html>
@@ -544,6 +662,17 @@ public class WebAggServer : IDisposable
   button { background: #2f3542; color: #ffffff; border: 1px solid #454c5c; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
   button:hover { background: #3a4152; }
   label { color: #9aa3b2; font-size: 13px; cursor: pointer; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab.active { background: #3a4152; border-color: #4c9aff; }
+  .files-bar { color: #9aa3b2; font-size: 13px; margin-bottom: 10px; }
+  #fileRoot { color: #4c9aff; font-family: Consolas, "Courier New", monospace; }
+  .crumb { margin-bottom: 10px; font-size: 13px; }
+  .crumb a { color: #4c9aff; text-decoration: none; margin-right: 6px; }
+  .crumb a:hover { text-decoration: underline; }
+  .crumb .sep { color: #5c6470; margin-right: 6px; }
+  td.fname.dir { color: #4c9aff; cursor: pointer; font-weight: bold; }
+  td.fname.file { cursor: pointer; }
+  #fileMsg { color: #e5534b; font-size: 13px; margin-top: 10px; }
   .cards { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
   .card { background: #20242d; border: 1px solid #2f3542; border-left: 4px solid #3fb950; border-radius: 6px; padding: 10px 14px; min-width: 178px; font-size: 13px; line-height: 1.7; }
   .card.offline { border-left-color: #e5534b; opacity: .85; }
@@ -573,6 +702,12 @@ public class WebAggServer : IDisposable
   <label><input type="checkbox" id="autoRefresh" checked> 自动刷新(3秒)</label>
 </header>
 
+<nav class="tabs">
+  <button class="tab active" id="tabDash">看板</button>
+  <button class="tab" id="tabFiles">文件</button>
+</nav>
+
+<div id="dashView">
 <div class="cards" id="cards"><div class="empty">加载中...</div></div>
 
 <table>
@@ -583,6 +718,19 @@ public class WebAggServer : IDisposable
 </table>
 
 <a id="exportLink" href="/api/export.csv">导出 CSV</a>
+</div>
+
+<div id="filesView" style="display:none">
+  <div class="files-bar">浏览根目录：<span id="fileRoot"></span></div>
+  <div class="crumb" id="crumb"></div>
+  <table>
+    <thead>
+      <tr><th>名称</th><th>类型/大小</th><th>修改时间</th><th>操作</th></tr>
+    </thead>
+    <tbody id="fileRows"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody>
+  </table>
+  <div id="fileMsg"></div>
+</div>
 
 <footer>
   监听共享目录：%%SHARE_ROOT%%<br>
@@ -663,6 +811,110 @@ refresh();
 setInterval(function () {
   if (document.getElementById("autoRefresh").checked) refresh();
 }, 3000);
+
+// ==================== 页签切换 ====================
+function showTab(name) {
+  var dash = name === "dash";
+  document.getElementById("tabDash").classList.toggle("active", dash);
+  document.getElementById("tabFiles").classList.toggle("active", !dash);
+  document.getElementById("dashView").style.display = dash ? "" : "none";
+  document.getElementById("filesView").style.display = dash ? "none" : "";
+  if (!dash) loadFiles();   // 进文件页才拉列表（懒加载）
+}
+document.getElementById("tabDash").onclick = function () { showTab("dash"); };
+document.getElementById("tabFiles").onclick = function () { showTab("files"); };
+
+// ==================== 文件浏览（/api/list） ====================
+var rootPath = "%%RESULTS_ROOT_JS%%";
+document.getElementById("fileRoot").textContent = rootPath || "（未配置）";
+// 当前浏览位置：相对根目录的路径（"" = 根），?path= 参数可直达（相对或绝对都行）
+var current = new URLSearchParams(location.search).get("path") || "";
+
+// 深链接：?view=files 直达文件页（?path= 直达目录），方便收藏/部署排查。
+// 必须在 current 定义之后调用（showTab→loadFiles 会读 current）
+showTab(new URLSearchParams(location.search).get("view") === "files" ? "files" : "dash");
+
+function fmtSize(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
+function renderCrumb() {
+  var segs = current ? current.split(/[\\\/]+/).filter(function (s) { return s.length > 0; }) : [];
+  var html = '<a href="javascript:void(0)" data-rel="">根目录</a>';
+  var rel = "";
+  for (var i = 0; i < segs.length; i++) {
+    rel = rel + (rel ? "/" : "") + segs[i];
+    html += '<span class="sep">/</span><a href="javascript:void(0)" data-rel="' + esc(rel) + '">' + esc(segs[i]) + '</a>';
+  }
+  document.getElementById("crumb").innerHTML = html;
+}
+
+async function loadFiles() {
+  var tb = document.getElementById("fileRows");
+  var msg = document.getElementById("fileMsg");
+  tb.innerHTML = '<tr><td colspan="4" class="empty">加载中...</td></tr>';
+  msg.textContent = "";
+  renderCrumb();
+  try {
+    var url = "/api/list" + (current ? "?path=" + encodeURIComponent(current) : "");
+    var res = await fetch(url);
+    if (res.status === 403 || res.status === 404) {
+      msg.textContent = await res.text();
+      tb.innerHTML = '<tr><td colspan="4" class="empty">无法浏览该目录</td></tr>';
+      return;
+    }
+    if (!res.ok) {
+      msg.textContent = "加载失败（HTTP " + res.status + "）";
+      tb.innerHTML = '<tr><td colspan="4" class="empty">暂无数据</td></tr>';
+      return;
+    }
+    var list = await res.json();
+    if (!list || list.length === 0) {
+      tb.innerHTML = '<tr><td colspan="4" class="empty">空目录</td></tr>';
+      return;
+    }
+    var html = "";
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i];
+      html += '<tr>' +
+        '<td class="fname ' + (it.IsDir ? "dir" : "file") + '"' +
+        ' data-dir="' + (it.IsDir ? "1" : "0") + '"' +
+        ' data-name="' + esc(it.Name) + '" data-path="' + esc(it.Path) + '">' + esc(it.Name) + '</td>' +
+        '<td>' + (it.IsDir ? "目录" : fmtSize(it.Size)) + '</td>' +
+        '<td>' + esc(it.Modified) + '</td>' +
+        '<td>' + (it.IsDir ? "" :
+          '<a class="xml" href="/api/file?path=' + encodeURIComponent(it.Path) + '" target="_blank">下载</a>') + '</td>' +
+        '</tr>';
+    }
+    tb.innerHTML = html;
+  } catch (e) {
+    msg.textContent = "加载失败：" + e;
+    tb.innerHTML = '<tr><td colspan="4" class="empty">暂无数据</td></tr>';
+  }
+}
+
+// 目录行点击进入；文件行点击（或下载按钮）新窗口下载
+document.getElementById("fileRows").onclick = function (ev) {
+  var td = ev.target.closest ? ev.target.closest("td.fname") : null;
+  if (!td) return;
+  var p = td.getAttribute("data-path");
+  if (td.getAttribute("data-dir") === "1") {
+    current = (current ? current.replace(/[\\\/]+$/, "") + "/" : "") + td.getAttribute("data-name");
+    loadFiles();
+  } else {
+    window.open("/api/file?path=" + encodeURIComponent(p), "_blank");
+  }
+};
+
+// 面包屑：点击回到任意上级目录
+document.getElementById("crumb").onclick = function (ev) {
+  var a = ev.target.closest ? ev.target.closest("a") : null;
+  if (!a) return;
+  current = a.getAttribute("data-rel") || "";
+  loadFiles();
+};
 </script>
 </body>
 </html>

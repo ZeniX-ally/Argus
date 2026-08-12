@@ -1112,7 +1112,7 @@ class SelfTest
 
                 var navButtons = nav!.Controls.OfType<NavButton>().Where(b => b.PageIndex >= 0)
                                      .OrderBy(b => b.PageIndex).ToList();
-                Check(navButtons.Count == 8, $"导航有 {navButtons.Count} 项（5 个主页面 + 3 个内嵌工具页）");
+                Check(navButtons.Count == 9, $"导航有 {navButtons.Count} 项（5 个主页面 + 4 个内嵌工具页）");
                 bool ordered = true;
                 for (int i = 1; i < navButtons.Count; i++)
                     if (navButtons[i].Top <= navButtons[i - 1].Top) ordered = false;
@@ -1166,7 +1166,7 @@ class SelfTest
                 var toolPages = (ToolHost[])typeof(MainForm).GetField("_toolPages",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
                     .GetValue(form)!;
-                Check(toolPages.Length == 3, $"三个工具页宿主已建（{toolPages.Length} 个）");
+                Check(toolPages.Length == 4, $"四个工具页宿主已建（{toolPages.Length} 个）");
                 Check(toolPages.All(h => h.Embedded == null),
                       "**启动时工具尚未构造**（惰加载，不拖慢开机）");
 
@@ -1196,7 +1196,9 @@ class SelfTest
                           $"{pt}：页面可见且开了 AutoScroll（窗口拉小靠滚动条兑）");
                     Check(navButtons.First(b => b.PageIndex == page).Active, $"{pt}：对应导航项高亮");
                 }
-                Check(toolTitles.Distinct().Count() == 3, $"三个工具页标题各不相同：{string.Join(" / ", toolTitles)}");
+                Check(toolTitles.Distinct().Count() == 4, $"四个工具页标题各不相同：{string.Join(" / ", toolTitles)}");
+                Check(toolPages.Length > 3 && toolPages[3].Embedded is AggCenterForm,
+                      "第 4 个工具页 = 聚合看板（AggCenterForm 内嵌，空共享目录下也能正常开页）");
 
                 showPage.Invoke(form, new object?[] { 0 });
                 Application.DoEvents();
@@ -1210,8 +1212,8 @@ class SelfTest
                 form.Dispose();
             }
 
-            // ---------- 调试工具默认隐藏（v3.2.3：--debug 才显示）----------
-            Console.WriteLine("\n【调试工具隐藏】不带 --debug 时侧边栏无调试入口，导航结构不塌");
+            // ---------- 调试工具默认显示（v3.4.1：用户拍板直接显示在菜单；--debug 参数保留兼容无副作用）----------
+            Console.WriteLine("\n【调试工具显示】不带 --debug 时侧边栏也有调试入口，导航结构不塌");
             {
                 var engD = new Engine(new AppConfig
                 {
@@ -1228,16 +1230,16 @@ class SelfTest
                     .GetValue(f2)!;
                 var btns = nav2.Controls.OfType<NavButton>().Where(b => b.PageIndex >= 0)
                               .OrderBy(b => b.PageIndex).ToList();
-                Check(btns.Count == 7, $"生产模式侧边导航 {btns.Count} 项（调试工具已隐藏，剩 4 页 + 3 工具）");
-                Check(!btns.Any(b => b.PageIndex == 4), "生产模式侧边栏无「调试工具」入口");
-                // 页面结构保留：反射切到调试页不崩，但导航项里没有可高亮的调试按钮
+                Check(btns.Count == 9, $"生产模式侧边导航 {btns.Count} 项（调试默认显示：5 页 + 4 工具）");
+                Check(btns.Any(b => b.PageIndex == 4), "生产模式侧边栏有「调试工具」入口（v3.4.1 默认显示）");
+                // 调试页正常可达：切过去有导航高亮
                 var sp2 = typeof(MainForm).GetMethod("ShowPage",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
                 sp2.Invoke(f2, new object?[] { 4 });
                 Application.DoEvents();
-                Check(!nav2.Controls.OfType<NavButton>().Any(b => b.PageIndex == 4 && b.Active),
-                      "生产模式调试页无导航高亮（确认无入口）");
-                Check(f2.Visible && nav2.Visible, "隐藏调试项后主窗口与导航一切正常");
+                Check(nav2.Controls.OfType<NavButton>().Any(b => b.PageIndex == 4 && b.Active),
+                      "生产模式调试页有导航高亮（入口可用）");
+                Check(f2.Visible && nav2.Visible, "调试项显示后主窗口与导航一切正常");
                 f2.Hide();
             }
             DesktopNotifier.Shutdown();     // 自检里也会建托盘图标，记得收
@@ -1733,6 +1735,15 @@ class SelfTest
         // ==================== Web 聚合服务（Phase 3：纯 Web 模式） ====================
         Console.WriteLine("\n【Web 聚合服务】页面与 API / 推送入库 / XML 下载白名单 / CSV 导出 / 路由错误码");
         RunWebAggServerTests(work);
+
+        // ==================== Web 目录浏览（Phase 3：/api/list + 文件页签） ====================
+        Console.WriteLine("\n【Web 目录浏览】/api/list 白名单与排序 / 下载回归 / 页面文件页签");
+        RunWebFileBrowserTests(work);
+
+        // ==================== 聚合服务一键部署（v3.4.0：agg --install） ====================
+        // 只测可测部分：默认 config JSON 生成；netsh/快捷方式/进程启动属系统操作，不实跑（只编译）
+        Console.WriteLine("\n【一键部署】默认聚合配置生成（JSON 内容与合法性）");
+        RunAggInstallConfigTests();
 
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
@@ -2758,10 +2769,154 @@ class SelfTest
                 new StringContent(big, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
             Check(r413.StatusCode == HttpStatusCode.RequestEntityTooLarge, "POST /api/fail（body 超 1MB）-> 413");
 
+        srv.Stop();
+        w.Stop();
+    }
+    TryDeleteDir(webRoot);
+    Console.WriteLine("    Web 聚合服务自检完成");
+    }
+
+    // ==================== Web 目录浏览（Phase 3：/api/list + 页面文件页签） ====================
+    // 场景：根目录列表（目录在前文件在后） / 相对路径 / 绝对路径 / 穿越与越权 403 / 不存在 404 /
+    // 下载回归 / 页面文件页签。白名单根 = resultsRoot（构造参数），与 /api/file 同源。
+    // ==================== 聚合服务一键部署（v3.4.0：agg --install） ====================
+    // 场景：默认 config JSON 生成 —— 字段齐全 / 值正确 / 合法可解析 / 缩进可读。
+    // 系统操作（netsh 防火墙 / 快捷方式 / 启动进程）依赖 Windows 环境，这里只保证编译通过。
+    static void RunAggInstallConfigTests()
+    {
+        var json = Program.BuildDefaultAggConfigJson();
+        Check(!string.IsNullOrEmpty(json), "一键部署:BuildDefaultAggConfigJson 返回非空 JSON");
+        if (string.IsNullOrEmpty(json)) return;
+        bool parseOk = false;
+        using (var doc = System.Text.Json.JsonDocument.Parse(json))
+        {
+            parseOk = true;
+            var root = doc.RootElement;
+            Check(root.TryGetProperty("station_id", out var s) && s.GetString() == "AGG",
+                  "一键部署:station_id=AGG");
+            Check(root.TryGetProperty("results_root", out var r) && r.GetString() == @"D:\Results",
+                  "一键部署:results_root=D:\\Results");
+            Check(root.TryGetProperty("agg_transport", out var t) && t.GetString() == "http",
+                  "一键部署:agg_transport=http");
+            Check(root.TryGetProperty("agg_http_port", out var p) &&
+                  p.ValueKind == System.Text.Json.JsonValueKind.Number && p.GetInt32() == 8080,
+                  "一键部署:agg_http_port=8080");
+            Check(root.TryGetProperty("agg_share_root", out var sr) && sr.GetString() == "",
+                  "一键部署:agg_share_root 为空串");
+            Check(root.TryGetProperty("log_level", out var l) && l.GetString() == "INFO",
+                  "一键部署:log_level=INFO");
+        }
+        Check(parseOk, "一键部署:JSON 合法可解析");
+        Check(json.Contains("  ") && json.Contains("\n"), "一键部署:JSON 已缩进（WriteIndented 可读格式）");
+    }
+
+    static void RunWebFileBrowserTests(string work)
+    {
+        var webRoot = Path.Combine(work, "webfiles");
+        var resultsRoot = Path.Combine(webRoot, "results");
+        var shareRoot = Path.Combine(webRoot, "share");
+        Directory.CreateDirectory(resultsRoot);
+        Directory.CreateDirectory(shareRoot);   // ⚠ 必须存在：AggWatcher.Start() 对不存在的 shareRoot 直接 return
+        // 造目录结构：test.xml + sub/sub.txt + empty-dir（空目录也应在列表里）
+        const string xmlContent = "<BATCH><STATUS>FAIL</STATUS></BATCH>";
+        File.WriteAllText(Path.Combine(resultsRoot, "test.xml"), xmlContent);
+        var subDir = Path.Combine(resultsRoot, "sub");
+        Directory.CreateDirectory(subDir);
+        const string subContent = "sub 目录里的文本";
+        File.WriteAllText(Path.Combine(subDir, "sub.txt"), subContent);
+        Directory.CreateDirectory(Path.Combine(resultsRoot, "empty-dir"));
+        int port = GetFreePort();
+        var baseUrl = $"http://127.0.0.1:{port}";
+
+        using (var db = new AggDatabase(Path.Combine(webRoot, "agg.db")))
+        using (var w = new AggWatcher(shareRoot, db, heartbeatTimeoutSec: 60, pollSec: 1))
+        using (var srv = new WebAggServer(port, w, db, resultsRoot, shareRoot))
+        {
+            w.Start();
+            srv.Start();
+            Check(WaitUntil(() => srv.Listening, 5000), "目录浏览：Web 服务进入监听状态");
+
+            // ---- ① 根目录列表：目录在前文件在后、各自按名排序 ----
+            var rRoot = _http.GetAsync($"{baseUrl}/api/list").GetAwaiter().GetResult();
+            Check(rRoot.StatusCode == HttpStatusCode.OK, "GET /api/list（无 path = 根目录）-> 200");
+            if (rRoot.StatusCode == HttpStatusCode.OK)
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(
+                    rRoot.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                var arr = doc.RootElement;
+                Check(arr.GetArrayLength() == 3,
+                      $"GET /api/list：根目录 3 项（test.xml + sub + empty-dir，实得 {arr.GetArrayLength()}）");
+                Check(arr[0].GetProperty("IsDir").GetBoolean() && arr[1].GetProperty("IsDir").GetBoolean()
+                      && !arr[2].GetProperty("IsDir").GetBoolean(),
+                      "GET /api/list：目录排前、文件排后");
+                Check(arr[0].GetProperty("Name").GetString() == "empty-dir"
+                      && arr[1].GetProperty("Name").GetString() == "sub"
+                      && arr[2].GetProperty("Name").GetString() == "test.xml",
+                      "GET /api/list：目录/文件各自按名称排序（OrdinalIgnoreCase）");
+                Check(arr[0].GetProperty("Size").GetInt64() == 0, "GET /api/list：目录 Size=0");
+                Check(arr[1].GetProperty("Path").GetString() == subDir,
+                      "GET /api/list：Path=该项完整路径（可直接回传 /api/list 或 /api/file）");
+                Check(arr[2].GetProperty("Size").GetInt64() == xmlContent.Length,
+                      "GET /api/list：文件 Size=实际字节数");
+                Check(arr[2].GetProperty("Modified").GetString() ==
+                      File.GetLastWriteTime(Path.Combine(resultsRoot, "test.xml")).ToString("yyyy-MM-dd HH:mm:ss"),
+                      "GET /api/list：Modified 格式 yyyy-MM-dd HH:mm:ss");
+            }
+
+            // ---- ② 相对路径子目录 ----
+            var rSub = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString("sub")}").GetAwaiter().GetResult();
+            Check(rSub.StatusCode == HttpStatusCode.OK, "GET /api/list?path=sub（相对路径）-> 200");
+            if (rSub.StatusCode == HttpStatusCode.OK)
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(
+                    rSub.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                var arr = doc.RootElement;
+                Check(arr.GetArrayLength() == 1 && arr[0].GetProperty("Name").GetString() == "sub.txt"
+                      && !arr[0].GetProperty("IsDir").GetBoolean(),
+                      "GET /api/list?path=sub：列出 sub.txt");
+            }
+
+            // ---- ③ 绝对路径子目录（白名单内放行） ----
+            var rAbs = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString(subDir)}").GetAwaiter().GetResult();
+            Check(rAbs.StatusCode == HttpStatusCode.OK, "GET /api/list?path=<根下子目录绝对路径> -> 200");
+            if (rAbs.StatusCode == HttpStatusCode.OK)
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(
+                    rAbs.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(doc.RootElement.GetArrayLength() == 1
+                      && doc.RootElement[0].GetProperty("Name").GetString() == "sub.txt",
+                      "GET /api/list?path=绝对路径：同样列出 sub.txt");
+            }
+
+            // ---- ④ 越权 / 穿越 / 不存在 ----
+            var rTraversal = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString("../outside")}").GetAwaiter().GetResult();
+            Check(rTraversal.StatusCode == HttpStatusCode.Forbidden, "GET /api/list?path=../outside（目录穿越）-> 403");
+            var rWindows = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString(@"C:\Windows")}").GetAwaiter().GetResult();
+            Check(rWindows.StatusCode == HttpStatusCode.Forbidden, "GET /api/list?path=C:\\Windows（绝对路径越权）-> 403");
+            if (rWindows.StatusCode == HttpStatusCode.Forbidden)
+                Check(rWindows.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("拒绝访问"),
+                      "GET /api/list 403：返回中文提示「拒绝访问：目录不在允许范围内」");
+            var rGhost = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString("no-such-dir")}").GetAwaiter().GetResult();
+            Check(rGhost.StatusCode == HttpStatusCode.NotFound, "GET /api/list?path=不存在目录 -> 404");
+
+            // ---- ⑤ 下载回归 + 页面文件页签 ----
+            var rFile = _http.GetAsync($"{baseUrl}/api/file?path={Uri.EscapeDataString(Path.Combine(resultsRoot, "test.xml"))}").GetAwaiter().GetResult();
+            Check(rFile.StatusCode == HttpStatusCode.OK
+                  && rFile.Content.ReadAsStringAsync().GetAwaiter().GetResult() == xmlContent,
+                  "GET /api/file?path=（回归）200 且内容与磁盘文件一致");
+            var rPage = _http.GetAsync($"{baseUrl}/").GetAwaiter().GetResult();
+            if (rPage.StatusCode == HttpStatusCode.OK)
+            {
+                var page = rPage.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                Check(page.Contains("tabFiles") && page.Contains("文件"), "GET /：页面含「文件」页签");
+                Check(page.Contains("filesView") && page.Contains("fileRows"), "GET /：页面含文件浏览容器与表格");
+                Check(page.Contains("/api/list"), "GET /：页面 JS 调用了 /api/list");
+            }
+
             srv.Stop();
             w.Stop();
         }
         TryDeleteDir(webRoot);
-        Console.WriteLine("    Web 聚合服务自检完成");
+        Console.WriteLine("    目录浏览自检完成");
     }
 }

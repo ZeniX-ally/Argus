@@ -1,5 +1,6 @@
-# 打包 FCT 工具套件 v3.0.0（单 exe：主程序 + 排行/取数/TDMS 三个工具）
+# 打包 FCT 工具套件 v3.3.0（单 exe：主程序 + 排行/取数/TDMS 三个工具）
 # ⚠ v3.0.0：数据分发已独立成 FCT-Distributor.exe，单独打包（见 ../fct-distributor/tools/make_package.ps1）
+# ⚠ v3.4.1：聚合后端纯净包用 make_package_agg.ps1 单独打包（输出 dist-agg\Argus-Agg-v3.4.1.zip）
 #
 # ⚠ 2026-08-01 交付形态变更：**不再生成 package_v*/ 子目录**。
 #   产物直接铺平到 bin\Release\net8.0-windows（build 标准输出）：
@@ -18,7 +19,7 @@
 $ErrorActionPreference = 'Stop'
 # 路径自己推（仓库目录 2026-07-31 从 G4_9-QA 改名成 Argus，写死绝对路径会静静失效）
 $root = (Resolve-Path "$PSScriptRoot\..").Path
-$ver  = '3.3.0'
+$ver  = '3.4.1'
 $out  = Join-Path $root 'bin\Release\net8.0-windows'
 
 # 程序文件（不含 pdb / config.json）
@@ -38,8 +39,9 @@ $progFiles = @(
 # 仓库根目录里的随包文件（不是构建产物）
 # ⚠ app_icon.ico 必须带上：v2.9.4 前它没进包，导致现场托盘图标一直是系统灰图
 # ⚠ config.json 不在此列表：webhook 是凭据，由 Write-PackageConfig 置空后单独入包
-$rootFiles = @('启动.bat', 'app_icon.ico')
-$docs = @('版本更新说明.md', '更新日志.md')
+$rootFiles = @('启动.bat', 'app_icon.ico', '一键部署聚合服务.bat')
+# 聚合服务说明.md 随包：机台包也带了一键部署聚合服务.bat，使用说明应一并分发
+$docs = @('版本更新说明.md', '更新日志.md', '聚合服务说明.md')
 
 <#
   生成包内 config.json 模板：webhook_url 一律置空。
@@ -120,7 +122,10 @@ function Assert-DepsWinFiles([string]$stage) {
 
 # ==================== 1) 铺平到 $out ====================
 # 程序文件已在 build 时生成在 $out；补上随包文件与 data/logs 目录
-foreach ($f in $rootFiles) { Copy-Item (Join-Path $root $f) $out }
+foreach ($f in $rootFiles) {
+    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path $root 'tools' $f) $out }
+    else { Copy-Item (Join-Path $root $f) $out }
+}
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $out }
 Write-PackageConfig (Join-Path $out 'config.json')          # webhook 置空（凭据不进构建产物）
 New-Item -ItemType Directory -Path (Join-Path $out 'data'), (Join-Path $out 'logs') -Force | Out-Null
@@ -132,7 +137,10 @@ New-Item -ItemType Directory -Path $stage -Force | Out-Null
 foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stage }
 Copy-WinRuntimes $stage
 Assert-DepsWinFiles $stage
-foreach ($f in ($rootFiles + $docs)) { Copy-Item (Join-Path $root $f) $stage }
+foreach ($f in ($rootFiles + $docs)) {
+    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path $root 'tools' $f) $stage }
+    else { Copy-Item (Join-Path $root $f) $stage }
+}
 Write-PackageConfig (Join-Path $stage 'config.json')        # 完整包模板同样置空 webhook
 New-Item -ItemType Directory -Path (Join-Path $stage 'data'), (Join-Path $stage 'logs') -Force | Out-Null
 
@@ -151,6 +159,7 @@ foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stageUpd }
 Copy-WinRuntimes $stageUpd
 Assert-DepsWinFiles $stageUpd
 Copy-Item (Join-Path $root '启动.bat') $stageUpd
+Copy-Item (Join-Path $root 'tools' '一键部署聚合服务.bat') $stageUpd  # 聚合服务端升级也可一键部署
 Write-PackageConfig (Join-Path $stageUpd 'config.json')     # 配置模板（webhook 置空，部署端合并时保留现场值）
 Copy-Item (Join-Path $root 'app_icon.ico') $stageUpd                     # 图标也跟着更新
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $stageUpd }
