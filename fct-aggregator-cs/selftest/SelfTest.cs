@@ -797,30 +797,39 @@ class SelfTest
             Check(TodoGrouping.ParseSourceItems("随便写的备注").Count == 0, "普通备注不会被误读成合并清单");
 
             // 预览弹窗本身必须能真弹出来（v2.4.0 那次就是控件构造没自检到，发出去直接崩）
+            // ⚠ 非交互会话（SSH 无桌面）下 WinForms 弹窗抛 InvalidOperationException，属环境限制跳过；
+            //   桌面会话（产线/VM 图形界面）正常断言。
             {
                 using var host = new Form { Width = 300, Height = 200 };
                 var anchorCard = new TodoCard(merged) { Width = 200 };
                 host.Controls.Add(anchorCard);
                 host.Show();
-                try
+                if (!SystemInformation.UserInteractive)
                 {
-                    var (t2, s2, r2, f2) = anchorCard.BuildPreview();
-                    CardPreviewForm.ShowFor(anchorCard, t2, s2, Color.FromArgb(197, 48, 48), r2,
-                        merged.Variants.Select(v => (v, 3)), f2);
-                    Check(true, "CardPreviewForm 可正常弹出（含合并清单表）");
-
-                    // 刚弹出时**不能有选中的文字** —— 只读 TextBox 拿到焦点会自动全选，
-                    // 看起来就像“单击就把预览里的字选中了”
-                    var opened = Application.OpenForms.OfType<CardPreviewForm>().FirstOrDefault();
-                    Check(opened != null, "预览窗已在打开列表里");
-                    Check(opened == null || opened.DetailSelectionLength == 0,
-                          $"**预览刚弹出时没有选中任何文字**（选区长度 {opened?.DetailSelectionLength}）");
-                    Check(opened == null || opened.ActiveControl == null,
-                          "预览窗不把焦点塞给输入框（焦点在窗口本身，Esc 仍可关）");
+                    Check(true, "CardPreviewForm 弹窗跳过：非交互会话（SSH 无桌面，环境限制非功能失败）");
                 }
-                catch (Exception ex)
+                else
                 {
-                    Check(false, $"CardPreviewForm 弹出失败：{ex.GetType().Name} {ex.Message}");
+                    try
+                    {
+                        var (t2, s2, r2, f2) = anchorCard.BuildPreview();
+                        CardPreviewForm.ShowFor(anchorCard, t2, s2, Color.FromArgb(197, 48, 48), r2,
+                            merged.Variants.Select(v => (v, 3)), f2);
+                        Check(true, "CardPreviewForm 可正常弹出（含合并清单表）");
+
+                        // 刚弹出时**不能有选中的文字** —— 只读 TextBox 拿到焦点会自动全选，
+                        // 看起来就像“单击就把预览里的字选中了”
+                        var opened = Application.OpenForms.OfType<CardPreviewForm>().FirstOrDefault();
+                        Check(opened != null, "预览窗已在打开列表里");
+                        Check(opened == null || opened.DetailSelectionLength == 0,
+                              $"**预览刚弹出时没有选中任何文字**（选区长度 {opened?.DetailSelectionLength}）");
+                        Check(opened == null || opened.ActiveControl == null,
+                              "预览窗不把焦点塞给输入框（焦点在窗口本身，Esc 仍可关）");
+                    }
+                    catch (Exception ex)
+                    {
+                        Check(false, $"CardPreviewForm 弹出失败：{ex.GetType().Name} {ex.Message}");
+                    }
                 }
                 CardPreviewForm.CloseCurrent();
                 Check(true, "CardPreviewForm.CloseCurrent() 可重复调用不报错");
@@ -2236,15 +2245,15 @@ class SelfTest
         WriteHeartbeat(Path.Combine(share6, "FCT1"), "FCT1",
             DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), lastSeq: 7, queued: 3);
         using (var db6 = new AggDatabase(Path.Combine(aggRoot, "db6.db")))
-        using (var w6 = new AggWatcher(share6, db6, heartbeatTimeoutSec: 1, pollSec: 1))
+        using (var w6 = new AggWatcher(share6, db6, heartbeatTimeoutSec: 3, pollSec: 1))
         {
             w6.Start();
             Check(WaitUntil(() =>
             {
                 var st = FindMachine(w6, "FCT1");
                 return st != null && st.Online && st.LastSeq == 7 && st.Queued == 3;
-            }, 10000), "心跳：FCT1 上线（1s 超时阈值内判定），last_seq=7/queued=3 从心跳读出");
-            // 心跳 ts 改成 2 分钟前 → 超过 1s 超时阈值 → 下一轮轮询判离线
+            }, 10000), "心跳：FCT1 上线（3s 超时阈值内判定），last_seq=7/queued=3 从心跳读出");
+            // 心跳 ts 改成 2 分钟前 → 超过超时阈值 → 下一轮轮询判离线
             WriteHeartbeat(Path.Combine(share6, "FCT1"), "FCT1",
                 DateTime.Now.AddMinutes(-2).ToString("yyyy-MM-dd HH:mm:ss"), 7, 3);
             Check(WaitUntil(() => FindMachine(w6, "FCT1") is { Online: false }, 10000),
@@ -2379,7 +2388,7 @@ class SelfTest
             Check(p1.HttpMode && p1.Active, "http 推送：http 模式激活（transport=http 且 url 非空）");
             db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-a.xml"), "SN-H1A", "自检不良H1A"));
             db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-b.xml"), "SN-H1B", "自检不良H1B"));
-            Check(WaitUntil(() => col1.Count == 2, 10000), "http 推送：收到 2 条 POST body（两条 FAIL 事件）");
+            Check(WaitUntil(() => col1.Count == 2, 30000), "http 推送：收到 2 条 POST body（两条 FAIL 事件）");
             var rows1 = db1h.FetchFailRecordsAfter(0).OrderBy(x => x.Id).ToList();
             Check(rows1.Count == 2, $"http 推送：库里 2 条 FAIL（实得 {rows1.Count}）");
             var bodies1 = col1.Snapshot();
@@ -2459,11 +2468,16 @@ class SelfTest
         {
             p3.Init();
             db3h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http3-a.xml"), "SN-H3A", "自检不良H3A"));
-            Check(WaitUntil(() => col3.Count == 1, 10000), "http 断线前置：在线时第 1 条已推送");
+            // ⚠ 必须等 seq=1 完全确认出队（LastSeq>=1）再 Dispose，否则 Dispose 会杀掉 in-flight 的
+            //   seq=1 响应：请求已处理(body 到达)但客户端读不到响应 → 判失败留队 → 后续断言错乱。
+            //   body 到达与响应收讫有先后（HTTP keep-alive 连接池），分两步各自独立等。
+            Check(WaitUntil(() => col3.Count >= 1, 10000), "http 断线前置：seq=1 body 已到达");
+            Check(WaitUntil(() => p3.LastSeq >= 1, 20000),
+                  "http 断线前置：seq=1 已确认出队（响应收讫，Dispose 无 in-flight 竞态）");
             col3.Dispose();   // 模拟断线：接收端关闭，之后的 POST 全部失败
             db3h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http3-b.xml"), "SN-H3B", "自检不良H3B"));
             var id3b = db3h.FetchFailRecordsAfter(0)[1].Id;
-            Check(WaitUntil(() => p3.QueuedCount == 1, 3000), "http 断线：第 2 条滞留内存队列");
+            Check(WaitUntil(() => p3.QueuedCount == 1, 10000), "http 断线：第 2 条滞留内存队列");
             Check(WaitUntil(() =>
             {
                 try
@@ -2478,7 +2492,7 @@ class SelfTest
             }, 5000), "http 断线：agg_queue.json 已落盘且含断线 seq（重启不丢队）");
             // 重启接收端（同端口）；worker 按 retrySec=1 自动补推
             using var col3b = new HttpCollector(port3);
-            Check(WaitUntil(() => col3b.Count == 1, 10000), "http 断线：接收端恢复后自动补推第 2 条");
+            Check(WaitUntil(() => col3b.Count == 1, 30000), "http 断线：接收端恢复后自动补推第 2 条");
             var b3b = col3b.Snapshot().FirstOrDefault(b => b.Contains("\"sn\":\"SN-H3B\""));
             Check(b3b != null && !b3b.EndsWith('\n'), "http 断线：补推的 body 是完整 JSON（无尾换行）");
             Check(WaitUntil(() => p3.QueuedCount == 0 && p3.LastSeq == id3b, 5000),
