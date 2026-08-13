@@ -121,18 +121,22 @@ public sealed class KpiCard : Control
             new Rectangle(14, 8, Width - 40, 16), Theme.TextSub,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-        // 大数字：强调色 + 下侧一层同色光晕（发光的监控数字）
+        // 大数字：垂直居中放在「标题下方 ~ 副标题上方」的可用空间里，绝不与标题/副标题重叠
         var numFont = _big ? Theme.Number : Theme.NumberSmall;
-        var numRect = new Rectangle(12, _big ? 26 : 24, Width - 20, _big ? 40 : 32);
+        var subH = _sub.Length > 0 ? 18 : 0;                       // 副标题预留高度
+        var availTop = 28;                                          // 标题区(8..24)下方
+        var availBot = Height - (subH > 0 ? 20 : 6);                // 副标题区(Height-20..)上方
+        var availH = Math.Max(20, availBot - availTop);
+        var numRect = new Rectangle(12, availTop, Width - 20, availH);
         using (var glow = new SolidBrush(Color.FromArgb(26, _accent)))
-            g.FillRectangle(glow, new Rectangle(12, _big ? 26 : 24, Width - 24, _big ? 40 : 32));
+            g.FillRectangle(glow, new Rectangle(12, availTop, Width - 24, availH));
         TextRenderer.DrawText(g, _value, numFont, numRect, _accent,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis |
             TextFormatFlags.NoPadding);
 
         if (_sub.Length > 0)
             TextRenderer.DrawText(g, _sub, Theme.Small,
-                new Rectangle(14, Height - 22, Width - 20, 16), Theme.TextFaint,
+                new Rectangle(14, Height - 20, Width - 20, 16), Theme.TextFaint,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
     }
 }

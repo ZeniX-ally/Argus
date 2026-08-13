@@ -115,7 +115,8 @@ public class AggCenterForm : Form
     private void BuildUi()
     {
         // ===== 顶部信息条 =====
-        var topBar = new Panel { Dock = DockStyle.Top, Height = 50, BackColor = Theme.Surface };
+        // 高度 58：内边距上下各 5，可用 48，放两行 InfoLabel(各 22) 不重叠
+        var topBar = new Panel { Dock = DockStyle.Top, Height = 58, BackColor = Theme.Surface };
         topBar.Paint += (_, e) =>
         {
             using var p = new Pen(Theme.Border);
@@ -134,7 +135,8 @@ public class AggCenterForm : Form
         tip.SetToolTip(_lblDbPath, _dbPath);
 
         // ===== KPI 数字条（SCADA 大屏感：大数字 + 状态灯圆点） =====
-        var kpiBar = new Panel { Dock = DockStyle.Top, Height = 84, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap, Theme.Gap, Theme.Gap, 0) };
+        // 高度 96：标题(8..24) + 大数字(28..72) + 副标题(76..92) 三行不重叠
+        var kpiBar = new Panel { Dock = DockStyle.Top, Height = 96, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap, Theme.Gap, Theme.Gap, 0) };
         var kpiTable = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, BackColor = Theme.Bg };
         for (int i = 0; i < 4; i++) kpiTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         void AddKpi(string key, string title, Color accent, int col)
@@ -232,7 +234,7 @@ public class AggCenterForm : Form
 
     private static Label InfoLabel() => new()
     {
-        Dock = DockStyle.Top, Height = 24, Font = Theme.Small, ForeColor = Theme.TextSub,
+        Dock = DockStyle.Top, Height = 22, Font = Theme.Small, ForeColor = Theme.TextSub,
         TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, UseMnemonic = false,
     };
 
