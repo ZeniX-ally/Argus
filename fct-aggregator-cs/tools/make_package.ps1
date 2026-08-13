@@ -1,4 +1,4 @@
-# 打包 FCT 工具套件 v3.3.0（单 exe：主程序 + 排行/取数/TDMS 三个工具）
+﻿# 打包 FCT 工具套件 v3.3.0（单 exe：主程序 + 排行/取数/TDMS 三个工具）
 # ⚠ v3.0.0：数据分发已独立成 FCT-Distributor.exe，单独打包（见 ../fct-distributor/tools/make_package.ps1）
 # ⚠ v3.4.1：聚合后端纯净包用 make_package_agg.ps1 单独打包（输出 dist-agg\Argus-Agg-v3.4.1.zip）
 #
@@ -17,6 +17,8 @@
 #
 # ⚠ dotnet clean / Rebuild 会清掉本目录内容，打好的 zip 请及时拷走归档。
 $ErrorActionPreference = 'Stop'
+# SSH/CI 非交互会话无控制台：Write-Progress 抛 HostException 会中止脚本，静默进度条
+$ProgressPreference = 'SilentlyContinue'
 # 路径自己推（仓库目录 2026-07-31 从 G4_9-QA 改名成 Argus，写死绝对路径会静静失效）
 $root = (Resolve-Path "$PSScriptRoot\..").Path
 $ver  = '3.4.1'
@@ -123,7 +125,7 @@ function Assert-DepsWinFiles([string]$stage) {
 # ==================== 1) 铺平到 $out ====================
 # 程序文件已在 build 时生成在 $out；补上随包文件与 data/logs 目录
 foreach ($f in $rootFiles) {
-    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path $root 'tools' $f) $out }
+    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $out }
     else { Copy-Item (Join-Path $root $f) $out }
 }
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $out }
@@ -138,7 +140,7 @@ foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stage }
 Copy-WinRuntimes $stage
 Assert-DepsWinFiles $stage
 foreach ($f in ($rootFiles + $docs)) {
-    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path $root 'tools' $f) $stage }
+    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $stage }
     else { Copy-Item (Join-Path $root $f) $stage }
 }
 Write-PackageConfig (Join-Path $stage 'config.json')        # 完整包模板同样置空 webhook
@@ -159,11 +161,10 @@ foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stageUpd }
 Copy-WinRuntimes $stageUpd
 Assert-DepsWinFiles $stageUpd
 Copy-Item (Join-Path $root '启动.bat') $stageUpd
-Copy-Item (Join-Path $root 'tools' '一键部署聚合服务.bat') $stageUpd  # 聚合服务端升级也可一键部署
+Copy-Item (Join-Path (Join-Path $root 'tools') '一键部署聚合服务.bat') $stageUpd  # 聚合服务端升级也可一键部署
 Write-PackageConfig (Join-Path $stageUpd 'config.json')     # 配置模板（webhook 置空，部署端合并时保留现场值）
 Copy-Item (Join-Path $root 'app_icon.ico') $stageUpd                     # 图标也跟着更新
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $stageUpd }
-Copy-Item (Join-Path $root '覆盖说明.md') $stageUpd      # 覆盖包专属：升级步骤说明
 
 $zipUpd = Join-Path $out "Argus-v$ver-update.zip"
 if (Test-Path $zipUpd) { Remove-Item $zipUpd -Force }

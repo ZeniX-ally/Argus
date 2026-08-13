@@ -1,4 +1,4 @@
-# 打包 Argus 聚合后端纯净包 v3.4.1（机台端采集包用 make_package.ps1，本脚本只打聚合包）
+﻿# 打包 Argus 聚合后端纯净包 v3.4.1（机台端采集包用 make_package.ps1，本脚本只打聚合包）
 #
 # 本包只含聚合服务相关：Argus.exe（agg --web / agg --install）+ 运行依赖 +
 # 一键部署聚合服务.bat + 聚合服务说明.md + config.json（聚合端模板）+ data\ + logs\。
@@ -13,6 +13,8 @@
 #   本脚本输出到 dist-agg\（仓库根下新建，dotnet clean 不会动它）。
 #   版本号 $ver 保持与 FctAggregator.csproj 的 <Version> 一致。
 $ErrorActionPreference = 'Stop'
+# SSH/CI 非交互会话无控制台：Write-Progress 抛 HostException 会中止脚本，静默进度条
+$ProgressPreference = 'SilentlyContinue'
 # 路径自己推（写死绝对路径会静静失效）
 $root  = (Resolve-Path "$PSScriptRoot\..").Path
 $ver   = '3.4.1'
@@ -126,7 +128,7 @@ New-Item -ItemType Directory -Path $out -Force | Out-Null
 foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $out }
 Copy-WinRuntimes $out
 Assert-DepsWinFiles $out
-Copy-Item (Join-Path $root 'tools' '一键部署聚合服务.bat') $out
+Copy-Item (Join-Path (Join-Path $root 'tools') '一键部署聚合服务.bat') $out
 Copy-Item (Join-Path $root '聚合服务说明.md') $out
 Write-PackageAggConfig (Join-Path $out 'config.json')          # 聚合模板（无 webhook）
 New-Item -ItemType Directory -Path (Join-Path $out 'data'), (Join-Path $out 'logs') -Force | Out-Null
@@ -139,7 +141,7 @@ foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stage }
 Copy-WinRuntimes $stage
 Assert-DepsWinFiles $stage
 foreach ($f in $aggFiles) {
-    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path $root 'tools' $f) $stage }
+    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $stage }
     else { Copy-Item (Join-Path $root $f) $stage }
 }
 Write-PackageAggConfig (Join-Path $stage 'config.json')
