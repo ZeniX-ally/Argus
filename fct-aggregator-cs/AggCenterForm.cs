@@ -23,6 +23,7 @@ public class AggCenterForm : Form
     private readonly AggDatabase _db;
     private readonly AggWatcher _watcher;
     private readonly HttpIngest? _ingest;   // agg_transport 含 http 才创建，纯 smb 部署为 null
+    private readonly AggAlertService _alert;   // Phase 3: 飞书离线告警 + 定时汇总（webhook 未配置则空转）
     private readonly System.Windows.Forms.Timer _timer = new();
     private SplitContainer _split = null!;
 
@@ -66,13 +67,17 @@ public class AggCenterForm : Form
         _watcher = new AggWatcher(shareRoot, _db, heartbeatTimeoutSec);
         _watcher.Changed += OnWatcherChanged;   // 后台线程事件，跨线程进 UI
 
-        // HTTP 接收（B2 双通道）：agg_transport 含 http（http/both）才启用，否则保持纯 smb 行为
+        // Phase 3: 飞书离线告警 + 定时汇总（agg_webhook_url 未配置时 Start 自动跳过）
         var cfg = AppConfig.Instance;
+        _alert = new AggAlertService(_watcher, _db, cfg.AggWebhookUrl, cfg.AggSummaryMinutes);
+        _alert.Start();
+
+        // HTTP 接收（B2 双通道）：agg_transport 含 http（http/both）才启用，否则保持纯 smb 行为
         _httpPort = cfg.AggHttpPort;
         var transport = string.IsNullOrEmpty(cfg.AggTransport) ? "smb" : cfg.AggTransport;
         if (transport.Contains("http", StringComparison.OrdinalIgnoreCase))
         {
-            _ingest = new HttpIngest(_httpPort, _watcher.IngestFail, _watcher.IngestHeartbeat);
+            _ingest = new HttpIngest(_httpPort, _watcher.IngestFail, _watcher.IngestHeartbeat, cfg.AggToken);
             Logger.Info($"[聚合看板] HTTP 接收已接线: 端口 {_httpPort}（transport={transport}）");
         }
         else
@@ -276,6 +281,7 @@ public class AggCenterForm : Form
         _timer.Stop();
         _timer.Dispose();
         _watcher.Changed -= OnWatcherChanged;
+        _alert.Stop();
         // 队列里还有文件在写也直接停：简单可靠优先，不弹确认
         try { _watcher.Stop(); } catch (Exception ex) { Logger.Warning($"看板停止异常: {ex.Message}"); }
         try { _ingest?.Stop(); } catch (Exception ex) { Logger.Warning($"HTTP 接收停止异常: {ex.Message}"); }

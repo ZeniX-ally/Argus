@@ -1745,6 +1745,10 @@ class SelfTest
         Console.WriteLine("\n【Web 聚合服务】页面与 API / 推送入库 / XML 下载白名单 / CSV 导出 / 路由错误码");
         RunWebAggServerTests(work);
 
+        // ==================== agg_token 鉴权 + 分页搜索（v3.4.2） ====================
+        Console.WriteLine("\n【聚合鉴权与分页】agg_token 403 / 分页 offset / 搜索 q / FAIL 总数 / XML 内容落盘");
+        RunAggTokenPagingTests(work);
+
         // ==================== Web 目录浏览（Phase 3：/api/list + 文件页签） ====================
         Console.WriteLine("\n【Web 目录浏览】/api/list 白名单与排序 / 下载回归 / 页面文件页签");
         RunWebFileBrowserTests(work);
@@ -2388,7 +2392,22 @@ class SelfTest
             Check(p1.HttpMode && p1.Active, "http 推送：http 模式激活（transport=http 且 url 非空）");
             db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-a.xml"), "SN-H1A", "自检不良H1A"));
             db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-b.xml"), "SN-H1B", "自检不良H1B"));
-            Check(WaitUntil(() => col1.Count == 2, 30000), "http 推送：收到 2 条 POST body（两条 FAIL 事件）");
+            if (!WaitUntil(() => col1.Count == 2, 30000))
+            {
+                var diag = string.Join(" | ", col1.Snapshot().Select(b =>
+                {
+                    try
+                    {
+                        using var d = System.Text.Json.JsonDocument.Parse(b);
+                        var t = d.RootElement.GetProperty("type").GetString() ?? "?";
+                        var s = d.RootElement.TryGetProperty("seq", out var sv) ? sv.GetInt64() : -1;
+                        return $"{t}#{s}";
+                    }
+                    catch { return "?"; }
+                }));
+                Console.WriteLine($"    [诊断] col1.Count={col1.Count}, bodies: {diag}");
+            }
+            Check(col1.Count == 2, "http 推送：收到 2 条 POST body（两条 FAIL 事件）");
             var rows1 = db1h.FetchFailRecordsAfter(0).OrderBy(x => x.Id).ToList();
             Check(rows1.Count == 2, $"http 推送：库里 2 条 FAIL（实得 {rows1.Count}）");
             var bodies1 = col1.Snapshot();
@@ -2788,6 +2807,180 @@ class SelfTest
     }
     TryDeleteDir(webRoot);
     Console.WriteLine("    Web 聚合服务自检完成");
+    }
+
+    // ==================== agg_token 鉴权 + 分页搜索 + XML 内容落盘（v3.4.2） ====================
+    // 场景：token 未配放行 / 配了不匹配 403 / 匹配 200（头与 query 两路）/ 分页 offset /
+    // 搜索 q（sn/model/fail_reason）/ /api/fails/count 总数 / 跨机台 XML 内容随事件上送落盘后下载。
+    static void RunAggTokenPagingTests(string work)
+    {
+        var webRoot = Path.Combine(work, "aggsec");
+        var resultsRoot = Path.Combine(webRoot, "results");
+        var shareRoot = Path.Combine(webRoot, "share");
+        Directory.CreateDirectory(resultsRoot);
+        Directory.CreateDirectory(shareRoot);
+        int port = GetFreePort();
+        var baseUrl = $"http://127.0.0.1:{port}";
+
+        using (var db = new AggDatabase(Path.Combine(webRoot, "agg.db")))
+        using (var w = new AggWatcher(shareRoot, db, heartbeatTimeoutSec: 60, pollSec: 1))
+        using (var srv = new WebAggServer(port, w, db, resultsRoot, shareRoot, token: "secret-token"))
+        {
+            w.Start();
+            srv.Start();
+            Check(WaitUntil(() => srv.Listening, 5000), "聚合鉴权：带 token 的 Web 服务已启动");
+
+            // ---- ① 无 token 全部 403 ----
+            var rNoTok = _http.GetAsync($"{baseUrl}/api/machines").GetAwaiter().GetResult();
+            Check(rNoTok.StatusCode == HttpStatusCode.Forbidden, "GET /api/machines（无 token）-> 403");
+            var rNoTokPush = _http.PostAsync($"{baseUrl}/api/fail",
+                new StringContent(BuildFailJsonCustom(101, "FCT1", "X:\\fct\\a.xml", "SN-101", "无 token"),
+                    Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rNoTokPush.StatusCode == HttpStatusCode.Forbidden, "POST /api/fail（无 token）-> 403");
+            Check(WaitUntil(() => db.FailCount("") == 0, 3000), "聚合鉴权：403 的推送未入库（FailCount=0）");
+
+            // ---- ② 错误 token 403 ----
+            using (var bad = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/machines"))
+            {
+                bad.Headers.Add("X-Agg-Token", "wrong");
+                var rBadTok = _http.SendAsync(bad).GetAwaiter().GetResult();
+                Check(rBadTok.StatusCode == HttpStatusCode.Forbidden, "GET /api/machines（错误 token）-> 403");
+            }
+
+            // ---- ③ 正确 token（header）200 且能入库 ----
+            using (var okPush = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/fail"))
+            {
+                okPush.Headers.Add("X-Agg-Token", "secret-token");
+                okPush.Content = new StringContent(
+                    BuildFailJsonCustom(101, "FCT1", "X:\\fct\\a.xml", "SN-101", "5V_Rail"),
+                    Encoding.UTF8, "application/json");
+                var rOkPush = _http.SendAsync(okPush).GetAwaiter().GetResult();
+                Check(rOkPush.StatusCode == HttpStatusCode.OK, "POST /api/fail（正确 token 头）-> 200");
+            }
+            Check(WaitUntil(() => db.FailCount("") == 1, 10000), "聚合鉴权：正确 token 的推送已入库（FailCount=1）");
+
+            // 再入库 3 条（不同机台/SN/原因）供分页与搜索断言
+            PushFailWithToken(baseUrl, "secret-token", BuildFailJsonCustom(102, "FCT2", "X:\\fct\\b.xml", "SN-102", "12V_Rail"));
+            PushFailWithToken(baseUrl, "secret-token", BuildFailJsonCustom(103, "FCT1", "X:\\fct\\c.xml", "SN-103", "CAN_Bus"));
+            PushFailWithToken(baseUrl, "secret-token", BuildFailJsonCustom(104, "FCT2", "X:\\fct\\d.xml", "SN-104", "5V_Rail"));
+            Check(WaitUntil(() => db.FailCount("") == 4, 10000), "聚合鉴权：共入库 4 条（FailCount=4）");
+
+            // ---- ④ 分页：limit=2 + offset ----
+            var rPage0 = _http.GetAsync($"{baseUrl}/api/fails?limit=2&offset=0&token=secret-token").GetAwaiter().GetResult();
+            if (rPage0.StatusCode == HttpStatusCode.OK)
+            {
+                using var p0 = System.Text.Json.JsonDocument.Parse(
+                    rPage0.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(p0.RootElement.GetArrayLength() == 2, "分页:limit=2&offset=0 -> 返回 2 条");
+            }
+            var rPage1 = _http.GetAsync($"{baseUrl}/api/fails?limit=2&offset=2&token=secret-token").GetAwaiter().GetResult();
+            if (rPage1.StatusCode == HttpStatusCode.OK)
+            {
+                using var p1 = System.Text.Json.JsonDocument.Parse(
+                    rPage1.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(p1.RootElement.GetArrayLength() == 2, "分页:limit=2&offset=2 -> 返回 2 条（第二页）");
+            }
+            var rPageTail = _http.GetAsync($"{baseUrl}/api/fails?limit=2&offset=4&token=secret-token").GetAwaiter().GetResult();
+            if (rPageTail.StatusCode == HttpStatusCode.OK)
+            {
+                using var pt = System.Text.Json.JsonDocument.Parse(
+                    rPageTail.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(pt.RootElement.GetArrayLength() == 0, "分页:limit=2&offset=4 -> 返回 0 条（越界空页）");
+            }
+
+            // ---- ⑤ 搜索：q 过滤 SN ----
+            var rSearch = _http.GetAsync($"{baseUrl}/api/fails?q={Uri.EscapeDataString("SN-103")}&token=secret-token").GetAwaiter().GetResult();
+            if (rSearch.StatusCode == HttpStatusCode.OK)
+            {
+                using var sd = System.Text.Json.JsonDocument.Parse(
+                    rSearch.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(sd.RootElement.GetArrayLength() == 1
+                      && sd.RootElement[0].GetProperty("Sn").GetString() == "SN-103",
+                      "搜索:q=SN-103 -> 只命中 1 条且 SN 正确");
+            }
+            var rSearchReason = _http.GetAsync($"{baseUrl}/api/fails?q={Uri.EscapeDataString("12V_Rail")}&token=secret-token").GetAwaiter().GetResult();
+            if (rSearchReason.StatusCode == HttpStatusCode.OK)
+            {
+                using var rd = System.Text.Json.JsonDocument.Parse(
+                    rSearchReason.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(rd.RootElement.GetArrayLength() == 1
+                      && rd.RootElement[0].GetProperty("FailReason").GetString() == "12V_Rail",
+                      "搜索:q=12V_Rail -> 只命中 fail_reason 匹配的 1 条");
+            }
+            var rSearchNone = _http.GetAsync($"{baseUrl}/api/fails?q={Uri.EscapeDataString("不存在")}&token=secret-token").GetAwaiter().GetResult();
+            if (rSearchNone.StatusCode == HttpStatusCode.OK)
+            {
+                using var nd = System.Text.Json.JsonDocument.Parse(
+                    rSearchNone.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(nd.RootElement.GetArrayLength() == 0, "搜索:q=不存在 -> 0 条");
+            }
+
+            // ---- ⑥ /api/fails/count 总数（含过滤） ----
+            var rCntAll = _http.GetAsync($"{baseUrl}/api/fails/count?token=secret-token").GetAwaiter().GetResult();
+            Check(rCntAll.StatusCode == HttpStatusCode.OK, "GET /api/fails/count -> 200");
+            if (rCntAll.StatusCode == HttpStatusCode.OK)
+            {
+                using var cd = System.Text.Json.JsonDocument.Parse(
+                    rCntAll.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(cd.RootElement.GetProperty("count").GetInt64() == 4,
+                      "GET /api/fails/count：全库总数 = 4");
+            }
+            var rCntFiltered = _http.GetAsync($"{baseUrl}/api/fails/count?q={Uri.EscapeDataString("5V_Rail")}&token=secret-token").GetAwaiter().GetResult();
+            if (rCntFiltered.StatusCode == HttpStatusCode.OK)
+            {
+                using var fd = System.Text.Json.JsonDocument.Parse(
+                    rCntFiltered.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                Check(fd.RootElement.GetProperty("count").GetInt64() == 2,
+                      "GET /api/fails/count?q=5V_Rail：过滤后总数 = 2");
+            }
+
+            // ---- ⑦ 跨机台 XML 内容落盘：xml_content 随事件上送 -> 聚合端本地 agg_xml 可下载 ----
+            const string xmlPayload = "<BATCH><STATUS>FAIL</STATUS><SN>SN-201</SN></BATCH>";
+            var data = new Dictionary<string, object?>
+            {
+                ["id"] = 201, ["station_id"] = "FCT1", ["model"] = "E3002781",
+                ["category"] = "Online", ["test_date"] = "20260812", ["sn"] = "SN-201",
+                ["result"] = "FAIL", ["xml_path"] = "X:\\fct\\local-201.xml",   // 机台端路径（聚合端不可达）
+                ["fail_reason"] = "跨机台XML", ["tester"] = "SELFTEST",
+                ["panel_status"] = "0000", ["batch_timestamp"] = "2026-08-12 09:00:00",
+                ["has_fail_items"] = 1, ["file_size"] = 123,
+                ["xml_content"] = xmlPayload,
+            };
+            var failWithXml = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["machine"] = "FCT1", ["type"] = "fail", ["seq"] = 201,
+                ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), ["data"] = data,
+            });
+            PushFailWithToken(baseUrl, "secret-token", failWithXml);
+            Check(WaitUntil(() => db.FailCount("") == 5, 10000), "XML 内容落盘:带 xml_content 的推送已入库（FailCount=5）");
+            long xmlId = 0;
+            Check(WaitUntil(() =>
+            {
+                var row = db.QueryFails(10, "FCT1").FirstOrDefault(r => r.Sn == "SN-201");
+                if (row == null) return false;
+                xmlId = row.Id;
+                return !string.IsNullOrEmpty(row.XmlPath) && File.Exists(row.XmlPath);   // XmlPath 已改写为本地文件
+            }, 10000), "XML 内容落盘:XmlPath 已改写为聚合端本地文件且存在");
+            var rXml = _http.GetAsync($"{baseUrl}/api/file?id={xmlId}&token=secret-token").GetAwaiter().GetResult();
+            Check(rXml.StatusCode == HttpStatusCode.OK, $"GET /api/file?id={xmlId}（跨机台 XML 本地落盘）-> 200");
+            if (rXml.StatusCode == HttpStatusCode.OK)
+                Check(rXml.Content.ReadAsStringAsync().GetAwaiter().GetResult() == xmlPayload,
+                      "GET /api/file?id=：内容与上送的 xml_content 一致");
+
+            srv.Stop();
+            w.Stop();
+        }
+        TryDeleteDir(webRoot);
+        Console.WriteLine("    聚合鉴权与分页自检完成");
+    }
+
+    /// <summary>带 token 头 POST fail（鉴权自检辅助）。</summary>
+    static void PushFailWithToken(string baseUrl, string token, string json)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/fail");
+        req.Headers.Add("X-Agg-Token", token);
+        req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        _http.SendAsync(req).GetAwaiter().GetResult();
     }
 
     // ==================== Web 目录浏览（Phase 3：/api/list + 页面文件页签） ====================

@@ -26,6 +26,23 @@ internal sealed class MachineState
     public bool Online;
 }
 
+/// <summary>
+/// 聚合入库失败（数据库层异常）。由 AggWatcher.IngestFail 抛出、HttpIngest/WebAggServer
+/// 捕获后回 HTTP 5xx —— 机台端收到非 2xx 会把该事件放回断线补偿队列自动重推。
+/// 注意：JSON 解析失败 / 缺字段这类「内容错误」不抛本异常（重推也一样坏，回 200 让机台端正常推进）。
+/// </summary>
+public sealed class AggIngestException : Exception
+{
+    public string Machine { get; }
+    public long Seq { get; }
+
+    public AggIngestException(string machine, long seq, string message) : base(message)
+    {
+        Machine = machine;
+        Seq = seq;
+    }
+}
+
 /// <summary>机台聚合看板用的机台状态快照：心跳信息来自内存缓存，FAIL 统计现查数据库。</summary>
 public class AggMachineStatus
 {
@@ -82,6 +99,10 @@ public class AggWatcher : IDisposable
 
     /// <summary>有新 FAIL 入库或心跳状态变化时触发（GUI 订阅后跨线程刷新）。</summary>
     public event Action? Changed;
+
+    /// <summary>机台在线→离线翻转时触发（Phase 3 离线告警用）。参数 = 机台名 + 最后确认存活时间。
+    /// 触发点：smb 心跳超时（UpdateHeartbeat）/ HTTP LastSeen 超时（RefreshMachines）。</summary>
+    public event Action<string, DateTime>? MachineOffline;
 
     /// <summary>本次运行新入库文件数（INSERT 真正插入才算，重复忽略不计）。</summary>
     public long ProcessedFiles => Interlocked.Read(ref _processedFiles);
@@ -199,7 +220,8 @@ public class AggWatcher : IDisposable
 
     /// <summary>机台 POST 的 fail JSON（与 fail-{seq}.json 文件同格式）→ 解析入库。
     /// 成功入库则 ProcessedFiles++ 并触发 Changed；缺 seq / machine 或 JSON 非法则忽略并记警告。
-    /// 与文件监听共用 (machine, seq) 幂等：同一事件两条通道各来一次也只入库一次。</summary>
+    /// 与文件监听共用 (machine, seq) 幂等：同一事件两条通道各来一次也只入库一次。
+    /// 数据库写入失败抛 <see cref="AggIngestException"/>（HTTP 层据此回 5xx 让机台重推）。</summary>
     public void IngestFail(string json)
     {
         long seq;
@@ -219,14 +241,14 @@ public class AggWatcher : IDisposable
             return;
         }
 
+        var row = ParseFailJson(json, "", seq);   // http 通道没有目录名可回落，machine 缺失在下面拦截
+        if (string.IsNullOrEmpty(row.Machine))
+        {
+            Logger.Warning("[聚合监听] HTTP fail 缺少 machine，忽略");
+            return;
+        }
         try
         {
-            var row = ParseFailJson(json, "", seq);   // http 通道没有目录名可回落，machine 缺失在下面拦截
-            if (string.IsNullOrEmpty(row.Machine))
-            {
-                Logger.Warning("[聚合监听] HTTP fail 缺少 machine，忽略");
-                return;
-            }
             bool changed = false;
             if (_db.InsertFail(row) > 0)
             {
@@ -236,15 +258,20 @@ public class AggWatcher : IDisposable
             if (TouchHttpMachine(row.Machine)) changed = true;   // 推送也算存活证据；新机台自动出现在看板
             if (changed) TryFireChanged();
         }
+        catch (AggIngestException) { throw; }
         catch (Exception ex)
         {
-            Logger.Warning($"[聚合监听] HTTP fail 入库失败: {ex.Message}");
+            // 数据库层失败（连接/锁/磁盘）：上抛带 (machine, seq)，HTTP 层回 5xx 触发机台端重推
+            Logger.Error($"[聚合监听] HTTP fail 入库失败 machine={row.Machine} seq={row.Seq}: {ex.Message}");
+            throw new AggIngestException(row.Machine, row.Seq, ex.Message);
         }
     }
 
     /// <summary>机台 POST 的心跳（machine/type/ts/last_seq/queued）→ 更新/创建该机台 MachineState
     /// （LastHeartbeat/LastSeq/Queued/LastSeen=now），上线状态翻转触发 Changed。
-    /// 新机台首次 HTTP 推送即自动出现在看板。</summary>
+    /// 新机台首次 HTTP 推送即自动出现在看板。
+    /// 判活基准 = 请求到达时刻（服务器时钟），与机台 ts 无关；ts 仅展示，且做未来时间校验
+    /// （机台时钟过快时记 warning 并回落展示为当前时刻，避免看板时间线错乱）。</summary>
     public void IngestHeartbeat(string json)
     {
         try
@@ -262,6 +289,13 @@ public class AggWatcher : IDisposable
             int queued = 0;
             if (root.TryGetProperty("last_seq", out var pl)) { if (pl.TryGetInt64(out var l)) lastSeq = l; }
             if (root.TryGetProperty("queued", out var pq)) { if (pq.TryGetInt32(out var q)) queued = q; }
+
+            // ts 未来时间校验：机台时钟快过聚合端时（>5 分钟超前）记 warning、展示回落 now
+            if (ts.Length > 0 && TryParseTs(ts, out var hbTs) && hbTs > DateTime.Now.AddMinutes(5))
+            {
+                Logger.Warning($"[聚合监听] 机台 {machine} 心跳 ts 超前未来时间（{ts}），展示回落当前时刻");
+                ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            }
 
             bool changed = false;
             lock (_lock)
@@ -437,7 +471,9 @@ public class AggWatcher : IDisposable
 
     /// <summary>解析 fail JSON（文件内容或 HTTP body 同格式）：顶层 machine/type/seq/ts/data，
     /// data 里各字段 TryGetProperty 给默认值（缺省空串）；machine 为空时用 fallbackMachine；
-    /// seq 以传入参数为准（文件版=文件名，HTTP 版=JSON 顶层）。</summary>
+    /// seq 以传入参数为准（文件版=文件名，HTTP 版=JSON 顶层）。
+    /// 跨机台 XML 拉取：data.xml_content 非空时落盘到聚合端 {BaseDir}/data/agg_xml/{machine}/{seq}.xml，
+    /// XmlPath 改写为聚合端本地路径（Web 下载走本地白名单，不再依赖机台路径）。</summary>
     private AggFailRow ParseFailJson(string json, string fallbackMachine, long seq)
     {
         using var doc = JsonDocument.Parse(json);
@@ -464,9 +500,35 @@ public class AggWatcher : IDisposable
             row.BatchTimestamp = Str(data, "batch_timestamp");
             row.HasFailItems = Num(data, "has_fail_items") != 0;   // 0/1
             row.FileSize = Num(data, "file_size");
+            // 跨机台 XML：内容随事件上送时落盘本地，XmlPath 改写为本地文件
+            var xmlContent = Str(data, "xml_content");
+            if (xmlContent.Length > 0)
+            {
+                var localPath = SaveXmlContent(row.Machine, seq, xmlContent);
+                if (localPath != null) row.XmlPath = localPath;
+            }
         }
         row.IngestTs = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         return row;
+    }
+
+    /// <summary>把随事件上送的 XML 内容写到聚合端本地 data/agg_xml/{machine}/{seq}.xml，返回本地路径。
+    /// 写失败记警告并返回 null（XmlPath 保留机台端原值，下载仍走白名单逻辑）。</summary>
+    private string? SaveXmlContent(string machine, long seq, string content)
+    {
+        try
+        {
+            var dir = Path.Combine(AppConfig.BaseDir, "data", "agg_xml", machine);
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, $"{seq}.xml");
+            File.WriteAllText(path, content, Encoding.UTF8);
+            return path;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[聚合监听] XML 内容落盘失败 machine={machine} seq={seq}: {ex.Message}");
+            return null;
+        }
     }
 
     private static string Str(JsonElement data, string name) =>
@@ -489,18 +551,61 @@ public class AggWatcher : IDisposable
 
     // ==================== 心跳轮询线程 ====================
 
+    /// <summary>fail 文件兜底重扫周期（秒）。FileSystemWatcher 在 SMB 共享上可能漏事件
+    /// （网络抖动/改名竞态），心跳轮询线程定期全量扫一遍，靠 (machine, seq) 幂等零成本。</summary>
+    private const int RescanIntervalSec = 60;
+    private int _rescanCountdown;   // 距下次重扫的剩余秒数（<=0 触发后重置）
+
     private void HeartbeatLoop()
     {
         while (!_stopping)
         {
-            try { RefreshMachines(); }
+            try
+            {
+                RefreshMachines();
+                if (_rescanCountdown <= 0)
+                {
+                    RescanFailFiles();
+                    _rescanCountdown = RescanIntervalSec;
+                }
+            }
             catch (Exception ex) { Logger.Warning($"[聚合监听] 心跳轮询异常: {ex.Message}"); }
             // 按秒递减，Stop 时最多 1 秒内退出
             for (int i = 0; i < _pollSec && !_stopping; i++)
             {
                 try { Thread.Sleep(1000); } catch { }
             }
+            _rescanCountdown -= _pollSec;
         }
+    }
+
+    /// <summary>
+    /// 兜底全量重扫：遍历各机台目录 fail-*.json 全部入队（INSERT OR IGNORE 幂等，
+    /// 已入库的直接忽略，零成本）。覆盖 FileSystemWatcher 漏事件/改名竞态等丢事件场景。
+    /// 复用处理线程的队列与重试逻辑，不在这里做 IO 解析。
+    /// </summary>
+    private void RescanFailFiles()
+    {
+        if (string.IsNullOrEmpty(_shareRoot) || !Directory.Exists(_shareRoot)) return;
+        int found = 0;
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories(_shareRoot))
+            {
+                foreach (var file in Directory.EnumerateFiles(dir, "fail-*.json"))
+                {
+                    Enqueue(file);
+                    found++;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[聚合监听] 兜底重扫失败: {ex.Message}");
+            return;
+        }
+        if (found > 0)
+            Logger.Info($"[聚合监听] 兜底重扫: 入队 {found} 个 fail 文件（幂等，重复处理零成本）");
     }
 
     /// <summary>扫描机台目录：新增/消失的目录更新缓存；读心跳判在线离线（翻转时触发 Changed）。</summary>
@@ -553,6 +658,7 @@ public class AggWatcher : IDisposable
                     Logger.Info($"[聚合监听] 机台 {st.Machine} {(online ? "上线" : "离线")}（HTTP LastSeen 超时判定）");
                     st.Online = online;
                     changed = true;
+                    if (!online) FireMachineOffline(st.Machine, st.LastSeen);
                 }
             }
             foreach (var gone in _machines.Keys
@@ -565,8 +671,9 @@ public class AggWatcher : IDisposable
 
     /// <summary>读并解析一台机的心跳文件，更新在线状态与 LastSeq/Queued。
     /// 读取或解析失败一律保持原状态（临时 IO 故障不能误报离线）。返回状态是否变化。
-    /// 在线判定与 HTTP 通道统一：心跳新鲜（机台端还在写）即确认存活，LastSeen=now；
-    /// 机台停推后 LastSeen 停在最后确认点，超时自然判离线。</summary>
+    /// 在线判定（v3.4.2 改）：以 heartbeat.json 的**文件写时间**（LastWriteTime）为准 ——
+    /// 机台端每次写心跳都刷新文件时间戳，聚合端拿它跟本机时钟比，不依赖机台时钟（时钟漂移不再误判）。
+    /// JSON 内 ts 仅用于展示；文件写时间陈旧 → 不刷新 LastSeen，超时自然判离线。</summary>
     private bool UpdateHeartbeat(string dir, MachineState st)
     {
         var hbPath = Path.Combine(dir, "heartbeat.json");
@@ -589,18 +696,22 @@ public class AggWatcher : IDisposable
                 Logger.Warning($"[聚合监听] 心跳解析失败，保持原状态 {hbPath}: {ex.Message}");
                 return false;
             }
-            if (!TryParseTs(ts, out var hbTime))
+
+            // 文件写时间即心跳新鲜度基准；机台时钟（ts）只展示不判活
+            DateTime hbWrite;
+            try { hbWrite = File.GetLastWriteTime(hbPath); }
+            catch (Exception ex)
             {
-                Logger.Warning($"[聚合监听] 心跳 ts 无法解析，保持原状态 {hbPath}: ts='{ts}'");
+                Logger.Warning($"[聚合监听] 心跳文件写时间读取失败，保持原状态 {hbPath}: {ex.Message}");
                 return false;
             }
 
             lock (_lock)
             {
                 bool changed = false;
-                // 心跳新鲜（写入时间距现在不超超时）才算机台确认存活：刷新 LastSeen；
+                // 心跳文件新鲜（写时间距现在不超超时）才算机台确认存活：刷新 LastSeen；
                 // 陈旧心跳（机台已停推）不刷新，LastSeen 停在最后确认点，超时后判离线
-                if ((DateTime.Now - hbTime).TotalSeconds <= _heartbeatTimeoutSec)
+                if ((DateTime.Now - hbWrite).TotalSeconds <= _heartbeatTimeoutSec)
                     st.LastSeen = DateTime.Now;
                 var online = (DateTime.Now - st.LastSeen).TotalSeconds <= _heartbeatTimeoutSec;
                 if (online != st.Online)
@@ -608,6 +719,7 @@ public class AggWatcher : IDisposable
                     Logger.Info($"[聚合监听] 机台 {st.Machine} {(online ? "上线" : "离线")}（心跳 {ts}）");
                     st.Online = online;
                     changed = true;
+                    if (!online) FireMachineOffline(st.Machine, st.LastSeen);
                 }
                 if (st.LastHeartbeat != ts) changed = true;
                 st.LastHeartbeat = ts;
@@ -623,8 +735,10 @@ public class AggWatcher : IDisposable
         }
     }
 
+    // ==================== 事件 ====================
+
     /// <summary>解析 "yyyy-MM-dd HH:mm:ss"；先走 TimeUtil.Normalize（兼容 ISO/数字等怪格式），
-    /// 再用 TryParseExact 兜底。失败返回 false。</summary>
+    /// 再用 TryParseExact 兜底。失败返回 false。（HTTP 心跳 ts 未来时间校验用）</summary>
     private static bool TryParseTs(string ts, out DateTime dt)
     {
         var norm = TimeUtil.Normalize(ts);
@@ -633,13 +747,18 @@ public class AggWatcher : IDisposable
             CultureInfo.InvariantCulture, DateTimeStyles.None, out dt);
     }
 
-    // ==================== 事件 ====================
-
     /// <summary>回调异常不能影响后台线程，统一包一层。</summary>
     private void TryFireChanged()
     {
         try { Changed?.Invoke(); }
         catch (Exception ex) { Logger.Warning($"[聚合监听] Changed 回调异常: {ex.Message}"); }
+    }
+
+    /// <summary>触发机台离线事件（告警用）。回调异常不影响后台线程。</summary>
+    private void FireMachineOffline(string machine, DateTime lastSeen)
+    {
+        try { MachineOffline?.Invoke(machine, lastSeen); }
+        catch (Exception ex) { Logger.Warning($"[聚合监听] MachineOffline 回调异常: {ex.Message}"); }
     }
 
     public void Dispose() => Stop();

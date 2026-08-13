@@ -18,6 +18,9 @@ namespace FctAggregator;
 ///   POST /api/heartbeat   heartbeat 处理
 ///   其他路径 404；非 POST 405；body 超 1MB 413；非法 JSON / 根路径 type 不明 400。
 ///
+/// 鉴权（v3.4.2）：构造传入共享 token（agg_token，空串=不启用）。配置后所有请求
+/// 校验 X-Agg-Token 头，缺失或不匹配回 403 —— 机台端 AgentPusher 会自动带同配置 token。
+///
 /// 响应策略：fail/heartbeat 处理一律回 200（回调异常也回 200 —— 机台端不因聚合端
 /// 逻辑错误重推，重推压力由 (machine, seq) 幂等兜底）；协议错误（路径/方法/超限/坏 JSON）回 4xx。
 /// </summary>
@@ -25,22 +28,28 @@ public class HttpIngest : IDisposable
 {
     private const int MaxBodyBytes = 1024 * 1024;   // body 上限 1MB，超限 413
     private const int ReadChunk = 16384;
+    /// <summary>共享 token 请求头名（与 AgentPusher.TokenHeader 同值，机台端按此携带）。</summary>
+    public const string TokenHeader = "X-Agg-Token";
 
     private readonly int _port;
     private readonly Action<string> _onFail;
     private readonly Action<string> _onHeartbeat;
+    private readonly string _token;   // 共享 token；空串 = 不启用鉴权
 
     private readonly object _lock = new();
     private HttpListener? _listener;
     private Thread? _acceptThread;
     private long _receivedCount;
 
-    /// <summary>构造并绑定回调：onFail 收 fail JSON（机台 POST 的原始字符串），onHeartbeat 收心跳 JSON。</summary>
-    public HttpIngest(int port, Action<string> onFail, Action<string> onHeartbeat)
+    /// <summary>构造并绑定回调：onFail 收 fail JSON（机台 POST 的原始字符串），onHeartbeat 收心跳 JSON。
+    /// token 为聚合端共享访问令牌（agg_token），空串不校验（兼容无鉴权部署）。</summary>
+    public HttpIngest(int port, Action<string> onFail, Action<string> onHeartbeat, string token = "")
     {
         _port = port;
         _onFail = onFail;
         _onHeartbeat = onHeartbeat;
+        _token = token ?? "";
+        if (_token.Length > 0) Logger.Info($"[HTTP 接收] 已启用 agg_token 鉴权（不匹配回 403）");
     }
 
     /// <summary>HttpListener 是否成功开启（Start 失败时 false，GUI 据此显示失败状态）。</summary>
@@ -137,6 +146,18 @@ public class HttpIngest : IDisposable
         {
             using var resp = ctx.Response;
 
+            // 鉴权：配置了 agg_token 后所有请求必须带 X-Agg-Token，缺失/不匹配 403
+            if (_token.Length > 0)
+            {
+                var got = ctx.Request.Headers[TokenHeader] ?? "";
+                if (got.Length == 0 || !string.Equals(got, _token, StringComparison.Ordinal))
+                {
+                    Logger.Warning($"[HTTP 接收] 403: agg_token 缺失或不匹配（{ctx.Request.RemoteEndPoint}）");
+                    resp.StatusCode = 403;
+                    return;
+                }
+            }
+
             if (!string.Equals(ctx.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase))
             {
                 resp.StatusCode = 405;   // Method Not Allowed
@@ -188,9 +209,16 @@ public class HttpIngest : IDisposable
                 if (route == "fail") _onFail(body);
                 else _onHeartbeat(body);
             }
+            catch (AggIngestException ex)
+            {
+                // 数据库写入失败：回 500 —— 机台端断线补偿队列收到非 2xx 自动重推
+                Logger.Error($"[HTTP 接收] fail 入库失败 machine={ex.Machine} seq={ex.Seq}: {ex.Message}");
+                resp.StatusCode = 500;
+                return;
+            }
             catch (Exception ex)
             {
-                // 聚合端逻辑错误绝不回 4xx/5xx：机台端不重推，重复风险交给 (machine, seq) 幂等兜底
+                // 其他聚合端逻辑错误绝不回 4xx/5xx：机台端不重推，重复风险交给 (machine, seq) 幂等兜底
                 Logger.Warning($"[HTTP 接收] {route} 回调异常（仍回 200）: {ex.Message}");
             }
             resp.StatusCode = 200;

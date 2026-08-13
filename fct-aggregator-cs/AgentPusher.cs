@@ -36,6 +36,8 @@ public class AgentPusher
 
     /// <summary>http 直推复用单例；Timeout 5 秒，聚合端必须本地网内，失败走断线补偿队列重试。</summary>
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
+    /// <summary>共享 token 的请求头名（聚合端 HttpIngest/WebAggServer 按同名校验）。</summary>
+    public const string TokenHeader = "X-Agg-Token";
 
     private readonly AppConfig _cfg;
     private readonly Database _db;
@@ -188,27 +190,28 @@ public class AgentPusher
                 }
 
                 work.Sort((a, b) => a.Seq.CompareTo(b.Seq));
-                bool ok = true;
+                bool allOk = true;
                 int pushed = 0;
+                var sent = new List<AggQueueItem>(work.Count);
                 foreach (var item in work)
                 {
-                    if (_stopping) { ok = false; break; }
-                    if (!TrySend(item)) { ok = false; break; }
+                    if (_stopping) { allOk = false; break; }
+                    if (!TrySend(item)) { allOk = false; continue; }   // 失败保留在队列，下次只重推未成功的
+                    sent.Add(item);
                     if (++pushed % 200 == 0) CheckHeartbeat();
                 }
 
                 lock (_lock)
                 {
-                    if (ok)
+                    // 成功项按 seq 精确出队（不再整体 Clear）：部分失败时已成功的立即推进
+                    foreach (var s in sent)
                     {
-                        _pending.Clear();
-                        _pendingSeqs.Clear();
-                        long m = _maxSeq;
-                        foreach (var w in work) if (w.Seq > m) m = w.Seq;
-                        if (m > _maxSeq) { _maxSeq = m; _stateDirty = true; }
-                        _queueDirty = true;
+                        _pending.RemoveAll(x => x.Seq == s.Seq);
+                        _pendingSeqs.Remove(s.Seq);
+                        if (s.Seq > _maxSeq) { _maxSeq = s.Seq; _stateDirty = true; }
                     }
-                    // 失败：整队保留，下次整队重推（文件按 (machine,seq) 幂等，重复写无副作用）
+                    // 本轮有成功 → 队列有变化，落盘
+                    if (sent.Count > 0) _queueDirty = true;
                     if (_queueDirty || _stateDirty)
                     {
                         PersistQueueLocked();
@@ -216,7 +219,7 @@ public class AgentPusher
                     }
                 }
                 CheckHeartbeat();
-                _signal.WaitOne(ok ? 1000 : _retryMs);
+                _signal.WaitOne(allOk ? 1000 : _retryMs);
             }
         }
         catch (Exception ex) { Logger.Error($"[聚合推送] worker 异常: {ex.Message}"); }
@@ -247,13 +250,16 @@ public class AgentPusher
     /// <summary>按通道分发发送动作：smb=写文件，http=POST 结构化 JSON（队列/重试/续推不区分通道）。</summary>
     private bool TrySend(AggQueueItem item) => HttpMode ? TryPost(item) : TryPushFile(item);
 
-    /// <summary>http 直推：把与文件内容完全相同的 JSON 行（无尾换行）POST 到聚合端，返回是否成功。</summary>
+    /// <summary>http 直推：把与文件内容完全相同的 JSON 行（无尾换行）POST 到聚合端，返回是否成功。
+    /// 聚合端配置了 agg_token 时带共享 token 头（403 视为失败进重试队列，与断线同路径）。</summary>
     private bool TryPost(AggQueueItem item)
     {
         try
         {
             using var content = new StringContent(item.Json, Encoding.UTF8, "application/json");
-            var resp = _http.PostAsync(_cfg.AggHttpUrl, content).GetAwaiter().GetResult();
+            using var req = new HttpRequestMessage(HttpMethod.Post, _cfg.AggHttpUrl) { Content = content };
+            if (!string.IsNullOrEmpty(_cfg.AggToken)) req.Headers.Add(TokenHeader, _cfg.AggToken);
+            var resp = _http.Send(req);
             if (resp.IsSuccessStatusCode) return true;
             Logger.Warning($"{Chan} POST 失败 seq={item.Seq}: HTTP {(int)resp.StatusCode}");
             return false;
@@ -295,7 +301,9 @@ public class AgentPusher
             if (HttpMode)
             {
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                var resp = _http.PostAsync(_cfg.AggHttpUrl, content).GetAwaiter().GetResult();
+                using var req = new HttpRequestMessage(HttpMethod.Post, _cfg.AggHttpUrl) { Content = content };
+                if (!string.IsNullOrEmpty(_cfg.AggToken)) req.Headers.Add(TokenHeader, _cfg.AggToken);
+                var resp = _http.Send(req);
                 if (!resp.IsSuccessStatusCode)
                     Logger.Warning($"{Chan} 心跳 POST 失败: HTTP {(int)resp.StatusCode}");
             }
@@ -342,6 +350,7 @@ public class AgentPusher
             ["batch_timestamp"] = rec.BatchTimestamp,
             ["has_fail_items"] = rec.HasFailItems ? 1 : 0,
             ["file_size"] = rec.FileSize,
+            ["xml_content"] = ReadXmlContent(rec.XmlPath),   // 跨机台 XML 拉取（≤512KB 才带上，聚合端落盘后 Web 可下载）
         };
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
@@ -351,6 +360,23 @@ public class AgentPusher
             ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
             ["data"] = data,
         });
+    }
+
+    /// <summary>读取 XML 报告内容用于上送（跨机台拉取）。不存在/超 512KB/读取失败 → null（不带该字段）。</summary>
+    private static string? ReadXmlContent(string? xmlPath)
+    {
+        if (string.IsNullOrEmpty(xmlPath)) return null;
+        try
+        {
+            var fi = new FileInfo(xmlPath);
+            if (!fi.Exists || fi.Length <= 0 || fi.Length > 512 * 1024) return null;
+            return File.ReadAllText(xmlPath, Encoding.UTF8);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[聚合推送] 读取 XML 内容失败（跳过跨机台拉取）: {ex.Message}");
+            return null;
+        }
     }
 
     // ==================== 持久化 ====================

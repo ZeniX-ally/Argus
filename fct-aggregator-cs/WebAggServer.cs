@@ -47,11 +47,17 @@ public class WebAggServer : IDisposable
     private static readonly string LogFileFullPath =
         Path.GetFullPath(Path.Combine(AppConfig.BaseDir, "logs", "app.log"));
 
+    /// <summary>跨机台 XML 落盘目录（{BaseDir}/data/agg_xml）：聚合端收到的随事件上送 XML，
+    /// 与 resultsRoot 一并列入白名单放行（下载走本地文件，不依赖机台路径）。</summary>
+    private static readonly string AggXmlRoot =
+        Path.GetFullPath(Path.Combine(AppConfig.BaseDir, "data", "agg_xml"));
+
     private readonly int _port;
     private readonly AggWatcher _watcher;
     private readonly AggDatabase _db;
     private readonly string _resultsRoot;
     private readonly string _shareRoot;
+    private readonly string _token;   // 共享 token（agg_token）；空串 = 不启用鉴权
 
     private readonly object _lock = new();
     private HttpListener? _listener;
@@ -59,14 +65,17 @@ public class WebAggServer : IDisposable
     private long _receivedCount;
 
     /// <summary>构造：port=监听端口，watcher=聚合监听器（推接入库/机台状态），db=聚合库（明细查询），
-    /// resultsRoot=XML 报告白名单根目录（空串=拒绝全部文件下载），shareRoot=共享目录（看板页展示用）。</summary>
-    public WebAggServer(int port, AggWatcher watcher, AggDatabase db, string resultsRoot, string shareRoot)
+    /// resultsRoot=XML 报告白名单根目录（空串=拒绝全部文件下载），shareRoot=共享目录（看板页展示用）。
+    /// token=共享访问令牌（agg_token，空串=不启用鉴权；配置后浏览器访问需带 ?token= 或 X-Agg-Token 头）。</summary>
+    public WebAggServer(int port, AggWatcher watcher, AggDatabase db, string resultsRoot, string shareRoot, string token = "")
     {
         _port = port;
         _watcher = watcher;
         _db = db;
         _resultsRoot = resultsRoot ?? "";
         _shareRoot = shareRoot ?? "";
+        _token = token ?? "";
+        if (_token.Length > 0) Logger.Info($"[Web 服务] 已启用 agg_token 鉴权（看板需 ?token= 访问，推送需 X-Agg-Token 头）");
     }
 
     /// <summary>HttpListener 是否成功开启（Start 失败时 false，CLI 据此打印警告）。</summary>
@@ -163,6 +172,15 @@ public class WebAggServer : IDisposable
         {
             using var resp = ctx.Response;
 
+            // 鉴权（agg_token 配置后生效）：POST 推送校验 X-Agg-Token 头；
+            // GET 看板/API 校验头或 ?token= 查询参数（浏览器场景）。不匹配一律 403。
+            if (_token.Length > 0 && !Authorized(ctx))
+            {
+                Logger.Warning($"[Web 服务] 403: agg_token 缺失或不匹配（{ctx.Request.RemoteEndPoint} {ctx.Request.HttpMethod} {ctx.Request.Url?.AbsolutePath}）");
+                resp.StatusCode = 403;
+                return;
+            }
+
             var method = ctx.Request.HttpMethod.ToUpperInvariant();
             var path = ctx.Request.Url?.AbsolutePath ?? "";
             if (path.Length > 1) path = path.TrimEnd('/');   // 统一去掉尾斜杠（/ 除外）
@@ -189,6 +207,11 @@ public class WebAggServer : IDisposable
 
                 case "/api/fails":
                     if (method == "GET") { CountHit(); ServeFails(ctx); }
+                    else resp.StatusCode = 405;
+                    break;
+
+                case "/api/fails/count":
+                    if (method == "GET") { CountHit(); ServeFailsCount(ctx); }
                     else resp.StatusCode = 405;
                     break;
 
@@ -231,6 +254,14 @@ public class WebAggServer : IDisposable
 
     private void CountHit() => Interlocked.Increment(ref _receivedCount);
 
+    /// <summary>鉴权检查：header X-Agg-Token 或 query token 任一匹配即通过（聚合端未配置 token 时永不调用本方法）。</summary>
+    private bool Authorized(HttpListenerContext ctx)
+    {
+        var got = ctx.Request.Headers[HttpIngest.TokenHeader];
+        if (string.IsNullOrEmpty(got)) got = ctx.Request.QueryString["token"] ?? "";
+        return !string.IsNullOrEmpty(got) && string.Equals(got, _token, StringComparison.Ordinal);
+    }
+
     // ==================== GET 路由 ====================
 
     /// <summary>看板首页：内嵌 HTML（const 字符串，占位符替换共享目录/聚合库路径展示用）。</summary>
@@ -263,19 +294,43 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>FAIL 明细 JSON：limit 默认 200 上限 1000；machine 可选（空=全部机台）。</summary>
+    /// <summary>FAIL 明细 JSON：limit 默认 200 上限 1000；machine 可选（空=全部机台）；
+    /// offset 分页；keyword 对 SN/型号/失败原因模糊搜索。</summary>
     private void ServeFails(HttpListenerContext ctx)
     {
         try
         {
+            var q = ctx.Request.QueryString;
             var (limit, machine) = ReadLimitMachine(ctx);
-            var list = _db.QueryFails(limit, machine);
+            var offset = 0;
+            if (int.TryParse(q["offset"], out var o) && o > 0) offset = o;
+            var keyword = (q["q"] ?? "").Trim();
+            var list = _db.QueryFails(limit, machine, offset, keyword.Length == 0 ? null : keyword);
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(list, JsonOpts));
         }
         catch (Exception ex)
         {
             Logger.Warning($"[Web 服务] 查询 FAIL 明细失败: {ex.Message}");
             RespondText(ctx, 500, "查询 FAIL 明细失败");
+        }
+    }
+
+    /// <summary>FAIL 总数 JSON（分页用）：可选 machine/q 过滤，与 /api/fails 同条件。</summary>
+    private void ServeFailsCount(HttpListenerContext ctx)
+    {
+        try
+        {
+            var q = ctx.Request.QueryString;
+            var machine = (q["machine"] ?? "").Trim();
+            var keyword = (q["q"] ?? "").Trim();
+            var count = _db.FailCount(machine.Length == 0 ? "" : machine, keyword.Length == 0 ? null : keyword);
+            Respond(ctx, 200, "application/json; charset=utf-8",
+                Encoding.UTF8.GetBytes($"{{\"count\":{count}}}"));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 查询 FAIL 总数失败: {ex.Message}");
+            RespondText(ctx, 500, "查询 FAIL 总数失败");
         }
     }
 
@@ -501,6 +556,13 @@ public class WebAggServer : IDisposable
                 return;
             }
         }
+        catch (AggIngestException ex)
+        {
+            // 数据库写入失败：回 500 —— 机台端断线补偿队列收到非 2xx 自动重推
+            Logger.Error($"[Web 服务] fail 入库失败 machine={ex.Machine} seq={ex.Seq}: {ex.Message}");
+            ctx.Response.StatusCode = 500;
+            return;
+        }
         catch (Exception ex)
         {
             // 聚合端逻辑错误绝不回 4xx/5xx：机台端不重推，重复风险交给 (machine, seq) 幂等兜底
@@ -531,6 +593,11 @@ public class WebAggServer : IDisposable
 
         // 日志白名单：聚合服务日志始终可下载（部署排查用）
         if (string.Equals(full, LogFileFullPath, StringComparison.OrdinalIgnoreCase))
+            return File.Exists(full) ? 200 : 403;
+
+        // 跨机台 XML 目录放行（data/agg_xml/{machine}/{seq}.xml）
+        if (full.StartsWith(AggXmlRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase))
             return File.Exists(full) ? 200 : 403;
 
         if (string.IsNullOrEmpty(_resultsRoot)) return 403;   // 未配置白名单根：拒绝全部
@@ -691,6 +758,11 @@ public class WebAggServer : IDisposable
   a.xml:hover { text-decoration: underline; }
   #exportLink { display: inline-block; margin-top: 14px; color: #4c9aff; text-decoration: none; font-size: 13px; }
   #exportLink:hover { text-decoration: underline; }
+  .filters { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+  .filters input { background: #20242d; border: 1px solid #2f3542; color: #d8dee9; border-radius: 4px; padding: 6px 10px; font-size: 13px; flex: 1; max-width: 360px; }
+  .filters input:focus { outline: none; border-color: #4c9aff; }
+  .pager { display: flex; gap: 10px; margin-top: 12px; align-items: center; color: #9aa3b2; font-size: 13px; }
+  .pager button:disabled { opacity: .4; cursor: default; }
   footer { margin-top: 18px; color: #5c6470; font-size: 12px; line-height: 1.8; }
 </style>
 </head>
@@ -710,6 +782,12 @@ public class WebAggServer : IDisposable
 <div id="dashView">
 <div class="cards" id="cards"><div class="empty">加载中...</div></div>
 
+<div class="filters">
+  <input type="text" id="searchBox" placeholder="搜索 SN / 型号 / 失败原因..." value="">
+  <button id="btnSearch">搜索</button>
+  <button id="btnClearSearch">清空</button>
+</div>
+
 <table>
   <thead>
     <tr><th>时间</th><th>机台</th><th>型号</th><th>SN</th><th>测试日期</th><th>失败原因</th><th>测试员</th><th>结果</th><th>报告</th></tr>
@@ -717,8 +795,14 @@ public class WebAggServer : IDisposable
   <tbody id="rows"><tr><td colspan="9" class="empty">暂无数据</td></tr></tbody>
 </table>
 
-<a id="exportLink" href="/api/export.csv">导出 CSV</a>
+<div class="pager">
+  <button id="btnPrev">上一页</button>
+  <span id="pageInfo">第 1 页</span>
+  <button id="btnNext">下一页</button>
+  <span id="totalInfo"></span>
 </div>
+
+<a id="exportLink" href="/api/export.csv">导出 CSV</a></div>
 
 <div id="filesView" style="display:none">
   <div class="files-bar">浏览根目录：<span id="fileRoot"></span></div>
@@ -738,27 +822,118 @@ public class WebAggServer : IDisposable
 </footer>
 
 <script>
+// ==================== 鉴权（agg_token 配置后） ====================
+// token 来源：URL ?token= 或 localStorage（刷新/翻页后保持）；所有 fetch 统一带 X-Agg-Token 头。
+var AGG_TOKEN = new URLSearchParams(location.search).get("token") || localStorage.getItem("agg_token") || "";
+if (AGG_TOKEN) localStorage.setItem("agg_token", AGG_TOKEN);
+
+function apiHeaders() {
+  var h = { "Content-Type": "application/json" };
+  if (AGG_TOKEN) h["X-Agg-Token"] = AGG_TOKEN;
+  return h;
+}
+
+async function apiFetch(url) {
+  var res = await fetch(url, { headers: apiHeaders() });
+  if (res.status === 403 && AGG_TOKEN) {
+    // token 失效（服务端改了 token）：清掉本地缓存，提示重新带 ?token= 访问
+    localStorage.removeItem("agg_token");
+    AGG_TOKEN = "";
+  }
+  return res;
+}
+
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
 }
 
+// ==================== 搜索 / 分页 ====================
+var PAGE_SIZE = 100;
+var curPage = 0;         // 0 起
+var curKeyword = "";
+var failTotal = -1;      // -1 = 未知（还没查到）
+
+function buildFailsUrl(offset) {
+  var url = "/api/fails?limit=" + PAGE_SIZE + "&offset=" + offset;
+  if (curKeyword) url += "&q=" + encodeURIComponent(curKeyword);
+  return url;
+}
+
+function renderPager() {
+  document.getElementById("pageInfo").textContent = "第 " + (curPage + 1) + " 页";
+  document.getElementById("btnPrev").disabled = curPage <= 0;
+  document.getElementById("btnNext").disabled = failTotal < 0 || (curPage + 1) * PAGE_SIZE >= failTotal;
+  document.getElementById("totalInfo").textContent = failTotal >= 0 ? "共 " + failTotal + " 条" : "";
+}
+
+async function refreshFails() {
+  var res = await apiFetch(buildFailsUrl(curPage * PAGE_SIZE));
+  if (!res.ok) return;
+  renderFails(await res.json());
+  var cres = await apiFetch("/api/fails/count?limit=1" + (curKeyword ? "&q=" + encodeURIComponent(curKeyword) : ""));
+  if (cres.ok) {
+    var cj = await cres.json();
+    if (typeof cj.count === "number") failTotal = cj.count;
+  }
+  renderPager();
+}
+
 async function refresh() {
   try {
     var res = await Promise.all([
-      fetch("/api/machines"),
-      fetch("/api/fails?limit=200")
+      apiFetch("/api/machines"),
+      refreshFails()
     ]);
-    if (!res[0].ok || !res[1].ok) return;
+    if (!res[0].ok) return;
     var machines = await res[0].json();
-    var fails = await res[1].json();
     renderMachines(machines);
-    renderFails(fails);
+    checkOfflineBeep(machines);
     var total = 0;
     for (var i = 0; i < machines.length; i++) total += (machines[i].FailCount || 0);
     document.getElementById("totalFails").textContent = total;
   } catch (e) { /* 服务未就绪时静默，下轮再试 */ }
+}
+
+// ==================== 离线声音提醒 ====================
+// 机台从在线 → 离线翻转时播一次短蜂鸣（Web Audio，无需外部资源）。
+// 首次加载不响（prevOnline 为空表）；同一机台重复翻转靠音频节流（1 秒内不连响）。
+var prevOnline = null;      // { machine: bool, ... }
+var lastBeepAt = 0;
+
+function checkOfflineBeep(machines) {
+  var now = Date.now();
+  if (prevOnline) {
+    for (var i = 0; i < machines.length; i++) {
+      var m = machines[i];
+      var was = prevOnline[m.Machine];
+      if (was === true && m.Online === false && now - lastBeepAt > 1000) {
+        playBeep();
+        lastBeepAt = now;
+        break;
+      }
+    }
+  }
+  prevOnline = {};
+  for (var i = 0; i < machines.length; i++) prevOnline[machines[i].Machine] = machines[i].Online;
+}
+
+function playBeep() {
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var ctx = new AC();
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.value = 880;
+    gain.gain.value = 0.15;
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.35);
+    setTimeout(function () { ctx.close(); }, 600);
+  } catch (e) { /* 音频不可用就静默 */ }
 }
 
 function renderMachines(list) {
@@ -782,6 +957,10 @@ function renderMachines(list) {
   box.innerHTML = html;
 }
 
+function xmlHref(p) {
+  return p + (AGG_TOKEN ? (p.indexOf("?") >= 0 ? "&" : "?") + "token=" + encodeURIComponent(AGG_TOKEN) : "");
+}
+
 function renderFails(list) {
   var tb = document.getElementById("rows");
   if (!list || list.length === 0) {
@@ -800,17 +979,45 @@ function renderFails(list) {
       '<td class="reason" title="' + esc(r.FailReason) + '">' + esc(r.FailReason) + '</td>' +
       '<td>' + esc(r.Tester) + '</td>' +
       '<td>' + esc(r.Result) + '</td>' +
-      '<td><a class="xml" href="/api/file?id=' + r.Id + '" target="_blank">XML</a></td>' +
+      '<td><a class="xml" href="' + xmlHref('/api/file?id=' + r.Id) + '" target="_blank">XML</a></td>' +
       '</tr>';
   }
   tb.innerHTML = html;
 }
 
 document.getElementById("btnRefresh").onclick = refresh;
+document.getElementById("btnSearch").onclick = function () {
+  curKeyword = document.getElementById("searchBox").value.trim();
+  curPage = 0;
+  failTotal = -1;
+  refresh();
+};
+document.getElementById("btnClearSearch").onclick = function () {
+  document.getElementById("searchBox").value = "";
+  curKeyword = "";
+  curPage = 0;
+  failTotal = -1;
+  refresh();
+};
+document.getElementById("searchBox").onkeydown = function (e) {
+  if (e.key === "Enter") document.getElementById("btnSearch").onclick();
+};
+document.getElementById("btnPrev").onclick = function () {
+  if (curPage > 0) { curPage--; refresh(); }
+};
+document.getElementById("btnNext").onclick = function () {
+  if (failTotal < 0 || (curPage + 1) * PAGE_SIZE < failTotal) { curPage++; refresh(); }
+};
 refresh();
 setInterval(function () {
   if (document.getElementById("autoRefresh").checked) refresh();
 }, 3000);
+
+// CSV 导出链接：带 token 时附加 ?token= 让 <a href> 直接下载也能过鉴权
+(function () {
+  var el = document.getElementById("exportLink");
+  if (el && AGG_TOKEN) el.href = "/api/export.csv?token=" + encodeURIComponent(AGG_TOKEN);
+})();
 
 // ==================== 页签切换 ====================
 function showTab(name) {
@@ -859,7 +1066,7 @@ async function loadFiles() {
   renderCrumb();
   try {
     var url = "/api/list" + (current ? "?path=" + encodeURIComponent(current) : "");
-    var res = await fetch(url);
+    var res = await apiFetch(url);
     if (res.status === 403 || res.status === 404) {
       msg.textContent = await res.text();
       tb.innerHTML = '<tr><td colspan="4" class="empty">无法浏览该目录</td></tr>';
@@ -885,7 +1092,7 @@ async function loadFiles() {
         '<td>' + (it.IsDir ? "目录" : fmtSize(it.Size)) + '</td>' +
         '<td>' + esc(it.Modified) + '</td>' +
         '<td>' + (it.IsDir ? "" :
-          '<a class="xml" href="/api/file?path=' + encodeURIComponent(it.Path) + '" target="_blank">下载</a>') + '</td>' +
+          '<a class="xml" href="' + xmlHref('/api/file?path=' + encodeURIComponent(it.Path)) + '" target="_blank">下载</a>') + '</td>' +
         '</tr>';
     }
     tb.innerHTML = html;
@@ -904,7 +1111,7 @@ document.getElementById("fileRows").onclick = function (ev) {
     current = (current ? current.replace(/[\\\/]+$/, "") + "/" : "") + td.getAttribute("data-name");
     loadFiles();
   } else {
-    window.open("/api/file?path=" + encodeURIComponent(p), "_blank");
+    window.open(xmlHref("/api/file?path=" + encodeURIComponent(p)), "_blank");
   }
 };
 

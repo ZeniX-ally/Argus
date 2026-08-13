@@ -121,16 +121,20 @@ public class AggDatabase : IDisposable
         }
     }
 
-    /// <summary>某机台 FAIL 总数；machine 为空串/null 时统计全库。</summary>
-    public long FailCount(string machine)
+    /// <summary>某机台 FAIL 总数；machine 为空串/null 时统计全库。keyword 非空时加模糊过滤（分页总数用）。</summary>
+    public long FailCount(string machine, string? keyword = null)
     {
         lock (_sync)
         {
             Open();
             using var cmd = _conn!.CreateCommand();
-            var where = string.IsNullOrEmpty(machine) ? "" : "WHERE machine = @m";
+            var conds = new List<string>();
+            if (!string.IsNullOrEmpty(machine)) conds.Add("machine = @m");
+            if (!string.IsNullOrEmpty(keyword)) conds.Add("(sn LIKE @kw OR model LIKE @kw OR fail_reason LIKE @kw)");
+            var where = conds.Count > 0 ? "WHERE " + string.Join(" AND ", conds) : "";
             cmd.CommandText = $"SELECT COUNT(*) FROM agg_records {where}";
             if (!string.IsNullOrEmpty(machine)) cmd.Parameters.AddWithValue("@m", machine);
+            if (!string.IsNullOrEmpty(keyword)) cmd.Parameters.AddWithValue("@kw", $"%{keyword}%");
             return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
         }
     }
@@ -163,24 +167,34 @@ public class AggDatabase : IDisposable
         }
     }
 
-    /// <summary>按 ingest_ts 倒序取最近 FAIL 明细；machine 非空时只取该机台。</summary>
-    public List<AggFailRow> QueryFails(int limit, string? machine = null)
+    /// <summary>按 ingest_ts 倒序取最近 FAIL 明细；machine 非空时只取该机台。
+    /// offset 用于分页（0=从最新开始）；keyword 非空时对 SN/型号/失败原因做 LIKE 模糊搜索。</summary>
+    public List<AggFailRow> QueryFails(int limit, string? machine = null, int offset = 0, string? keyword = null)
     {
         lock (_sync)
         {
             Open();
             using var cmd = _conn!.CreateCommand();
-            var where = string.IsNullOrEmpty(machine) ? "" : "WHERE machine = @m";
+            var where = new List<string>();
+            if (!string.IsNullOrEmpty(machine)) where.Add("machine = @m");
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                // 注入防护：keyword 参数化；通配符由用户输入，LIKE 不命中也不出错
+                where.Add("(sn LIKE @kw OR model LIKE @kw OR fail_reason LIKE @kw)");
+            }
+            var whereSql = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
             cmd.CommandText = $@"
                 SELECT id, machine, seq, type, ts, ingest_ts,
                        station_id, model, category, test_date, sn,
                        result, fail_reason, tester, panel_status, batch_timestamp,
                        has_fail_items, file_size, xml_path
-                  FROM agg_records {where}
+                  FROM agg_records {whereSql}
                  ORDER BY ingest_ts DESC, id DESC
-                 LIMIT @lim";
+                 LIMIT @lim OFFSET @off";
             if (!string.IsNullOrEmpty(machine)) cmd.Parameters.AddWithValue("@m", machine);
+            if (!string.IsNullOrEmpty(keyword)) cmd.Parameters.AddWithValue("@kw", $"%{keyword}%");
             cmd.Parameters.AddWithValue("@lim", limit <= 0 ? 200 : limit);
+            cmd.Parameters.AddWithValue("@off", offset < 0 ? 0 : offset);
             var list = new List<AggFailRow>();
             using var r = cmd.ExecuteReader();
             while (r.Read()) list.Add(ReadRow(r));

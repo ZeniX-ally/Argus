@@ -11,6 +11,9 @@
     "todo_scan_days": 30,
     "agg_enabled": false,
     "agg_share_root": "",
+    "agg_token": "",
+    "agg_webhook_url": "",
+    "agg_summary_minutes": 60,
     "fts": {
         "hookspool_path": "C:\\FTS\\HookSpool",
         "results_path": "D:/Results"

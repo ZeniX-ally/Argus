@@ -32,6 +32,15 @@ public class AppConfig
     public string AggHttpUrl { get; set; } = "";
     /// <summary>聚合端 HTTP 监听端口（聚合端用，机台端不用管）。config.json: agg_http_port。</summary>
     public int AggHttpPort { get; set; } = 8080;
+    /// <summary>
+    /// 聚合共享访问令牌（聚合端/机台端/看板三方共用，鉴权用）。config.json: agg_token。
+    /// 空串=不启用鉴权（兼容现有部署）；配置后机台推送 / Web 看板 / API 一律校验，不匹配 403。
+    /// </summary>
+    public string AggToken { get; set; } = "";
+    /// <summary>聚合端飞书群机器人 webhook（Phase 3 汇总/离线告警用）。config.json: agg_webhook_url。</summary>
+    public string AggWebhookUrl { get; set; } = "";
+    /// <summary>聚合汇总推送间隔（分钟，Phase 3）。config.json: agg_summary_minutes。</summary>
+    public int AggSummaryMinutes { get; set; } = 60;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -78,6 +87,11 @@ public class AppConfig
                 if (root.TryGetProperty("agg_http_port", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var port) && port >= 1 && port <= 65535)
                     cfg.AggHttpPort = port;
+                if (root.TryGetProperty("agg_token", out v)) cfg.AggToken = v.GetString() ?? "";
+                if (root.TryGetProperty("agg_webhook_url", out v)) cfg.AggWebhookUrl = v.GetString() ?? "";
+                if (root.TryGetProperty("agg_summary_minutes", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var m) && m >= 1)
+                    cfg.AggSummaryMinutes = m;
                 return cfg;
             }
             else

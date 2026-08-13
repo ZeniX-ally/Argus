@@ -207,10 +207,12 @@ static class Program
         catch (Exception ex) { Logger.Error($"[聚合服务] 聚合库打开失败（后续插入会再试）: {ex.Message}"); }
 
         using var watcher = new AggWatcher(cfg.AggShareRoot, db, heartbeatTimeoutSec: 90, pollSec: 10);
-        using var server = new WebAggServer(cfg.AggHttpPort, watcher, db, cfg.ResultsRoot, cfg.AggShareRoot);
+        using var server = new WebAggServer(cfg.AggHttpPort, watcher, db, cfg.ResultsRoot, cfg.AggShareRoot, cfg.AggToken);
+        using var alert = new AggAlertService(watcher, db, cfg.AggWebhookUrl, cfg.AggSummaryMinutes);
 
         watcher.Start();
         server.Start();
+        alert.Start();
 
         if (server.Listening)
         {
@@ -356,6 +358,9 @@ static class Program
             ["agg_transport"] = "http",
             ["agg_http_port"] = 8080,
             ["agg_share_root"] = "",
+            ["agg_token"] = "",
+            ["agg_webhook_url"] = "",
+            ["agg_summary_minutes"] = 60,
             ["log_level"] = "INFO",
         };
         return JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true });
