@@ -74,9 +74,9 @@ public sealed class TodoCard : BoardCardBase
 
         using (var path = MaintenanceDraw.Rounded(r, 5))
         {
-            using (var bg = new SolidBrush(Hover ? Color.FromArgb(255, 249, 245) : Color.FromArgb(255, 245, 240)))
+            using (var bg = new SolidBrush(Hover ? Color.FromArgb(38, 34, 32) : Color.FromArgb(30, 27, 25)))
                 g.FillPath(bg, path);
-            using var pen = new Pen(Hover ? Accent : Color.FromArgb(236, 176, 160), Hover ? 1.4f : 1f)
+            using var pen = new Pen(Hover ? Accent : Color.FromArgb(148, 88, 70), Hover ? 1.4f : 1f)
             { DashStyle = Hover ? DashStyle.Solid : DashStyle.Dash };
             g.DrawPath(pen, path);
         }
@@ -92,7 +92,7 @@ public sealed class TodoCard : BoardCardBase
         const int tagW = 54;
         TextRenderer.DrawText(g, Item.Title, TitleFont,
             new Rectangle(left, 6, Math.Max(20, Width - left - tagW - 10), 18),
-            Color.FromArgb(32, 40, 52), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Color.FromArgb(226, 232, 240), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
         var tag = new Rectangle(Width - tagW - 6, 7, tagW, 16);
         using (var tp = MaintenanceDraw.Rounded(tag, 8))
@@ -116,7 +116,7 @@ public sealed class TodoCard : BoardCardBase
             : $"区间 {Item.RangeCount} 次 · 累计 {Item.TotalCount} 次";
         TextRenderer.DrawText(g, counts, BodyFont,
             new Rectangle(pr.Right + 6, 28, Math.Max(20, Width - pr.Right - 14), 16),
-            Color.FromArgb(150, 70, 60), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Color.FromArgb(248, 150, 130), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
         // ---- 第 3 行: 合并信息 / 型号 · 机台 ----
         var merged = Item.VariantCount > 1 ? $"已合并 {Item.VariantCount} 个同类项 · " : "";
@@ -124,7 +124,7 @@ public sealed class TodoCard : BoardCardBase
         var station = string.IsNullOrWhiteSpace(Item.StationId) ? "—" : Item.StationId;
         TextRenderer.DrawText(g, $"{merged}{model} · {station}", MetaFont,
             new Rectangle(left, 48, Math.Max(20, Width - left - 8), 16),
-            Color.FromArgb(140, 120, 118), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Color.FromArgb(180, 160, 156), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
         // ---- 合并的 fail 项（卡上直接列前两项，剩下的用 +N 提示，完整清单看单击预览）----
         int y = 64;
@@ -137,17 +137,17 @@ public sealed class TodoCard : BoardCardBase
                 text += $"   +{Item.VariantCount - lines} 项";
             TextRenderer.DrawText(g, text, MetaFont,
                 new Rectangle(left + 2, y, Math.Max(20, Width - left - 10), 16),
-                Color.FromArgb(120, 96, 96), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                Color.FromArgb(190, 160, 156), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             y += 16;
         }
 
         // ---- 最后一行: 最近出现 + 操作提示 ----
         TextRenderer.DrawText(g, $"最近 {ShortTime(Item.LastSeen)}", MetaFont,
             new Rectangle(left, y + 2, Math.Max(20, Width - left - 96), 16),
-            Color.FromArgb(150, 130, 128), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Color.FromArgb(190, 170, 166), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, Hover ? "单击预览" : "必须确认", MetaFont,
             new Rectangle(Width - 92, y + 2, 86, 16),
-            Color.FromArgb(180, 120, 110), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            Color.FromArgb(240, 160, 140), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
     }
 
     /// <summary>预览弹窗用的内容（与卡片同一份数据，避免两处写法走歧）。</summary>
@@ -270,7 +270,7 @@ public class TodoRangeForm : Form
         var note = new Label
         {
             Dock = DockStyle.Bottom, Height = 22, Padding = new Padding(16, 0, 16, 0),
-            ForeColor = Color.FromArgb(140, 150, 168),
+            ForeColor = Color.FromArgb(148, 163, 184),
             Text = "只影响「待办」列的显示范围，不会删除任何待办。",
         };
 

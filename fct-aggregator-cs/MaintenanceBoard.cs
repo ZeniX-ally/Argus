@@ -43,7 +43,7 @@ public class MaintenanceBoard : Panel
     private void BuildUi()
     {
         AutoScroll = true;
-        BackColor = Color.FromArgb(244, 246, 249);
+        BackColor = Color.FromArgb(18, 22, 29);
         Padding = new Padding(6, 4, 6, 4);
 
         var defs = MaintenanceMeta.Statuses;
@@ -432,7 +432,7 @@ public class MaintenanceBoard : Panel
             _more = new Label
             {
                 Dock = DockStyle.Bottom, Height = 20, Visible = false,
-                ForeColor = Color.FromArgb(120, 132, 150), Font = HintFont,
+                ForeColor = Color.FromArgb(148, 163, 184), Font = HintFont,
                 TextAlign = ContentAlignment.MiddleCenter,
             };
 
@@ -442,7 +442,7 @@ public class MaintenanceBoard : Panel
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 AutoScroll = true,
-                BackColor = Color.FromArgb(236, 239, 244),
+                BackColor = Color.FromArgb(17, 21, 28),
                 Padding = new Padding(2, 4, 2, 4),
             };
             _cards.Paint += PaintCardsBackdrop;
@@ -600,7 +600,7 @@ public class MaintenanceBoard : Panel
         {
             if (_highlight == on) return;
             _highlight = on;
-            _cards.BackColor = on ? ControlPaint.Light(_def.Accent, 0.86f) : Color.FromArgb(236, 239, 244);
+            _cards.BackColor = on ? Color.FromArgb(24, 30, 40) : Color.FromArgb(17, 21, 28);
             _head.Invalidate();
         }
 
@@ -611,13 +611,13 @@ public class MaintenanceBoard : Panel
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var r = _head.ClientRectangle;
 
-            using (var bg = new SolidBrush(_highlight ? ControlPaint.Light(_def.Accent, 0.75f) : Color.White))
+            using (var bg = new SolidBrush(_highlight ? Color.FromArgb(30, 41, 59) : Theme.Surface))
                 g.FillRectangle(bg, r);
             using (var bar = new SolidBrush(_def.Accent))
                 g.FillRectangle(bar, new Rectangle(0, r.Bottom - 3, r.Width, 3));
 
             TextRenderer.DrawText(g, _def.Zh, HeadFont, new Rectangle(8, 0, r.Width - 54, r.Height - 3),
-                Color.FromArgb(38, 46, 58), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                Color.FromArgb(203, 213, 225), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
             var badge = _total.ToString();
             var bw = Math.Max(24, TextRenderer.MeasureText(badge, BadgeFont).Width + 12);
@@ -635,7 +635,7 @@ public class MaintenanceBoard : Panel
                 var tw = TextRenderer.MeasureText(t, BadgeFont).Width + 12;
                 var tr = new Rectangle(br.X - tw - 4, br.Y, tw, 18);
                 using (var path = MaintenanceDraw.Rounded(tr, 9))
-                using (var b = new SolidBrush(Color.FromArgb(197, 48, 48)))
+                using (var b = new SolidBrush(Color.FromArgb(248, 113, 113)))
                     g.FillPath(b, path);
                 TextRenderer.DrawText(g, t, BadgeFont, tr, Color.White,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
@@ -648,11 +648,11 @@ public class MaintenanceBoard : Panel
             var r = _cards.ClientRectangle;
             r.Inflate(-10, -10);
             if (r.Width <= 0 || r.Height <= 0) return;
-            using var pen = new Pen(Color.FromArgb(205, 212, 222)) { DashStyle = DashStyle.Dash };
+            using var pen = new Pen(Color.FromArgb(58, 72, 92)) { DashStyle = DashStyle.Dash };
             e.Graphics.DrawRectangle(pen, r.X, r.Y, r.Width, Math.Min(r.Height, 64));
             TextRenderer.DrawText(e.Graphics, "拖动卡片到此处", HintFont,
                 new Rectangle(r.X, r.Y, r.Width, Math.Min(r.Height, 64)),
-                Color.FromArgb(150, 160, 175),
+                Color.FromArgb(148, 163, 184),
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
     }
@@ -723,9 +723,9 @@ public sealed class MaintenanceCard : BoardCardBase
 
         using (var path = MaintenanceDraw.Rounded(r, 5))
         {
-            using (var bg = new SolidBrush(Hover ? Color.FromArgb(252, 253, 255) : Color.White))
+            using (var bg = new SolidBrush(Hover ? Color.FromArgb(38, 46, 58) : Theme.Surface))
                 g.FillPath(bg, path);
-            using (var pen = new Pen(Hover ? MaintenanceMeta.AccentOf(Record.Status) : Color.FromArgb(214, 220, 229)))
+            using (var pen = new Pen(Hover ? MaintenanceMeta.AccentOf(Record.Status) : Color.FromArgb(58, 72, 92)))
                 g.DrawPath(pen, path);
         }
 
@@ -739,17 +739,17 @@ public sealed class MaintenanceCard : BoardCardBase
         // 第 1 行: 故障项目 + 右上角 #ID
         TextRenderer.DrawText(g, Record.FailItem, TitleFont,
             new Rectangle(left, 7, Math.Max(20, Width - left - idW - 8), 18),
-            Color.FromArgb(32, 40, 52), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Color.FromArgb(226, 232, 240), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, $"#{Record.Id}", MetaFont,
             new Rectangle(Width - idW - 6, 7, idW, 18),
-            Color.FromArgb(160, 170, 184), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            Color.FromArgb(148, 163, 184), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
         // 第 2 行: 故障描述（v2.3.0 起不再显示设备 SN —— 维修记录不再关心 SN）
         var dev = !string.IsNullOrWhiteSpace(Record.FailReason) ? Record.FailReason
                 : !string.IsNullOrWhiteSpace(Record.Resolution) ? Record.Resolution : "—";
         TextRenderer.DrawText(g, dev, BodyFont,
             new Rectangle(left, 29, Math.Max(20, Width - left - 8), 16),
-            Color.FromArgb(88, 98, 114), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Color.FromArgb(148, 163, 184), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
         // 第 3 行: 严重度 · 维修人 · 最后更新
         var sevZh = MaintenanceMeta.SeverityZhOf(Record.Severity);
@@ -757,10 +757,10 @@ public sealed class MaintenanceCard : BoardCardBase
         var when = ShortTime(string.IsNullOrEmpty(Record.UpdatedAt) ? Record.CreatedAt : Record.UpdatedAt);
         TextRenderer.DrawText(g, $"{sevZh} · {who}", MetaFont,
             new Rectangle(left, 50, Math.Max(20, Width - left - 96), 16),
-            Color.FromArgb(128, 138, 154), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Color.FromArgb(148, 163, 184), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, when, MetaFont,
             new Rectangle(Width - 92, 50, 86, 16),
-            Color.FromArgb(150, 160, 175), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            Color.FromArgb(148, 163, 184), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
         // 第 4 行(仅合并过的记录): 合并了哪些原始 fail 项
         if (SourceItems.Count > 1)
@@ -769,7 +769,7 @@ public sealed class MaintenanceCard : BoardCardBase
                        (SourceItems.Count > 1 ? $"  +{SourceItems.Count - 1}" : "");
             TextRenderer.DrawText(g, text, MetaFont,
                 new Rectangle(left, 70, Math.Max(20, Width - left - 8), 16),
-                Color.FromArgb(150, 140, 120), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                Color.FromArgb(200, 180, 140), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         }
     }
 

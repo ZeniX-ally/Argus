@@ -238,8 +238,8 @@ public class DeviceStatusPanel : Panel
                 Color lampColor, statusColor; string statusText;
                 if (dev.Type == "com")
                 {
-                    if (dev.Online) { lampColor = Color.FromArgb(39, 174, 96); statusText = "在线"; statusColor = lampColor; }
-                    else { lampColor = Color.FromArgb(231, 76, 60); statusText = "离线"; statusColor = lampColor; }
+                    if (dev.Online) { lampColor = Color.FromArgb(52, 211, 153); statusText = "在线"; statusColor = lampColor; }
+                    else { lampColor = Color.FromArgb(248, 113, 113); statusText = "离线"; statusColor = lampColor; }
                 }
                 else { lampColor = Color.Silver; statusText = "USB"; statusColor = Color.Gray; }
 

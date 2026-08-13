@@ -10,30 +10,34 @@ namespace FctAggregator;
 /// </summary>
 public static class Theme
 {
-    // ==================== 颜色 ====================
-    /// <summary>工作区底色（极浅冷灰，衬托白色卡片；高级简约风）。</summary>
-    public static readonly Color Bg = Color.FromArgb(247, 248, 250);
-    /// <summary>卡片/面板底色。</summary>
-    public static readonly Color Surface = Color.White;
-    /// <summary>侧边导航底色（炭黑，中性克制的深底）。</summary>
-    public static readonly Color NavBg = Color.FromArgb(16, 20, 24);
-    public static readonly Color NavHover = Color.FromArgb(28, 34, 40);
-    public static readonly Color NavActive = Color.FromArgb(30, 36, 42);
-    public static readonly Color NavText = Color.FromArgb(150, 158, 166);
+    // ==================== 颜色（v3.4.6 深色工业监控风 / SCADA 基调） ====================
+    /// <summary>工作区底色（近黑蓝灰，工业监控面板感）。</summary>
+    public static readonly Color Bg = Color.FromArgb(14, 17, 23);
+    /// <summary>卡片/面板底色（比背景亮一档的深灰蓝）。</summary>
+    public static readonly Color Surface = Color.FromArgb(22, 27, 35);
+    /// <summary>更亮一档（悬停/强调区）。</summary>
+    public static readonly Color SurfaceHi = Color.FromArgb(30, 37, 48);
+    /// <summary>侧边导航底色（比背景更黑，突出层次）。</summary>
+    public static readonly Color NavBg = Color.FromArgb(10, 13, 18);
+    public static readonly Color NavHover = Color.FromArgb(24, 30, 40);
+    public static readonly Color NavActive = Color.FromArgb(22, 28, 38);
+    public static readonly Color NavText = Color.FromArgb(130, 142, 158);
     public static readonly Color NavTextActive = Color.White;
 
-    public static readonly Color Border = Color.FromArgb(231, 234, 240);
-    public static readonly Color TextMain = Color.FromArgb(15, 23, 42);
-    public static readonly Color TextSub = Color.FromArgb(100, 116, 139);
-    public static readonly Color TextFaint = Color.FromArgb(160, 174, 192);
+    public static readonly Color Border = Color.FromArgb(42, 52, 66);
+    public static readonly Color BorderHi = Color.FromArgb(58, 72, 92);
+    public static readonly Color TextMain = Color.FromArgb(226, 232, 240);
+    public static readonly Color TextSub = Color.FromArgb(148, 163, 184);
+    public static readonly Color TextFaint = Color.FromArgb(100, 116, 139);
 
-    // 唯一强调色 + 降饱和语义色（高级简约：彩色收敛，只留必要的语义）
-    public static readonly Color Primary = Color.FromArgb(37, 99, 235);
-    public static readonly Color Success = Color.FromArgb(22, 163, 74);
-    public static readonly Color Warning = Color.FromArgb(217, 119, 6);
-    public static readonly Color Danger = Color.FromArgb(220, 38, 38);
-    public static readonly Color Info = Color.FromArgb(13, 148, 136);
-    public static readonly Color Neutral = Color.FromArgb(100, 116, 139);
+    // SCADA 基调：青蓝主色 + 荧光语义色（黑底上亮、清晰、有"机器状态"感）
+    public static readonly Color Primary = Color.FromArgb(56, 189, 248);      // 亮青蓝
+    public static readonly Color PrimaryDim = Color.FromArgb(14, 165, 233);   // 深一档（激活条/边框）
+    public static readonly Color Success = Color.FromArgb(52, 211, 153);      // 荧光绿
+    public static readonly Color Warning = Color.FromArgb(251, 191, 36);      // 亮琥珀
+    public static readonly Color Danger = Color.FromArgb(248, 113, 113);      // 亮红
+    public static readonly Color Info = Color.FromArgb(34, 211, 238);         // 亮青
+    public static readonly Color Neutral = Color.FromArgb(148, 163, 184);
 
     // ==================== 字体 ====================
     private const string Family = "Microsoft YaHei UI";
@@ -43,11 +47,11 @@ public static class Theme
     public static readonly Font BodyBold = new(Family, 9F, FontStyle.Bold);
     public static readonly Font Small = new(Family, 8.25F);
     public static readonly Font Tiny = new(Family, 7.5F, FontStyle.Bold);
-    /// <summary>KPI 大数字。</summary>
-    public static readonly Font Number = new(Family, 21F, FontStyle.Bold);
-    public static readonly Font NumberSmall = new(Family, 15F, FontStyle.Bold);
-    /// <summary>统计明细的大数字（介于 KPI 与正文之间，v3.1.0.3 主页简约改版用）。</summary>
-    public static readonly Font NumberMid = new(Family, 17F, FontStyle.Bold);
+    /// <summary>KPI 大数字（监控风：偏大、醒目）。</summary>
+    public static readonly Font Number = new(Family, 24F, FontStyle.Bold);
+    public static readonly Font NumberSmall = new(Family, 17F, FontStyle.Bold);
+    /// <summary>统计明细的大数字（介于 KPI 与正文之间）。</summary>
+    public static readonly Font NumberMid = new(Family, 19F, FontStyle.Bold);
     public static readonly Font Mono = new("Consolas", 9F);
 
     // ==================== 尺寸 ====================
@@ -56,13 +60,17 @@ public static class Theme
     public const int StatusBarHeight = 26;
     /// <summary>自绘标题栏高度（v3.0.1：去掉系统标题栏，改炭黑自绘，与侧栏一体）。</summary>
     public const int TitleBarHeight = 34;
-    public const int Radius = 6;
+    public const int Radius = 8;
     public const int Gap = 10;
 
     // ==================== 绘制小工具 ====================
     public static GraphicsPath Rounded(Rectangle r, int radius = Radius) => MaintenanceDraw.Rounded(r, radius);
 
-    /// <summary>画一张白卡片（圆角 + 描边，可选顶部强调色条）。</summary>
+    /// <summary>
+    /// 画一张深色卡片（圆角 + 描边 + 可选顶部强调色条，SCADA 风）。
+    /// 卡片底色 <see cref="Surface"/>，hover 时边框提亮到 <see cref="BorderHi"/>；
+    /// accent 为强调色时左侧 3px 亮条（状态灯式的彩色指示）。
+    /// </summary>
     public static void DrawCard(Graphics g, Rectangle r, Color? accent = null, bool hover = false)
     {
         if (r.Width <= 2 || r.Height <= 2) return;
@@ -70,7 +78,7 @@ public static class Theme
         var rect = new Rectangle(r.X, r.Y, r.Width - 1, r.Height - 1);
         using var path = Rounded(rect);
         using (var b = new SolidBrush(Surface)) g.FillPath(b, path);
-        using (var p = new Pen(hover ? Primary : Border)) g.DrawPath(p, path);
+        using (var p = new Pen(hover ? BorderHi : Border)) g.DrawPath(p, path);
         if (accent != null)
         {
             // 左侧 3px 强调条（用裁剪保证不出圆角）
@@ -82,7 +90,7 @@ public static class Theme
         }
     }
 
-    /// <summary>画一个状态胶囊（顶栏用）。返回占用宽度。</summary>
+    /// <summary>画一个状态胶囊（顶栏用）。返回占用宽度。深色版：半透明底 + 彩色边框 + 发光小圆点。</summary>
     public static int DrawChip(Graphics g, Point at, string text, Color color, Font? font = null)
     {
         font ??= Small;
@@ -91,33 +99,36 @@ public static class Theme
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using (var path = Rounded(r, 11))
         {
-            using var b = new SolidBrush(Color.FromArgb(24, color));
+            using var b = new SolidBrush(Color.FromArgb(26, color));
             g.FillPath(b, path);
-            using var p = new Pen(Color.FromArgb(70, color));
+            using var p = new Pen(Color.FromArgb(110, color));
             g.DrawPath(p, path);
         }
-        // 左侧小圆点
+        // 左侧发光小圆点（亮色实心 + 外圈光晕）
         using (var dot = new SolidBrush(color))
-            g.FillEllipse(dot, r.X + 8, r.Y + 8, 6, 6);
+            g.FillEllipse(dot, r.X + 8, r.Y + 7, 7, 7);
+        using (var glow = new Pen(Color.FromArgb(90, color), 1.5f))
+            g.DrawEllipse(glow, r.X + 6, r.Y + 5, 11, 11);
         TextRenderer.DrawText(g, text, font,
-            new Rectangle(r.X + 17, r.Y, r.Width - 20, r.Height), color,
+            new Rectangle(r.X + 18, r.Y, r.Width - 20, r.Height), color,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
         return w;
     }
 
-    /// <summary>统一风格的按钮（工具栏用）。</summary>
+    /// <summary>统一风格的按钮（工具栏用）。深色版：深底 + 亮边框，主按钮青蓝填充。</summary>
     public static Button MakeButton(string text, int width = 88, bool primary = false)
     {
         var b = new Button
         {
             Text = text, Width = width, Height = 30, FlatStyle = FlatStyle.Flat,
             Font = Body, Cursor = Cursors.Hand, Margin = new Padding(0, 3, 6, 3),
-            BackColor = primary ? Primary : Surface,
+            BackColor = primary ? PrimaryDim : Surface,
             ForeColor = primary ? Color.White : TextMain,
             UseVisualStyleBackColor = false,
         };
-        b.FlatAppearance.BorderColor = primary ? Primary : Border;
+        b.FlatAppearance.BorderColor = primary ? Primary : BorderHi;
         b.FlatAppearance.BorderSize = 1;
+        b.FlatAppearance.MouseOverBackColor = primary ? Primary : SurfaceHi;
         return b;
     }
 
@@ -159,10 +170,12 @@ public static class Theme
             case TextBox tb:
                 tb.BorderStyle = BorderStyle.FixedSingle;
                 if (!tb.ReadOnly) tb.BackColor = Surface;
+                tb.ForeColor = TextMain;
                 break;
             case ComboBox cb:
                 cb.FlatStyle = FlatStyle.Flat;
                 cb.BackColor = Surface;
+                cb.ForeColor = TextMain;
                 break;
             case CheckBox or RadioButton:
                 root.ForeColor = TextMain;
@@ -199,17 +212,18 @@ public static class Theme
         b.FlatStyle = FlatStyle.Flat;
         b.UseVisualStyleBackColor = false;
         b.Cursor = Cursors.Hand;
-        // 工具里已经给“主按钮”涂了颜色（绿底/蓝底）的，只统一边框不改底色
+        // 工具里已经给"主按钮"涂了颜色的（绿底/蓝底），只统一边框不改底色
         if (IsDefaultish(b.BackColor))
         {
             b.BackColor = Surface;
             b.ForeColor = TextMain;
-            b.FlatAppearance.BorderColor = Border;
+            b.FlatAppearance.BorderColor = BorderHi;
         }
         else
         {
-            b.FlatAppearance.BorderColor = ControlPaint.Dark(b.BackColor, 0.05f);
+            b.FlatAppearance.BorderColor = ControlPaint.Dark(b.BackColor, 0.15f);
         }
+        b.FlatAppearance.MouseOverBackColor = SurfaceHi;
         b.FlatAppearance.BorderSize = 1;
     }
 
@@ -219,18 +233,18 @@ public static class Theme
         dg.BackgroundColor = Bg;
         dg.GridColor = Border;
         dg.EnableHeadersVisualStyles = false;          // 不关它，表头颜色改不动
-        dg.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(238, 242, 247);
-        dg.ColumnHeadersDefaultCellStyle.ForeColor = TextMain;
+        dg.ColumnHeadersDefaultCellStyle.BackColor = SurfaceHi;
+        dg.ColumnHeadersDefaultCellStyle.ForeColor = TextSub;
         dg.ColumnHeadersDefaultCellStyle.Font = BodyBold;
-        dg.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(238, 242, 247);
-        dg.ColumnHeadersDefaultCellStyle.SelectionForeColor = TextMain;
+        dg.ColumnHeadersDefaultCellStyle.SelectionBackColor = SurfaceHi;
+        dg.ColumnHeadersDefaultCellStyle.SelectionForeColor = TextSub;
         dg.DefaultCellStyle.BackColor = Surface;
         dg.DefaultCellStyle.ForeColor = TextMain;
-        dg.DefaultCellStyle.SelectionBackColor = Color.FromArgb(219, 232, 246);
-        dg.DefaultCellStyle.SelectionForeColor = TextMain;
-        dg.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 251, 253);
-        dg.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(244, 246, 249);
-        dg.RowHeadersDefaultCellStyle.ForeColor = TextSub;
+        dg.DefaultCellStyle.SelectionBackColor = Color.FromArgb(30, 41, 59);
+        dg.DefaultCellStyle.SelectionForeColor = Color.White;
+        dg.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(26, 32, 41);
+        dg.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(20, 25, 33);
+        dg.RowHeadersDefaultCellStyle.ForeColor = TextFaint;
     }
 
     /// <summary>自绘 / 已调好的控件：不刷，也不递归进去。</summary>

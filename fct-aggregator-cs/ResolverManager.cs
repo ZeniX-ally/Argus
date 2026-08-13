@@ -115,7 +115,7 @@ public class ResolverManagerForm : Form
         {
             Left = 14, Top = 12, Width = 380, Height = 20,
             Text = "输入姓名 → 【添加】即可，之后在维修记录里直接下拉选。",
-            ForeColor = Color.FromArgb(90, 100, 115),
+            ForeColor = Color.FromArgb(148, 163, 184),
         };
 
         _name.Left = 14; _name.Top = 38; _name.Width = 250;
@@ -128,7 +128,7 @@ public class ResolverManagerForm : Form
         var btnAdd = new Button
         {
             Left = 272, Top = 37, Width = 120, Height = 25, Text = "添加",
-            BackColor = Color.FromArgb(226, 240, 217),
+            BackColor = Color.FromArgb(28, 66, 54),
         };
         btnAdd.Click += (_, _) => Add();
 
@@ -357,7 +357,7 @@ public class ResolverPickerForm : Form
         {
             Left = 14, Top = 10, Width = 396, Height = 18,
             Text = "勾选一个或多个 —— 多人会存成「张三、李四」。",
-            ForeColor = Color.FromArgb(90, 100, 115),
+            ForeColor = Color.FromArgb(148, 163, 184),
         };
 
         var lblF = new Label { Left = 14, Top = 34, Width = 40, Text = "过滤:", TextAlign = ContentAlignment.MiddleRight };
@@ -397,7 +397,7 @@ public class ResolverPickerForm : Form
         var btnAdd = new Button
         {
             Left = 272, Top = 363, Width = 138, Height = 25, Text = "添加并勾选",
-            BackColor = Color.FromArgb(226, 240, 217),
+            BackColor = Color.FromArgb(28, 66, 54),
         };
         btnAdd.Click += (_, _) => AddAndCheck();
 

@@ -50,10 +50,14 @@ public sealed class NavButton : Control
         var bg = _active ? Theme.NavActive : _hover ? Theme.NavHover : Theme.NavBg;
         using (var b = new SolidBrush(bg)) g.FillRectangle(b, r);
 
-        // 激活态左侧亮条（主色细条，高级简约：不再用白色块）
+        // 激活态左侧青色亮条（SCADA 风：主色 + 微光）
         if (_active)
+        {
             using (var b = new SolidBrush(Theme.Primary))
-                g.FillRectangle(b, new Rectangle(0, 0, 3, r.Height));
+                g.FillRectangle(b, new Rectangle(0, 0, 4, r.Height));
+            using (var glow = new SolidBrush(Color.FromArgb(36, Theme.Primary)))
+                g.FillRectangle(glow, new Rectangle(4, 0, 6, r.Height));
+        }
 
         var fore = _active ? Theme.NavTextActive : Theme.NavText;
         TextRenderer.DrawText(g, Text, _active ? Theme.BodyBold : Theme.Body,
@@ -76,7 +80,7 @@ public sealed class NavButton : Control
 
 /// <summary>
 /// KPI 卡片（自绘）：标题 + 大数字 + 副说明，左侧一条强调色。
-/// 主页顶部一排就是它。
+/// 主页顶部一排就是它。深色工业监控风：大数字偏大、强调色发光感。
 /// </summary>
 public sealed class KpiCard : Control
 {
@@ -108,12 +112,21 @@ public sealed class KpiCard : Control
         var r = new Rectangle(0, 0, Width, Height);
         Theme.DrawCard(g, r, _accent);
 
+        // 标题：浅灰，右上角小圆点（状态灯感）
+        using (var dot = new SolidBrush(_accent))
+            g.FillEllipse(dot, Width - 22, 11, 7, 7);
+        using (var glow = new Pen(Color.FromArgb(80, _accent), 1.5f))
+            g.DrawEllipse(glow, Width - 24, 9, 11, 11);
         TextRenderer.DrawText(g, Text, Theme.Small,
-            new Rectangle(14, 8, Width - 20, 16), Theme.TextSub,
+            new Rectangle(14, 8, Width - 40, 16), Theme.TextSub,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-        TextRenderer.DrawText(g, _value, _big ? Theme.Number : Theme.NumberSmall,
-            new Rectangle(12, _big ? 24 : 22, Width - 20, _big ? 34 : 28), _accent,
+        // 大数字：强调色 + 下侧一层同色光晕（发光的监控数字）
+        var numFont = _big ? Theme.Number : Theme.NumberSmall;
+        var numRect = new Rectangle(12, _big ? 26 : 24, Width - 20, _big ? 40 : 32);
+        using (var glow = new SolidBrush(Color.FromArgb(26, _accent)))
+            g.FillRectangle(glow, new Rectangle(12, _big ? 26 : 24, Width - 24, _big ? 40 : 32));
+        TextRenderer.DrawText(g, _value, numFont, numRect, _accent,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis |
             TextFormatFlags.NoPadding);
 

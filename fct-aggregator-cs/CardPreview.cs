@@ -59,7 +59,7 @@ public class CardPreviewForm : Form
         MinimizeBox = false; MaximizeBox = false;
         Width = 470;
         Font = new Font("Microsoft YaHei UI", 9F);
-        BackColor = Color.White;
+        BackColor = Theme.Surface;
         KeyPreview = true;
         Padding = new Padding(1);
 
@@ -74,7 +74,7 @@ public class CardPreviewForm : Form
         var subLabel = new Label
         {
             Dock = DockStyle.Bottom, Height = 18, Text = subtitle,
-            ForeColor = Color.FromArgb(235, 240, 248),
+            ForeColor = Color.FromArgb(203, 213, 225),
             Padding = new Padding(12, 0, 12, 2), AutoEllipsis = true,
             Font = new Font("Microsoft YaHei UI", 8.5F),
         };
@@ -96,7 +96,7 @@ public class CardPreviewForm : Form
         var detail = new TextBox
         {
             Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None,
-            BackColor = Color.White, Dock = DockStyle.Top, ScrollBars = ScrollBars.Vertical,
+            BackColor = Theme.Surface, Dock = DockStyle.Top, ScrollBars = ScrollBars.Vertical,
             Font = new Font("Microsoft YaHei UI", 9F), TabStop = false,
             Text = string.Join(Environment.NewLine, rows.Select(r => $"{r.k}  {r.v}")),
         };
@@ -123,7 +123,7 @@ public class CardPreviewForm : Form
                 Dock = DockStyle.Top, Height = 24, Padding = new Padding(12, 2, 12, 0),
                 Text = merged.Count > 1 ? $"合并的 fail 项（{merged.Count} 项）" : "来源 fail 项",
                 Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(60, 70, 88),
+                ForeColor = Color.FromArgb(203, 213, 225),
             };
             var list = new ListView
             {
@@ -157,9 +157,9 @@ public class CardPreviewForm : Form
         var foot = new Label
         {
             Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(12, 4, 12, 4),
-            Text = footer, ForeColor = Color.FromArgb(130, 140, 158),
+            Text = footer, ForeColor = Color.FromArgb(148, 163, 184),
             Font = new Font("Microsoft YaHei UI", 8.5F),
-            BackColor = Color.FromArgb(248, 250, 252), AutoEllipsis = true,
+            BackColor = Color.FromArgb(18, 22, 29), AutoEllipsis = true,
         };
         Controls.Add(foot);
         total += foot.Height + 2;
