@@ -22,8 +22,8 @@ public class AggCenterForm : Form
     private readonly int _httpPort;
     private readonly AggDatabase _db;
     private readonly AggWatcher _watcher;
-    private readonly HttpIngest? _ingest;   // agg_transport 含 http 才创建，纯 smb 部署为 null
-    private readonly AggAlertService _alert;   // Phase 3: 飞书离线告警 + 定时汇总（webhook 未配置则空转）
+    private HttpIngest? _ingest;   // agg_transport 含 http 才创建，纯 smb 部署为 null；设置热生效时可重建
+    private AggAlertService _alert;   // Phase 3: 飞书离线告警 + 定时汇总（webhook 未配置则空转）
     private readonly System.Windows.Forms.Timer _timer = new();
     private SplitContainer _split = null!;
 
@@ -212,6 +212,10 @@ public class AggCenterForm : Form
         status.Items.Add(_statusHttp);
         status.Items.Add(new ToolStripStatusLabel { Spring = true });   // 弹簧把右侧信息推到最右
         status.Items.Add(_statusTimeout);
+        // 管理后台入口：设置/开关（v3.4.4）—— 与 Web 看板「设置」页同源同配置
+        var btnSettings = new ToolStripButton("设置") { DisplayStyle = ToolStripItemDisplayStyle.Text, Font = Theme.Small };
+        btnSettings.Click += (_, _) => ShowSettingsDialog();
+        status.Items.Add(btnSettings);
 
         // 停靠顺序：后 Add 的先停靠 —— 状态栏最先停靠(底部)，split 吃剩余，topBar 顶
         Controls.Add(topBar);
@@ -289,6 +293,150 @@ public class AggCenterForm : Form
         _watcher.Dispose();
         try { _ingest?.Dispose(); } catch { }
         _db.Dispose();
+    }
+
+    // ==================================================================
+    //  管理后台：设置对话框 + 热生效
+    // ==================================================================
+
+    /// <summary>弹出聚合服务设置对话框（与 Web 看板「设置」页同源同配置）。</summary>
+    private void ShowSettingsDialog()
+    {
+        var cfg = AppConfig.Instance;
+        using var dlg = new Form
+        {
+            Text = "聚合服务设置",
+            Size = new Size(520, 470),
+            MinimumSize = new Size(520, 470),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Theme.Bg,
+            Font = Theme.Body,
+        };
+
+        var port = new NumericUpDown { Minimum = 1, Maximum = 65535, Value = cfg.AggHttpPort, Width = 300 };
+        var token = new TextBox { Text = "", Width = 300, UseSystemPasswordChar = true, PlaceholderText = "留空=不修改；填入新值立即生效" };
+        var webhook = new TextBox { Text = cfg.AggWebhookUrl, Width = 300 };
+        var summary = new NumericUpDown { Minimum = 1, Maximum = 1440, Value = cfg.AggSummaryMinutes, Width = 300 };
+        var shareRoot = new TextBox { Text = cfg.AggShareRoot, Width = 300 };
+        var transport = new ComboBox { Width = 300, DropDownStyle = ComboBoxStyle.DropDownList };
+        transport.Items.Add("http（机台直推）");
+        transport.Items.Add("smb（共享目录）");
+        transport.SelectedIndex = cfg.AggTransport.Contains("http", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+
+        var tipToken = new Label
+        {
+            Text = cfg.AggToken.Length > 0 ? "当前已配置令牌" : "当前未配置令牌（不限访问）",
+            AutoSize = true, ForeColor = Theme.TextFaint, Font = Theme.Small,
+        };
+
+        var y = 18;
+        void Row(string label, Control c, string hint = "")
+        {
+            dlg.Controls.Add(new Label
+            {
+                Text = label, Location = new Point(24, y + 3), AutoSize = true,
+                ForeColor = Theme.TextSub, Font = Theme.Body,
+            });
+            c.Location = new Point(190, y);
+            dlg.Controls.Add(c);
+            if (hint.Length > 0)
+                dlg.Controls.Add(new Label
+                {
+                    Text = hint, Location = new Point(190, y + 28),
+                    AutoSize = true, ForeColor = Theme.TextFaint, Font = Theme.Small,
+                });
+            y += hint.Length > 0 ? 58 : 42;
+        }
+        Row("监听端口", port, "改后需重启聚合服务生效");
+        Row("访问令牌 (agg_token)", token, "");
+        tipToken.Location = new Point(190, y);
+        dlg.Controls.Add(tipToken);
+        y += 24;
+        Row("飞书告警 webhook", webhook, "机台离线告警 + 定时汇总推送目标；留空关闭");
+        Row("汇总间隔（分钟）", summary, "");
+        Row("共享目录根", shareRoot, "smb 通道机台目录根；http 通道可留空");
+        Row("传输通道", transport, "改后需重启聚合服务生效");
+
+        var msg = new Label
+        {
+            Text = "", Location = new Point(24, y + 2), AutoSize = true,
+            ForeColor = Theme.Success, Font = Theme.Small,
+        };
+        dlg.Controls.Add(msg);
+
+        var btnSave = new Button { Text = "保存", Location = new Point(190, y + 24), Size = new Size(100, 30) };
+        var btnCancel = new Button { Text = "取消", Location = new Point(300, y + 24), Size = new Size(100, 30) };
+        dlg.Controls.Add(btnSave);
+        dlg.Controls.Add(btnCancel);
+
+        btnCancel.Click += (_, _) => dlg.Close();
+        btnSave.Click += (_, _) =>
+        {
+            var oldPort = cfg.AggHttpPort;
+            var oldTransport = cfg.AggTransport;
+            var newToken = token.Text.Trim();
+            var newWebhook = webhook.Text.Trim();
+            var newSummary = (int)summary.Value;
+            var newShare = shareRoot.Text.Trim();
+            var newTransport = transport.SelectedIndex == 0 ? "http" : "smb";
+            var newPort = (int)port.Value;
+
+            var changed = new List<string>();
+            if (newPort != oldPort) { cfg.AggHttpPort = newPort; changed.Add("port"); }
+            if (newToken.Length > 0 && newToken != cfg.AggToken) { cfg.AggToken = newToken; changed.Add("token"); }
+            if (newWebhook != cfg.AggWebhookUrl) { cfg.AggWebhookUrl = newWebhook; changed.Add("webhook"); }
+            if (newSummary != cfg.AggSummaryMinutes) { cfg.AggSummaryMinutes = newSummary; changed.Add("summary"); }
+            if (newShare != cfg.AggShareRoot) { cfg.AggShareRoot = newShare; changed.Add("share"); }
+            if (newTransport != oldTransport) { cfg.AggTransport = newTransport; changed.Add("transport"); }
+
+            if (changed.Count == 0) { dlg.Close(); return; }
+            if (!cfg.Save())
+            {
+                msg.ForeColor = Theme.Danger;
+                msg.Text = "保存失败（看日志）";
+                return;
+            }
+            ReconfigureServices();
+            msg.ForeColor = Theme.Success;
+            msg.Text = changed.Contains("port") || changed.Contains("transport")
+                ? "已保存。端口/通道变更需重启聚合服务完全生效。"
+                : "已保存并生效。";
+        };
+
+        Theme.Apply(dlg);
+        dlg.ShowDialog(this);
+    }
+
+    /// <summary>
+    /// 设置变更后热生效：重建 HTTP 接收器与告警服务（token/webhook/汇总/transport 立即生效；
+    /// 端口/通道变更需重启进程，此处尽力重建一次）。
+    /// </summary>
+    private void ReconfigureServices()
+    {
+        var cfg = AppConfig.Instance;
+        // 告警服务：停旧的按新配置起
+        _alert.Stop();
+        _alert = new AggAlertService(_watcher, _db, cfg.AggWebhookUrl, cfg.AggSummaryMinutes);
+        _alert.Start();
+        // HTTP 接收：停旧的按新配置起（transport 含 http 才建）
+        if (_ingest != null) { try { _ingest.Stop(); _ingest.Dispose(); } catch { } _ingest = null; }
+        var transport = string.IsNullOrEmpty(cfg.AggTransport) ? "smb" : cfg.AggTransport;
+        if (transport.Contains("http", StringComparison.OrdinalIgnoreCase))
+        {
+            _ingest = new HttpIngest(cfg.AggHttpPort, _watcher.IngestFail, _watcher.IngestHeartbeat, cfg.AggToken);
+            _ingest.Start();
+            _statusHttp.Text = $"HTTP 接收 :{cfg.AggHttpPort}";
+            _statusHttp.ForeColor = Theme.Success;
+        }
+        else
+        {
+            _statusHttp.Text = "HTTP 接收 关";
+            _statusHttp.ForeColor = Theme.TextFaint;
+        }
+        Logger.Info($"[聚合看板] 设置已应用: transport={transport}, port={cfg.AggHttpPort}, webhook={(cfg.AggWebhookUrl.Length > 0 ? "on" : "off")}");
     }
 
     // ==================================================================

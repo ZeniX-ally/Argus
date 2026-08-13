@@ -2967,6 +2967,49 @@ class SelfTest
                 Check(rXml.Content.ReadAsStringAsync().GetAwaiter().GetResult() == xmlPayload,
                       "GET /api/file?id=：内容与上送的 xml_content 一致");
 
+            // ---- ⑧ 管理后台：GET /api/settings（只读，不污染真实 config.json）----
+            var rSet = _http.GetAsync($"{baseUrl}/api/settings?token=secret-token").GetAwaiter().GetResult();
+            Check(rSet.StatusCode == HttpStatusCode.OK, "GET /api/settings（带 token）-> 200");
+            if (rSet.StatusCode == HttpStatusCode.OK)
+            {
+                using var sd = System.Text.Json.JsonDocument.Parse(
+                    rSet.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                var root = sd.RootElement;
+                Check(root.TryGetProperty("agg_http_port", out _)
+                      && root.TryGetProperty("agg_token_set", out _)
+                      && root.TryGetProperty("agg_webhook_set", out _)
+                      && root.TryGetProperty("agg_summary_minutes", out _)
+                      && root.TryGetProperty("agg_transport", out _)
+                      && root.TryGetProperty("results_root", out _),
+                      "GET /api/settings：返回全部聚合配置字段（端口/token/webhook/汇总/通道/白名单）");
+            }
+            var rSetNoToken = _http.GetAsync($"{baseUrl}/api/settings").GetAwaiter().GetResult();
+            Check(rSetNoToken.StatusCode == HttpStatusCode.Forbidden, "GET /api/settings（无 token）-> 403（设置页也要鉴权）");
+
+            // 页面含「设置」页签
+            var rPage2 = _http.GetAsync($"{baseUrl}/?token=secret-token").GetAwaiter().GetResult();
+            if (rPage2.StatusCode == HttpStatusCode.OK)
+            {
+                var page2 = rPage2.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                Check(page2.Contains("tabSettings") && page2.Contains("settingsView"),
+                      "GET /：页面含「设置」页签与设置视图容器");
+                Check(page2.Contains("/api/settings"), "GET /：页面 JS 调用 /api/settings（设置页加载）");
+            }
+
+            // ---- ⑨ Config.Save 容错：损坏的 config.json 不崩溃、未知字段保留 ----
+            var cfgPath = Path.Combine(AppConfig.BaseDir, "config.json");
+            if (File.Exists(cfgPath))
+            {
+                var backup = File.ReadAllText(cfgPath);
+                try
+                {
+                    File.WriteAllText(cfgPath, "{ 这不是合法 JSON");
+                    var cfgTmp = new AppConfig { AggEnabled = false };
+                    Check(cfgTmp.Save() == false, "Config.Save：损坏 config.json 时返回 false 不抛异常");
+                }
+                finally { File.WriteAllText(cfgPath, backup); }
+            }
+
             srv.Stop();
             w.Stop();
         }

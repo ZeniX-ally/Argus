@@ -169,8 +169,20 @@ public class MainForm : Form
             Dock = DockStyle.Right, Width = 280, ForeColor = Theme.TextFaint, Font = Theme.Small,
             BackColor = Theme.Surface, Padding = new Padding(0, 0, 14, 0), TextAlign = ContentAlignment.MiddleRight,
         };
-        statusBar.Controls.Add(_statusLeft);
+        // 聚合设置（机台视角）：连接聚合端 / 本机一键成为聚合端（v3.4.4 管理后台）
+        var btnAggSettings = new Button
+        {
+            Text = "聚合设置",
+            Dock = DockStyle.Right, Width = 96, Height = Theme.StatusBarHeight,
+            FlatStyle = FlatStyle.Flat, BackColor = Theme.Surface, ForeColor = Theme.TextSub,
+            Font = Theme.Small, Cursor = Cursors.Hand,
+        };
+        btnAggSettings.FlatAppearance.BorderColor = Theme.Border;
+        btnAggSettings.Click += (_, _) => ShowAggSettingsDialog();
+        // 停靠顺序：后 Add 的先停靠 —— 按钮先停靠（靠左），状态文本最后停靠（最右）
         statusBar.Controls.Add(_statusRight);
+        statusBar.Controls.Add(btnAggSettings);
+        statusBar.Controls.Add(_statusLeft);
         Controls.Add(statusBar);
 
         // ===== 扫描进度（细条，只在扫描时出现）=====
@@ -691,6 +703,168 @@ public class MainForm : Form
         // ⚠ v3.1.0.2：**禁用 AnimateWindow(AW_CENTER)** —— 实测系统窗口动画会干扰后续拖动
         //   合成（点击后拖动窗口严重延迟）。过渡改为纯逻辑：splash 圆点 → 主窗口直接显示
         //   （splash 在主窗口显示 450ms 后被隐藏，视觉上仍连贯）。
+    }
+
+    /// <summary>
+    /// 机台视角「聚合设置」对话框（v3.4.4 管理后台）：
+    ///   ① 连接聚合端：填 IP[:端口] → 写 config(agg_enabled/http/url) → 重启推送器；
+    ///   ② 本机一键成为聚合端：拉起 <c>Argus.exe agg --install</c>（现成的一键部署：
+    ///      生成配置/防火墙/开机自启/启动聚合服务）。
+    /// </summary>
+    private void ShowAggSettingsDialog()
+    {
+        var cfg = AppConfig.Instance;
+        using var dlg = new Form
+        {
+            Text = "聚合设置",
+            Size = new Size(560, 420),
+            MinimumSize = new Size(560, 420),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Theme.Bg,
+            Font = Theme.Body,
+        };
+
+        // ===== 当前状态 =====
+        var stateLabel = new Label
+        {
+            Text = cfg.AggEnabled
+                ? $"当前: 已开启聚合推送（{cfg.AggTransport} → {UrlOrShare()}）"
+                : "当前: 未开启聚合推送",
+            Location = new Point(24, 16), AutoSize = true, ForeColor = Theme.TextSub, Font = Theme.Small,
+        };
+        dlg.Controls.Add(stateLabel);
+
+        // ===== ① 连接聚合端 =====
+        var secLabel = new Label
+        {
+            Text = "① 连接聚合端（本机作为机台推送数据）", Location = new Point(24, 52),
+            AutoSize = true, ForeColor = Theme.TextSub, Font = Theme.Body,
+        };
+        dlg.Controls.Add(secLabel);
+
+        var lblIp = new Label { Text = "聚合端 IP", Location = new Point(24, 86), AutoSize = true, ForeColor = Theme.TextSub };
+        var txtIp = new TextBox { Location = new Point(150, 82), Width = 200, Text = CurrentIpOf(cfg) };
+        var lblPort = new Label { Text = "端口", Location = new Point(362, 86), AutoSize = true, ForeColor = Theme.TextSub };
+        var txtPort = new TextBox { Location = new Point(410, 82), Width = 80, Text = cfg.AggHttpPort.ToString() };
+        var btnConnect = new Button { Text = "连接", Location = new Point(150, 116), Size = new Size(110, 30) };
+        var lblConnMsg = new Label { Text = "", Location = new Point(270, 121), AutoSize = true, ForeColor = Theme.Success, Font = Theme.Small };
+        dlg.Controls.Add(lblIp); dlg.Controls.Add(txtIp);
+        dlg.Controls.Add(lblPort); dlg.Controls.Add(txtPort);
+        dlg.Controls.Add(btnConnect); dlg.Controls.Add(lblConnMsg);
+
+        btnConnect.Click += (_, _) =>
+        {
+            var ip = txtIp.Text.Trim();
+            if (ip.Length == 0 || !int.TryParse(txtPort.Text.Trim(), out var port) || port < 1 || port > 65535)
+            {
+                lblConnMsg.ForeColor = Theme.Danger;
+                lblConnMsg.Text = "IP 或端口无效";
+                return;
+            }
+            cfg.AggEnabled = true;
+            cfg.AggTransport = "http";
+            cfg.AggHttpUrl = $"http://{ip}:{port}/";
+            if (!cfg.Save())
+            {
+                lblConnMsg.ForeColor = Theme.Danger;
+                lblConnMsg.Text = "配置保存失败（看日志）";
+                return;
+            }
+            _engine.RestartPusher();
+            lblConnMsg.ForeColor = Theme.Success;
+            lblConnMsg.Text = $"已连接 {cfg.AggHttpUrl}，推送器已重启";
+            stateLabel.Text = $"当前: 已开启聚合推送（http → {cfg.AggHttpUrl}）";
+        };
+
+        // ===== ② 本机一键成为聚合端 =====
+        var sec2 = new Label
+        {
+            Text = "② 本机一键成为聚合端（自动配置环境 + 启动聚合服务）", Location = new Point(24, 168),
+            AutoSize = true, ForeColor = Theme.TextSub, Font = Theme.Body,
+        };
+        dlg.Controls.Add(sec2);
+
+        var btnBecome = new Button { Text = "一键部署聚合服务", Location = new Point(24, 200), Size = new Size(180, 34) };
+        var lblBecomeMsg = new Label
+        {
+            Text = "会弹 UAC 确认（防火墙放行需要管理员权限）。完成后浏览器访问 http://本机IP:8080/ 即可查看看板。",
+            Location = new Point(24, 244), Size = new Size(500, 40),
+            ForeColor = Theme.TextFaint, Font = Theme.Small,
+        };
+        dlg.Controls.Add(btnBecome); dlg.Controls.Add(lblBecomeMsg);
+
+        btnBecome.Click += (_, _) =>
+        {
+            try
+            {
+                // 发布包根目录优先（make_package 已铺平），开发目录回落 tools/
+                var bat = Path.Combine(AppConfig.BaseDir, "一键部署聚合服务.bat");
+                if (!File.Exists(bat)) bat = Path.Combine(AppConfig.BaseDir, "tools", "一键部署聚合服务.bat");
+                if (!File.Exists(bat))
+                {
+                    lblBecomeMsg.ForeColor = Theme.Danger;
+                    lblBecomeMsg.Text = "未找到「一键部署聚合服务.bat」，请使用完整发布包部署聚合端。";
+                    return;
+                }
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = bat,
+                    UseShellExecute = true,   // bat 内部自带 UAC 提权逻辑
+                    WorkingDirectory = Path.GetDirectoryName(bat) ?? AppConfig.BaseDir,
+                };
+                System.Diagnostics.Process.Start(psi);
+                lblBecomeMsg.ForeColor = Theme.Success;
+                lblBecomeMsg.Text = "已启动一键部署窗口，按提示操作即可（防火墙放行需点「是」）。";
+            }
+            catch (Exception ex)
+            {
+                lblBecomeMsg.ForeColor = Theme.Danger;
+                lblBecomeMsg.Text = $"启动失败: {ex.Message}";
+            }
+        };
+
+        // ===== ③ 断开聚合推送 =====
+        var btnDisable = new Button
+        {
+            Text = "断开聚合推送", Location = new Point(24, 310), Size = new Size(140, 30),
+            ForeColor = Theme.Danger,
+        };
+        var lblDisableMsg = new Label { Text = "", Location = new Point(180, 315), AutoSize = true, ForeColor = Theme.TextSub, Font = Theme.Small };
+        dlg.Controls.Add(btnDisable); dlg.Controls.Add(lblDisableMsg);
+        btnDisable.Click += (_, _) =>
+        {
+            cfg.AggEnabled = false;
+            cfg.Save();
+            _engine.RestartPusher();
+            lblDisableMsg.Text = "已断开，推送器已停止";
+            stateLabel.Text = "当前: 未开启聚合推送";
+        };
+
+        Theme.Apply(dlg);
+        dlg.ShowDialog(this);
+    }
+
+    private string UrlOrShare()
+    {
+        var cfg = AppConfig.Instance;
+        return cfg.AggTransport.Contains("http", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(cfg.AggHttpUrl)
+            ? cfg.AggHttpUrl
+            : cfg.AggShareRoot;
+    }
+
+    /// <summary>从已配置的 http url 里提取 IP（填连接框默认值用）；没有则空串。</summary>
+    private static string CurrentIpOf(AppConfig cfg)
+    {
+        if (cfg.AggHttpUrl.Length == 0) return "";
+        try
+        {
+            var u = new Uri(cfg.AggHttpUrl);
+            return u.Host;
+        }
+        catch { return ""; }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

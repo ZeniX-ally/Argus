@@ -105,4 +105,63 @@ public class AppConfig
         }
         return new AppConfig();
     }
+
+    /// <summary>
+    /// 把当前实例的聚合相关字段合并写回 config.json（保留磁盘上其他未知字段，不破坏手改的配置）。
+    /// 写临时文件再原子改名；失败记 ERROR 返回 false（调用方决定是否提示）。
+    /// </summary>
+    public bool Save()
+    {
+        var path = Path.Combine(BaseDir, "config.json");
+        try
+        {
+            // 读现有 JSON 保留未知字段；读不到/损坏则从空开始
+            using var doc = JsonDocument.Parse(File.Exists(path) ? File.ReadAllText(path) : "{}");
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
+            {
+                writer.WriteStartObject();
+                var known = new HashSet<string>(StringComparer.Ordinal)
+                {
+                    "station_id", "results_root", "fct_ini_path", "webhook_url", "skip_historical_scan",
+                    "log_level", "desktop_notify", "notify_min_interval_sec", "todo_scan_days",
+                    "agg_enabled", "agg_share_root", "agg_transport", "agg_http_url", "agg_http_port",
+                    "agg_token", "agg_webhook_url", "agg_summary_minutes",
+                };
+                // 先写磁盘上的未知字段（保留原样），本类管理的字段随后覆盖
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (!known.Contains(prop.Name))
+                        prop.WriteTo(writer);
+                }
+                writer.WriteString("station_id", StationId);
+                writer.WriteString("results_root", ResultsRoot);
+                writer.WriteString("fct_ini_path", FctIniPath);
+                writer.WriteString("webhook_url", WebhookUrl);
+                writer.WriteBoolean("skip_historical_scan", SkipHistoricalScan);
+                writer.WriteString("log_level", LogLevel);
+                writer.WriteBoolean("desktop_notify", DesktopNotify);
+                writer.WriteNumber("notify_min_interval_sec", NotifyMinIntervalSec);
+                writer.WriteNumber("todo_scan_days", TodoScanDays);
+                writer.WriteBoolean("agg_enabled", AggEnabled);
+                writer.WriteString("agg_share_root", AggShareRoot);
+                writer.WriteString("agg_transport", AggTransport);
+                writer.WriteString("agg_http_url", AggHttpUrl);
+                writer.WriteNumber("agg_http_port", AggHttpPort);
+                writer.WriteString("agg_token", AggToken);
+                writer.WriteString("agg_webhook_url", AggWebhookUrl);
+                writer.WriteNumber("agg_summary_minutes", AggSummaryMinutes);
+                writer.WriteEndObject();
+            }
+            var tmp = path + ".tmp";
+            File.WriteAllBytes(tmp, stream.ToArray());
+            File.Move(tmp, path, overwrite: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"保存 config.json 失败: {ex.Message}");
+            return false;
+        }
+    }
 }

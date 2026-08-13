@@ -208,11 +208,25 @@ static class Program
 
         using var watcher = new AggWatcher(cfg.AggShareRoot, db, heartbeatTimeoutSec: 90, pollSec: 10);
         using var server = new WebAggServer(cfg.AggHttpPort, watcher, db, cfg.ResultsRoot, cfg.AggShareRoot, cfg.AggToken);
-        using var alert = new AggAlertService(watcher, db, cfg.AggWebhookUrl, cfg.AggSummaryMinutes);
+        var alert = new AggAlertService(watcher, db, cfg.AggWebhookUrl, cfg.AggSummaryMinutes);
 
         watcher.Start();
         server.Start();
         alert.Start();
+
+        // Web 设置页保存后热生效：告警服务按新 webhook/汇总间隔重建（token 由 server 内部自更新）
+        server.SettingsChanged += () =>
+        {
+            try
+            {
+                var c2 = AppConfig.Instance;
+                alert.Stop();
+                alert = new AggAlertService(watcher, db, c2.AggWebhookUrl, c2.AggSummaryMinutes);
+                alert.Start();
+                Logger.Info($"[聚合服务] Web 设置已热生效（webhook={(c2.AggWebhookUrl.Length > 0 ? "on" : "off")}, 汇总={c2.AggSummaryMinutes} 分钟）");
+            }
+            catch (Exception ex) { Logger.Warning($"[聚合服务] 设置热生效失败: {ex.Message}"); }
+        };
 
         if (server.Listening)
         {

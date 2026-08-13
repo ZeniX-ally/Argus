@@ -57,7 +57,7 @@ public class WebAggServer : IDisposable
     private readonly AggDatabase _db;
     private readonly string _resultsRoot;
     private readonly string _shareRoot;
-    private readonly string _token;   // 共享 token（agg_token）；空串 = 不启用鉴权
+    private string _token;   // 共享 token（agg_token）；空串 = 不启用鉴权。设置页可热更新
 
     private readonly object _lock = new();
     private HttpListener? _listener;
@@ -86,6 +86,9 @@ public class WebAggServer : IDisposable
 
     /// <summary>收到的有效请求数（路由命中且方法正确的请求才计数，404/405 不计）。</summary>
     public long ReceivedCount => Interlocked.Read(ref _receivedCount);
+
+    /// <summary>设置被修改且已落盘时触发（AggCenterForm/Program 订阅后重启 HttpIngest/AggAlertService 热生效）。</summary>
+    public event Action? SettingsChanged;
 
     /// <summary>启动监听：后台线程 accept；失败只记 ERROR 日志不抛异常。
     /// 前缀三档回退：http://+:port/（全网卡）→ http://0.0.0.0:port/ → http://127.0.0.1:port/
@@ -200,6 +203,12 @@ public class WebAggServer : IDisposable
                     else resp.StatusCode = 405;
                     break;
 
+                case "/api/settings":
+                    if (method == "GET") { CountHit(); ServeSettings(ctx); }
+                    else if (method == "POST") { CountHit(); ServeSettingsSave(ctx); }
+                    else resp.StatusCode = 405;
+                    break;
+
                 case "/api/machines":
                     if (method == "GET") { CountHit(); ServeMachines(ctx); }
                     else resp.StatusCode = 405;
@@ -278,6 +287,124 @@ public class WebAggServer : IDisposable
 
     private void ServeHealth(HttpListenerContext ctx)
         => Respond(ctx, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes("{\"ok\":true}"));
+
+    /// <summary>设置读取：返回聚合端当前配置（管理后台「设置」页填充用）。
+    /// 只读聚合相关字段；密码类字段（token）**不回显**，只给布尔「是否已配置」。</summary>
+    private void ServeSettings(HttpListenerContext ctx)
+    {
+        try
+        {
+            var cfg = AppConfig.Instance;
+            var payload = new Dictionary<string, object?>
+            {
+                ["agg_http_port"] = cfg.AggHttpPort,
+                ["agg_token_set"] = cfg.AggToken.Length > 0,
+                ["agg_token"] = "",                        // 不回显，避免明文泄漏；留空表示不修改
+                ["agg_webhook_set"] = cfg.AggWebhookUrl.Length > 0,
+                ["agg_webhook_url"] = cfg.AggWebhookUrl,   // webhook 是飞书群的地址，非密钥，回显便于改
+                ["agg_summary_minutes"] = cfg.AggSummaryMinutes,
+                ["agg_share_root"] = cfg.AggShareRoot,
+                ["agg_transport"] = cfg.AggTransport,
+                ["results_root"] = cfg.ResultsRoot,
+            };
+            Respond(ctx, 200, "application/json; charset=utf-8",
+                JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 读取设置失败: {ex.Message}");
+            RespondText(ctx, 500, "读取设置失败");
+        }
+    }
+
+    /// <summary>设置保存：更新 config.json（原子写）+ 热生效（token 立即更新）。
+    /// 端口/transport/结果目录这类需要重建监听的字段，返回提示「重启聚合服务生效」。
+    /// 返回 JSON：{"ok":true,"restart":bool,"msg":"..."}。</summary>
+    private void ServeSettingsSave(HttpListenerContext ctx)
+    {
+        string body;
+        try { body = ReadBody(ctx.Request); }
+        catch (BodyTooLargeException) { ctx.Response.StatusCode = 413; return; }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var cfg = AppConfig.Instance;
+            var changed = new List<string>();
+
+            if (root.TryGetProperty("agg_http_port", out var pp) && pp.ValueKind == JsonValueKind.Number
+                && pp.TryGetInt32(out var port) && port >= 1 && port <= 65535 && port != cfg.AggHttpPort)
+            {
+                cfg.AggHttpPort = port;
+                changed.Add("agg_http_port");
+            }
+            if (root.TryGetProperty("agg_token", out var pt) && pt.ValueKind == JsonValueKind.String
+                && !string.Equals(pt.GetString(), cfg.AggToken, StringComparison.Ordinal))
+            {
+                cfg.AggToken = pt.GetString() ?? "";
+                changed.Add("agg_token");
+            }
+            if (root.TryGetProperty("agg_webhook_url", out var pw) && pw.ValueKind == JsonValueKind.String
+                && !string.Equals(pw.GetString() ?? "", cfg.AggWebhookUrl, StringComparison.Ordinal))
+            {
+                cfg.AggWebhookUrl = pw.GetString() ?? "";
+                changed.Add("agg_webhook_url");
+            }
+            if (root.TryGetProperty("agg_summary_minutes", out var pm) && pm.ValueKind == JsonValueKind.Number
+                && pm.TryGetInt32(out var m) && m >= 1 && m != cfg.AggSummaryMinutes)
+            {
+                cfg.AggSummaryMinutes = m;
+                changed.Add("agg_summary_minutes");
+            }
+            if (root.TryGetProperty("agg_transport", out var pt2) && pt2.ValueKind == JsonValueKind.String
+                && !string.Equals(pt2.GetString() ?? "", cfg.AggTransport, StringComparison.OrdinalIgnoreCase))
+            {
+                var t = (pt2.GetString() ?? "").Trim().ToLowerInvariant();
+                if (t == "http" || t == "smb") { cfg.AggTransport = t; changed.Add("agg_transport"); }
+            }
+            if (root.TryGetProperty("agg_share_root", out var ps) && ps.ValueKind == JsonValueKind.String
+                && !string.Equals(ps.GetString() ?? "", cfg.AggShareRoot, StringComparison.Ordinal))
+            {
+                cfg.AggShareRoot = ps.GetString() ?? "";
+                changed.Add("agg_share_root");
+            }
+
+            if (changed.Count == 0)
+            {
+                Respond(ctx, 200, "application/json; charset=utf-8",
+                    Encoding.UTF8.GetBytes("{\"ok\":true,\"restart\":false,\"msg\":\"无变化\"}"));
+                return;
+            }
+
+            if (!cfg.Save())
+            {
+                RespondText(ctx, 500, "配置保存失败（看日志）");
+                return;
+            }
+
+            // 热生效：token 立即更新（本服务鉴权）；其余字段通知订阅方（AggCenterForm/Program 重启相关组件）
+            bool needRestart = changed.Contains("agg_http_port") || changed.Contains("agg_transport");
+            if (changed.Contains("agg_token")) _token = cfg.AggToken;
+            try { SettingsChanged?.Invoke(); } catch (Exception ex) { Logger.Warning($"[Web 服务] 设置变更回调异常: {ex.Message}"); }
+
+            var msg = needRestart
+                ? "已保存。端口/传输通道变更需要重启聚合服务才生效（或重新一键部署）。"
+                : "已保存并生效。";
+            var respJson = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["ok"] = true,
+                ["restart"] = needRestart,
+                ["msg"] = msg,
+            });
+            Respond(ctx, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(respJson));
+        }
+        catch (JsonException ex)
+        {
+            Logger.Warning($"[Web 服务] 设置 JSON 非法: {ex.Message}");
+            ctx.Response.StatusCode = 400;
+        }
+    }
 
     /// <summary>机台状态列表：心跳信息来自 watcher 缓存，FAIL 统计现查库。</summary>
     private void ServeMachines(HttpListenerContext ctx)
@@ -763,6 +890,18 @@ public class WebAggServer : IDisposable
   .filters input:focus { outline: none; border-color: #4c9aff; }
   .pager { display: flex; gap: 10px; margin-top: 12px; align-items: center; color: #9aa3b2; font-size: 13px; }
   .pager button:disabled { opacity: .4; cursor: default; }
+  #settingsView h3 { color: #ffffff; font-size: 15px; margin-bottom: 12px; }
+  #settingsView .set-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  #settingsView .set-row label { width: 170px; color: #9aa3b2; font-size: 13px; flex-shrink: 0; }
+  #settingsView .set-row input, #settingsView .set-row select {
+    background: #20242d; border: 1px solid #2f3542; color: #d8dee9; border-radius: 4px;
+    padding: 6px 10px; font-size: 13px; width: 360px;
+  }
+  #settingsView .set-row input:focus, #settingsView .set-row select:focus { outline: none; border-color: #4c9aff; }
+  #settingsView .set-row .hint { color: #5c6470; font-size: 12px; }
+  #settingsView .set-actions { margin-top: 16px; display: flex; align-items: center; gap: 12px; }
+  #setMsg { color: #4c9aff; font-size: 13px; }
+  #setMsg.err { color: #e5534b; }
   footer { margin-top: 18px; color: #5c6470; font-size: 12px; line-height: 1.8; }
 </style>
 </head>
@@ -777,6 +916,7 @@ public class WebAggServer : IDisposable
 <nav class="tabs">
   <button class="tab active" id="tabDash">看板</button>
   <button class="tab" id="tabFiles">文件</button>
+  <button class="tab" id="tabSettings">设置</button>
 </nav>
 
 <div id="dashView">
@@ -814,6 +954,52 @@ public class WebAggServer : IDisposable
     <tbody id="fileRows"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody>
   </table>
   <div id="fileMsg"></div>
+</div>
+
+<div id="settingsView" style="display:none">
+  <h3>聚合服务设置</h3>
+  <div class="set-row">
+    <label>监听端口</label>
+    <input type="number" id="setPort" min="1" max="65535" value="8080">
+    <span class="hint">改后需重启聚合服务生效</span>
+  </div>
+  <div class="set-row">
+    <label>访问令牌（agg_token）</label>
+    <input type="password" id="setToken" placeholder="留空=不修改；填入新值立即生效">
+    <span class="hint" id="tokenState"></span>
+  </div>
+  <div class="set-row">
+    <label>飞书告警 webhook</label>
+    <input type="text" id="setWebhook" placeholder="https://open.feishu.cn/open-apis/...">
+    <span class="hint">机台离线告警 + 定时汇总推送目标；留空关闭</span>
+  </div>
+  <div class="set-row">
+    <label>汇总推送间隔（分钟）</label>
+    <input type="number" id="setSummary" min="1" max="1440" value="60">
+    <span class="hint">每 N 分钟向飞书推一次各机台汇总</span>
+  </div>
+  <div class="set-row">
+    <label>传输通道</label>
+    <select id="setTransport">
+      <option value="http">http（机台直推）</option>
+      <option value="smb">smb（共享目录）</option>
+    </select>
+    <span class="hint">改后需重启聚合服务生效</span>
+  </div>
+  <div class="set-row">
+    <label>共享目录根</label>
+    <input type="text" id="setShareRoot" placeholder="D:\ArgusAgg">
+    <span class="hint">smb 通道机台目录根；http 通道可留空</span>
+  </div>
+  <div class="set-row">
+    <label>报告白名单根（results_root）</label>
+    <input type="text" id="setResultsRoot" placeholder="D:\Results">
+    <span class="hint">XML 下载/文件浏览白名单，目录外一律拒绝</span>
+  </div>
+  <div class="set-actions">
+    <button id="btnSaveSettings">保存设置</button>
+    <span id="setMsg"></span>
+  </div>
 </div>
 
 <footer>
@@ -1021,15 +1207,73 @@ setInterval(function () {
 
 // ==================== 页签切换 ====================
 function showTab(name) {
-  var dash = name === "dash";
+  var dash = name === "dash", files = name === "files", set = name === "settings";
   document.getElementById("tabDash").classList.toggle("active", dash);
-  document.getElementById("tabFiles").classList.toggle("active", !dash);
+  document.getElementById("tabFiles").classList.toggle("active", files);
+  document.getElementById("tabSettings").classList.toggle("active", set);
   document.getElementById("dashView").style.display = dash ? "" : "none";
-  document.getElementById("filesView").style.display = dash ? "none" : "";
-  if (!dash) loadFiles();   // 进文件页才拉列表（懒加载）
+  document.getElementById("filesView").style.display = files ? "" : "none";
+  document.getElementById("settingsView").style.display = set ? "" : "none";
+  if (files) loadFiles();            // 进文件页才拉列表（懒加载）
+  if (set) loadSettings();           // 进设置页才拉配置（懒加载）
 }
 document.getElementById("tabDash").onclick = function () { showTab("dash"); };
 document.getElementById("tabFiles").onclick = function () { showTab("files"); };
+document.getElementById("tabSettings").onclick = function () { showTab("settings"); };
+
+// ==================== 设置页（管理后台开关） ====================
+var settingsLoaded = false;
+
+async function loadSettings() {
+  var res = await apiFetch("/api/settings");
+  if (!res.ok) return;
+  var s = await res.json();
+  document.getElementById("setPort").value = s.agg_http_port || 8080;
+  document.getElementById("setWebhook").value = s.agg_webhook_url || "";
+  document.getElementById("setSummary").value = s.agg_summary_minutes || 60;
+  document.getElementById("setTransport").value = s.agg_transport || "http";
+  document.getElementById("setShareRoot").value = s.agg_share_root || "";
+  document.getElementById("setResultsRoot").value = s.results_root || "";
+  document.getElementById("tokenState").textContent = s.agg_token_set ? "（已配置）" : "（未配置）";
+  document.getElementById("setToken").value = "";
+  settingsLoaded = true;
+}
+
+document.getElementById("btnSaveSettings").onclick = async function () {
+  var msg = document.getElementById("setMsg");
+  msg.textContent = "保存中...";
+  msg.className = "";
+  var port = parseInt(document.getElementById("setPort").value, 10);
+  var summary = parseInt(document.getElementById("setSummary").value, 10);
+  var body = {
+    agg_http_port: isNaN(port) ? 8080 : port,
+    agg_token: document.getElementById("setToken").value,
+    agg_webhook_url: document.getElementById("setWebhook").value.trim(),
+    agg_summary_minutes: isNaN(summary) ? 60 : summary,
+    agg_transport: document.getElementById("setTransport").value,
+    agg_share_root: document.getElementById("setShareRoot").value.trim(),
+    results_root: document.getElementById("setResultsRoot").value.trim(),
+  };
+  try {
+    var res = await fetch("/api/settings", {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify(body)
+    });
+    var r = await res.json();
+    if (r.ok) {
+      msg.textContent = r.msg || "已保存";
+      document.getElementById("setToken").value = "";
+      loadSettings();
+    } else {
+      msg.className = "err";
+      msg.textContent = r.msg || "保存失败";
+    }
+  } catch (e) {
+    msg.className = "err";
+    msg.textContent = "保存失败：" + e;
+  }
+};
 
 // ==================== 文件浏览（/api/list） ====================
 var rootPath = "%%RESULTS_ROOT_JS%%";
@@ -1039,7 +1283,8 @@ var current = new URLSearchParams(location.search).get("path") || "";
 
 // 深链接：?view=files 直达文件页（?path= 直达目录），方便收藏/部署排查。
 // 必须在 current 定义之后调用（showTab→loadFiles 会读 current）
-showTab(new URLSearchParams(location.search).get("view") === "files" ? "files" : "dash");
+var initView = new URLSearchParams(location.search).get("view") || "dash";
+showTab(initView === "files" ? "files" : initView === "settings" ? "settings" : "dash");
 
 function fmtSize(n) {
   if (n < 1024) return n + " B";

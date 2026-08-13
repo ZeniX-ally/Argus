@@ -10,7 +10,7 @@ public class Engine
     private readonly AppConfig _cfg;
     private readonly Database _db;
     private readonly string _stationId;
-    private readonly AgentPusher _pusher;
+    private AgentPusher _pusher;
     private readonly List<FileSystemWatcher> _watchers = new();
     private volatile bool _initialScanComplete = false;
     private CancellationTokenSource _cts = new();
@@ -130,6 +130,18 @@ public class Engine
         try { _retryThread?.Join(3000); } catch { }
         foreach (var w in _watchers) { try { w.EnableRaisingEvents = false; w.Dispose(); } catch { } }
         _watchers.Clear();
+    }
+
+    /// <summary>
+    /// 机台端「连接聚合端」设置变更后重启推送器（停旧建新，读最新 config）。
+    /// 事件订阅/队列落盘/续推全部重建；未启用（agg_enabled=false）时正常停掉。
+    /// </summary>
+    public void RestartPusher()
+    {
+        try { _pusher.Stop(); } catch (Exception ex) { Logger.Warning($"旧推送器停止异常: {ex.Message}"); }
+        _pusher = new AgentPusher(_cfg, _stationId, _db);
+        _pusher.Init();
+        Logger.Info($"[聚合推送] 推送器已按新配置重启（enabled={_cfg.AggEnabled}, transport={_cfg.AggTransport}）");
     }
 
     private List<string> DiscoverModels(string root)
