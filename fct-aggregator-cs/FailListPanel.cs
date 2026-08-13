@@ -129,7 +129,7 @@ public sealed class FailListPanel : Panel
         _grid.ColumnHeadersDefaultCellStyle.BackColor = Theme.SurfaceHi;
         _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
         _grid.ColumnHeadersDefaultCellStyle.Font = Theme.BodyBold;
-        _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(30, 41, 59);
+        _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(52, 66, 88);
         _grid.DefaultCellStyle.SelectionForeColor = Theme.TextMain;
         _grid.Columns.Add("item", "失败项");
         _grid.Columns["item"]!.Width = 430;
@@ -280,7 +280,7 @@ public sealed class FailListPanel : Panel
     /// <summary>表格加一行(两模式共用)。count = 该失败项总次数, gi = 分区序号(隔区浅色底纹)。</summary>
     private void AddGridRow(FailRecord f, int count, int gi)
     {
-        var alt = gi % 2 == 0 ? Theme.Surface : Color.FromArgb(26, 32, 41);
+        var alt = gi % 2 == 0 ? Theme.Surface : Color.FromArgb(40, 51, 68);
         var fg = count >= 5 ? Theme.Danger
                : count >= 2 ? Color.FromArgb(251, 146, 60)
                : Theme.TextMain;
@@ -371,7 +371,7 @@ public sealed class FailListPanel : Panel
                             Tag = f.XmlPath,
                             ForeColor = Theme.TextMain,
                             NodeFont = grpHit ? null : Theme.BodyBold,
-                            BackColor = grpHit ? Theme.Surface : Color.FromArgb(34, 32, 24),
+                            BackColor = grpHit ? Theme.Surface : Color.FromArgb(56, 52, 38),
                         };
                         gn.Nodes.Add(cn);
                     }

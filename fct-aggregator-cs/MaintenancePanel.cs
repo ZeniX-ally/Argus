@@ -81,7 +81,7 @@ public class MaintenancePanel : Panel
         {
             Text = "从FAIL选故障项", Width = 118, Height = 30,
             Margin = new Padding(12, 2, 4, 2),
-            BackColor = Color.FromArgb(28, 66, 54),
+            BackColor = Color.FromArgb(34, 84, 68),
         };
         btnFromFail.Click += (_, _) => NewFromFailItems();
         bar.Controls.Add(btnFromFail);
@@ -567,7 +567,7 @@ public class MaintenancePanel : Panel
         {
             Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
             ScrollBars = ScrollBars.Vertical, Margin = m,
-            BackColor = Color.FromArgb(24, 30, 40),
+            BackColor = Color.FromArgb(46, 59, 78),
         };
         _reason = new TextBox { Dock = DockStyle.Fill, Margin = m };
         _severity = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, Margin = m };
@@ -592,14 +592,14 @@ public class MaintenancePanel : Panel
         var btnPickWho = new Button
         {
             Dock = DockStyle.Fill, Text = "选择", Margin = new Padding(2, 5, 2, 5),
-            BackColor = Color.FromArgb(30, 58, 90),
+            BackColor = Color.FromArgb(38, 74, 112),
         };
         btnPickWho.Click += (_, _) => PickResolvers();
         btnPickWho.Enabled = _db != null;
         var btnAddWho = new Button
         {
             Dock = DockStyle.Fill, Text = "+ 人员", Margin = new Padding(0, 5, 3, 5),
-            BackColor = Color.FromArgb(28, 66, 54),
+            BackColor = Color.FromArgb(34, 84, 68),
         };
         btnAddWho.Click += (_, _) => ManageResolvers();
         btnAddWho.Enabled = _db != null;

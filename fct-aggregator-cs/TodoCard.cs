@@ -74,7 +74,7 @@ public sealed class TodoCard : BoardCardBase
 
         using (var path = MaintenanceDraw.Rounded(r, 5))
         {
-            using (var bg = new SolidBrush(Hover ? Color.FromArgb(38, 34, 32) : Color.FromArgb(30, 27, 25)))
+            using (var bg = new SolidBrush(Hover ? Color.FromArgb(58, 48, 44) : Color.FromArgb(50, 42, 38)))
                 g.FillPath(bg, path);
             using var pen = new Pen(Hover ? Accent : Color.FromArgb(148, 88, 70), Hover ? 1.4f : 1f)
             { DashStyle = Hover ? DashStyle.Solid : DashStyle.Dash };

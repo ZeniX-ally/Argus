@@ -25,13 +25,12 @@ public class AggCenterForm : Form
     private HttpIngest? _ingest;   // agg_transport 含 http 才创建，纯 smb 部署为 null；设置热生效时可重建
     private AggAlertService _alert;   // Phase 3: 飞书离线告警 + 定时汇总（webhook 未配置则空转）
     private readonly System.Windows.Forms.Timer _timer = new();
-    private SplitContainer _split = null!;
+    private TableLayoutPanel _split = null!;
 
     // ===== 顶部信息条 =====
     private Label _lblShareRoot = null!;
     private Label _lblDbPath = null!;
-    private Label _lblTotalFails = null!;
-    private Label _lblProcessed = null!;
+    private readonly Dictionary<string, KpiCard> _kpis = new();   // 顶部 KPI 条（在线/离线/FAIL/已处理）
 
     // ===== 机台卡片区 =====
     private FlowLayoutPanel _cardFlow = null!;
@@ -109,61 +108,65 @@ public class AggCenterForm : Form
     // ==================================================================
 
     /// <summary>
-    /// 三层结构：顶部信息条（监听目录/聚合库/累计 FAIL/已处理文件）→
-    /// 中部上下分栏（上：机台卡片横向流式区，下：FAIL 明细表）→ 底部状态栏。
+    /// 监控大屏式布局（v3.4.7 重新设计）：
+    /// 顶部信息条（共享目录/聚合库）→ KPI 数字条（在线/离线/累计 FAIL/已处理）→
+    /// 左右分栏（左：机台卡片 2 列网格；右：FAIL 明细表）→ 底部状态栏。
     /// </summary>
     private void BuildUi()
     {
         // ===== 顶部信息条 =====
-        var topBar = new Panel { Dock = DockStyle.Top, Height = 62, BackColor = Theme.Surface };
+        var topBar = new Panel { Dock = DockStyle.Top, Height = 50, BackColor = Theme.Surface };
         topBar.Paint += (_, e) =>
         {
             using var p = new Pen(Theme.Border);
             e.Graphics.DrawLine(p, 0, topBar.Height - 1, topBar.Width, topBar.Height - 1);
         };
-        var infoLeft = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(16, 7, 16, 7) };
+        var infoLeft = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(16, 5, 16, 5) };
         _lblShareRoot = InfoLabel();
         _lblDbPath = InfoLabel();
         infoLeft.Controls.Add(_lblDbPath);       // 先加的先停靠 → 在下面
         infoLeft.Controls.Add(_lblShareRoot);
-
-        var infoRight = new Panel { Dock = DockStyle.Right, Width = 300, BackColor = Theme.Surface, Padding = new Padding(8, 7, 16, 7) };
-        _lblTotalFails = new Label
-        {
-            Dock = DockStyle.Top, Height = 26, Font = Theme.NumberSmall,
-            ForeColor = Theme.TextSub, TextAlign = ContentAlignment.MiddleRight, Text = "累计 FAIL  0",
-        };
-        _lblProcessed = new Label
-        {
-            Dock = DockStyle.Top, Height = 20, Font = Theme.Small,
-            ForeColor = Theme.TextFaint, TextAlign = ContentAlignment.MiddleRight, Text = "已处理 0 个文件",
-        };
-        infoRight.Controls.Add(_lblProcessed);
-        infoRight.Controls.Add(_lblTotalFails);
-
-        topBar.Controls.Add(infoLeft);           // Fill 先加 = 最后停靠 = 吃剩余
-        topBar.Controls.Add(infoRight);
+        topBar.Controls.Add(infoLeft);
 
         // 长路径鼠标悬停看全名
         var tip = new ToolTip();
         tip.SetToolTip(_lblShareRoot, _shareRoot);
         tip.SetToolTip(_lblDbPath, _dbPath);
 
-        // ===== 中部：上卡片区 / 下 FAIL 明细 =====
-        _split = new SplitContainer
+        // ===== KPI 数字条（SCADA 大屏感：大数字 + 状态灯圆点） =====
+        var kpiBar = new Panel { Dock = DockStyle.Top, Height = 84, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap, Theme.Gap, Theme.Gap, 0) };
+        var kpiTable = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, BackColor = Theme.Bg };
+        for (int i = 0; i < 4; i++) kpiTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        void AddKpi(string key, string title, Color accent, int col)
         {
-            Dock = DockStyle.Fill, Orientation = Orientation.Horizontal,
-            Panel1MinSize = 150, Panel2MinSize = 130,
-        };
-        _split.Panel1.BackColor = Theme.Bg;
-        _split.Panel2.BackColor = Theme.Bg;
+            var c = new KpiCard(title, accent) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, 0) };
+            _kpis[key] = c;
+            kpiTable.Controls.Add(c, col, 0);
+        }
+        AddKpi("online", "在线机台", Theme.Success, 0);
+        AddKpi("offline", "离线机台", Theme.Danger, 1);
+        AddKpi("fail", "累计 FAIL", Theme.Primary, 2);
+        AddKpi("processed", "已处理文件", Theme.Info, 3);
+        _kpis["processed"].Margin = new Padding(0);
+        kpiBar.Controls.Add(kpiTable);
 
-        // -- 机台卡片区（横向流式 + 自动横向滚动，机台多时滚动条兜底）--
+        // ===== 中部：左右分栏（左：机台卡片网格 / 右：FAIL 明细） =====
+        // ⚠ 不用 SplitContainer：内嵌模式（TopLevel=false 进 ToolHost）时控件尺寸为 0，
+        //   SplitContainer 初始化内部 SplitterDistance 会抛 InvalidOperationException。
+        //   TableLayoutPanel 两列无此问题，列宽用 Absolute + Percent 模拟分栏。
+        var split = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg,
+        };
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 430));
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        // -- 左：机台卡片区（2 列网格，换行布局，机台多时纵向滚动）--
         var cardsHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap) };
         _cardFlow = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = Theme.Bg,
-            FlowDirection = FlowDirection.LeftToRight, WrapContents = false, AutoScroll = true,
+            FlowDirection = FlowDirection.TopDown, WrapContents = true, AutoScroll = true,
         };
         _emptyLabel = new Label
         {
@@ -173,9 +176,9 @@ public class AggCenterForm : Form
         };
         cardsHost.Controls.Add(_cardFlow);
         cardsHost.Controls.Add(_emptyLabel);
-        _split.Panel1.Controls.Add(cardsHost);
+        split.Controls.Add(cardsHost, 0, 0);
 
-        // -- FAIL 明细表 --
+        // -- 右：FAIL 明细表 --
         var gridHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap) };
         _grid = new DataGridView
         {
@@ -195,7 +198,7 @@ public class AggCenterForm : Form
         };
         gridHost.Controls.Add(_grid);
         gridHost.Controls.Add(_emptyGridLabel);   // 后加的在上层：无数据时盖住表格
-        _split.Panel2.Controls.Add(gridHost);
+        split.Controls.Add(gridHost, 1, 0);
 
         // ===== 底部状态栏 =====
         var status = new StatusStrip
@@ -217,10 +220,14 @@ public class AggCenterForm : Form
         btnSettings.Click += (_, _) => ShowSettingsDialog();
         status.Items.Add(btnSettings);
 
-        // 停靠顺序：后 Add 的先停靠 —— 状态栏最先停靠(底部)，split 吃剩余，topBar 顶
+        // 停靠顺序：后 Add 的先停靠 —— 状态栏最先停靠(底部)，split 吃剩余，kpiBar 中间，topBar 顶
         Controls.Add(topBar);
-        Controls.Add(_split);
+        Controls.Add(kpiBar);
+        Controls.Add(split);
         Controls.Add(status);
+
+        // 替换旧字段引用（RefreshData 用到的 _split 改为局部 split 的别名）
+        _split = split;
     }
 
     private static Label InfoLabel() => new()
@@ -256,9 +263,7 @@ public class AggCenterForm : Form
 
     private void OnShown(object? sender, EventArgs e)
     {
-        // SplitterDistance 必须等布局完成后再设（构造期设置会因控件尺寸为 0 抛异常）
-        try { _split.SplitterDistance = Math.Min(205, Math.Max(_split.Panel1MinSize, _split.Height - _split.Panel2MinSize - 20)); }
-        catch (Exception ex) { Logger.Warning($"分隔条初始化失败: {ex.Message}"); }
+        // 分栏布局用 TableLayoutPanel（列宽 Absolute+Percent 已定），无需设 SplitterDistance
         try { _db.Open(); }
         catch (Exception ex)
         {
@@ -483,10 +488,14 @@ public class AggCenterForm : Form
     {
         SetText(_lblShareRoot, $"监听目录  {_shareRoot}");
         SetText(_lblDbPath, $"聚合库  {_dbPath}");
+        // KPI 条：在线/离线/累计 FAIL/已处理（大数字监控感）
+        var machines = _watcher.GetMachines();
+        var online = machines.Count(m => m.Online);
         var total = _watcher.TotalFails;
-        SetText(_lblTotalFails, $"累计 FAIL  {total:N0}");
-        _lblTotalFails.ForeColor = total > 0 ? Theme.Danger : Theme.TextSub;
-        SetText(_lblProcessed, $"已处理 {_watcher.ProcessedFiles:N0} 个文件");
+        if (_kpis.TryGetValue("online", out var ko)) ko.Set(online.ToString("N0"), $"共 {machines.Count:N0} 台");
+        if (_kpis.TryGetValue("offline", out var koff)) koff.Set((machines.Count - online).ToString("N0"), "心跳超时 90s");
+        if (_kpis.TryGetValue("fail", out var kf)) kf.Set(total.ToString("N0"), "全部机台");
+        if (_kpis.TryGetValue("processed", out var kp)) kp.Set(_watcher.ProcessedFiles.ToString("N0"), "本次运行");
     }
 
     /// <summary>
@@ -658,13 +667,13 @@ public class AggCenterForm : Form
 
         public MachineCard(string machine)
         {
-            Size = new Size(200, 124);
+            Size = new Size(250, 150);
             Margin = new Padding(0, 0, Theme.Gap, Theme.Gap);
             BackColor = Theme.Surface;
-            Padding = new Padding(10, 6, 10, 4);
+            Padding = new Padding(12, 8, 12, 6);
 
-            // 头行：机台名（左）+ 状态文字 + 状态灯（右）
-            var header = new Panel { Dock = DockStyle.Top, Height = 24, BackColor = Theme.Surface };
+            // 头行：状态灯（左，醒目）+ 机台名 + 状态文字（右）
+            var header = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Theme.Surface };
             _name = new Label
             {
                 Text = machine, Dock = DockStyle.Fill, Font = Theme.BodyBold,
@@ -679,18 +688,18 @@ public class AggCenterForm : Form
             };
             _lamp = new Label
             {
-                Dock = DockStyle.Right, Width = 18, Text = "●", Font = Theme.BodyBold,
+                Dock = DockStyle.Left, Width = 20, Text = "●", Font = new Font(Theme.Body.FontFamily, 11F, FontStyle.Bold),
                 ForeColor = Theme.Success, TextAlign = ContentAlignment.MiddleCenter,
             };
             header.Controls.Add(_name);     // Fill 先加
             header.Controls.Add(_status);
-            header.Controls.Add(_lamp);     // 后加 = 最右
+            header.Controls.Add(_lamp);     // 后加 = 最左（Left 停靠）
 
             _lblHeartbeat = RowLabel();
             _lblFailCount = new Label
             {
-                Dock = DockStyle.Top, Height = 26, Font = Theme.NumberSmall,
-                ForeColor = Theme.TextSub, TextAlign = ContentAlignment.MiddleLeft,
+                Dock = DockStyle.Top, Height = 30, Font = Theme.NumberSmall,
+                ForeColor = Theme.Primary, TextAlign = ContentAlignment.MiddleLeft,
                 Text = "累计 FAIL  0", UseMnemonic = false,
             };
             _lblLastFail = RowLabel();

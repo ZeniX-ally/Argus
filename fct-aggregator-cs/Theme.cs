@@ -10,34 +10,34 @@ namespace FctAggregator;
 /// </summary>
 public static class Theme
 {
-    // ==================== 颜色（v3.4.6 深色工业监控风 / SCADA 基调） ====================
-    /// <summary>工作区底色（近黑蓝灰，工业监控面板感）。</summary>
-    public static readonly Color Bg = Color.FromArgb(14, 17, 23);
-    /// <summary>卡片/面板底色（比背景亮一档的深灰蓝）。</summary>
-    public static readonly Color Surface = Color.FromArgb(22, 27, 35);
+    // ==================== 颜色（v3.4.7 深色工业监控风 · 提亮版） ====================
+    /// <summary>工作区底色（中深蓝灰，SCADA 面板感但不过暗）。</summary>
+    public static readonly Color Bg = Color.FromArgb(27, 35, 48);
+    /// <summary>卡片/面板底色（比背景亮一档）。</summary>
+    public static readonly Color Surface = Color.FromArgb(36, 46, 62);
     /// <summary>更亮一档（悬停/强调区）。</summary>
-    public static readonly Color SurfaceHi = Color.FromArgb(30, 37, 48);
-    /// <summary>侧边导航底色（比背景更黑，突出层次）。</summary>
-    public static readonly Color NavBg = Color.FromArgb(10, 13, 18);
-    public static readonly Color NavHover = Color.FromArgb(24, 30, 40);
-    public static readonly Color NavActive = Color.FromArgb(22, 28, 38);
-    public static readonly Color NavText = Color.FromArgb(130, 142, 158);
+    public static readonly Color SurfaceHi = Color.FromArgb(46, 59, 78);
+    /// <summary>侧边导航底色（比背景更深一档，突出层次）。</summary>
+    public static readonly Color NavBg = Color.FromArgb(21, 28, 39);
+    public static readonly Color NavHover = Color.FromArgb(33, 43, 58);
+    public static readonly Color NavActive = Color.FromArgb(38, 49, 70);
+    public static readonly Color NavText = Color.FromArgb(148, 162, 182);
     public static readonly Color NavTextActive = Color.White;
 
-    public static readonly Color Border = Color.FromArgb(42, 52, 66);
-    public static readonly Color BorderHi = Color.FromArgb(58, 72, 92);
-    public static readonly Color TextMain = Color.FromArgb(226, 232, 240);
-    public static readonly Color TextSub = Color.FromArgb(148, 163, 184);
-    public static readonly Color TextFaint = Color.FromArgb(100, 116, 139);
+    public static readonly Color Border = Color.FromArgb(56, 71, 92);
+    public static readonly Color BorderHi = Color.FromArgb(74, 93, 120);
+    public static readonly Color TextMain = Color.FromArgb(232, 237, 244);
+    public static readonly Color TextSub = Color.FromArgb(168, 182, 200);
+    public static readonly Color TextFaint = Color.FromArgb(117, 134, 156);
 
-    // SCADA 基调：青蓝主色 + 荧光语义色（黑底上亮、清晰、有"机器状态"感）
-    public static readonly Color Primary = Color.FromArgb(56, 189, 248);      // 亮青蓝
-    public static readonly Color PrimaryDim = Color.FromArgb(14, 165, 233);   // 深一档（激活条/边框）
-    public static readonly Color Success = Color.FromArgb(52, 211, 153);      // 荧光绿
-    public static readonly Color Warning = Color.FromArgb(251, 191, 36);      // 亮琥珀
-    public static readonly Color Danger = Color.FromArgb(248, 113, 113);      // 亮红
-    public static readonly Color Info = Color.FromArgb(34, 211, 238);         // 亮青
-    public static readonly Color Neutral = Color.FromArgb(148, 163, 184);
+    // SCADA 基调：亮青蓝主色 + 荧光语义色（提亮版，黑底/深底上都醒目）
+    public static readonly Color Primary = Color.FromArgb(76, 195, 255);      // 亮青蓝
+    public static readonly Color PrimaryDim = Color.FromArgb(30, 144, 224);   // 深一档（激活条/主按钮）
+    public static readonly Color Success = Color.FromArgb(61, 220, 151);      // 荧光绿
+    public static readonly Color Warning = Color.FromArgb(255, 197, 61);      // 亮琥珀
+    public static readonly Color Danger = Color.FromArgb(255, 123, 114);      // 亮红
+    public static readonly Color Info = Color.FromArgb(57, 208, 232);         // 亮青
+    public static readonly Color Neutral = Color.FromArgb(168, 182, 200);
 
     // ==================== 字体 ====================
     private const string Family = "Microsoft YaHei UI";
@@ -240,10 +240,10 @@ public static class Theme
         dg.ColumnHeadersDefaultCellStyle.SelectionForeColor = TextSub;
         dg.DefaultCellStyle.BackColor = Surface;
         dg.DefaultCellStyle.ForeColor = TextMain;
-        dg.DefaultCellStyle.SelectionBackColor = Color.FromArgb(30, 41, 59);
+        dg.DefaultCellStyle.SelectionBackColor = Color.FromArgb(52, 66, 88);
         dg.DefaultCellStyle.SelectionForeColor = Color.White;
-        dg.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(26, 32, 41);
-        dg.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(20, 25, 33);
+        dg.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(40, 51, 68);
+        dg.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(33, 42, 57);
         dg.RowHeadersDefaultCellStyle.ForeColor = TextFaint;
     }
 

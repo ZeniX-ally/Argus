@@ -43,7 +43,7 @@ public class MaintenanceBoard : Panel
     private void BuildUi()
     {
         AutoScroll = true;
-        BackColor = Color.FromArgb(18, 22, 29);
+        BackColor = Color.FromArgb(27, 35, 48);
         Padding = new Padding(6, 4, 6, 4);
 
         var defs = MaintenanceMeta.Statuses;
@@ -442,7 +442,7 @@ public class MaintenanceBoard : Panel
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 AutoScroll = true,
-                BackColor = Color.FromArgb(17, 21, 28),
+                BackColor = Color.FromArgb(33, 42, 57),
                 Padding = new Padding(2, 4, 2, 4),
             };
             _cards.Paint += PaintCardsBackdrop;
@@ -600,7 +600,7 @@ public class MaintenanceBoard : Panel
         {
             if (_highlight == on) return;
             _highlight = on;
-            _cards.BackColor = on ? Color.FromArgb(24, 30, 40) : Color.FromArgb(17, 21, 28);
+            _cards.BackColor = on ? Color.FromArgb(46, 59, 78) : Color.FromArgb(33, 42, 57);
             _head.Invalidate();
         }
 
@@ -611,7 +611,7 @@ public class MaintenanceBoard : Panel
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var r = _head.ClientRectangle;
 
-            using (var bg = new SolidBrush(_highlight ? Color.FromArgb(30, 41, 59) : Theme.Surface))
+            using (var bg = new SolidBrush(_highlight ? Color.FromArgb(52, 66, 88) : Theme.Surface))
                 g.FillRectangle(bg, r);
             using (var bar = new SolidBrush(_def.Accent))
                 g.FillRectangle(bar, new Rectangle(0, r.Bottom - 3, r.Width, 3));
@@ -723,7 +723,7 @@ public sealed class MaintenanceCard : BoardCardBase
 
         using (var path = MaintenanceDraw.Rounded(r, 5))
         {
-            using (var bg = new SolidBrush(Hover ? Color.FromArgb(38, 46, 58) : Theme.Surface))
+            using (var bg = new SolidBrush(Hover ? Color.FromArgb(56, 71, 92) : Theme.Surface))
                 g.FillPath(bg, path);
             using (var pen = new Pen(Hover ? MaintenanceMeta.AccentOf(Record.Status) : Color.FromArgb(58, 72, 92)))
                 g.DrawPath(pen, path);
