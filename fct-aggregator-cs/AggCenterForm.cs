@@ -160,7 +160,7 @@ public class AggCenterForm : Form
         {
             Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg,
         };
-        split.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 430));
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 480));
         split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
         // -- 左：机台卡片区（2 列网格，换行布局，机台多时纵向滚动）--
@@ -169,6 +169,13 @@ public class AggCenterForm : Form
         {
             Dock = DockStyle.Fill, BackColor = Theme.Bg,
             FlowDirection = FlowDirection.TopDown, WrapContents = true, AutoScroll = true,
+        };
+        // 窗口尺寸变化时按新宽度重算卡片（2 列排满不截断）
+        _cardFlow.ClientSizeChanged += (_, _) =>
+        {
+            if (_cards.Count == 0) return;
+            var w = Math.Max(180, Math.Max(0, _cardFlow.ClientSize.Width) / 2 - Theme.Gap);
+            foreach (var c in _cards.Values) c.SetCardWidth(w);
         };
         _emptyLabel = new Label
         {
@@ -506,11 +513,17 @@ public class AggCenterForm : Form
     /// <summary>
     /// 机台卡片增量更新：按机台名缓存卡片，新增的才建、消失的移除、
     /// 剩下的只改文字颜色（SuspendLayout/ResumeLayout 包住增删，防闪烁）。
+    /// 卡片宽度按左栏可用宽度自适应（2 列排满不截断）。
     /// </summary>
     private void UpdateCards(List<AggMachineStatus> machines)
     {
         var sorted = machines.OrderBy(m => m.Machine, StringComparer.OrdinalIgnoreCase).ToList();
         var want = sorted.Select(m => m.Machine).ToHashSet();
+
+        // 自适应卡片宽度：两列排满 = 2×(cardW + MarginW)，MarginW=Theme.Gap；
+        // cardW = flowW/2 - Gap，最小 180（窗口太窄时单列兜底）
+        var flowW = Math.Max(0, _cardFlow.ClientSize.Width);
+        var cardW = Math.Max(180, flowW / 2 - Theme.Gap);
 
         _cardFlow.SuspendLayout();
         foreach (var kv in _cards.ToList())
@@ -530,6 +543,7 @@ public class AggCenterForm : Form
                 _cards[m.Machine] = card;
                 _cardFlow.Controls.Add(card);
             }
+            card.SetCardWidth(cardW);
             card.Update(m);
         }
         _cardFlow.ResumeLayout();
@@ -672,7 +686,7 @@ public class AggCenterForm : Form
 
         public MachineCard(string machine)
         {
-            Size = new Size(250, 150);
+            Height = 150;
             Margin = new Padding(0, 0, Theme.Gap, Theme.Gap);
             BackColor = Theme.Surface;
             Padding = new Padding(12, 8, 12, 6);
@@ -723,6 +737,16 @@ public class AggCenterForm : Form
             Dock = DockStyle.Top, Height = 20, Font = Theme.Small,
             ForeColor = Theme.TextSub, TextAlign = ContentAlignment.MiddleLeft, UseMnemonic = false,
         };
+
+        /// <summary>按左栏可用宽度设置卡片宽度（2 列自适应）。</summary>
+        public void SetCardWidth(int width)
+        {
+            if (Width != width)
+            {
+                Width = width;
+                Invalidate();
+            }
+        }
 
         /// <summary>状态变化才改文字/颜色；强调条变了才重绘卡片。</summary>
         public void Update(AggMachineStatus s)
