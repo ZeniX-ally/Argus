@@ -222,11 +222,14 @@ public class AggCenterForm : Form
         btnSettings.Click += (_, _) => ShowSettingsDialog();
         status.Items.Add(btnSettings);
 
-        // 停靠顺序：后 Add 的先停靠 —— 状态栏最先停靠(底部)，split 吃剩余，kpiBar 中间，topBar 顶
-        Controls.Add(topBar);
-        Controls.Add(kpiBar);
-        Controls.Add(split);
+        // ⚠ 停靠顺序铁律（WinForms）：后 Add 的先停靠。
+        //   顶部两行信息条 topBar 必须**最后 Add** → 最先停靠到最顶；
+        //   kpiBar(Top) 其次 → 紧贴其下；split(Fill) 吃剩余；status(Bottom) 最先 Add → 停最底。
+        //   顺序写反会导致 topBar 被 kpiBar 挤到下面、文字悬空盖在 KPI 卡上。
         Controls.Add(status);
+        Controls.Add(split);
+        Controls.Add(kpiBar);
+        Controls.Add(topBar);
 
         // 替换旧字段引用（RefreshData 用到的 _split 改为局部 split 的别名）
         _split = split;
