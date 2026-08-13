@@ -798,31 +798,68 @@ public class MainForm : Form
 
         btnBecome.Click += (_, _) =>
         {
-            try
+            // 防火墙放行需要管理员：当前是管理员直接执行，否则 runas 提权重启自身执行
+            if (!AggDeployer.IsAdmin())
             {
-                // 发布包根目录优先（make_package 已铺平），开发目录回落 tools/
-                var bat = Path.Combine(AppConfig.BaseDir, "一键部署聚合服务.bat");
-                if (!File.Exists(bat)) bat = Path.Combine(AppConfig.BaseDir, "tools", "一键部署聚合服务.bat");
-                if (!File.Exists(bat))
+                var ask = MessageBox.Show(
+                    "一键成为聚合端需要管理员权限（防火墙放行）。\n是否以管理员身份重新启动部署？",
+                    "聚合服务一键部署", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (ask != DialogResult.Yes) return;
+                if (AggDeployer.RelaunchAsAdmin())
+                {
+                    lblBecomeMsg.ForeColor = Theme.Success;
+                    lblBecomeMsg.Text = "已以管理员身份启动部署窗口（UAC 点「是」），完成后本机即聚合端。";
+                }
+                else
                 {
                     lblBecomeMsg.ForeColor = Theme.Danger;
-                    lblBecomeMsg.Text = "未找到「一键部署聚合服务.bat」，请使用完整发布包部署聚合端。";
-                    return;
+                    lblBecomeMsg.Text = "提权启动失败（UAC 被取消？），请右键 Argus.exe → 以管理员身份运行后重试。";
                 }
-                var psi = new System.Diagnostics.ProcessStartInfo
+                return;
+            }
+
+            // 已是管理员：当前进程直接执行部署（不依赖任何外部 bat）
+            lblBecomeMsg.ForeColor = Theme.TextSub;
+            lblBecomeMsg.Text = "部署中，请稍候...";
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                var r = AggDeployer.Deploy();
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"步骤 1: config.json 就绪（端口 {r.Port}）");
+                sb.AppendLine(r.FirewallOk
+                    ? "步骤 2: 防火墙放行 ✓"
+                    : $"步骤 2: 防火墙放行失败（{r.FirewallMsg}）");
+                sb.AppendLine(r.AutoStartOk
+                    ? "步骤 3: 开机自启 ✓"
+                    : $"步骤 3: 开机自启失败（{r.AutoStartMsg}）");
+                sb.AppendLine(r.ServiceOk
+                    ? "步骤 4: 聚合服务已启动 ✓"
+                    : $"步骤 4: 服务启动失败（{r.ServiceMsg}）");
+                if (r.Addresses.Count > 0)
                 {
-                    FileName = bat,
-                    UseShellExecute = true,   // bat 内部自带 UAC 提权逻辑
-                    WorkingDirectory = Path.GetDirectoryName(bat) ?? AppConfig.BaseDir,
-                };
-                System.Diagnostics.Process.Start(psi);
+                    sb.AppendLine("步骤 5: 浏览器访问地址");
+                    foreach (var ip in r.Addresses) sb.AppendLine($"  http://{ip}:{r.Port}/");
+                }
+                else
+                    sb.AppendLine($"步骤 5: 浏览器访问 http://本机IP:{r.Port}/");
+                sb.AppendLine();
+                sb.AppendLine("机台端在「聚合设置」里填本机 IP 即可连接。");
+                MessageBox.Show(sb.ToString(), "聚合服务一键部署",
+                    MessageBoxButtons.OK, r.FullSuccess ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
                 lblBecomeMsg.ForeColor = Theme.Success;
-                lblBecomeMsg.Text = "已启动一键部署窗口，按提示操作即可（防火墙放行需点「是」）。";
+                lblBecomeMsg.Text = r.FullSuccess
+                    ? "部署完成，本机已是聚合端（浏览器访问上面地址查看看板）。"
+                    : "部署部分完成（见弹窗），未成功的步骤请看提示。";
             }
             catch (Exception ex)
             {
                 lblBecomeMsg.ForeColor = Theme.Danger;
-                lblBecomeMsg.Text = $"启动失败: {ex.Message}";
+                lblBecomeMsg.Text = $"部署失败: {ex.Message}";
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
             }
         };
 

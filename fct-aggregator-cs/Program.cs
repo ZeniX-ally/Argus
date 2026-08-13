@@ -260,195 +260,44 @@ static class Program
 
     /// <summary>
     /// 一键部署聚合服务（argus agg --install）：config 生成 / 防火墙放行 / 开机自启 / 启动服务。
-    /// 产线维护者双击「一键部署聚合服务.bat」后经提权调用本命令。
-    /// 已完成的步骤不回滚；防火墙失败只警告不中断（服务仍可启动，只是机台访问会受限）。
+    /// 逻辑在 <see cref="AggDeployer"/>（内嵌，不依赖外部 bat）；本方法只是 CLI 壳：
+    /// 打印每步结果与访问地址（GUI 按钮也走 AggDeployer，结果用弹窗展示）。
     /// ⚠ EDR(SentinelOne) 兼容：开机自启用「启动文件夹快捷方式」，不写注册表 Run/服务键。
     /// </summary>
     private static int RunAggInstall()
     {
-        try
-        {
-            Console.WriteLine("聚合服务一键部署");
-            Console.WriteLine();
+        Console.WriteLine("聚合服务一键部署");
+        Console.WriteLine();
 
-            var exePath = CurrentExePath();
-            var configPath = Path.Combine(AppConfig.BaseDir, "config.json");
+        var r = AggDeployer.Deploy();
 
-            // ---- 步骤 1/5：生成 config.json（幂等：已存在则保留） ----
-            int port;
-            Console.WriteLine("步骤 1/5: 检查 config.json ...");
-            if (File.Exists(configPath))
-            {
-                port = ReadAggHttpPort(configPath);
-                Console.WriteLine($"  config.json 已存在，保留现有配置（当前 agg_http_port={port}）");
-            }
-            else
-            {
-                File.WriteAllText(configPath, BuildDefaultAggConfigJson());
-                port = 8080;
-                Console.WriteLine($"  已生成默认 config.json（agg_http_port={port}）");
-            }
+        Console.WriteLine($"步骤 1/5: config.json 已就绪（agg_http_port={r.Port}）");
+        if (r.FirewallOk)
+            Console.WriteLine("步骤 2/5: 防火墙规则 ArgusAggWeb 已就绪");
+        else
+            Console.WriteLine($"步骤 2/5: 防火墙放行失败——{r.FirewallMsg}（请以管理员身份重新运行）");
+        if (r.AutoStartOk)
+            Console.WriteLine("步骤 3/5: 开机自启已添加（启动文件夹）");
+        else
+            Console.WriteLine($"步骤 3/5: 开机自启设置失败: {r.AutoStartMsg}");
+        if (r.ServiceOk)
+            Console.WriteLine("步骤 4/5: 聚合服务已启动（无窗口常驻）");
+        else
+            Console.WriteLine($"步骤 4/5: 服务启动失败: {r.ServiceMsg}（可手动运行 Argus.exe agg --web）");
 
-            // ---- 步骤 2/5：防火墙放行（需要管理员；失败不中断后续步骤） ----
-            Console.WriteLine($"步骤 2/5: 防火墙放行 TCP {port} 入站 ...");
-            try
-            {
-                RunProcessWait("netsh.exe", "advfirewall firewall delete rule name=\"ArgusAggWeb\"");   // 先清旧规则（不存在时失败属正常，忽略）
-                int code = RunProcessWait("netsh.exe",
-                    $"advfirewall firewall add rule name=\"ArgusAggWeb\" dir=in action=allow protocol=TCP localport={port}");
-                if (code == 0)
-                    Console.WriteLine("  防火墙规则 ArgusAggWeb 已就绪");
-                else
-                    Console.WriteLine($"  防火墙放行失败——请以管理员身份重新运行（右键 bat → 以管理员身份运行）(退出码 {code})");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  防火墙放行失败——请以管理员身份重新运行（右键 bat → 以管理员身份运行）: {ex.Message}");
-            }
-
-            // ---- 步骤 3/5：开机自启（启动文件夹快捷方式，不写注册表——EDR 兼容） ----
-            Console.WriteLine("步骤 3/5: 添加开机自启（启动文件夹快捷方式）...");
-            try
-            {
-                var startupDir = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-                var lnkPath = Path.Combine(startupDir, "Argus聚合服务.lnk");
-                CreateShortcut(lnkPath, exePath, "agg --web", AppConfig.BaseDir);
-                Console.WriteLine(File.Exists(lnkPath)
-                    ? "  已添加开机自启（启动文件夹）"
-                    : "  警告: 快捷方式创建失败（文件未落盘）");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  警告: 开机自启设置失败: {ex.Message}");
-            }
-
-            // ---- 步骤 4/5：启动服务（无窗口后台常驻） ----
-            Console.WriteLine("步骤 4/5: 启动聚合服务 ...");
-            try
-            {
-                using var svc = Process.Start(new ProcessStartInfo
-                {
-                    FileName = exePath,
-                    Arguments = "agg --web",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WorkingDirectory = AppConfig.BaseDir,
-                });
-                Console.WriteLine(svc == null
-                    ? "  警告: 服务进程启动失败（请手动运行 Argus.exe agg --web）"
-                    : "  服务已启动");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  警告: 服务启动失败: {ex.Message}");
-            }
-
-            // ---- 步骤 5/5：打印访问地址 ----
-            Console.WriteLine("步骤 5/5: 浏览器访问地址");
-            var addrs = LocalIPv4Addresses();
-            foreach (var ip in addrs)
-                Console.WriteLine($"  http://{ip}:{port}/");
-            if (addrs.Count == 0)
-                Console.WriteLine($"  http://本机IP:{port}/（未枚举到 IP，请用本机实际 IP）");
-            Console.WriteLine("机台端 config 配置: agg_enabled=true + agg_transport=http + agg_http_url=http://本机IP:8080/");
-            Console.WriteLine();
-            Console.WriteLine("部署完成。浏览器打开上面任一地址即可查看看板。");
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"部署失败: {ex.Message}");
-            return 1;
-        }
+        Console.WriteLine("步骤 5/5: 浏览器访问地址");
+        foreach (var ip in r.Addresses)
+            Console.WriteLine($"  http://{ip}:{r.Port}/");
+        if (r.Addresses.Count == 0)
+            Console.WriteLine($"  http://本机IP:{r.Port}/（未枚举到 IP，请用本机实际 IP）");
+        Console.WriteLine("机台端 config 配置: agg_enabled=true + agg_transport=http + agg_http_url=http://本机IP:8080/");
+        Console.WriteLine();
+        Console.WriteLine("部署完成。浏览器打开上面任一地址即可查看看板。");
+        return 0;
     }
 
-    /// <summary>默认聚合端配置 JSON（agg --install 首次生成用，保持最小字段集）。</summary>
-    internal static string BuildDefaultAggConfigJson()
-    {
-        var cfg = new Dictionary<string, object?>
-        {
-            ["station_id"] = "AGG",
-            ["results_root"] = @"D:\Results",
-            ["agg_transport"] = "http",
-            ["agg_http_port"] = 8080,
-            ["agg_share_root"] = "",
-            ["agg_token"] = "",
-            ["agg_webhook_url"] = "",
-            ["agg_summary_minutes"] = 60,
-            ["log_level"] = "INFO",
-        };
-        return JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true });
-    }
-
-    /// <summary>从现有 config.json 读 agg_http_port（读不到/非法回落默认 8080）。</summary>
-    private static int ReadAggHttpPort(string configPath)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(configPath));
-            if (doc.RootElement.TryGetProperty("agg_http_port", out var v) &&
-                v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var port) && port >= 1 && port <= 65535)
-                return port;
-        }
-        catch { }
-        return 8080;
-    }
-
-    /// <summary>当前进程对应的 Argus.exe 路径（dotnet 运行 DLL 时回落程序集路径）。</summary>
-    private static string CurrentExePath()
-    {
-        var p = Environment.ProcessPath ?? "";
-        if (Path.GetFileNameWithoutExtension(p).Equals("Argus", StringComparison.OrdinalIgnoreCase))
-            return p;
-        var loc = System.Reflection.Assembly.GetEntryAssembly()?.Location ?? "";
-        return loc.Length > 0 ? loc : p;
-    }
-
-    /// <summary>同步运行外部命令，返回退出码（netsh 等系统工具用）。</summary>
-    private static int RunProcessWait(string fileName, string arguments)
-    {
-        using var p = Process.Start(new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = arguments,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        });
-        if (p == null) return -1;
-        p.StandardOutput.ReadToEnd();
-        p.StandardError.ReadToEnd();
-        p.WaitForExit();
-        return p.ExitCode;
-    }
-
-    /// <summary>
-    /// 用 WScript.Shell COM(晚绑定)创建 .lnk 快捷方式（与 AutoStart 同款写法，EDR 安全：启动文件夹而非注册表）。
-    /// </summary>
-    private static void CreateShortcut(string lnkPath, string targetPath, string arguments, string workingDir)
-    {
-        Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
-        if (shellType == null) throw new InvalidOperationException("WScript.Shell 不可用");
-        object? shell = Activator.CreateInstance(shellType);
-        try
-        {
-            object? shortcut = shellType.InvokeMember("CreateShortcut",
-                System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { lnkPath });
-            if (shortcut == null) throw new InvalidOperationException("CreateShortcut 返回空");
-            var st = shortcut.GetType();
-            st.InvokeMember("TargetPath", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { targetPath });
-            if (!string.IsNullOrEmpty(arguments))
-                st.InvokeMember("Arguments", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { arguments });
-            st.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { workingDir });
-            st.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { "Argus 聚合服务（开机自启）" });
-            st.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, null);
-        }
-        finally
-        {
-            if (shell != null && Marshal.IsComObject(shell))
-                Marshal.ReleaseComObject(shell);
-        }
-    }
+    /// <summary>默认聚合端配置 JSON（转发到 AggDeployer，自检/历史兼容用）。</summary>
+    internal static string BuildDefaultAggConfigJson() => AggDeployer.BuildDefaultConfigJson();
 
     /// <summary>枚举本机 IPv4 非回环地址（打印浏览器访问地址用）；失败返回空表。</summary>
     private static List<string> LocalIPv4Addresses()

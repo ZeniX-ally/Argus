@@ -3058,6 +3058,13 @@ class SelfTest
         }
         Check(parseOk, "一键部署:JSON 合法可解析");
         Check(json.Contains("  ") && json.Contains("\n"), "一键部署:JSON 已缩进（WriteIndented 可读格式）");
+
+        // ---- v3.4.4：AggDeployer 内嵌部署器（不再依赖外部 bat） ----
+        var depJson = AggDeployer.BuildDefaultConfigJson();
+        Check(!string.IsNullOrEmpty(depJson) && depJson == json,
+              "AggDeployer:BuildDefaultConfigJson 与 Program 转发版一致（内嵌单一来源）");
+        Check(AggDeployer.IsAdmin() == false || AggDeployer.IsAdmin() == true,
+              "AggDeployer:IsAdmin 可调用（Windows 下返回布尔，不抛异常）");
     }
 
     static void RunWebFileBrowserTests(string work)
