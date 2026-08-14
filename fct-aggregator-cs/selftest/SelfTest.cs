@@ -1391,15 +1391,35 @@ class SelfTest
                 }
                 else
                 {
-                    var names = System.Reflection.Assembly.LoadFrom(Path.GetFullPath(dll))
-                                      .GetManifestResourceNames();
-                    var xmls = names.Where(n => n.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)).ToList();
-                    // v3.0.0：分发器的内置模板（tpl\*.xml）随它一起搬去 fct-distributor/ 了。
-                    // 这里反向断言 —— 主程序里**不该**再有任何 xml 资源，否则说明拆分没拆干净。
-                    Check(xmls.Count == 0,
-                          $"主程序里已无内置模板 xml 资源（分发器已独立，实得 {xmls.Count} 个）");
-                    Check(names.Any(n => n.EndsWith("app_icon.ico", StringComparison.OrdinalIgnoreCase)),
-                          "内嵌图标仍在（取数/TDMS 工具靠 EndsWith(\"app_icon.ico\") 找它）");                }
+                    // ⚠ 2026-08-14 修复：不能直接 LoadFrom 共享盘（SMB/Samba）路径 —— .NET 加载
+                    //   程序集会抛 FileLoadException 0x80131515「不支持的操作」（win10 VM 实跑踩中，
+                    //   Windows 更新后 SMB 客户端行为变化）。先拷到本地临时目录再加载，
+                    //   资源清单检查语义不变；读不到/拷贝失败则记 FAIL，不再让整个自检崩溃。
+                    string? namesPath = null;
+                    try
+                    {
+                        var local = Path.Combine(Path.GetTempPath(),
+                            "Argus_selftest_" + Guid.NewGuid().ToString("N")[..8] + ".dll");
+                        File.Copy(dll, local, overwrite: true);
+                        namesPath = local;
+                    }
+                    catch (Exception ex)
+                    {
+                        Check(false, $"内置模板检查：拷贝 Argus.dll 到本地临时目录失败——{ex.GetType().Name} {ex.Message}");
+                    }
+                    if (namesPath != null)
+                    {
+                        var names = System.Reflection.Assembly.LoadFrom(namesPath)
+                                          .GetManifestResourceNames();
+                        var xmls = names.Where(n => n.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)).ToList();
+                        // v3.0.0：分发器的内置模板（tpl\*.xml）随它一起搬去 fct-distributor/ 了。
+                        // 这里反向断言 —— 主程序里**不该**再有任何 xml 资源，否则说明拆分没拆干净。
+                        Check(xmls.Count == 0,
+                              $"主程序里已无内置模板 xml 资源（分发器已独立，实得 {xmls.Count} 个）");
+                        Check(names.Any(n => n.EndsWith("app_icon.ico", StringComparison.OrdinalIgnoreCase)),
+                              "内嵌图标仍在（取数/TDMS 工具靠 EndsWith(\"app_icon.ico\") 找它）");
+                    }
+                }
             }
 
             // 名字重名的类确实靠命名空间隔开了（合并前有 10 组同名类）
@@ -2392,7 +2412,12 @@ class SelfTest
             Check(p1.HttpMode && p1.Active, "http 推送：http 模式激活（transport=http 且 url 非空）");
             db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-a.xml"), "SN-H1A", "自检不良H1A"));
             db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-b.xml"), "SN-H1B", "自检不良H1B"));
-            if (!WaitUntil(() => col1.Count == 2, 30000))
+            // ⚠ 2026-08-14 修复竞态：不能数 col1.Count == 2 —— 推送器 worker 启动瞬间
+            //   会立刻发首条心跳（_lastHeartbeat 初始 0），两条 fail 又几乎同时 POST，
+            //   轮询窗口可能永远看不到「恰好 2 条」（win10 VM Windows 更新后时序漂移实测踩中）。
+            //   语义是「两条 FAIL 事件都到了」，所以只数 type=fail 的 body，心跳是噪音。
+            bool TwoFails() => col1.Snapshot().Count(b => b.Contains("\"type\":\"fail\"")) == 2;
+            if (!WaitUntil(TwoFails, 30000))
             {
                 var diag = string.Join(" | ", col1.Snapshot().Select(b =>
                 {
@@ -2405,9 +2430,9 @@ class SelfTest
                     }
                     catch { return "?"; }
                 }));
-                Console.WriteLine($"    [诊断] col1.Count={col1.Count}, bodies: {diag}");
+                Console.WriteLine($"    [诊断] col1.Count={col1.Count}, fail 数={col1.Snapshot().Count(b => b.Contains("\"type\":\"fail\""))}, bodies: {diag}");
             }
-            Check(col1.Count == 2, "http 推送：收到 2 条 POST body（两条 FAIL 事件）");
+            Check(TwoFails(), "http 推送：收到 2 条 fail POST body（两条 FAIL 事件）");
             var rows1 = db1h.FetchFailRecordsAfter(0).OrderBy(x => x.Id).ToList();
             Check(rows1.Count == 2, $"http 推送：库里 2 条 FAIL（实得 {rows1.Count}）");
             var bodies1 = col1.Snapshot();

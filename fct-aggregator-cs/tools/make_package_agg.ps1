@@ -17,7 +17,10 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 # 路径自己推（写死绝对路径会静静失效）
 $root  = (Resolve-Path "$PSScriptRoot\..").Path
-$ver   = '3.4.1'
+# ⚠ 版本号自动读 FctAggregator.csproj 的 <Version>（2026-08-14 修复：曾手写 $ver='3.4.1'
+#   导致 csproj 升到 3.4.10 后打出的 zip 仍叫 Argus-Agg-v3.4.1.zip，包名版本滞后于程序）
+$ver   = [regex]::Match((Get-Content (Join-Path $root 'FctAggregator.csproj') -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
+if (-not $ver) { throw 'FctAggregator.csproj 里找不到 <Version>' }
 $build = Join-Path $root 'bin\Release\net8.0-windows'
 $out   = Join-Path $root 'dist-agg'
 
