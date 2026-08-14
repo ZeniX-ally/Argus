@@ -17,12 +17,14 @@ namespace FctAggregator;
 public class AggAlertService : IDisposable
 {
     private const int OfflineMinIntervalSec = 600;   // 同一机台两次离线告警最小间隔（防抖）
+    private const int OnlineMinIntervalSec = 600;    // 同一机台两次上线通知最小间隔（防抖，与离线对称）
 
     private readonly AggWatcher _watcher;
     private readonly AggDatabase _db;
     private readonly string _webhook;
     private readonly int _summaryMinutes;
     private readonly Dictionary<string, long> _lastOfflineAt = new();   // 机台 -> 上次离线告警 TickCount
+    private readonly Dictionary<string, long> _lastOnlineAt = new();    // 机台 -> 上次上线通知 TickCount
     private Thread? _thread;
     private volatile bool _stopping;
     private volatile bool _started;
@@ -38,7 +40,9 @@ public class AggAlertService : IDisposable
     /// <summary>是否配置了飞书 webhook（未配置则 Start 只挂事件不推，汇总线程不启动）。</summary>
     public bool Enabled => !string.IsNullOrWhiteSpace(_webhook);
 
-    /// <summary>启动：订阅离线事件 + 起汇总线程（webhook 未配置时只记录日志不启动）。</summary>
+    /// <summary>启动：订阅离线/上线事件 + 起汇总线程（webhook 未配置时只记录日志不启动）。
+    /// 防抖预热：启动瞬间已在离线/在线的机台直接记入防抖表，避免服务重启后
+    /// 对「本来就离线/在线」的机台重复告警（v3.4.11 连通性加固）。</summary>
     public void Start()
     {
         if (_started) return;
@@ -49,9 +53,21 @@ public class AggAlertService : IDisposable
             return;
         }
         _watcher.MachineOffline += OnMachineOffline;
+        _watcher.MachineOnline += OnMachineOnline;
+        // 防抖预热：现有状态不告警（离线机台不重复报、在线机台不报上线）
+        try
+        {
+            var now = Environment.TickCount64;
+            foreach (var m in _watcher.GetMachines())
+            {
+                if (m.Online) _lastOnlineAt[m.Machine] = now;
+                else _lastOfflineAt[m.Machine] = now;
+            }
+        }
+        catch (Exception ex) { Logger.Warning($"[聚合告警] 防抖预热失败: {ex.Message}"); }
         _thread = new Thread(SummaryLoop) { IsBackground = true, Name = "agg-alert" };
         _thread.Start();
-        Logger.Info($"[聚合告警] 已启用: 离线告警(同机台{OfflineMinIntervalSec / 60}分钟防抖) + 定时汇总(每{_summaryMinutes}分钟)");
+        Logger.Info($"[聚合告警] 已启用: 离线告警+上线通知(同机台{OfflineMinIntervalSec / 60}分钟防抖) + 定时汇总(每{_summaryMinutes}分钟)");
     }
 
     /// <summary>停止：退订事件 + 停后台线程。</summary>
@@ -60,6 +76,7 @@ public class AggAlertService : IDisposable
         if (!_started) return;
         _stopping = true;
         _watcher.MachineOffline -= OnMachineOffline;
+        _watcher.MachineOnline -= OnMachineOnline;
         try { _thread?.Join(3000); } catch { }
         _started = false;
     }
@@ -103,6 +120,53 @@ public class AggAlertService : IDisposable
             {
                 tag = "markdown",
                 content = $"**机台 {Escape(machine)} 已离线**，请到产线检查（网络断连 / 程序退出 / 机器断电）。",
+            },
+            new
+            {
+                tag = "note",
+                elements = new object[] { new { tag = "plain_text", content = $"Argus 聚合告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}" } },
+            },
+        };
+        await PostCard(new { header, elements });
+    }
+
+    // ==================== 恢复上线通知（v3.4.11 连通性加固） ====================
+
+    private void OnMachineOnline(string machine, DateTime lastSeen)
+    {
+        var now = Environment.TickCount64;
+        lock (_lastOnlineAt)
+        {
+            if (_lastOnlineAt.TryGetValue(machine, out var last) && now - last < OnlineMinIntervalSec * 1000L)
+                return;   // 防抖：短时间重复翻转不刷屏
+            _lastOnlineAt[machine] = now;
+        }
+        Logger.Info($"[聚合告警] 机台恢复上线: {machine}");
+        _ = SendOnlineAlertAsync(machine, lastSeen);
+    }
+
+    private async Task SendOnlineAlertAsync(string machine, DateTime lastSeen)
+    {
+        var header = new
+        {
+            title = new { tag = "plain_text", content = $"机台恢复上线 · {machine}" },
+            template = "green",
+        };
+        var elements = new List<object>
+        {
+            new
+            {
+                tag = "div",
+                fields = new object[]
+                {
+                    Field("机台", machine),
+                    Field("确认时间", lastSeen == DateTime.MinValue ? "—" : lastSeen.ToString("yyyy-MM-dd HH:mm:ss")),
+                },
+            },
+            new
+            {
+                tag = "markdown",
+                content = $"**机台 {Escape(machine)} 已恢复上线**，聚合链路已重新打通，数据推送恢复正常。",
             },
             new
             {

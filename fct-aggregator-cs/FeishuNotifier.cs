@@ -24,6 +24,45 @@ public static class FeishuNotifier
         await PostCard(webhookUrl, BuildStatusChangeCard(rec, fromStatus, toStatus), $"#{rec.Id} {rec.FailItem}");
     }
 
+    /// <summary>
+    /// 聚合链路告警（v3.4.11 连通性加固）：机台端在聚合端断连/恢复/队列溢出时推送。
+    /// kind: disconnected=断连（红）/ recovered=恢复（绿）/ overflow=队列溢出（琥珀）。
+    /// 走机台自己的 webhook，聚合端挂掉时告警依然能发出（聚合端发的离线告警在此场景不可用）。
+    /// </summary>
+    public static async Task SendAggLinkAlert(string webhookUrl, string machine, string kind, string detail)
+    {
+        if (string.IsNullOrWhiteSpace(webhookUrl)) return;
+        var (title, template) = kind switch
+        {
+            "recovered" => ($"聚合链路已恢复 · {machine}", "green"),
+            "overflow" => ($"聚合推送队列溢出 · {machine}", "amber"),
+            _ => ($"聚合链路断连 · {machine}", "red"),
+        };
+        var card = new
+        {
+            header = new { title = new { tag = "plain_text", content = title }, template },
+            elements = new object[]
+            {
+                new
+                {
+                    tag = "div",
+                    fields = new object[] { Field("机台", machine) },
+                },
+                new
+                {
+                    tag = "markdown",
+                    content = $"**{Escape(detail)}**\n请检查机台与聚合端之间的网络 / 聚合端服务状态。",
+                },
+                new
+                {
+                    tag = "note",
+                    elements = new object[] { new { tag = "plain_text", content = $"Argus 链路告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}" } },
+                },
+            },
+        };
+        await PostCard(webhookUrl, card, $"link-{kind}-{machine}");
+    }
+
     /// <summary>卡片 POST + 重试（两种推送共用）。tag 仅用于最终失败日志定位。</summary>
     private static async Task PostCard(string webhookUrl, object card, string tag)
     {

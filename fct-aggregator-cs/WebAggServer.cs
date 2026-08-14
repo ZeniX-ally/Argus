@@ -63,6 +63,7 @@ public class WebAggServer : IDisposable
     private HttpListener? _listener;
     private Thread? _acceptThread;
     private long _receivedCount;
+    private DateTime _startedAt;   // 服务启动时间（看板页脚健康展示，v3.4.11）
 
     /// <summary>构造：port=监听端口，watcher=聚合监听器（推接入库/机台状态），db=聚合库（明细查询），
     /// resultsRoot=XML 报告白名单根目录（空串=拒绝全部文件下载），shareRoot=共享目录（看板页展示用）。
@@ -112,6 +113,7 @@ public class WebAggServer : IDisposable
                     l.Prefixes.Add(prefix);
                     l.Start();
                     _listener = l;
+                    _startedAt = DateTime.Now;
                     _acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "web-agg" };
                     _acceptThread.Start();
                     Logger.Info($"[Web 服务] 已启动，监听 {prefix}");
@@ -286,7 +288,17 @@ public class WebAggServer : IDisposable
     }
 
     private void ServeHealth(HttpListenerContext ctx)
-        => Respond(ctx, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes("{\"ok\":true}"));
+    {
+        // 服务健康：部署排查 + 看板页脚展示（v3.4.11 连通性加固）
+        var uptime = _startedAt == default ? 0 : (long)(DateTime.Now - _startedAt).TotalSeconds;
+        var payload = new Dictionary<string, object>
+        {
+            ["ok"] = true,
+            ["uptime_sec"] = uptime,
+            ["received"] = ReceivedCount,
+        };
+        Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts));
+    }
 
     /// <summary>设置读取：返回聚合端当前配置（管理后台「设置」页填充用）。
     /// 只读聚合相关字段；密码类字段（token）**不回显**，只给布尔「是否已配置」。</summary>
@@ -1004,7 +1016,8 @@ public class WebAggServer : IDisposable
 
 <footer>
   监听共享目录：%%SHARE_ROOT%%<br>
-  聚合库：%%DB_PATH%%
+  聚合库：%%DB_PATH%%<br>
+  服务运行：<span id="svcHealth">…</span>
 </footer>
 
 <script>
@@ -1080,6 +1093,21 @@ async function refresh() {
     for (var i = 0; i < machines.length; i++) total += (machines[i].FailCount || 0);
     document.getElementById("totalFails").textContent = total;
   } catch (e) { /* 服务未就绪时静默，下轮再试 */ }
+}
+
+// ==================== 服务健康（v3.4.11 连通性加固） ====================
+// 页脚展示运行时长与累计接收推送数 —— 聚合服务活着没、收没收到数据，一眼可见。
+async function refreshHealth() {
+  try {
+    var res = await apiFetch("/api/health");
+    if (!res.ok) { document.getElementById("svcHealth").textContent = "服务异常"; return; }
+    var h = await res.json();
+    var up = h.uptime_sec || 0;
+    var hh = Math.floor(up / 3600), mm = Math.floor((up % 3600) / 60), ss = up % 60;
+    var upText = (hh > 0 ? hh + " 小时 " : "") + mm + " 分 " + ss + " 秒";
+    document.getElementById("svcHealth").textContent =
+      "已 " + upText + " · 累计接收推送 " + (h.received || 0) + " 次";
+  } catch (e) { document.getElementById("svcHealth").textContent = "健康检查失败"; }
 }
 
 // ==================== 离线声音提醒 ====================
@@ -1198,6 +1226,8 @@ refresh();
 setInterval(function () {
   if (document.getElementById("autoRefresh").checked) refresh();
 }, 3000);
+refreshHealth();
+setInterval(refreshHealth, 15000);
 
 // CSV 导出链接：带 token 时附加 ?token= 让 <a href> 直接下载也能过鉴权
 (function () {

@@ -104,6 +104,10 @@ public class AggWatcher : IDisposable
     /// 触发点：smb 心跳超时（UpdateHeartbeat）/ HTTP LastSeen 超时（RefreshMachines）。</summary>
     public event Action<string, DateTime>? MachineOffline;
 
+    /// <summary>机台离线→在线翻转时触发（v3.4.11 连通性加固：恢复上线通知用）。
+    /// 参数 = 机台名 + 确认存活时间。触发点同 MachineOffline（心跳/LastSeen 恢复）。</summary>
+    public event Action<string, DateTime>? MachineOnline;
+
     /// <summary>本次运行新入库文件数（INSERT 真正插入才算，重复忽略不计）。</summary>
     public long ProcessedFiles => Interlocked.Read(ref _processedFiles);
 
@@ -658,7 +662,8 @@ public class AggWatcher : IDisposable
                     Logger.Info($"[聚合监听] 机台 {st.Machine} {(online ? "上线" : "离线")}（HTTP LastSeen 超时判定）");
                     st.Online = online;
                     changed = true;
-                    if (!online) FireMachineOffline(st.Machine, st.LastSeen);
+                    if (online) FireMachineOnline(st.Machine, st.LastSeen);
+                    else FireMachineOffline(st.Machine, st.LastSeen);
                 }
             }
             foreach (var gone in _machines.Keys
@@ -719,7 +724,8 @@ public class AggWatcher : IDisposable
                     Logger.Info($"[聚合监听] 机台 {st.Machine} {(online ? "上线" : "离线")}（心跳 {ts}）");
                     st.Online = online;
                     changed = true;
-                    if (!online) FireMachineOffline(st.Machine, st.LastSeen);
+                    if (online) FireMachineOnline(st.Machine, st.LastSeen);
+                    else FireMachineOffline(st.Machine, st.LastSeen);
                 }
                 if (st.LastHeartbeat != ts) changed = true;
                 st.LastHeartbeat = ts;
@@ -759,6 +765,13 @@ public class AggWatcher : IDisposable
     {
         try { MachineOffline?.Invoke(machine, lastSeen); }
         catch (Exception ex) { Logger.Warning($"[聚合监听] MachineOffline 回调异常: {ex.Message}"); }
+    }
+
+    /// <summary>触发机台恢复上线事件（v3.4.11 恢复通知用）。回调异常不影响后台线程。</summary>
+    private void FireMachineOnline(string machine, DateTime lastSeen)
+    {
+        try { MachineOnline?.Invoke(machine, lastSeen); }
+        catch (Exception ex) { Logger.Warning($"[聚合监听] MachineOnline 回调异常: {ex.Message}"); }
     }
 
     public void Dispose() => Stop();

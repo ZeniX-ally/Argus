@@ -1761,6 +1761,10 @@ class SelfTest
         Console.WriteLine("\n【HTTP 双通道】机台端直推 / 心跳 / 断线补偿 / 聚合端接收 / 全链路 / 路由");
         RunHttpChannelTests(work);
 
+        // ==================== 聚合链路连通性（v3.4.11） ====================
+        Console.WriteLine("\n【聚合链路连通性】状态机 / 主备聚合端 / 断连恢复 / 队列溢出计数");
+        RunLinkConnectivityTests(work);
+
         // ==================== Web 聚合服务（Phase 3：纯 Web 模式） ====================
         Console.WriteLine("\n【Web 聚合服务】页面与 API / 推送入库 / XML 下载白名单 / CSV 导出 / 路由错误码");
         RunWebAggServerTests(work);
@@ -2649,6 +2653,123 @@ class SelfTest
         TryDeleteDir(root6);
 
         Console.WriteLine("    HTTP 双通道自检完成");
+    }
+
+    // ==================== 聚合链路连通性（v3.4.11：状态机/主备/恢复/溢出） ====================
+
+    static void RunLinkConnectivityTests(string work)
+    {
+        var linkRoot = Path.Combine(work, "link");
+        Directory.CreateDirectory(linkRoot);
+
+        // ---- ① 主备聚合端：主地址不可达，自动切备用（live collector 收到全部 FAIL）----
+        var rootA = Path.Combine(linkRoot, "ha");
+        Directory.CreateDirectory(rootA);
+        int deadPort = GetFreePort();
+        int livePort = GetFreePort();
+        var dbA = new Database(Path.Combine(rootA, "db.db"));
+        var pA = new AgentPusher(new AppConfig
+        {
+            StationId = "FCT1",
+            AggEnabled = true,
+            AggTransport = "http",
+            AggHttpUrl = $"http://127.0.0.1:{deadPort}/,http://127.0.0.1:{livePort}/",   // 主备逗号分隔
+        }, "FCT1", dbA, Path.Combine(rootA, "data"), retrySec: 1, heartbeatSec: 60);
+        using (var col = new HttpCollector(livePort))
+        {
+            pA.Init();
+            dbA.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(rootA, "ha-a.xml"), "SN-HA1", "自检不良HA1"));
+            dbA.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(rootA, "ha-b.xml"), "SN-HA2", "自检不良HA2"));
+            Check(WaitUntil(() => col.Snapshot().Count(b => b.Contains("\"type\":\"fail\"")) == 2, 15000),
+                  "主备聚合端：主不可达自动切备用，两条 FAIL 均送达备用端");
+            var snap = pA.GetLinkSnapshot();
+            Check(snap.State is AggLinkState.Connected or AggLinkState.Degraded,
+                  $"主备聚合端：链路状态正常（实得 {snap.State}）");
+            Check(snap.Target.Contains($"127.0.0.1:{livePort}"),
+                  $"主备聚合端：当前目标已切到备用地址（实得 {snap.Target}）");
+            pA.Stop();
+        }
+        TryDeleteDir(rootA);
+
+        // ---- ② 断连状态机：全部地址不可达 → 连续失败超阈值判 Disconnected，事件不丢 ----
+        var rootB = Path.Combine(linkRoot, "down");
+        Directory.CreateDirectory(rootB);
+        int deadPortB = GetFreePort();
+        var dbB = new Database(Path.Combine(rootB, "db.db"));
+        var pB = new AgentPusher(new AppConfig
+        {
+            StationId = "FCT1",
+            AggEnabled = true,
+            AggTransport = "http",
+            AggHttpUrl = $"http://127.0.0.1:{deadPortB}/",
+        }, "FCT1", dbB, Path.Combine(rootB, "data"), retrySec: 1, heartbeatSec: 60);
+        var flipped = new List<AggLinkState>();
+        pB.LinkStateChanged += (_, n) => flipped.Add(n);
+        pB.Init();
+        dbB.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(rootB, "down-a.xml"), "SN-DN1", "自检不良DN1"));
+        dbB.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(rootB, "down-b.xml"), "SN-DN2", "自检不良DN2"));
+        Check(WaitUntil(() => pB.GetLinkSnapshot().State == AggLinkState.Disconnected, 20000),
+              "断连状态机：聚合端全不可达 → 判 Disconnected（连续失败阈值）");
+        Check(flipped.Contains(AggLinkState.Disconnected), "断连状态机：LinkStateChanged 事件携带断连翻转");
+        var sB = pB.GetLinkSnapshot();
+        Check(sB.ConsecutiveFailures >= 3, $"断连状态机：连续失败计数 ≥3（实得 {sB.ConsecutiveFailures}）");
+        Check(sB.Backlog >= 2, "断连状态机：断连期间事件保留在队列（断线补偿不清空）");
+        pB.Stop();
+        TryDeleteDir(rootB);
+
+        // ---- ③ 链路恢复：备用端后启动 → 断连状态自动回到正常，积压自动补推 ----
+        var rootC = Path.Combine(linkRoot, "recover");
+        Directory.CreateDirectory(rootC);
+        int deadPortC = GetFreePort();
+        int livePortC = GetFreePort();
+        var dbC = new Database(Path.Combine(rootC, "db.db"));
+        var pC = new AgentPusher(new AppConfig
+        {
+            StationId = "FCT1",
+            AggEnabled = true,
+            AggTransport = "http",
+            AggHttpUrl = $"http://127.0.0.1:{deadPortC}/,http://127.0.0.1:{livePortC}/",
+        }, "FCT1", dbC, Path.Combine(rootC, "data"), retrySec: 1, heartbeatSec: 60);
+        pC.Init();
+        dbC.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(rootC, "rec-a.xml"), "SN-RC1", "自检不良RC1"));
+        Check(WaitUntil(() => pC.GetLinkSnapshot().State == AggLinkState.Disconnected, 20000),
+              "链路恢复：聚合端全挂 → 先断连");
+        using (var colC = new HttpCollector(livePortC))
+        {
+            Check(WaitUntil(() => pC.GetLinkSnapshot().State is AggLinkState.Connected or AggLinkState.Degraded, 20000),
+                  "链路恢复：备用端恢复后自动重连（状态回到正常）");
+            Check(WaitUntil(() => colC.Snapshot().Count(b => b.Contains("\"type\":\"fail\"")) == 1, 10000),
+                  "链路恢复：断连期间积压的 FAIL 自动补推");
+        }
+        pC.Stop();
+        TryDeleteDir(rootC);
+
+        // ---- ④ 队列溢出：超过上限丢最老并累计计数（防静默丢数据的可观测性）----
+        var rootD = Path.Combine(linkRoot, "overflow");
+        Directory.CreateDirectory(rootD);
+        int deadPortD = GetFreePort();
+        var dbD = new Database(Path.Combine(rootD, "db.db"));
+        var pD = new AgentPusher(new AppConfig
+        {
+            StationId = "FCT1",
+            AggEnabled = true,
+            AggTransport = "http",
+            AggHttpUrl = $"http://127.0.0.1:{deadPortD}/",
+        }, "FCT1", dbD, Path.Combine(rootD, "data"), retrySec: 1, heartbeatSec: 60);
+        pD.Init();
+        // 推送端不可达，队列只进不出：塞超上限验证丢弃计数与上限约束
+        for (int i = 1; i <= AgentPusher.MaxQueue + 50; i++)
+        {
+            var rec = MakeFailRec(work, "FCT1", Path.Combine(rootD, $"of-{i}.xml"), $"SN-OF{i}", $"自检不良OF{i}");
+            pD.EnqueueFail(rec, i);
+        }
+        var sD = pD.GetLinkSnapshot();
+        Check(sD.DroppedCount >= 50, $"队列溢出：超上限丢最老并计数（实得 {sD.DroppedCount}）");
+        Check(sD.Backlog <= AgentPusher.MaxQueue, $"队列溢出：队列长度不超过上限（实得 {sD.Backlog}）");
+        pD.Stop();
+        TryDeleteDir(rootD);
+
+        Console.WriteLine("    聚合链路连通性自检完成");
     }
 
     // ==================== Web 聚合服务（Phase 3：纯 Web 模式） ====================

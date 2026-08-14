@@ -41,6 +41,8 @@ public class MainForm : Form
     private ProgressBar _progressBar = null!;
     private Label _statusLeft = null!;
     private Label _statusRight = null!;
+    private Label _lblAggLink = null!;      // 状态栏聚合链路状态灯（v3.4.11 连通性加固）
+    private ToolTip _aggLinkTip = null!;
 
     // ===== 主页 =====
     private readonly Dictionary<string, KpiCard> _kpi = new();
@@ -179,9 +181,31 @@ public class MainForm : Form
         };
         btnAggSettings.FlatAppearance.BorderColor = Theme.Border;
         btnAggSettings.Click += (_, _) => ShowAggSettingsDialog();
-        // 停靠顺序：后 Add 的先停靠 —— 按钮先停靠（靠左），状态文本最后停靠（最右）
+        // 聚合链路状态灯（v3.4.11）：绿=正常 / 黄=积压 / 红=断连 / 灰=未启用；悬浮显示详情
+        _lblAggLink = new Label
+        {
+            Text = "聚合：…",
+            Dock = DockStyle.Right, Width = 150, TextAlign = ContentAlignment.MiddleRight,
+            ForeColor = Theme.TextFaint, BackColor = Theme.Surface, Font = Theme.Small,
+            Cursor = Cursors.Hand,
+        };
+        _lblAggLink.Click += (_, _) => ShowAggSettingsDialog();
+        _aggLinkTip = new ToolTip { AutoPopDelay = 10000, InitialDelay = 400, ReshowDelay = 200 };
+        _aggLinkTip.SetToolTip(_lblAggLink, "聚合链路状态");
+        // 状态翻转立即刷（worker 线程事件，跨线程进 UI）
+        try
+        {
+            _engine.Pusher.LinkStateChanged += (_, _) =>
+            {
+                if (IsHandleCreated) BeginInvoke(UpdateAggLinkUi);
+                else UpdateAggLinkUi();
+            };
+        }
+        catch (Exception ex) { Logger.Warning($"[聚合推送] 订阅链路状态事件失败: {ex.Message}"); }
+        // 停靠顺序：后 Add 的先停靠 —— 按钮/灯先停靠（靠左），状态文本最后停靠（最右）
         statusBar.Controls.Add(_statusRight);
         statusBar.Controls.Add(btnAggSettings);
+        statusBar.Controls.Add(_lblAggLink);
         statusBar.Controls.Add(_statusLeft);
         Controls.Add(statusBar);
 
@@ -566,7 +590,57 @@ public class MainForm : Form
         UpdateKpi();
         if (_tickCount % 10 == 1) UpdateTodoBadge();    // 查库的活儿 10 秒一次就够（拖动时减少撞库卡顿）
         UpdateStatusBar();
+        if (_tickCount % 5 == 1) UpdateAggLinkUi();     // 积压数等低频刷新
         AutoRefreshMaintenance();
+    }
+
+    /// <summary>状态栏聚合链路状态灯刷新（v3.4.11 连通性加固）。
+    /// 绿=正常 / 黄=积压 / 红=断连 / 灰=未启用；悬浮提示含上次成功时间、连续失败、积压、累计丢弃。</summary>
+    private void UpdateAggLinkUi()
+    {
+        try
+        {
+            var cfg = AppConfig.Instance;
+            var pusher = _engine.Pusher;
+            if (!cfg.AggEnabled || pusher == null)
+            {
+                _lblAggLink.Text = "聚合：未启用";
+                _lblAggLink.ForeColor = Theme.TextFaint;
+                _aggLinkTip.SetToolTip(_lblAggLink, "聚合推送未启用（config.json 的 agg_enabled）");
+                return;
+            }
+            var s = pusher.GetLinkSnapshot();
+            var tip = $"目标: {s.Target}\n"
+                    + $"上次成功: {(s.LastSuccessAt == default ? "从未" : s.LastSuccessAt.ToString("HH:mm:ss"))}\n"
+                    + $"连续失败: {s.ConsecutiveFailures} 次\n"
+                    + $"队列积压: {s.Backlog} 条\n"
+                    + $"累计丢弃: {s.DroppedCount} 条";
+            switch (s.State)
+            {
+                case AggLinkState.Disconnected:
+                    _lblAggLink.Text = "● 聚合断连";
+                    _lblAggLink.ForeColor = Theme.Danger;
+                    tip += $"\n断连始于: {s.DisconnectedSince:HH:mm:ss}\n点击打开「聚合设置」检查";
+                    break;
+                case AggLinkState.Degraded:
+                    _lblAggLink.Text = $"● 聚合积压 {s.Backlog}";
+                    _lblAggLink.ForeColor = Theme.Warning;
+                    break;
+                case AggLinkState.Connected:
+                    _lblAggLink.Text = "● 聚合正常";
+                    _lblAggLink.ForeColor = Theme.Success;
+                    break;
+                default:
+                    _lblAggLink.Text = "聚合：等待发送";
+                    _lblAggLink.ForeColor = Theme.TextFaint;
+                    break;
+            }
+            _aggLinkTip.SetToolTip(_lblAggLink, tip);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[聚合推送] 状态灯刷新失败: {ex.Message}");
+        }
     }
 
     private void UpdateChips()
@@ -737,6 +811,14 @@ public class MainForm : Form
         };
         dlg.Controls.Add(stateLabel);
 
+        // ===== 链路状态（v3.4.11 连通性加固：现场一眼看到连接健康） =====
+        var linkStateLabel = new Label
+        {
+            Text = BuildLinkStateText(),
+            Location = new Point(24, 34), AutoSize = true, ForeColor = Theme.TextFaint, Font = Theme.Small,
+        };
+        dlg.Controls.Add(linkStateLabel);
+
         // ===== ① 连接聚合端 =====
         var secLabel = new Label
         {
@@ -890,6 +972,29 @@ public class MainForm : Form
         return cfg.AggTransport.Contains("http", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(cfg.AggHttpUrl)
             ? cfg.AggHttpUrl
             : cfg.AggShareRoot;
+    }
+
+    /// <summary>聚合设置弹窗里的链路状态行文本（v3.4.11 连通性加固）。</summary>
+    private string BuildLinkStateText()
+    {
+        var cfg = AppConfig.Instance;
+        if (!cfg.AggEnabled) return "链路状态: 未启用聚合推送";
+        try
+        {
+            var s = _engine.Pusher.GetLinkSnapshot();
+            var state = s.State switch
+            {
+                AggLinkState.Disconnected => $"断连（始于 {s.DisconnectedSince:HH:mm:ss}）",
+                AggLinkState.Degraded => $"积压 {s.Backlog} 条",
+                AggLinkState.Connected => "正常",
+                _ => "等待首次发送",
+            };
+            return $"链路状态: {state} ｜ 上次成功 {(s.LastSuccessAt == default ? "从未" : s.LastSuccessAt.ToString("HH:mm:ss"))} ｜ 连续失败 {s.ConsecutiveFailures} 次 ｜ 累计丢弃 {s.DroppedCount} 条";
+        }
+        catch (Exception ex)
+        {
+            return $"链路状态: 读取失败（{ex.Message}）";
+        }
     }
 
     /// <summary>从已配置的 http url 里提取 IP（填连接框默认值用）；没有则空串。</summary>

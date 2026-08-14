@@ -41,6 +41,11 @@ public class AppConfig
     public string AggWebhookUrl { get; set; } = "";
     /// <summary>聚合汇总推送间隔（分钟，Phase 3）。config.json: agg_summary_minutes。</summary>
     public int AggSummaryMinutes { get; set; } = 60;
+    /// <summary>
+    /// 机台端聚合链路断连告警阈值（分钟）：连续推送失败持续超过该时长才推飞书
+    /// 「聚合端不可达」告警（防网络抖动误报）；恢复时自动推「链路已恢复」。config.json: agg_fail_alert_minutes。
+    /// </summary>
+    public int AggFailAlertMinutes { get; set; } = 5;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -92,6 +97,9 @@ public class AppConfig
                 if (root.TryGetProperty("agg_summary_minutes", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var m) && m >= 1)
                     cfg.AggSummaryMinutes = m;
+                if (root.TryGetProperty("agg_fail_alert_minutes", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var fam) && fam >= 1)
+                    cfg.AggFailAlertMinutes = fam;
                 return cfg;
             }
             else
@@ -126,7 +134,7 @@ public class AppConfig
                     "station_id", "results_root", "fct_ini_path", "webhook_url", "skip_historical_scan",
                     "log_level", "desktop_notify", "notify_min_interval_sec", "todo_scan_days",
                     "agg_enabled", "agg_share_root", "agg_transport", "agg_http_url", "agg_http_port",
-                    "agg_token", "agg_webhook_url", "agg_summary_minutes",
+                    "agg_token", "agg_webhook_url", "agg_summary_minutes", "agg_fail_alert_minutes",
                 };
                 // 先写磁盘上的未知字段（保留原样），本类管理的字段随后覆盖
                 foreach (var prop in doc.RootElement.EnumerateObject())
@@ -151,6 +159,7 @@ public class AppConfig
                 writer.WriteString("agg_token", AggToken);
                 writer.WriteString("agg_webhook_url", AggWebhookUrl);
                 writer.WriteNumber("agg_summary_minutes", AggSummaryMinutes);
+                writer.WriteNumber("agg_fail_alert_minutes", AggFailAlertMinutes);
                 writer.WriteEndObject();
             }
             var tmp = path + ".tmp";

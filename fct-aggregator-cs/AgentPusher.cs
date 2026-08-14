@@ -15,6 +15,30 @@ public class AggQueueItem
     public string Json { get; set; } = "";
 }
 
+/// <summary>机台端聚合链路状态：Unknown=未启用/未知，Connected=正常，
+/// Degraded=发送成功但有积压（链路通、聚合端消费慢），Disconnected=连续失败断连。</summary>
+public enum AggLinkState { Unknown, Connected, Degraded, Disconnected }
+
+/// <summary>链路状态快照（UI 状态灯/告警读取用，线程安全）。</summary>
+public sealed class AggLinkSnapshot
+{
+    public AggLinkState State;
+    /// <summary>最近一次成功发送（fail 或心跳）时间。</summary>
+    public DateTime LastSuccessAt;
+    /// <summary>连续失败次数（fail/心跳任一通道）。</summary>
+    public int ConsecutiveFailures;
+    /// <summary>待推队列积压条数。</summary>
+    public int Backlog;
+    /// <summary>队列溢出累计丢弃条数。</summary>
+    public long DroppedCount;
+    /// <summary>当前生效目标（http=当前聚合端 URL，smb=共享目录根）。</summary>
+    public string Target = "";
+    /// <summary>本次断连起点（State==Disconnected 时有效）。</summary>
+    public DateTime DisconnectedSince;
+    /// <summary>本次断连是否已发过飞书告警（决定恢复时是否发恢复通知）。</summary>
+    public bool DisconnectAlertSent;
+}
+
 /// <summary>
 /// 机台聚合推送器（Phase 2 增强：B2 双通道方案，smb 文件 / http 直推）。
 ///
@@ -31,8 +55,13 @@ public class AggQueueItem
 /// </summary>
 public class AgentPusher
 {
-    private const int MaxQueue = 5000;
+    /// <summary>内存队列上限（超限丢最老；公开供自检断言）。</summary>
+    public const int MaxQueue = 5000;
     private const int CatchUpBatch = 5000;
+    /// <summary>连续失败多少次（约 3×5s=15s）判为断连。</summary>
+    private const int DisconnectAfterFails = 3;
+    /// <summary>队列溢出告警节流（毫秒）：同种告警 30 分钟最多推一次，防刷屏。</summary>
+    private const int OverflowNotifyMinMs = 30 * 60 * 1000;
 
     /// <summary>http 直推复用单例；Timeout 5 秒，聚合端必须本地网内，失败走断线补偿队列重试。</summary>
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
@@ -45,6 +74,9 @@ public class AgentPusher
     private readonly string _dataDir;
     private readonly int _retryMs;
     private readonly int _heartbeatMs;
+    /// <summary>主备聚合端地址（agg_http_url 逗号分隔多个；发送时从上次成功索引开始轮询，第一个成功即成功）。</summary>
+    private readonly string[] _httpUrls;
+    private int _urlIndex;
 
     private readonly object _lock = new();
     private readonly AutoResetEvent _signal = new(false);
@@ -59,6 +91,19 @@ public class AgentPusher
     private bool _stateDirty;
     private long _lastQueuePersist;
     private long _lastHeartbeat;
+
+    // ===== 链路状态（worker 线程写，UI 读走 GetLinkSnapshot 锁）=====
+    private readonly object _linkLock = new();
+    private AggLinkState _linkState = AggLinkState.Unknown;
+    private DateTime _lastSuccessAt;
+    private int _consecutiveFailures;
+    private long _droppedCount;
+    private DateTime _disconnectedSince;
+    private bool _disconnectAlertSent;
+    private long _lastOverflowNotify;
+
+    /// <summary>链路状态翻转事件（worker 线程触发；订阅方自行 BeginInvoke 进 UI 线程）。</summary>
+    public event Action<AggLinkState, AggLinkState>? LinkStateChanged;
 
     /// <summary>共享目录根（可运行时改，worker 每轮都重读；测试/热改配置用）。</summary>
     public string ShareRoot { get; set; } = "";
@@ -89,6 +134,15 @@ public class AgentPusher
         _dataDir = dataDir ?? Path.Combine(AppConfig.BaseDir, "data");
         _retryMs = Math.Max(1, retrySec) * 1000;
         _heartbeatMs = Math.Max(1, heartbeatSec) * 1000;
+        // 主备聚合端：agg_http_url 逗号分隔（如 "http://10.0.0.1:8080/,http://10.0.0.2:8080/"）
+        _httpUrls = SplitUrls(cfg.AggHttpUrl);
+    }
+
+    /// <summary>逗号分隔拆聚合端地址列表；空串/全空白返回空数组。</summary>
+    private static string[] SplitUrls(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return Array.Empty<string>();
+        return s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
     /// <summary>启动时调用：读配置，enabled 且对应通道就绪（smb 要 share_root、http 要 http_url）才激活；激活后订阅入库事件并起后台线程。</summary>
@@ -109,9 +163,12 @@ public class AgentPusher
         LoadState();
         LoadQueue();
         _db.RecordsInserted += OnRecordsInserted;
-        _worker = new Thread(WorkerLoop) { IsBackground = true, Name = "agg-pusher" };
+        // worker 由看门狗托管：异常退避重启，杜绝静默断连（v3.4.11 连通性加固）
+        _worker = new Thread(WatchdogLoop) { IsBackground = true, Name = "agg-pusher" };
         _worker.Start();
-        var target = HttpMode ? $"url={_cfg.AggHttpUrl}" : $"share_root={ShareRoot}";
+        var target = HttpMode
+            ? (_httpUrls.Length > 1 ? $"urls=[{string.Join(", ", _httpUrls)}]（主备 {_httpUrls.Length} 个）" : $"url={_cfg.AggHttpUrl}")
+            : $"share_root={ShareRoot}";
         Logger.Info($"{Chan} 已启用: machine={_machine}, {target}, 续推起点 max_seq={_maxSeq}");
     }
 
@@ -162,7 +219,14 @@ public class AgentPusher
                 var dropped = _pending[0];
                 _pending.RemoveAt(0);
                 _pendingSeqs.Remove(dropped.Seq);
-                Logger.Warning($"[聚合推送] 队列超上限({MaxQueue})，丢弃最老事件 seq={dropped.Seq}（该 seq 不会补推，FAIL 仍在本地库）");
+                Interlocked.Increment(ref _droppedCount);
+                Logger.Warning($"[聚合推送] 队列超上限({MaxQueue})，丢弃最老事件 seq={dropped.Seq}（累计丢弃 {_droppedCount} 条，FAIL 仍在本地库）");
+                // 溢出告警（飞书，30 分钟节流）：聚合链路异常时数据开始丢失，现场必须知道
+                if (Environment.TickCount64 - _lastOverflowNotify >= OverflowNotifyMinMs)
+                {
+                    _lastOverflowNotify = Environment.TickCount64;
+                    _ = NotifyLinkAsync("overflow", $"推送队列超过上限({MaxQueue})，已丢弃最老事件（累计丢弃 {_droppedCount} 条）——聚合端可能长时间不可达，请检查链路");
+                }
             }
             _queueDirty = true;
             if (persist) MaybePersistQueueLocked();
@@ -196,8 +260,9 @@ public class AgentPusher
                 foreach (var item in work)
                 {
                     if (_stopping) { allOk = false; break; }
-                    if (!TrySend(item)) { allOk = false; continue; }   // 失败保留在队列，下次只重推未成功的
+                    if (!TrySend(item)) { allOk = false; RecordFailure(); continue; }   // 失败保留在队列，下次只重推未成功的
                     sent.Add(item);
+                    RecordSuccess();
                     if (++pushed % 200 == 0) CheckHeartbeat();
                 }
 
@@ -219,10 +284,41 @@ public class AgentPusher
                     }
                 }
                 CheckHeartbeat();
+                CheckDisconnectAlert();   // 断连持续超阈值才推飞书（防抖动误报）
                 _signal.WaitOne(allOk ? 1000 : _retryMs);
             }
         }
-        catch (Exception ex) { Logger.Error($"[聚合推送] worker 异常: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            // 上抛给看门狗（WatchdogLoop）退避重启 —— 线程异常退出 = 静默断连，绝不能发生
+            Logger.Error($"[聚合推送] worker 异常（看门狗将自动重启）: {ex.Message}");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 看门狗：worker 异常退出后按 5s×次数 退避自动重启（上限 50s），
+    /// 杜绝「worker 线程死掉、队列不推、心跳也停」的永久静默断连。
+    /// 正常退出（_stopping）直接结束。
+    /// </summary>
+    private void WatchdogLoop()
+    {
+        var backoff = 0;
+        while (!_stopping)
+        {
+            try
+            {
+                WorkerLoop();
+                backoff = 0;
+                return;   // 正常退出（Stop 置位后 WorkerLoop 循环自然结束）
+            }
+            catch (Exception ex)
+            {
+                backoff = Math.Min(10, backoff + 1);
+                Logger.Error($"{Chan} worker 异常退出（连续 {backoff} 次），{backoff * 5}s 后自动重启: {ex.Message}");
+                try { Thread.Sleep(backoff * 5000); } catch { }
+            }
+        }
     }
 
     /// <summary>重启续推兜底：数据库里 id &gt; 已推最大 seq 的 FAIL 全部入队（覆盖崩溃窗口/丢队场景）。</summary>
@@ -251,22 +347,43 @@ public class AgentPusher
     private bool TrySend(AggQueueItem item) => HttpMode ? TryPost(item) : TryPushFile(item);
 
     /// <summary>http 直推：把与文件内容完全相同的 JSON 行（无尾换行）POST 到聚合端，返回是否成功。
+    /// 主备支持：从上次成功索引开始按顺序尝试全部地址，第一个成功即成功（备援切换零配置）。
     /// 聚合端配置了 agg_token 时带共享 token 头（403 视为失败进重试队列，与断线同路径）。</summary>
     private bool TryPost(AggQueueItem item)
     {
+        if (_httpUrls.Length == 0) return false;
+        var errs = new List<string>();
+        for (int i = 0; i < _httpUrls.Length; i++)
+        {
+            var idx = (_urlIndex + i) % _httpUrls.Length;
+            if (TryPostOne(item, _httpUrls[idx], out var err))
+            {
+                if (_urlIndex != idx) Logger.Info($"{Chan} 聚合端切换: {_httpUrls[idx]}（主备 {_httpUrls.Length} 个）");
+                _urlIndex = idx;
+                return true;
+            }
+            errs.Add($"{_httpUrls[idx]} → {err}");
+        }
+        Logger.Warning($"{Chan} POST 失败 seq={item.Seq}: {string.Join(" | ", errs)}");
+        return false;
+    }
+
+    private bool TryPostOne(AggQueueItem item, string url, out string err)
+    {
+        err = "";
         try
         {
             using var content = new StringContent(item.Json, Encoding.UTF8, "application/json");
-            using var req = new HttpRequestMessage(HttpMethod.Post, _cfg.AggHttpUrl) { Content = content };
+            using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
             if (!string.IsNullOrEmpty(_cfg.AggToken)) req.Headers.Add(TokenHeader, _cfg.AggToken);
             var resp = _http.Send(req);
             if (resp.IsSuccessStatusCode) return true;
-            Logger.Warning($"{Chan} POST 失败 seq={item.Seq}: HTTP {(int)resp.StatusCode}");
+            err = $"HTTP {(int)resp.StatusCode}";
             return false;
         }
         catch (Exception ex)
         {
-            Logger.Warning($"{Chan} POST 异常 seq={item.Seq}: {ex.Message}");
+            err = ex.Message;
             return false;
         }
     }
@@ -300,21 +417,152 @@ public class AgentPusher
         {
             if (HttpMode)
             {
-                using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                using var req = new HttpRequestMessage(HttpMethod.Post, _cfg.AggHttpUrl) { Content = content };
-                if (!string.IsNullOrEmpty(_cfg.AggToken)) req.Headers.Add(TokenHeader, _cfg.AggToken);
-                var resp = _http.Send(req);
-                if (!resp.IsSuccessStatusCode)
-                    Logger.Warning($"{Chan} 心跳 POST 失败: HTTP {(int)resp.StatusCode}");
+                if (_httpUrls.Length == 0) { RecordFailure(); return; }
+                for (int i = 0; i < _httpUrls.Length; i++)
+                {
+                    var idx = (_urlIndex + i) % _httpUrls.Length;
+                    if (TryPostHeartbeat(json, _httpUrls[idx]))
+                    {
+                        if (_urlIndex != idx) Logger.Info($"{Chan} 心跳切换聚合端: {_httpUrls[idx]}");
+                        _urlIndex = idx;
+                        RecordSuccess();
+                        return;
+                    }
+                }
+                Logger.Warning($"{Chan} 心跳 POST 失败: 全部 {_httpUrls.Length} 个聚合端均不可达");
+                RecordFailure();
             }
             else
             {
                 var dir = Path.Combine(ShareRoot, _machine);
                 Directory.CreateDirectory(dir);
                 File.WriteAllText(Path.Combine(dir, "heartbeat.json"), json + "\n", Encoding.UTF8);
+                RecordSuccess();
             }
         }
-        catch (Exception ex) { Logger.Warning($"{Chan} 心跳发送失败: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            Logger.Warning($"{Chan} 心跳发送失败: {ex.Message}");
+            RecordFailure();
+        }
+    }
+
+    private bool TryPostHeartbeat(string json, string url)
+    {
+        try
+        {
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+            if (!string.IsNullOrEmpty(_cfg.AggToken)) req.Headers.Add(TokenHeader, _cfg.AggToken);
+            var resp = _http.Send(req);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    // ==================== 链路状态机（v3.4.11 连通性加固） ====================
+
+    /// <summary>链路状态快照（UI 状态灯 / 自检读取；线程安全）。</summary>
+    public AggLinkSnapshot GetLinkSnapshot()
+    {
+        lock (_linkLock)
+        {
+            return new AggLinkSnapshot
+            {
+                State = _linkState,
+                LastSuccessAt = _lastSuccessAt,
+                ConsecutiveFailures = _consecutiveFailures,
+                Backlog = QueuedCount,
+                DroppedCount = Interlocked.Read(ref _droppedCount),
+                Target = HttpMode
+                    ? (_httpUrls.Length > 0 ? _httpUrls[Math.Min(_urlIndex, _httpUrls.Length - 1)] : _cfg.AggHttpUrl)
+                    : ShareRoot,
+                DisconnectedSince = _disconnectedSince,
+                DisconnectAlertSent = _disconnectAlertSent,
+            };
+        }
+    }
+
+    /// <summary>一次发送成功（fail 或心跳）：清零连续失败；断连恢复时触发恢复通知。</summary>
+    private void RecordSuccess()
+    {
+        lock (_linkLock)
+        {
+            var backlog = QueuedCount;
+            _consecutiveFailures = 0;
+            _lastSuccessAt = DateTime.Now;
+            if (_linkState == AggLinkState.Disconnected)
+            {
+                var wasAlerted = _disconnectAlertSent;
+                var since = _disconnectedSince;
+                _disconnectedSince = default;
+                _disconnectAlertSent = false;
+                var downMin = since == default ? 0 : (DateTime.Now - since).TotalMinutes;
+                Logger.Info($"{Chan} 链路已恢复（曾断开 {(downMin >= 1 ? $"{downMin:F1} 分钟" : "不足 1 分钟")}，剩余积压 {backlog} 条继续推送）");
+                if (wasAlerted && since != default)
+                    _ = NotifyLinkAsync("recovered", $"聚合端已恢复连接（断开 {downMin:F0} 分钟，积压 {backlog} 条继续补推，已全部进入重试队列）");
+                SetLinkStateLocked(backlog > 0 ? AggLinkState.Degraded : AggLinkState.Connected);
+            }
+            else if (_linkState == AggLinkState.Unknown || _linkState != (backlog > 0 ? AggLinkState.Degraded : AggLinkState.Connected))
+            {
+                SetLinkStateLocked(backlog > 0 ? AggLinkState.Degraded : AggLinkState.Connected);
+            }
+        }
+    }
+
+    /// <summary>一次发送失败：累计连续失败，达到阈值翻转断连（触发状态事件，UI 状态灯变红）。</summary>
+    private void RecordFailure()
+    {
+        lock (_linkLock)
+        {
+            _consecutiveFailures++;
+            if (_linkState != AggLinkState.Disconnected && _consecutiveFailures >= DisconnectAfterFails)
+            {
+                _disconnectedSince = DateTime.Now;
+                _disconnectAlertSent = false;
+                Logger.Warning($"{Chan} 链路断连（连续失败 {_consecutiveFailures} 次，队列积压 {QueuedCount} 条，断线补偿继续重试）");
+                SetLinkStateLocked(AggLinkState.Disconnected);
+            }
+        }
+    }
+
+    private void SetLinkStateLocked(AggLinkState next)
+    {
+        if (_linkState == next) return;
+        var old = _linkState;
+        _linkState = next;
+        try { LinkStateChanged?.Invoke(old, next); }
+        catch (Exception ex) { Logger.Warning($"{Chan} LinkStateChanged 回调异常: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 断连飞书告警（延时确认）：断连持续 ≥ agg_fail_alert_minutes 分钟才推，
+    /// 避免网络抖动瞬时断连就告警刷屏；同一断连周期只推一次（恢复通知由 RecordSuccess 补发）。
+    /// </summary>
+    private void CheckDisconnectAlert()
+    {
+        int fails;
+        lock (_linkLock)
+        {
+            if (_linkState != AggLinkState.Disconnected || _disconnectAlertSent) return;
+            if ((DateTime.Now - _disconnectedSince).TotalMinutes < _cfg.AggFailAlertMinutes) return;
+            _disconnectAlertSent = true;
+            fails = _consecutiveFailures;
+        }
+        _ = NotifyLinkAsync("disconnected",
+            $"聚合端 {(_httpUrls.Length > 0 ? _httpUrls[Math.Min(_urlIndex, _httpUrls.Length - 1)] : ShareRoot)} 不可达已超过 {_cfg.AggFailAlertMinutes} 分钟（连续失败 {fails} 次，队列积压 {QueuedCount} 条）");
+    }
+
+    /// <summary>链路告警走机台自己的飞书 webhook（webhook 未配置自动跳过）；告警失败不影响推送。</summary>
+    private async Task NotifyLinkAsync(string kind, string detail)
+    {
+        try
+        {
+            var wh = _cfg.WebhookUrl;
+            if (string.IsNullOrWhiteSpace(wh)) return;
+            await FeishuNotifier.SendAggLinkAlert(wh, _machine, kind, detail);
+        }
+        catch (Exception ex) { Logger.Warning($"{Chan} 链路告警推送失败: {ex.Message}"); }
     }
 
     /// <summary>心跳 JSON（文件版 / http 版共用）：machine/type/ts/last_seq/queued。</summary>
