@@ -527,6 +527,7 @@ public class XmlViewerForm : Form
             switch (reader.Name)
             {
                 case "BATCH":
+                    // BATCH@TIMESTAMP 只是 session 打开时间（可能早于实际测试数天），PANEL 分支会覆盖
                     d.Timestamp = TimeUtil.Normalize(reader.GetAttribute("TIMESTAMP") ?? "");
                     break;
                 case "FACTORY":
@@ -534,7 +535,14 @@ public class XmlViewerForm : Form
                     d.Tester = reader.GetAttribute("TESTER") ?? "";
                     break;
                 case "PANEL":
-                    if (!panelSet) { d.PanelStatus = reader.GetAttribute("STATUS") ?? ""; panelSet = true; }
+                    if (!panelSet)
+                    {
+                        d.PanelStatus = reader.GetAttribute("STATUS") ?? "";
+                        // v3.4.13：测试时间优先取 PANEL@TIMESTAMP（真实测试时间，与主程序记录一致）
+                        var pt = reader.GetAttribute("TIMESTAMP") ?? "";
+                        if (pt.Length > 0) d.Timestamp = TimeUtil.Normalize(pt);
+                        panelSet = true;
+                    }
                     break;
                 case "DUT":
                     if (!snSet) { d.Sn = reader.GetAttribute("ID") ?? ""; snSet = true; }

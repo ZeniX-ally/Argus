@@ -48,14 +48,18 @@ public class Processor
             info.Sn = parts[5];
             if (info.Sn.Length >= 8) info.ModelFromName = info.Sn[..8];
         }
-        // 第 7 段 = 17 位时间戳(yyyyMMddHHmmssfff); 14 位也兼容
-        if (parts.Length >= 7)
-        {
-            var ft = parts[6];
-            if (ft.Length is 14 or 17 && ft.All(char.IsDigit)) info.FileTime = ft;
-        }
+        // 文件名时间戳（v3.4.13 加固）：不再依赖固定段位 —— SN 若含下划线会把段位挤错，
+        // 改为从文件名里找**独立段**（下划线边界）的第一个 14/17 位纯数字段（yyyyMMddHHmmss[fff]）。
+        // 真实样本：..._20260814072417293_2026813232417386 → 第 7 段 17 位命中；第 8 段 16 位非标准自动跳过。
+        var ftMatch = TimeStampSegRe.Match(stem);
+        if (ftMatch.Success) info.FileTime = ftMatch.Groups[1].Value;
         return info;
     }
+
+    /// <summary>文件名里的独立时间戳段：`_yyyyMMddHHmmss_` 或 `_yyyyMMddHHmmssfff_`（14/17 位纯数字）。</summary>
+    private static readonly Regex TimeStampSegRe = new(
+        @"(?:^|_)(\d{14}|\d{17})(?=_|$)",
+        RegexOptions.Compiled);
 
     /// <summary>解析并分类。返回 null 表示跳过(debug/无法识别/解析失败)。</summary>
     public TestRecord? ParseAndClassify(string path)
