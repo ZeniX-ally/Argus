@@ -79,7 +79,7 @@ public class Processor
         bool isPass = prefix == "P_";
 
         string result;
-        string? user, tester = null, panelStatus = null, batchTs = null, failReason = null;
+        string? user, tester = null, panelStatus = null, batchTs = null, panelTs = null, failReason = null;
         bool hasFail = false;
         List<FailedTest> failedTests = new();
 
@@ -102,22 +102,30 @@ public class Processor
             tester = pr.Tester;
             panelStatus = pr.PanelStatus;
             batchTs = pr.BatchTimestamp;
+            panelTs = pr.PanelTimestamp;
             failReason = pr.FailReason;
             hasFail = pr.HasFailItems;
             failedTests = pr.FailedTests;
             if (string.IsNullOrEmpty(snFromName)) snFromName = pr.Sn;
         }
 
-        // batch_timestamp 保底链: XML BATCH TIMESTAMP(可解析) → 文件名时间段(17/14位) → 目录日期。
+        // batch_timestamp 时间源优先级（v3.4.12 修复）: PANEL(真实测试时间) → BATCH(session 开始) → 文件名 → 目录日期。
+        // ⚠ 真实产线样本实测踩坑：BATCH@TIMESTAMP 是测试 session 的打开时间，可能比实际测试早数天
+        //   （样本 BATCH=2026-07-30 18:21 而 PANEL=2026-08-14 07:17），导致推送卡片/待办显示的时间
+        //   与文件名时间(08-14 07:24)明显不一致。PANEL 才是这条记录的真实测试时间。
         // ⚠ 旧实现用 Length<10 判有效性: "2026-07-22T12:47:00.213+08:00" 长度够但格式怪时也过了,
         //   保底只在"真正解析不出时间"时触发, 保证显示/推送/待办的时间永远能读。
-        if (string.IsNullOrEmpty(batchTs) || TimeUtil.Normalize(batchTs).Length == 0)
+        var ts = panelTs;
+        if (string.IsNullOrEmpty(ts) || TimeUtil.Normalize(ts).Length == 0)
+            ts = batchTs;
+        if (string.IsNullOrEmpty(ts) || TimeUtil.Normalize(ts).Length == 0)
         {
             if (info.FileTime != null)
-                batchTs = TimeUtil.Normalize(info.FileTime);
+                ts = TimeUtil.Normalize(info.FileTime);
             else if (info.TestDate.Length == 8)
-                batchTs = $"{info.TestDate[..4]}-{info.TestDate[4..6]}-{info.TestDate[6..8]}T00:00:00";
+                ts = $"{info.TestDate[..4]}-{info.TestDate[4..6]}-{info.TestDate[6..8]}T00:00:00";
         }
+        batchTs = ts;
 
         // 机台号: 优先 config/传入, 否则从 tester 提取, 再否则 UNKNOWN
         var stationId = _defaultStation;

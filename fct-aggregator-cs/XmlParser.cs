@@ -21,6 +21,9 @@ public static class XmlParser
         public string? FailReason { get; set; }
         public bool HasFailItems { get; set; }   // 已排除 Get Unit Information
         public List<FailedTest> FailedTests { get; set; } = new();
+        /// <summary>首个 PANEL@TIMESTAMP（真实测试时间；v3.4.12 起作为 batch_timestamp 的优先来源——
+        /// BATCH@TIMESTAMP 只是测试 session 打开时间，可能比实际测试早数天）。</summary>
+        public string? PanelTimestamp { get; set; }
     }
 
     /// <summary>深度解析(F_/O_ 用)。失败返回 Error=true。</summary>
@@ -55,6 +58,7 @@ public static class XmlParser
                         if (!panelSet)
                         {
                             r.PanelStatus = reader.GetAttribute("STATUS");
+                            r.PanelTimestamp = reader.GetAttribute("TIMESTAMP");   // 真实测试时间
                             panelSet = true;
                         }
                         break;

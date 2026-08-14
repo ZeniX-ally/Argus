@@ -126,6 +126,45 @@ class SelfTest
         Check(TimeUtil.Normalize("") == "", "空时间返回空");
         Check(TimeUtil.Short("2026-07-22T12:47:00.213+08:00") != "—", "Short 对 ISO 时间可识别");
 
+        // ---------- batch_timestamp 时间源优先级（v3.4.12：PANEL 真实测试时间优先于 BATCH session 时间） ----------
+        // 真实产线样本：BATCH@TIMESTAMP=07-30 18:21（session 打开）而 PANEL@TIMESTAMP=08-14 07:17（实际测试），
+        // 文件名时间 08-14 07:24。旧实现用 BATCH 导致推送卡片/待办时间错乱。
+        {
+            var tsRoot = Path.Combine(work, "tsrc");
+            var tsDir = Path.Combine(tsRoot, "Offline", "E3002781", "20260814");
+            Directory.CreateDirectory(tsDir);
+            var tsXml = Path.Combine(tsDir,
+                "O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_20260814072417293_2026813232417386.xml");
+            const string tsBody = """
+                <BATCH TIMESTAMP="2026-07-30T18:21:15.533+08:00">
+                  <FACTORY USER="Operator" TESTER="PEU_G49_FCT6"/>
+                  <PANEL TIMESTAMP="2026-08-14T07:17:29.004+08:00" STATUS="Terminated">
+                    <DUT ID="E3002781AGV75236898002K81201743"/>
+                  </PANEL>
+                  <TEST NAME="BSW_vb_NMI_ESR1_Flt(XCP)" STATUS="Failed" VALUE="0" HILIM="1"/>
+                </BATCH>
+                """;
+            File.WriteAllText(tsXml, tsBody);
+            var tsPr = XmlParser.Parse(tsXml);
+            Check(tsPr.PanelTimestamp != null && tsPr.PanelTimestamp.Contains("2026-08-14T07:17:29"),
+                  "XML 解析: PANEL@TIMESTAMP 已提取（真实测试时间）");
+            var tsProc = new Processor(new AppConfig(), "");
+            var tsRec = tsProc.ParseAndClassify(tsXml);
+            // 入库存原始 ISO（与旧行为一致），展示/待办时归一化 —— 断言用 Normalize 后的值
+            Check(tsRec != null && TimeUtil.Normalize(tsRec.BatchTimestamp) == "2026-08-14 07:17:29",
+                  $"时间源优先级: PANEL 时间优先于 BATCH（实得 {tsRec?.BatchTimestamp}）");
+            Check(tsRec != null && tsRec.StationId == "FCT6",
+                  $"时间源用例: 机台号仍从 TESTER 提取（实得 {tsRec?.StationId}）");
+            // PANEL 无时间戳时回退 BATCH
+            var tsXml2 = Path.Combine(tsDir,
+                "O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_20260814072417293_2026813232417387.xml");
+            File.WriteAllText(tsXml2, tsBody.Replace("TIMESTAMP=\"2026-08-14T07:17:29.004+08:00\" ", ""));
+            var tsRec2 = tsProc.ParseAndClassify(tsXml2);
+            Check(tsRec2 != null && TimeUtil.Normalize(tsRec2.BatchTimestamp) == "2026-07-30 18:21:15",
+                  $"时间源优先级: PANEL 缺失时回退 BATCH（实得 {tsRec2?.BatchTimestamp}）");
+            TryDeleteDir(tsRoot);
+        }
+
         // ---------- FCT.ini 自动识别（v3.3.0: 不依赖配置路径） ----------
         Console.WriteLine("\n【FCT.ini 自动识别】FTS 树搜索 / 浅层全盘搜索");
         {
