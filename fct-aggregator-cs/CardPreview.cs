@@ -159,7 +159,7 @@ public class CardPreviewForm : Form
             Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(12, 4, 12, 4),
             Text = footer, ForeColor = Color.FromArgb(148, 163, 184),
             Font = new Font("Microsoft YaHei UI", 8.5F),
-            BackColor = Color.FromArgb(27, 35, 48), AutoEllipsis = true,
+            BackColor = Theme.Bg, AutoEllipsis = true,
         };
         Controls.Add(foot);
         total += foot.Height + 2;

@@ -14,16 +14,16 @@ public class XmlViewerForm : Form
     private const string IgnoredHint = "不计入不良";
     private static readonly string[] IgnoredFailSteps = { "Get Unit Information", "UUT Status Err" };
 
-    // ---- 配色 (深色主题) ----
-    private static readonly Color CBg        = Color.FromArgb(22, 25, 32);    // 主背景
-    private static readonly Color CCard      = Color.FromArgb(32, 37, 47);    // 卡片背景
-    private static readonly Color CCardLine  = Color.FromArgb(52, 59, 72);    // 卡片描边
-    private static readonly Color CText      = Color.FromArgb(228, 232, 240); // 主文字
-    private static readonly Color CTextDim   = Color.FromArgb(140, 150, 165); // 次要文字
-    private static readonly Color CAccent    = Color.FromArgb(88, 166, 255);  // 强调蓝
-    private static readonly Color CGreen     = Color.FromArgb(63, 185, 122);
-    private static readonly Color CRed       = Color.FromArgb(248, 81, 96);
-    private static readonly Color CAmber     = Color.FromArgb(230, 175, 70);
+    // ---- 配色 (亮色主题, v3.4.12) ----
+    private static readonly Color CBg        = Color.FromArgb(243, 244, 246);  // 主背景
+    private static readonly Color CCard      = Color.White;                    // 卡片背景
+    private static readonly Color CCardLine  = Color.FromArgb(209, 213, 219); // 卡片描边
+    private static readonly Color CText      = Color.FromArgb(31, 41, 55);    // 主文字
+    private static readonly Color CTextDim   = Color.FromArgb(107, 114, 128); // 次要文字
+    private static readonly Color CAccent    = Color.FromArgb(26, 115, 232);  // 强调蓝
+    private static readonly Color CGreen     = Color.FromArgb(22, 163, 74);
+    private static readonly Color CRed       = Color.FromArgb(220, 38, 38);
+    private static readonly Color CAmber     = Color.FromArgb(217, 119, 6);
 
     private readonly string _path;
     private readonly ReportData _data;
@@ -60,7 +60,7 @@ public class XmlViewerForm : Form
     private void BuildHeader()
     {
         bool pass = _data.PanelStatus.Equals("Passed", StringComparison.OrdinalIgnoreCase);
-        var header = new Panel { Dock = DockStyle.Top, Height = 104, BackColor = Color.FromArgb(28, 32, 41) };
+        var header = new Panel { Dock = DockStyle.Top, Height = 104, BackColor = Color.White };
         header.Paint += (_, e) =>
         {
             // 底部强调色细线
@@ -108,7 +108,7 @@ public class XmlViewerForm : Form
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             var r = new Rectangle(0, 0, badge.Width - 1, badge.Height - 1);
             using var path = RoundRect(r, 10);
-            using var fill = new SolidBrush(Color.FromArgb(38, badgeColor));
+            using var fill = new SolidBrush(Color.FromArgb(30, badgeColor));
             using var pen = new Pen(badgeColor, 1.6f);
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(pen, path);
@@ -340,7 +340,7 @@ public class XmlViewerForm : Form
 
         // 表头(不用粗体, 避免合成粗体宽度差异破坏对齐)
         AppendColored(rtb, Row("#", "测试项", "测量值", "下限", "上限", "单位", "状态") + "\n", CAccent, false);
-        AppendColored(rtb, new string('─', wIdx + wName + wVal + wLo + wHi + wUnit + 12) + "\n", Color.FromArgb(64, 72, 88), false);
+        AppendColored(rtb, new string('─', wIdx + wName + wVal + wLo + wHi + wUnit + 12) + "\n", Color.FromArgb(156, 163, 175), false);
 
         int idx = 1;
         foreach (var t in _data.Tests)
@@ -402,7 +402,7 @@ public class XmlViewerForm : Form
     // ========================= 底部工具条 =========================
     private void BuildFooter()
     {
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Color.FromArgb(28, 32, 41) };
+        var footer = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Color.White };
         footer.Paint += (_, e) =>
         {
             using var pen = new Pen(CCardLine, 1);
@@ -415,12 +415,12 @@ public class XmlViewerForm : Form
             {
                 Text = text, Height = 32, Width = 130, FlatStyle = FlatStyle.Flat,
                 ForeColor = primary ? Color.White : CText,
-                BackColor = primary ? accent : Color.FromArgb(46, 52, 64),
+                BackColor = primary ? accent : Color.White,
                 Font = new Font("Microsoft YaHei UI", 9F), Cursor = Cursors.Hand,
             };
             b.FlatAppearance.BorderSize = primary ? 0 : 1;
             b.FlatAppearance.BorderColor = CCardLine;
-            b.FlatAppearance.MouseOverBackColor = primary ? ControlPaint.Light(accent) : Color.FromArgb(56, 63, 78);
+            b.FlatAppearance.MouseOverBackColor = primary ? ControlPaint.Light(accent) : Color.FromArgb(240, 242, 246);
             return b;
         }
 
@@ -472,7 +472,7 @@ public class XmlViewerForm : Form
         {
             Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
             ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font("Consolas", 9.5F),
-            BackColor = Color.FromArgb(30, 34, 43), ForeColor = Color.FromArgb(210, 215, 225),
+            BackColor = Color.White, ForeColor = Color.FromArgb(31, 41, 55),
             BorderStyle = BorderStyle.None,
         };
         try { tb.Text = File.ReadAllText(_path); }

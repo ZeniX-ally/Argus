@@ -331,16 +331,19 @@ public class MainForm : Form
                 new Rectangle(58, 0, brand.Width - 70, brand.Height), Color.White,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
             // 底部细分隔线（与导航区区分，高级简约）
-            using var pen = new Pen(Color.FromArgb(44, 50, 58));
+            using var pen = new Pen(Theme.Border);
             g.DrawLine(pen, 0, brand.Height - 1, brand.Width, brand.Height - 1);
         };
 
         var exit = new NavButton("退出程序", -1) { Dock = DockStyle.Bottom };
         exit.Click += (_, _) => Close();
 
+        // ⚠ 版本号从程序集读（2026-08-14 修复：曾硬编码 "v3.3.0"，csproj 升版后界面版本号不再同步）
         var version = new Label
         {
-            Dock = DockStyle.Bottom, Height = 26, Text = "v3.3.0", ForeColor = Theme.NavText,
+            Dock = DockStyle.Bottom, Height = 26,
+            Text = "v" + (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?"),
+            ForeColor = Theme.NavText,
             Font = Theme.Small, BackColor = Theme.NavBg, TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(18, 0, 0, 0),
         };

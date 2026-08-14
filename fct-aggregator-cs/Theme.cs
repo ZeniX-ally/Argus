@@ -10,34 +10,34 @@ namespace FctAggregator;
 /// </summary>
 public static class Theme
 {
-    // ==================== 颜色（v3.4.7 深色工业监控风 · 提亮版） ====================
-    /// <summary>工作区底色（中深蓝灰，SCADA 面板感但不过暗）。</summary>
-    public static readonly Color Bg = Color.FromArgb(27, 35, 48);
-    /// <summary>卡片/面板底色（比背景亮一档）。</summary>
-    public static readonly Color Surface = Color.FromArgb(36, 46, 62);
-    /// <summary>更亮一档（悬停/强调区）。</summary>
-    public static readonly Color SurfaceHi = Color.FromArgb(46, 59, 78);
-    /// <summary>侧边导航底色（比背景更深一档，突出层次）。</summary>
-    public static readonly Color NavBg = Color.FromArgb(21, 28, 39);
-    public static readonly Color NavHover = Color.FromArgb(33, 43, 58);
-    public static readonly Color NavActive = Color.FromArgb(38, 49, 70);
-    public static readonly Color NavText = Color.FromArgb(148, 162, 182);
-    public static readonly Color NavTextActive = Color.White;
+    // ==================== 颜色（v3.4.12 亮色版：暗色可读性差，用户拍板回亮色） ====================
+    /// <summary>工作区底色（浅灰）。</summary>
+    public static readonly Color Bg = Color.FromArgb(243, 244, 246);
+    /// <summary>卡片/面板底色（白）。</summary>
+    public static readonly Color Surface = Color.White;
+    /// <summary>更暗一档（悬停/强调区，浅灰）。</summary>
+    public static readonly Color SurfaceHi = Color.FromArgb(232, 234, 240);
+    /// <summary>侧边导航底色（白，与内容区分靠边框与激活色）。</summary>
+    public static readonly Color NavBg = Color.White;
+    public static readonly Color NavHover = Color.FromArgb(240, 242, 246);
+    public static readonly Color NavActive = Color.FromArgb(226, 236, 252);
+    public static readonly Color NavText = Color.FromArgb(75, 85, 99);
+    public static readonly Color NavTextActive = Color.FromArgb(26, 115, 232);
 
-    public static readonly Color Border = Color.FromArgb(56, 71, 92);
-    public static readonly Color BorderHi = Color.FromArgb(74, 93, 120);
-    public static readonly Color TextMain = Color.FromArgb(232, 237, 244);
-    public static readonly Color TextSub = Color.FromArgb(168, 182, 200);
-    public static readonly Color TextFaint = Color.FromArgb(117, 134, 156);
+    public static readonly Color Border = Color.FromArgb(209, 213, 219);
+    public static readonly Color BorderHi = Color.FromArgb(156, 163, 175);
+    public static readonly Color TextMain = Color.FromArgb(31, 41, 55);
+    public static readonly Color TextSub = Color.FromArgb(75, 85, 99);
+    public static readonly Color TextFaint = Color.FromArgb(107, 114, 128);
 
-    // SCADA 基调：亮青蓝主色 + 荧光语义色（提亮版，黑底/深底上都醒目）
-    public static readonly Color Primary = Color.FromArgb(76, 195, 255);      // 亮青蓝
-    public static readonly Color PrimaryDim = Color.FromArgb(30, 144, 224);   // 深一档（激活条/主按钮）
-    public static readonly Color Success = Color.FromArgb(61, 220, 151);      // 荧光绿
-    public static readonly Color Warning = Color.FromArgb(255, 197, 61);      // 亮琥珀
-    public static readonly Color Danger = Color.FromArgb(255, 123, 114);      // 亮红
-    public static readonly Color Info = Color.FromArgb(57, 208, 232);         // 亮青
-    public static readonly Color Neutral = Color.FromArgb(168, 182, 200);
+    // 亮色基调：标准蓝主色 + 标准语义色（白底上对比度达标，可读性优先）
+    public static readonly Color Primary = Color.FromArgb(26, 115, 232);      // 主蓝
+    public static readonly Color PrimaryDim = Color.FromArgb(21, 87, 178);    // 深一档（激活条/主按钮）
+    public static readonly Color Success = Color.FromArgb(22, 163, 74);       // 绿
+    public static readonly Color Warning = Color.FromArgb(217, 119, 6);       // 琥珀
+    public static readonly Color Danger = Color.FromArgb(220, 38, 38);        // 红
+    public static readonly Color Info = Color.FromArgb(8, 145, 178);          // 青
+    public static readonly Color Neutral = Color.FromArgb(107, 114, 128);
 
     // ==================== 字体 ====================
     private const string Family = "Microsoft YaHei UI";
@@ -66,11 +66,9 @@ public static class Theme
     // ==================== 绘制小工具 ====================
     public static GraphicsPath Rounded(Rectangle r, int radius = Radius) => MaintenanceDraw.Rounded(r, radius);
 
-    /// <summary>
-    /// 画一张深色卡片（圆角 + 描边 + 可选顶部强调色条，SCADA 风）。
-    /// 卡片底色 <see cref="Surface"/>，hover 时边框提亮到 <see cref="BorderHi"/>；
-    /// accent 为强调色时左侧 3px 亮条（状态灯式的彩色指示）。
-    /// </summary>
+    /// <summary>画一张浅色卡片（圆角 + 描边 + 可选顶部强调色条）。
+    /// 卡片底色 <see cref="Surface"/>（白），hover 时边框加深到 <see cref="BorderHi"/>；
+    /// accent 为强调色时左侧 3px 亮条（状态灯式的彩色指示）。</summary>
     public static void DrawCard(Graphics g, Rectangle r, Color? accent = null, bool hover = false)
     {
         if (r.Width <= 2 || r.Height <= 2) return;
@@ -90,7 +88,7 @@ public static class Theme
         }
     }
 
-    /// <summary>画一个状态胶囊（顶栏用）。返回占用宽度。深色版：半透明底 + 彩色边框 + 发光小圆点。</summary>
+    /// <summary>画一个状态胶囊（顶栏用）。返回占用宽度。亮色版：浅色半透明底 + 彩色边框 + 实心圆点。</summary>
     public static int DrawChip(Graphics g, Point at, string text, Color color, Font? font = null)
     {
         font ??= Small;
@@ -99,15 +97,15 @@ public static class Theme
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using (var path = Rounded(r, 11))
         {
-            using var b = new SolidBrush(Color.FromArgb(26, color));
+            using var b = new SolidBrush(Color.FromArgb(24, color));
             g.FillPath(b, path);
             using var p = new Pen(Color.FromArgb(110, color));
             g.DrawPath(p, path);
         }
-        // 左侧发光小圆点（亮色实心 + 外圈光晕）
+        // 左侧实心圆点 + 淡光晕（亮色下 36 alpha 的光晕刚好可见）
         using (var dot = new SolidBrush(color))
             g.FillEllipse(dot, r.X + 8, r.Y + 7, 7, 7);
-        using (var glow = new Pen(Color.FromArgb(90, color), 1.5f))
+        using (var glow = new Pen(Color.FromArgb(48, color), 1.5f))
             g.DrawEllipse(glow, r.X + 6, r.Y + 5, 11, 11);
         TextRenderer.DrawText(g, text, font,
             new Rectangle(r.X + 18, r.Y, r.Width - 20, r.Height), color,
@@ -115,7 +113,7 @@ public static class Theme
         return w;
     }
 
-    /// <summary>统一风格的按钮（工具栏用）。深色版：深底 + 亮边框，主按钮青蓝填充。</summary>
+    /// <summary>统一风格的按钮（工具栏用）。亮色版：白底 + 灰边框，主按钮主蓝填充。</summary>
     public static Button MakeButton(string text, int width = 88, bool primary = false)
     {
         var b = new Button
@@ -240,10 +238,10 @@ public static class Theme
         dg.ColumnHeadersDefaultCellStyle.SelectionForeColor = TextSub;
         dg.DefaultCellStyle.BackColor = Surface;
         dg.DefaultCellStyle.ForeColor = TextMain;
-        dg.DefaultCellStyle.SelectionBackColor = Color.FromArgb(52, 66, 88);
-        dg.DefaultCellStyle.SelectionForeColor = Color.White;
-        dg.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(40, 51, 68);
-        dg.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(33, 42, 57);
+        dg.DefaultCellStyle.SelectionBackColor = Color.FromArgb(207, 227, 255);
+        dg.DefaultCellStyle.SelectionForeColor = Color.FromArgb(21, 87, 178);
+        dg.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(247, 248, 250);
+        dg.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(238, 240, 243);
         dg.RowHeadersDefaultCellStyle.ForeColor = TextFaint;
     }
 

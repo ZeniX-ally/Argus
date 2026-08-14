@@ -280,7 +280,7 @@ public sealed class FailListPanel : Panel
     /// <summary>表格加一行(两模式共用)。count = 该失败项总次数, gi = 分区序号(隔区浅色底纹)。</summary>
     private void AddGridRow(FailRecord f, int count, int gi)
     {
-        var alt = gi % 2 == 0 ? Theme.Surface : Color.FromArgb(40, 51, 68);
+        var alt = gi % 2 == 0 ? Theme.Surface : Color.FromArgb(247, 248, 250);
         var fg = count >= 5 ? Theme.Danger
                : count >= 2 ? Color.FromArgb(251, 146, 60)
                : Theme.TextMain;

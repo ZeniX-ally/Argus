@@ -17,10 +17,10 @@ public static class MaintenanceMeta
     /// </summary>
     public static readonly StatusDef[] Statuses =
     {
-        new("unknown",       "未知问题", Color.FromArgb(128, 108, 163)),
-        new("open",          "待办",     Color.FromArgb(37, 99, 165)),
-        new("in_progress",   "持续跟踪", Color.FromArgb(13, 138, 145)),
-        new("resolved",      "已完成",   Color.FromArgb(42, 128, 84)),
+        new("unknown",       "未知问题", Color.FromArgb(124, 58, 237)),   // 紫
+        new("open",          "待办",     Color.FromArgb(26, 115, 232)),   // 蓝
+        new("in_progress",   "持续跟踪", Color.FromArgb(13, 148, 136)),   // 青
+        new("resolved",      "已完成",   Color.FromArgb(22, 163, 74)),    // 绿
     };
 
     /// <summary>

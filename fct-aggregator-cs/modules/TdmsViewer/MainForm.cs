@@ -120,7 +120,7 @@ public sealed class MainForm : Form
         _stat.Height = 24;
         _stat.TextAlign = ContentAlignment.MiddleLeft;
         _stat.Font = new Font("Consolas", 9F);
-        _stat.ForeColor = Color.FromArgb(31, 78, 121);
+        _stat.ForeColor = Color.FromArgb(26, 115, 232);
         rsplit.Panel2.Controls.Add(_stat);
 
         _tabs.Dock = DockStyle.Fill;

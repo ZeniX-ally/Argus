@@ -277,7 +277,7 @@ public sealed class TitleBar : Control
         DrawBtn(g, 2, Hit.Min);
 
         // 底部细分隔线
-        using var pen = new Pen(Color.FromArgb(44, 50, 58));
+        using var pen = new Pen(Theme.Border);
         g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
     }
 

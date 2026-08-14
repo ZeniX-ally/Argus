@@ -113,7 +113,7 @@ public sealed class MainForm : Form
         _summary.SetBounds(14, y, 1040, 22);
         _summary.Text = "就绪。";
         _summary.Font = new Font("微软雅黑", 9.5F, FontStyle.Bold);
-        _summary.ForeColor = Color.FromArgb(31, 78, 121);
+        _summary.ForeColor = Color.FromArgb(26, 115, 232);
         _summary.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         Controls.Add(_summary);
 
@@ -148,8 +148,8 @@ public sealed class MainForm : Form
         _log.Multiline = true;
         _log.ScrollBars = ScrollBars.Vertical;
         _log.ReadOnly = true;
-        _log.BackColor = Color.FromArgb(30, 30, 30);
-        _log.ForeColor = Color.FromArgb(220, 220, 220);
+        _log.BackColor = Color.White;
+        _log.ForeColor = Color.FromArgb(31, 41, 55);
         _log.Font = new Font("Consolas", 9F);
         tabLog.Controls.Add(_log);
         _tabs.TabPages.Add(tabLog);
@@ -254,7 +254,7 @@ public sealed class MainForm : Form
         _recs.Clear();
         _bar.Value = 0;
         _summary.Text = "正在扫描...";
-        _summary.ForeColor = Color.FromArgb(31, 78, 121);
+        _summary.ForeColor = Color.FromArgb(26, 115, 232);
 
         var start = _dtStart.Value.Date;
         var end = _dtEnd.Value.Date;

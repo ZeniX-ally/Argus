@@ -128,7 +128,7 @@ public class ResolverManagerForm : Form
         var btnAdd = new Button
         {
             Left = 272, Top = 37, Width = 120, Height = 25, Text = "添加",
-            BackColor = Color.FromArgb(34, 84, 68),
+            BackColor = Color.FromArgb(22, 163, 74),
         };
         btnAdd.Click += (_, _) => Add();
 
@@ -397,7 +397,7 @@ public class ResolverPickerForm : Form
         var btnAdd = new Button
         {
             Left = 272, Top = 363, Width = 138, Height = 25, Text = "添加并勾选",
-            BackColor = Color.FromArgb(34, 84, 68),
+            BackColor = Color.FromArgb(22, 163, 74),
         };
         btnAdd.Click += (_, _) => AddAndCheck();
 

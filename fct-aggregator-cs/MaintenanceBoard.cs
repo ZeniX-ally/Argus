@@ -43,7 +43,7 @@ public class MaintenanceBoard : Panel
     private void BuildUi()
     {
         AutoScroll = true;
-        BackColor = Color.FromArgb(27, 35, 48);
+        BackColor = Theme.Bg;
         Padding = new Padding(6, 4, 6, 4);
 
         var defs = MaintenanceMeta.Statuses;
@@ -442,7 +442,7 @@ public class MaintenanceBoard : Panel
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 AutoScroll = true,
-                BackColor = Color.FromArgb(33, 42, 57),
+                BackColor = Theme.Surface,
                 Padding = new Padding(2, 4, 2, 4),
             };
             _cards.Paint += PaintCardsBackdrop;
@@ -600,7 +600,7 @@ public class MaintenanceBoard : Panel
         {
             if (_highlight == on) return;
             _highlight = on;
-            _cards.BackColor = on ? Color.FromArgb(46, 59, 78) : Color.FromArgb(33, 42, 57);
+            _cards.BackColor = on ? Theme.SurfaceHi : Theme.Surface;
             _head.Invalidate();
         }
 
@@ -611,13 +611,13 @@ public class MaintenanceBoard : Panel
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var r = _head.ClientRectangle;
 
-            using (var bg = new SolidBrush(_highlight ? Color.FromArgb(52, 66, 88) : Theme.Surface))
+            using (var bg = new SolidBrush(_highlight ? Theme.SurfaceHi : Theme.Surface))
                 g.FillRectangle(bg, r);
             using (var bar = new SolidBrush(_def.Accent))
                 g.FillRectangle(bar, new Rectangle(0, r.Bottom - 3, r.Width, 3));
 
             TextRenderer.DrawText(g, _def.Zh, HeadFont, new Rectangle(8, 0, r.Width - 54, r.Height - 3),
-                Color.FromArgb(203, 213, 225), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                Theme.TextSub, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
             var badge = _total.ToString();
             var bw = Math.Max(24, TextRenderer.MeasureText(badge, BadgeFont).Width + 12);

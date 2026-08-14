@@ -861,60 +861,60 @@ public class WebAggServer : IDisposable
 <title>Argus 多机台聚合看板</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #171a21; color: #d8dee9; font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif; padding: 16px; }
+  body { background: #f3f4f6; color: #1f2937; font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif; padding: 16px; }
   header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
-  h1 { font-size: 20px; color: #ffffff; }
-  .stat { color: #e5534b; font-weight: bold; }
-  button { background: #2f3542; color: #ffffff; border: 1px solid #454c5c; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
-  button:hover { background: #3a4152; }
-  label { color: #9aa3b2; font-size: 13px; cursor: pointer; }
+  h1 { font-size: 20px; color: #111827; }
+  .stat { color: #dc2626; font-weight: bold; }
+  button { background: #ffffff; color: #1f2937; border: 1px solid #d1d5db; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #e8eaf0; }
+  label { color: #6b7280; font-size: 13px; cursor: pointer; }
   .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-  .tab.active { background: #3a4152; border-color: #4c9aff; }
-  .files-bar { color: #9aa3b2; font-size: 13px; margin-bottom: 10px; }
-  #fileRoot { color: #4c9aff; font-family: Consolas, "Courier New", monospace; }
+  .tab.active { background: #dbe7fb; border-color: #1a73e8; }
+  .files-bar { color: #6b7280; font-size: 13px; margin-bottom: 10px; }
+  #fileRoot { color: #1a73e8; font-family: Consolas, "Courier New", monospace; }
   .crumb { margin-bottom: 10px; font-size: 13px; }
-  .crumb a { color: #4c9aff; text-decoration: none; margin-right: 6px; }
+  .crumb a { color: #1a73e8; text-decoration: none; margin-right: 6px; }
   .crumb a:hover { text-decoration: underline; }
-  .crumb .sep { color: #5c6470; margin-right: 6px; }
-  td.fname.dir { color: #4c9aff; cursor: pointer; font-weight: bold; }
+  .crumb .sep { color: #9ca3af; margin-right: 6px; }
+  td.fname.dir { color: #1a73e8; cursor: pointer; font-weight: bold; }
   td.fname.file { cursor: pointer; }
-  #fileMsg { color: #e5534b; font-size: 13px; margin-top: 10px; }
+  #fileMsg { color: #dc2626; font-size: 13px; margin-top: 10px; }
   .cards { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
-  .card { background: #20242d; border: 1px solid #2f3542; border-left: 4px solid #3fb950; border-radius: 6px; padding: 10px 14px; min-width: 178px; font-size: 13px; line-height: 1.7; }
-  .card.offline { border-left-color: #e5534b; opacity: .85; }
-  .card .mname { font-size: 15px; font-weight: bold; color: #ffffff; }
+  .card { background: #ffffff; border: 1px solid #e5e7eb; border-left: 4px solid #16a34a; border-radius: 6px; padding: 10px 14px; min-width: 178px; font-size: 13px; line-height: 1.7; }
+  .card.offline { border-left-color: #dc2626; opacity: .85; }
+  .card .mname { font-size: 15px; font-weight: bold; color: #111827; }
   .dot { font-size: 12px; }
-  .dot.on { color: #3fb950; }
-  .dot.off { color: #e5534b; }
-  .fail { color: #e5534b; font-weight: bold; }
-  table { width: 100%; border-collapse: collapse; background: #20242d; font-size: 13px; }
-  th, td { border: 1px solid #2f3542; padding: 6px 8px; text-align: left; white-space: nowrap; }
-  th { background: #2a2f3a; color: #9aa3b2; font-weight: normal; }
-  tr:hover td { background: #262b36; }
+  .dot.on { color: #16a34a; }
+  .dot.off { color: #dc2626; }
+  .fail { color: #dc2626; font-weight: bold; }
+  table { width: 100%; border-collapse: collapse; background: #ffffff; font-size: 13px; }
+  th, td { border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; white-space: nowrap; }
+  th { background: #f3f4f6; color: #4b5563; font-weight: normal; }
+  tr:hover td { background: #f9fafb; }
   td.reason { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
-  .empty { color: #5c6470; text-align: center; padding: 24px !important; white-space: normal !important; }
-  a.xml { color: #4c9aff; text-decoration: none; }
+  .empty { color: #9ca3af; text-align: center; padding: 24px !important; white-space: normal !important; }
+  a.xml { color: #1a73e8; text-decoration: none; }
   a.xml:hover { text-decoration: underline; }
-  #exportLink { display: inline-block; margin-top: 14px; color: #4c9aff; text-decoration: none; font-size: 13px; }
+  #exportLink { display: inline-block; margin-top: 14px; color: #1a73e8; text-decoration: none; font-size: 13px; }
   #exportLink:hover { text-decoration: underline; }
   .filters { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
-  .filters input { background: #20242d; border: 1px solid #2f3542; color: #d8dee9; border-radius: 4px; padding: 6px 10px; font-size: 13px; flex: 1; max-width: 360px; }
-  .filters input:focus { outline: none; border-color: #4c9aff; }
-  .pager { display: flex; gap: 10px; margin-top: 12px; align-items: center; color: #9aa3b2; font-size: 13px; }
+  .filters input { background: #ffffff; border: 1px solid #d1d5db; color: #1f2937; border-radius: 4px; padding: 6px 10px; font-size: 13px; flex: 1; max-width: 360px; }
+  .filters input:focus { outline: none; border-color: #1a73e8; }
+  .pager { display: flex; gap: 10px; margin-top: 12px; align-items: center; color: #6b7280; font-size: 13px; }
   .pager button:disabled { opacity: .4; cursor: default; }
-  #settingsView h3 { color: #ffffff; font-size: 15px; margin-bottom: 12px; }
+  #settingsView h3 { color: #111827; font-size: 15px; margin-bottom: 12px; }
   #settingsView .set-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-  #settingsView .set-row label { width: 170px; color: #9aa3b2; font-size: 13px; flex-shrink: 0; }
+  #settingsView .set-row label { width: 170px; color: #4b5563; font-size: 13px; flex-shrink: 0; }
   #settingsView .set-row input, #settingsView .set-row select {
-    background: #20242d; border: 1px solid #2f3542; color: #d8dee9; border-radius: 4px;
+    background: #ffffff; border: 1px solid #d1d5db; color: #1f2937; border-radius: 4px;
     padding: 6px 10px; font-size: 13px; width: 360px;
   }
-  #settingsView .set-row input:focus, #settingsView .set-row select:focus { outline: none; border-color: #4c9aff; }
-  #settingsView .set-row .hint { color: #5c6470; font-size: 12px; }
+  #settingsView .set-row input:focus, #settingsView .set-row select:focus { outline: none; border-color: #1a73e8; }
+  #settingsView .set-row .hint { color: #6b7280; font-size: 12px; }
   #settingsView .set-actions { margin-top: 16px; display: flex; align-items: center; gap: 12px; }
-  #setMsg { color: #4c9aff; font-size: 13px; }
-  #setMsg.err { color: #e5534b; }
-  footer { margin-top: 18px; color: #5c6470; font-size: 12px; line-height: 1.8; }
+  #setMsg { color: #1a73e8; font-size: 13px; }
+  #setMsg.err { color: #dc2626; }
+  footer { margin-top: 18px; color: #6b7280; font-size: 12px; line-height: 1.8; }
 </style>
 </head>
 <body>
