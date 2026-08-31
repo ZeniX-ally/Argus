@@ -1,0 +1,1128 @@
+﻿宸ヤ綔鐩綍: C:\Users\admin\AppData\Local\Temp\fct_agg_33d44b
+鐪熷疄搴撲笉瀛樺湪锛岀敤绌哄簱
+[OK]   Database 鏋勯€犲畬鎴愶紙Init + 杩佺Щ宸茶窇锛?
+    (璺宠繃杩佺Щ澶囦唤鏂█锛氭棤鐪熷疄搴?fixture)
+[OK]   closed -> resolved 杩佺Щ鐢熸晥锛堟畫鐣?closed = 0锛?
+[OK]   閲嶅鎵撳紑搴擄紙杩佺Щ骞傜瓑锛屾棤寮傚父锛?
+
+銆愭椂闂磋瘑鍒€戝洓绉嶆潵婧愭牸寮忕粺涓€瑙ｆ瀽
+[OK]   ISO 甯︽椂鍖烘绉?BATCH TIMESTAMP)瑙ｆ瀽姝ｇ‘
+[OK]   ISO 鏃犳椂鍖鸿В鏋愭纭?
+[OK]   鏍囧噯鏍煎紡鍘熸牱褰掍竴
+[OK]   17 浣嶆枃浠跺悕鏃堕棿瑙ｆ瀽姝ｇ‘(涓㈡绉?
+[OK]   14 浣嶆椂闂磋В鏋愭纭?
+[OK]   8 浣嶇洰褰曟棩鏈熻В鏋愭纭?
+[OK]   鏃犳硶璇嗗埆鐨勬椂闂磋繑鍥炵┖(涓嶅啀鍚愬師濮嬫€覆)
+[OK]   绌烘椂闂磋繑鍥炵┖
+[OK]   Short 瀵?ISO 鏃堕棿鍙瘑鍒?
+[OK]   ISO +08:00 鍋忕Щ锛氭寜澧欎笂鏃堕棿瑙ｆ瀽锛屼笉闅忔満鍣ㄦ椂鍖烘紓绉?
+[OK]   ISO +0800 鏃犲啋鍙峰亸绉诲悓鏍锋敮鎸?
+[OK]   ISO Z 鍚庣紑鍚屾牱鏀寔
+[OK]   璐熷亸绉绘寜鍘熷涓婃椂闂村彇锛堜笉鎹㈢畻鎴愭満鍣ㄦ湰鍦帮級
+[OK]   鏂囦欢鍚嶆椂闂存埑: 鏍囧噯娈典綅鍙栫 7 娈?17 浣嶏紙瀹炲緱 20260814072417293锛?
+[OK]   鏂囦欢鍚嶆椂闂存埑: SN 鍚笅鍒掔嚎娈典綅婕傜Щ浠嶈兘鍙栧鏃堕棿锛堝疄寰?20260814072417293锛?
+[OK]   鏂囦欢鍚嶆椂闂存埑: 绗?8 娈?16 浣嶉潪鏍囧噯娈佃嚜鍔ㄨ烦杩囷紙瀹炲緱 20260814072417293锛?
+[OK]   鏂囦欢鍚嶆椂闂存埑: 14 浣嶅吋瀹癸紙瀹炲緱 20260814072417锛?
+[OK]   鏃堕棿婧? 鏂囦欢鍚?17 浣嶆椂闂翠紭鍏堬紙瀹炲緱 2026-08-14 07:24:17锛?
+[OK]   鏃堕棿婧? Processor 涔熷彇鏂囦欢鍚嶆椂闂达紙瀹炲緱 2026-08-14 07:24:17锛?
+[OK]   鏃堕棿婧愮敤渚? 鏈哄彴鍙蜂粛浠?TESTER 鎻愬彇锛堝疄寰?FCT6锛?
+[OK]   鏃堕棿婧? 鏃犳枃浠跺悕鏃堕棿鏃跺洖閫€鐩綍鏃ユ湡锛堝疄寰?2026-08-14T00:00:00锛?
+
+銆怓CT.ini 鑷姩璇嗗埆銆慒TS 鏍戞悳绱?/ 娴呭眰鍏ㄧ洏鎼滅储
+[OK]   FTS 鏍戞悳绱㈣兘鍛戒腑娣卞眰 FCT.ini
+[OK]   娴呭眰鎼滅储涔熻兘鍛戒腑(鑷姩璇嗗埆鍏滃簳璺緞)
+[OK]   鏂囦欢鍚嶅ぇ灏忓啓涓嶆晱鎰?fct.ini 涔熻兘璇嗗埆)
+
+銆愭棫搴撳吋瀹广€戜骇绾胯€佸簱鐩村紑: 缂烘柊琛?+ investigating/closed 鐘舵€?+ 鏃ф椂闂存牸寮?
+[OK]   鏃у簱鎵撳紑鍚庤嚜鍔ㄨˉ寤鸿〃 todo_items
+[OK]   鏃у簱鎵撳紑鍚庤嚜鍔ㄨˉ寤鸿〃 app_meta
+[OK]   鏃у簱鎵撳紑鍚庤嚜鍔ㄨˉ寤鸿〃 dismissed_todos
+[OK]   鏃у簱鎵撳紑鍚庤嚜鍔ㄨˉ寤鸿〃 resolvers
+[OK]   鏃?investigating 璁板綍浠嶅湪搴撲腑, 褰掍竴鍖栧埌銆屽緟鍔炪€嶅垪
+[OK]   鏃?closed 璁板綍杩佺Щ鍒般€屽凡瀹屾垚銆嶅垪
+[OK]   鏃у簱鍘嗗彶涓嶈壇鍙櫥璁板緟鍔烇紙鏂扮櫥璁?2 鏉★級
+[OK]   鏃у簱 5V_Rail 杩涘緟鍔炲垪
+[OK]   鏃у簱 ISO 甯︽椂鍖烘椂闂村彲瑙ｆ瀽鏄剧ず
+[OK]   鏃у簱 14 浣嶆暟瀛楁椂闂村彲瑙ｆ瀽鏄剧ず
+[OK]   鏃у簱涓婂垹闄ゅ緟鍔炴甯革紙鑷姩琛ュ缓 dismissed_todos 鍐欐案涔呮爣璁帮級
+[OK]   鍒犻櫎鍚庣寮€寰呭姙鍒?
+[OK]   鐘舵€佷綋绯?4 涓笖椤哄簭姝ｇ‘: 鏈煡闂 -> 寰呭姙 -> 鎸佺画璺熻釜 -> 宸插畬鎴?
+[OK]   鏂板缓璁板綍榛樿鐘舵€?= open(鏈畬鎴?
+[OK]   legacy closed 浠嶆樉绀轰负銆屽凡瀹屾垚銆嶏紙澶栨潵 db 鍏滃簳锛?
+[OK]   legacy closed 褰掑苟鍒?resolved 鍒?
+[OK]   legacy investigating 褰掑苟鍒?open锛堛€屾鍦ㄦ帓鏌ャ€嶅垪宸插幓鎺夛級
+[OK]   legacy investigating 鏄剧ず涓恒€屽緟鍔炪€?
+[OK]   鏈煡鐘舵€佸綊骞跺埌 open锛屼笉浼氭紡鍗＄墖
+[OK]   銆岃繘琛屼腑銆嶅凡鏀瑰悕銆屾寔缁窡韪€?
+[OK]   閫犱簡 12 鏉℃祴璇曡褰曪紙4 鐘舵€?脳 3锛?
+    璁℃暟: 鏈煡闂=3, 寰呭姙=3, 鎸佺画璺熻釜=3, 宸插畬鎴?3
+[OK]   姣忎釜鐘舵€佺殑鐪熷疄璁℃暟 >= 3锛圙ROUP BY 缁熻鍙敤锛?
+[OK]   宸插畬鎴愯鏁?= 3锛? 鏂?+ 0 杩佺Щ锛?
+[OK]   璁℃暟鎬诲拰 12 == 鍏ㄨ〃 12锛堜笉鍙?LIMIT 鎴柇锛?
+[OK]   ListMaintenance 鍏ㄩ噺鍙栧埌 12 鏉?
+[OK]   姣忔潯閮藉彇鍒颁簡 updated_at锛坴2.1.0 閲?SELECT 鏍规湰娌″彇锛?
+[OK]   鎸夋渶鍚庢洿鏂版椂闂村€掑簭锛堢湅鏉胯涔? 鏈€杩戝姩杩囩殑缃《锛?
+[OK]   limit 鍙傛暟鐢熸晥锛堢湅鏉挎瘡鍒楅檺閲忕敤锛?
+[OK]   鎸夌姸鎬佺瓫閫夋纭?
+[OK]   UpdateMaintenance 杩斿洖 true
+[OK]   鍏ㄩ儴瀛楁閮藉啓杩涘幓浜嗭紙鍚娉?/ 鐘舵€?/ 璁板綍鏃ユ湡锛?
+[OK]   updated_at 宸插埛鏂帮紙2026-07-12 08:02:00 -> 2026-08-28 18:54:05锛?
+[OK]   鏇存柊涓嶅瓨鍦ㄧ殑璁板綍杩斿洖 false锛圲I 浼氭彁绀恒€屽彲鑳藉凡琚垹闄ゃ€嶏級
+[OK]   UpdateMaintenanceStatus 杩斿洖 true锛堟嫋鍔ㄦ敼鐘舵€侊級
+[OK]   鎷栧姩鍙敼鐘舵€侊紝鍏跺畠瀛楁涓嶅姩
+[OK]   鏇存柊鍙︿竴鏉＄姸鎬佽繑鍥?true
+[OK]   鐘舵€佸彉鏇翠簨浠惰Е鍙戜竴娆★紙瀹炲緱 1锛?
+[OK]   浜嬩欢甯︽棫/鏂扮姸鎬侊紙unknown -> in_progress锛?
+[OK]   鍚岀姸鎬侀噸澶嶈缃笉瑙﹀彂浜嬩欢锛堝幓閲嶏級
+[OK]   UpdateMaintenance锛堝叏瀛楁锛夎繑鍥?true
+[OK]   鍏ㄥ瓧娈垫洿鏂版敼鐘舵€佷篃瑙﹀彂浜嬩欢锛? 娆? in_progress -> resolved锛?
+[OK]   鍙敼鍐呭涓嶈Е鍙戠姸鎬佸彉鏇翠簨浠?
+[OK]   褰曞叆寰€鏈熸棩鏈熸椂 updated_at 璺熼殢 created_at锛?026-01-15 08:00:00锛夆€斺€?鍚﹀垯鑰佽褰曚細琚《鍒扮湅鏉挎渶鍓?
+[OK]   DeleteMaintenance 杩斿洖 true
+[OK]   鍒犻櫎鍚庣‘瀹炰笉鍦ㄥ垪琛ㄩ噷
+[OK]   绌哄簱鏂板缓绗竴鏉?id = 1锛堟湡鏈?1锛?
+[OK]   鍒犳帀鍞竴鐨勪竴鏉?
+[OK]   **鍒犵┖鍚庢柊寤?id = 1锛堟湡鏈?1锛屾棫鐗堜細缁?2锛?*
+[OK]   杩炵画鏂板缓 id = 2, 3
+[OK]   鍒犳帀鏈€鍚庝竴鏉″悗鏂板缓 id = 3锛堟湡鏈?3锛?
+[OK]   鍒犱腑闂撮偅鏉″悗鏂板缓 id = 4锛堟湡鏈?4锛屼笉鍥炲～绌哄彿 2锛?
+[OK]   鍒犱笉瀛樺湪鐨?id 杩斿洖 false 涓斾笉鎶ラ敊
+[OK]   鏃犳晥鍒犻櫎涓嶅奖鍝嶆父鏍囷紙涓嬩竴涓?id = 5锛?
+[OK]   **鍙抽敭鍗＄墖浼氳Е鍙?ContextRequested锛堜箣鍓嶅彸閿病浠讳綍鍙嶅簲锛?*
+[OK]   鑿滃崟寮瑰嚭鍧愭爣璺熼殢榧犳爣锛?2,34锛?
+[OK]   宸﹂敭涓嶅脊鑿滃崟锛堝乏閿暀缁欐嫋鎷?/ 鍙屽嚮缂栬緫锛?
+[OK]   鍙抽敭鎸変綇鎷栧姩涓嶄細璇蛋鎷栨嫿鍒嗘敮
+[OK]   MaintenanceBoard 鍚戝鏆撮湶浜?ContextRequested锛堣彍鍗曠敱 MaintenancePanel 缁熶竴鎻愪緵锛?
+[OK]   鏁呴殰椤瑰凡鍘婚噸锛? 琛屾簮鏁版嵁 -> 2 涓」锛堟湡鏈?2锛岀┖鍊间笉绠楋紝鍓嶅悗绌烘牸褰掍竴锛?
+[OK]   鍑虹幇娆℃暟缁熻姝ｇ‘锛?, 2锛?
+[OK]   鑱氬悎缁撴灉閲屼笉鍚?SN锛堝彧鏈夋祴璇曢」鍚嶏級
+    鐪熷疄搴撳幓閲嶅悗鏁呴殰椤?0 涓紝鍓?3: 
+    (璺宠繃鐪熷疄搴撴柇瑷€锛氭棤 fixture锛屾妸浠绘剰涓€涓満鍙板簱鎷峰埌 dist\data\fct.db 鍗冲彲鍚敤)
+[OK]   FailItemSource 缁撴瀯閲屾牴鏈病鏈?Sn 瀛楁锛堜粠鏁版嵁灞傚氨涓嶅甫 SN锛?
+    澶ч」鍚堝苟锛? 涓師濮嬫祴璇曢」 -> 0 涓緟鍔炲ぇ椤?
+[OK]   鍚堝苟鍚庣殑澶ч」鏁颁笉澶氫簬鍘熷椤规暟
+[OK]   姣忎釜澶ч」閮借兘绠楀嚭闈炵┖灞曠ず鍚?
+    鍘嗗彶缁翠慨浜? 寮犱笁, 鏉庡洓, 鐜嬩簲
+[OK]   缁翠慨浜哄€欓€夊彇鍒板巻鍙插€硷紙3 涓級
+[OK]   缁翠慨浜哄€欓€夊凡鍘婚噸
+[OK]   缁翠慨浜哄€欓€夐噷娌℃湁绌哄€?
+[OK]   鍚嶅崟娣诲姞銆岀帇寮恒€?
+[OK]   閲嶅娣诲姞锛堝甫绌烘牸锛夎鎷掞紝涓嶄細鍑轰袱鏉?
+[OK]   锛堝弬鑰冿級鍚嶅瓧澶у皬鍐欎笉鏁忔劅鍞竴
+[OK]   绌哄悕瀛楀姞涓嶈繘鍘?
+[OK]   鍚嶅崟娣诲姞銆岃档鍏€?
+[OK]   鍚嶅崟鐜版湁 2 浜猴紙鏈熸湜 2锛?
+[OK]   涓嬫媺鍊欓€夛細鍚嶅崟鎺掑湪鍓嶉潰
+[OK]   鍊欓€?= 鍚嶅崟 鈭?鍘嗗彶锛堝叡 5 涓紝鍚悕鍗曢噷鐨勭帇寮轰笌鍘嗗彶閲岀殑寮犱笁锛?
+[OK]   鍊欓€夊凡鍘婚噸锛堝ぇ灏忓啓涓嶆晱鎰燂級
+[OK]   銆屽紶涓夈€嶅湪 3 鏉″巻鍙茶褰曢噷鍑虹幇杩囷紙鍒犱汉鍓嶄細鎻愮ず杩欎釜鏁帮級
+[OK]   浠庡悕鍗曞垹鎺夈€屽紶涓夈€?
+[OK]   鍒犲悕鍗?*涓嶄細鍔ㄥ巻鍙茬淮淇褰?*
+[OK]   鍒犲悗浠嶈兘鍦ㄥ€欓€夐噷鐪嬪埌锛堝洜涓哄巻鍙茶褰曢噷杩樻湁锛?
+[OK]   鍒犱笉瀛樺湪鐨勪汉杩斿洖 false
+[OK]   鏀瑰悕锛堜笉鍚屾锛変笉鍔ㄥ巻鍙茶褰?
+[OK]   鍚嶅崟閲屽凡鏀规垚銆屽紶涓変笁銆?
+[OK]   鏀瑰悕骞跺悓姝ワ細鏀瑰姩浜?1 鏉″巻鍙茶褰曪紙鏈熸湜 1锛?
+[OK]   鍘嗗彶璁板綍閲岀殑鍚嶅瓧纭疄鏀规帀浜?
+[OK]   鏃у悕瀛楀凡涓嶅啀鍑虹幇鍦ㄨ褰曢噷
+[OK]   閲嶆柊鎵撳紑搴撳悗鍚嶅崟浠嶅湪锛堝缓琛ㄥ箓绛夛級
+[OK]   鎷嗗垎锛氶《鍙峰垎闅?
+[OK]   鎷嗗垎锛氬吋瀹?, ; / 绛夊垎闅旂涓庣┖鏍?
+[OK]   鎷嗗垎锛氶噸澶嶄汉鍘婚噸
+[OK]   鎷嗗垎锛氱┖鍊煎緱绌哄垪琛?
+[OK]   鎷兼帴锛氬幓绌哄幓閲嶃€佺敤椤跺彿
+[OK]   瑙勮寖鍖栵細浠绘剰鍐欐硶 -> 椤跺彿鎷兼帴锛堜繚鎸侀『搴忥級
+[OK]   鍖呭惈鍒ゅ畾鏄?*鎴愬憳绾?*锛堛€屽紶涓変赴銆嶄笉绠楀寘鍚€屽紶涓夈€嶏級
+[OK]   鎴愬憳绾ф敼鍚嶏細鍏朵綑浜轰笌椤哄簭涓嶅彉
+[OK]   澶氫汉璁板綍宸插瓨锛氬瓩涓冦€佸懆鍏?
+[OK]   鍊欓€夐噷瀛欎竷銆佸懆鍏?**鍒嗗紑**鍑虹幇
+[OK]   鍊欓€夐噷涓嶄細鍑虹幇銆屽瓩涓冦€佸懆鍏€嶈繖绉嶇粍鍚堥」
+[OK]   鎸変汉璁℃暟瀵瑰浜鸿褰曚篃鍑?
+[OK]   澶氫汉瀛楁鏀瑰悕鍚?= 瀛欎竷涓冦€佸懆鍏紙鍙崲瀛欎竷锛屽懆鍏笉鍔級
+[OK]   澶氶€夋棰勫嬀閫変簡 2 浜猴紙浼犲叆涓や汉锛?
+[OK]   澶氶€夋鍊欓€夊惈鍚嶅崟涓庡巻鍙查噷鐨勪汉
+[OK]   鍐嶅嬀涓€浜哄悗缁撴灉涓変汉锛氱帇寮恒€佽档鍏€佸懆鍏?
+[OK]   缁撴灉鐢ㄩ《鍙锋嫾鎺?
+[OK]   琛ㄥ崟淇濆瓨鏃舵妸銆屾柊浜虹敳, 鏂颁汉涔欍€嶈鑼冧负銆屾柊浜虹敳銆佹柊浜轰箼銆?
+[OK]   涓や釜鏂板悕瀛?*鍚勮嚜**杩涗簡鍚嶅崟锛堜笉鏄暣涓插綋涓€涓汉锛?
+[OK]   鍚嶅崟浠?5 澧炲埌 7
+[OK]   鍚嶅崟閲屾病鏈夊甫鍒嗛殧绗︾殑鑴忔暟鎹?
+[OK]   鎵归噺寤哄崟锛? 涓€夐」(鍚?涓噸澶? -> 2 鏉¤褰曪紙鏈熸湜 2锛?
+[OK]   鎵归噺璁板綍鐨?Id 鍧囦负 0锛堜氦缁?DB 鑷锛?
+[OK]   姣忔潯鐨勬晠闅滈」涓嶅悓
+[OK]   鎵归噺璁板綍榛樿鐘舵€?= 寰呭姙
+[OK]   鎵归噺璁板綍涓嶅甫璁惧鍨嬪彿 / SN锛堣〃鍗曞凡鍘绘帀杩欎袱椤癸級
+[OK]   鎵归噺璁板綍宸叉垚鍔熷啓鍏ュ簱
+[OK]   MaintenanceForm 閲屽凡鍒犻櫎 _model / _sn 杈撳叆妗?
+[OK]   缁翠慨浜烘帶浠朵粛鍦?
+[OK]   缁翠慨浜哄凡鏀逛负 ComboBox锛堝彲閫夊巻鍙插€硷紝涔熷彲鐩存帴杈撳叆锛?
+
+銆愬緟鍔炩啋鐪嬫澘銆戣仛鍚?/ 纭 / 蹇界暐 / 澶嶅彂閲嶇幇
+[OK]   MaintenanceBoard 鏃?UI 鏋勯€犳垚鍔?
+[OK]   MaintenanceBoard.Reload() 鍙甯告墽琛岋紙鍚緟鍔炲崱鑱氬悎锛?
+[OK]   鐪嬫澘寰呭姙鏁?== CountPendingTodos锛? == 2锛寁3.6.1 淇锛?
+[OK]   MaintenancePanel 鏃?UI 鏋勯€犳垚鍔燂紙宸插幓鎺夌嫭绔嬪緟鍔為〉锛?
+[OK]   缁翠慨闈㈡澘閲屽凡鍒犻櫎鐙珛寰呭姙椤电殑瀛楁锛坃todo / _btnTodo锛?
+[OK]   MaintenancePanel._board 宸插垵濮嬪寲锛堥潪 null锛?
+[OK]   MaintenancePanel._list 宸插垵濮嬪寲锛堥潪 null锛?
+[OK]   MaintenancePanel._listHost 宸插垵濮嬪寲锛堥潪 null锛?
+[OK]   MaintenancePanel._filter 宸插垵濮嬪寲锛堥潪 null锛?
+[OK]   MaintenancePanel._filterLabel 宸插垵濮嬪寲锛堥潪 null锛?
+[OK]   MaintenancePanel._btnBoard 宸插垵濮嬪寲锛堥潪 null锛?
+[OK]   MaintenancePanel._btnList 宸插垵濮嬪寲锛堥潪 null锛?
+[OK]   MaintenancePanel.Refresh2() 鍙甯告墽琛?
+[OK]   涓ょ鍗＄墖鍧囩户鎵?BoardCardBase锛堟嫋鏀炬牸寮忕粺涓€锛?
+[OK]   寰呭姙鍗″浐瀹氬睘浜庛€屽緟鍔炪€嶅垪
+[OK]   璁板綍鍗℃墍鍦ㄥ垪 = 瀹冪殑鐘舵€?
+[OK]   BoardCardBase 鏆撮湶浜?PreviewRequested锛堝崟鍑婚瑙堬級
+[OK]   鍗曞嚮涓嶄細绔嬪嵆瑙﹀彂棰勮锛堝厛绛夊弻鍑婚棿闅旓紝鍚﹀垯鍙屽嚮浼氬厛闂竴涓嬶級
+[OK]   **鍗曞嚮宸叉帓闃熼瑙?*锛堣鏃跺櫒宸插惎鍔級
+[OK]   鍙屽嚮瑙﹀彂 Activate 骞?*鍙栨秷**宸叉帓闃熺殑棰勮
+[OK]   鍙屽嚮鍚庣殑绗簩涓?MouseUp 涓嶄細鍐嶆帓棰勮
+[OK]   鍙抽敭涓嶅脊棰勮锛堝彸閿蛋鑿滃崟锛?
+[OK]   娌℃湁鍏堟寜涓嬬殑鏉炬墜涓嶄細琚綋鎴愬崟鍑伙紙鎷栨嫿钀藉洖鍗′笂涓嶄細璇脊棰勮锛?
+[OK]   寰呭姙鍗￠瑙堝唴瀹瑰畬鏁达紙鏍囬/鍓爣棰?鏄庣粏/椤佃剼锛?
+[OK]   浼樺厛绾х畻鐨勬槸**鍖洪棿鍐呮鏁?*锛?2 娆♀啋涓級鑰屼笉鏄疮璁★紙30 娆♀啋楂橈級
+[OK]   棰勮鍚屾椂缁欏嚭鍖洪棿鍐呮鏁颁笌绱娆℃暟
+[OK]   棰勮閲屾爣浜嗗悎骞堕」鏁?
+[OK]   鍚堝苟鍗℃瘮鍗曢」鍗℃洿楂橈紙120 > 88锛夆€斺€?鍗′笂鐩存帴鍒楀悎骞堕」
+[OK]   缁翠慨鍗′粠澶囨敞鍥炶鍒?2 涓悎骞堕」锛堟棤闇€鏌ュ簱锛?
+[OK]   甯﹀悎骞舵竻鍗曠殑缁翠慨鍗′細鍔犻珮涓€琛?
+[OK]   缁翠慨鍗￠瑙堝壇鏍囬鏍囧嚭鍚堝苟椤规暟
+[OK]   棰勮澶囨敞閲屼笉閲嶅鍫嗏€滄潵婧愭祴璇曢」鈥濋偅涓€澶ф锛堝凡鍗曠嫭鎴愯〃锛?
+[OK]   鏅€氬娉ㄤ笉浼氳璇鎴愬悎骞舵竻鍗?
+[OK]   CardPreviewForm 鍙甯稿脊鍑猴紙鍚悎骞舵竻鍗曡〃锛?
+[OK]   棰勮绐楀凡鍦ㄦ墦寮€鍒楄〃閲?
+[OK]   **棰勮鍒氬脊鍑烘椂娌℃湁閫変腑浠讳綍鏂囧瓧**锛堥€夊尯闀垮害 0锛?
+[OK]   棰勮绐椾笉鎶婄劍鐐瑰缁欒緭鍏ユ锛堢劍鐐瑰湪绐楀彛鏈韩锛孍sc 浠嶅彲鍏筹級
+[OK]   CardPreviewForm.CloseCurrent() 鍙噸澶嶈皟鐢ㄤ笉鎶ラ敊
+[OK]   **鐪嬫澘涓婂凡鏃犲拷鐣ュ叆鍙?*锛堜笉鑹彧鑳界‘璁?澶勭悊/鍒犻櫎锛屾病鏈夊拷鐣ワ級
+
+銆愬緟鍔灺峰ぇ椤瑰悎骞躲€戝悓绫绘祴璇曢」褰掍竴鍖?
+[OK]   姝ラ鍙蜂笉鍚岀殑鍚屼竴娴嬭瘯椤瑰悎骞朵负涓€椤?
+[OK]   鍘绘帀姝ラ鍙峰悗涓庤８鍚嶅悓閿?
+[OK]   閫氶亾鍙蜂笉鍚?CH1/CH2)鍚堝苟
+[OK]   浣嶅彿涓嶅悓(pin3/pin7)鍚堝苟
+[OK]   鍣ㄤ欢浣嶅彿涓嶅悓(U12/U7)鍚堝苟
+[OK]   **5V 涓?12V 涓嶅悎骞?*锛堟暟瀛?鍗曚綅鏈夌墿鐞嗗惈涔夛級
+[OK]   100ms 涓?200ms 涓嶅悎骞?
+[OK]   3V3 涓?1V8 涓嶅悎骞?
+[OK]   澶у皬鍐欎笌鍒嗛殧绗﹀樊寮傚悎骞?
+[OK]   鍏ㄨ鍐欐硶涓庡崐瑙掑悎骞?
+[OK]   鍚屼竴鍙傛暟甯︿笉鍚屾嫭鍙烽檺瀹氳瘝 -> 鍚堝苟涓轰竴涓ぇ椤?
+[OK]   鍚屼竴鍙傛暟涓嶅悓娴嬮噺璺緞(DMM/XCP) -> 鍚堝苟
+[OK]   **鎷彿閲屽氨鏄牳蹇冭涔夋椂涓嶄涪**锛圕heck(Voltage) 涓嶇瓑浜?Check(Current)锛?
+[OK]   绌烘晠闅滈」杩斿洖绌洪敭锛堣皟鐢ㄦ柟璺宠繃锛?
+[OK]   绾簭鍙烽」涓嶄細閫€鍖栨垚绌洪敭锛堝惁鍒欎細鍏ㄦ尋鎴愪竴寮犲崱锛?
+[OK]   鍚堝苟鍚庡睍绀哄悕鍙栨渶鐭笖鍘绘楠ゅ彿锛堝緱鍒般€?V_Rail銆嶏級
+[OK]   浼樺厛绾ф寜 fail 娆℃暟鍒嗛珮/涓?浣?
+
+銆愬緟鍔灺风櫥璁拌〃銆戝彧鎵繎涓€涓湀 路 姘镐箙淇濈暀 路 鎸夋鏁版帓浼樺厛绾?
+[OK]   3 鏉″悓绫?+ 1 鏉″紓绫?-> 鏂扮櫥璁?2 鏉″緟鍔烇紙鏈熸湜 2锛屽悓绫诲凡鍚堝苟锛?
+[OK]   鍚堝苟鍚庣殑澶ч」灞曠ず鍚?= 5V_Rail
+[OK]   鍚堝苟椤圭疮璁℃鏁?= 3锛堝疄寰?3锛?
+[OK]   璁颁綇浜?3 涓師濮嬫祴璇曢」锛坴ariants锛?
+[OK]   **200 澶╁墠鐨勪笉鑹笉鍏ュ緟鍔?*锛堝彧鎵繎涓€涓湀锛?
+[OK]   鍒楄〃鎸?fail 娆℃暟鍊掑簭锛? 娆＄殑鎺掑湪 1 娆″墠闈級
+[OK]   SortCount 鍗曡皟涓嶅锛堜紭鍏堝鐞嗘鏁板鐨勶級
+[OK]   閲嶅鍚屾涓嶆柊澧炰笉閲嶇畻锛堟柊澧?0锛屾鏁颁粛 3锛?
+[OK]   鏂颁笉鑹閲忕疮鍔犲埌鍚屼竴寮犲崱锛? 娆★級
+[OK]   鏂扮殑鍚岀被鍙樹綋骞跺叆 variants
+[OK]   鍖洪棿缁熻鐙珛浜庣疮璁★紙浠婃棩 2 娆?/ 绱 4 娆★級
+[OK]   閫変竴涓病鏈変笉鑹殑鍖洪棿 -> 寰呭姙鍒椾负绌?
+[OK]   **鎹㈠洖涓嶉檺鍖洪棿寰呭姙杩樺湪**锛堟案涔呬繚鐣欙紝涓嶆槸琚垹浜嗭級
+[OK]   CountPendingTodos 涓庤鍥句竴鑷?
+[OK]   榛樿瑙嗗浘寰呭姙鏁?== CountPendingTodos锛? == 2锛寁3.6.1 淇锛?
+[OK]   涓嶉檺鍖洪棿瑙嗗浘 RangeCount 鍥炶惤涓虹疮璁℃鏁帮紙涓嶆樉绀鸿瀵兼€х殑鍖洪棿娆℃暟锛?
+[OK]   纭寰呭姙宸插缓缁翠慨璁板綍 #1
+[OK]   纭钀藉埌闈炲緟鍔炲垪绛夊悓鐘舵€佸彉鏇淬€佽Е鍙戞帹閫侊紙1 娆? '' -> in_progress锛?
+[OK]   缁翠慨璁板綍鐨勬晠闅滈」 = 鍚堝苟鍚庣殑澶ч」鍚?
+[OK]   澶囨敞閲岀暀浜嗗師濮嬫祴璇曢」娓呭崟锛堝彲杩芥函锛?
+[OK]   鍙互纭鏃剁洿鎺ョ疆涓恒€屾寔缁窡韪€?
+[OK]   纭鍚庤椤圭寮€寰呭姙鍒?
+[OK]   璁板綍宸插畬鎴愬悗寰呭姙浠嶄笉鏄剧ず锛堥棶棰樺凡澶勭悊锛?
+[OK]   **澶勭悊瀹屽悗鍐嶅鍙?-> 鑷姩鍥炲埌寰呭姙**
+[OK]   澶嶅彂鏃舵鏁扮户缁疮鍔狅紙5 娆★紝涓嶆竻闆讹級
+[OK]   纭鍚?CAN 椤规殏鏃剁寮€寰呭姙
+[OK]   CountFailRecords 鑳芥暟鍑鸿鏁呴殰椤圭殑鐪熷疄涓嶈壇鏁?
+[OK]   **鍒犳帀缁翠慨璁板綍鍚庡緟鍔炶嚜鍔ㄥ洖鏉?*锛堝緟鍔炲垹涓嶆帀锛?
+[OK]   **鍐欏叆 dismissed_todos 涔熶笉浼氳寰呭姙娑堝け**锛堜笉璇诲拷鐣ュ悕鍗曪級
+[OK]   閲嶅紑搴撳悗鍚屾涓嶉噸澶嶇疮鍔狅紙5 -> 5锛?
+[OK]   鍚屾晠闅滈」鍦ㄤ袱涓満鍙板悇鑷竴鏉″緟鍔?
+[OK]   纭鍒般€屽緟鍔炪€嶅垪涔熷缓璁板綍 #2
+[OK]   纭鍒般€屽緟鍔炪€嶅垪涔熻Е鍙戞帹閫侊紙1 娆? '' -> open锛?
+[OK]   寰呭姙鍒犻櫎鍓嶅瓨鍦?
+[OK]   DeleteTodo 杩斿洖 true
+[OK]   鍒犻櫎鍚庣寮€寰呭姙鍒?
+[OK]   **宸插垹闄ょ殑寰呭姙涓嶅啀澶嶇幇**锛堟按浣嶇嚎宸茶繃锛屽垹闄ゆ槸姘镐箙鐨勶級
+[OK]   鍒犻櫎涓嶅瓨鍦ㄧ殑寰呭姙杩斿洖 false
+
+銆怗UI 甯冨眬銆戜晶杈瑰鑸?/ 椤舵爮 / 鐘舵€佹爮 / KPI 鍗′笉鑳介噸鍙犳垨濉屾帀
+[OK]   MainForm 鍙瀯閫狅紙鏂板澹充笉浼氫竴鍚姩灏卞穿锛?
+[OK]   浣跨敤绯荤粺鏍囧噯鏍囬鏍忥紙FormBorderStyle=Sizable锛夛紝鏃犺嚜缁樻爣棰樻爮
+[OK]   宸叉棤鑷粯 TitleBar 鎺т欢锛堝洖褰掔郴缁熸爣棰樻爮锛?
+[OK]   椤堕儴 TabControl 瀛樺湪锛圖ock=Fill锛屾浛浠ｄ晶鏍忓鑸級
+[OK]   TabControl 鏈?9 涓〉绛撅紙5 涓富椤甸潰 + 4 涓唴宓屽伐鍏烽〉锛?
+[OK]   椤舵爮宸叉樉绀洪〉鏍囬銆屾€昏銆嶏紝鍙充晶鐘舵€佽兌鍥婂尯濉厖
+[OK]   鐘舵€佹爮璐村簳锛坱op=715 + h=26 == 741锛?
+[OK]   鐘舵€佹爮宸插啓鍏ヨ繍琛屼俊鎭紙鍚緟鍔炴暟锛?
+[OK]   鍐呭鍖哄瓨鍦紙Dock=Fill锛?
+[OK]   **鍐呭鍖轰笉涓庨《鏍?鐘舵€佹爮閲嶅彔**锛坸=0, y=34, h=681锛?
+[OK]   KPI 鍗″叡 5 寮狅紙浠婃棩涓轰富锛氫骇鍝?PASS/FAIL/鑹巼/涓柇锛?
+[OK]   浠婃棩 KPI 榻愬叏锛氫粖鏃ヤ骇鍝佹暟/PASS/FAIL/鑹巼/涓柇
+[OK]   浠婃棩 KPI 鍗″搴︽甯革紙鏈€灏?237px锛屾病琚尋鎴愪竴鏉★級
+[OK]   绱鏁版嵁鍦ㄤ粖鏃?KPI 鍗′笅鏂广€佷笉閲嶅彔锛?28 <= 338锛?
+[OK]   绱鏁版嵁鏈夎冻澶熺┖闂达紙1236脳529锛?
+[OK]   鍒囬〉鏃?TabControl 閫変腑瀵瑰簲椤电
+[OK]   5 涓〉鏍囬鍚勪笉鐩稿悓锛氭€昏 / 寰呭姙 / 缁翠慨璁板綍 / FAIL 璁板綍 / 璁惧鐘舵€?/ 璋冭瘯宸ュ叿
+[OK]   鍥涗釜宸ュ叿椤靛涓诲凡寤猴紙4 涓級
+[OK]   **鍚姩鏃跺伐鍏峰皻鏈瀯閫?*锛堟儼鍔犺浇锛屼笉鎷栨參寮€鏈猴級
+[OK]   鍒囧埌绗?5 椤靛悗宸ュ叿宸插疄渚嬪寲锛團AIL 鎺掕锛?
+[OK]   FAIL 鎺掕锛?*TopLevel=false 涓旂埗瀹瑰櫒鏄〉闈㈠涓?*锛堢湡鍐呭祵锛屼笉鏄脊绐楋級
+[OK]   FAIL 鎺掕锛氬凡鍘绘帀鑷繁鐨勬爣棰樻爮骞堕摵婊￠〉闈?
+[OK]   FAIL 鎺掕锛歍opLevelControl 鎸囧洖涓荤獥鍙ｏ紙妯℃€佺獥 owner 鎵嶄笉浼氳窇鍋忥級
+[OK]   FAIL 鎺掕锛氶〉闈㈠涓诲紑浜?AutoScroll锛堢獥鍙ｆ媺灏忛潬婊氬姩鏉″厬锛?
+[OK]   FAIL 鎺掕锛?*椤甸潰瀹夸富鍙**锛坴3.6.0 淇锛欵nsure 鏃剁偣浜?Visible锛屽惁鍒?TabPage 鐧藉睆锛?
+[OK]   FAIL 鎺掕锛氬伐鍏风獥浣撳凡閾哄紑鐪熷疄灏哄锛?256脳651锛屼笉鏄?0 灏哄鐧藉睆锛?
+[OK]   FAIL 鎺掕锛氬搴?Tab 琚€変腑
+[OK]   鍒囧埌绗?6 椤靛悗宸ュ叿宸插疄渚嬪寲锛堝彇鏁版墦鍖咃級
+[OK]   鍙栨暟鎵撳寘锛?*TopLevel=false 涓旂埗瀹瑰櫒鏄〉闈㈠涓?*锛堢湡鍐呭祵锛屼笉鏄脊绐楋級
+[OK]   鍙栨暟鎵撳寘锛氬凡鍘绘帀鑷繁鐨勬爣棰樻爮骞堕摵婊￠〉闈?
+[OK]   鍙栨暟鎵撳寘锛歍opLevelControl 鎸囧洖涓荤獥鍙ｏ紙妯℃€佺獥 owner 鎵嶄笉浼氳窇鍋忥級
+[OK]   鍙栨暟鎵撳寘锛氶〉闈㈠涓诲紑浜?AutoScroll锛堢獥鍙ｆ媺灏忛潬婊氬姩鏉″厬锛?
+[OK]   鍙栨暟鎵撳寘锛?*椤甸潰瀹夸富鍙**锛坴3.6.0 淇锛欵nsure 鏃剁偣浜?Visible锛屽惁鍒?TabPage 鐧藉睆锛?
+[OK]   鍙栨暟鎵撳寘锛氬伐鍏风獥浣撳凡閾哄紑鐪熷疄灏哄锛?256脳651锛屼笉鏄?0 灏哄鐧藉睆锛?
+[OK]   鍙栨暟鎵撳寘锛氬搴?Tab 琚€変腑
+[OK]   鍒囧埌绗?7 椤靛悗宸ュ叿宸插疄渚嬪寲锛圱DMS 娉㈠舰锛?
+[OK]   TDMS 娉㈠舰锛?*TopLevel=false 涓旂埗瀹瑰櫒鏄〉闈㈠涓?*锛堢湡鍐呭祵锛屼笉鏄脊绐楋級
+[OK]   TDMS 娉㈠舰锛氬凡鍘绘帀鑷繁鐨勬爣棰樻爮骞堕摵婊￠〉闈?
+[OK]   TDMS 娉㈠舰锛歍opLevelControl 鎸囧洖涓荤獥鍙ｏ紙妯℃€佺獥 owner 鎵嶄笉浼氳窇鍋忥級
+[OK]   TDMS 娉㈠舰锛氶〉闈㈠涓诲紑浜?AutoScroll锛堢獥鍙ｆ媺灏忛潬婊氬姩鏉″厬锛?
+[OK]   TDMS 娉㈠舰锛?*椤甸潰瀹夸富鍙**锛坴3.6.0 淇锛欵nsure 鏃剁偣浜?Visible锛屽惁鍒?TabPage 鐧藉睆锛?
+[OK]   TDMS 娉㈠舰锛氬伐鍏风獥浣撳凡閾哄紑鐪熷疄灏哄锛?256脳651锛屼笉鏄?0 灏哄鐧藉睆锛?
+[OK]   TDMS 娉㈠舰锛氬搴?Tab 琚€変腑
+[OK]   鍒囧埌绗?8 椤靛悗宸ュ叿宸插疄渚嬪寲锛堣仛鍚堢湅鏉匡級
+[OK]   鑱氬悎鐪嬫澘锛?*TopLevel=false 涓旂埗瀹瑰櫒鏄〉闈㈠涓?*锛堢湡鍐呭祵锛屼笉鏄脊绐楋級
+[OK]   鑱氬悎鐪嬫澘锛氬凡鍘绘帀鑷繁鐨勬爣棰樻爮骞堕摵婊￠〉闈?
+[OK]   鑱氬悎鐪嬫澘锛歍opLevelControl 鎸囧洖涓荤獥鍙ｏ紙妯℃€佺獥 owner 鎵嶄笉浼氳窇鍋忥級
+[OK]   鑱氬悎鐪嬫澘锛氶〉闈㈠涓诲紑浜?AutoScroll锛堢獥鍙ｆ媺灏忛潬婊氬姩鏉″厬锛?
+[OK]   鑱氬悎鐪嬫澘锛?*椤甸潰瀹夸富鍙**锛坴3.6.0 淇锛欵nsure 鏃剁偣浜?Visible锛屽惁鍒?TabPage 鐧藉睆锛?
+[OK]   鑱氬悎鐪嬫澘锛氬伐鍏风獥浣撳凡閾哄紑鐪熷疄灏哄锛?256脳651锛屼笉鏄?0 灏哄鐧藉睆锛?
+[OK]   鑱氬悎鐪嬫澘锛氬搴?Tab 琚€変腑
+[OK]   鍥涗釜宸ュ叿椤垫爣棰樺悇涓嶇浉鍚岋細FAIL 鎺掕 / 鍙栨暟鎵撳寘 / TDMS 娉㈠舰 / 鑱氬悎鐪嬫澘
+[OK]   绗?4 涓伐鍏烽〉 = 鑱氬悎鐪嬫澘锛圓ggCenterForm 鍐呭祵锛岀┖鍏变韩鐩綍涓嬩篃鑳芥甯稿紑椤碉級
+[OK]   鍒囧洖鎬昏鍚?Tab 鍥炲埌 0锛屽伐鍏峰疄渚嬩繚鐣欙紙鍐嶅垏鍥炲幓鏃犻渶閲嶅缓锛?
+[OK]   **宸叉病鏈?OpenTool 寮圭獥璺緞**锛堝伐鍏峰彧鑳藉唴宓岋紝闃插洖娴侊級
+
+銆愯皟璇曞伐鍏锋樉绀恒€戜笉甯?--debug 鏃堕《閮?Tab 涔熸湁璋冭瘯鍏ュ彛锛屽鑸粨鏋勪笉濉?
+[OK]   鐢熶骇妯″紡 TabControl 9 椤癸紙璋冭瘯榛樿鏄剧ず锛? 椤?+ 4 宸ュ叿锛?
+[OK]   鐢熶骇妯″紡鏈夈€岃皟璇曞伐鍏枫€峊ab锛坴3.4.1 榛樿鏄剧ず锛?
+[OK]   鐢熶骇妯″紡璋冭瘯椤?Tab 琚€変腑锛堝叆鍙ｅ彲鐢級
+[OK]   璋冭瘯椤规樉绀哄悗涓荤獥鍙ｄ竴鍒囨甯?
+[OK]   閫€鍑烘椂鎵樼洏鍥炬爣宸插洖鏀讹紙Shutdown 鍙噸澶嶈皟锛?
+
+銆怓AIL 璁板綍椤点€戣〃鏍?鏍戝舰鍙岃鍥?路 鑱氬悎鍊掑簭 路 鎼滅储杩囨护
+[OK]   榛樿琛ㄦ牸瑙嗗浘锛坓rid 鍙銆乼ree 闅愯棌锛?
+[OK]   琛ㄦ牸琛屾暟 = FAIL 鏉℃暟锛? == 3锛?
+[OK]   琛ㄦ牸鎸夊け璐ラ」娆℃暟鍊掑簭锛?V_Rail / Check_CAN_Bus锛?
+[OK]   鍚屼竴澶辫触椤瑰唴鎸夋椂闂村€掑簭锛堟柊 SN-A 鍦ㄥ墠锛?
+[OK]   鍒囨爲褰㈠悗锛歘treeMode=true銆乬rid 闅愯棌銆乼ree 鍙
+[OK]   鏍戞牴鑺傜偣 = 澶辫触椤逛釜鏁帮紙2 == 2锛?
+[OK]   楂橀澶辫触椤瑰垎缁勭疆椤跺甫娆℃暟锛?V_Rail   [2 娆锛?
+[OK]   鏍戝舰缁勩€?V_Rail銆嶄笅 2 涓瓙SN锛?锛?
+[OK]   缁勮妭鐐?Tag=澶辫触椤瑰悕銆佸瓙鑺傜偣 Tag=XML 璺緞锛堝弻鍑昏兘寮€瀵规枃浠讹級
+[OK]   璁℃暟鏍囩鍚潯鏁颁笌澶辫触椤逛釜鏁帮紙鍏?3 鏉?FAIL 路 2 涓け璐ラ」锛?
+[OK]   鍒囧洖琛ㄦ牸瑙嗗浘
+
+銆愬紑鍚姩鐢汇€慡plashForm 鏋勯€?+ 鏃堕棿绾跨函鍑芥暟
+[OK]   SplashForm 鍙棤 UI 鏋勯€?
+[OK]   绐楀彛 鈮?鍥剧墖鍒嗚鲸鐜囷紙1408x768 鈮?1408x768锛?:1 鍘熷昂瀵革級
+[OK]   绐楀彛姣斾緥 = 鍥剧墖姣斾緥锛堜笉鍙樺舰锛?
+[OK]   t=0 閫忔槑 + scale=1锛堟笎寮鸿捣鐐癸紝閫忔槑搴﹁蛋绐楀彛 Opacity锛?
+[OK]   t=0.35s EaseOut 娓愬己涓紙opacity鈮?.875锛屽疄寰?0.875锛?
+[OK]   t=0.7s 娓愬己瀹屾垚锛堝叏浜級
+[OK]   t=3.0s 淇濇寔鍏ㄤ寒锛堢瓑寰?5 绉掞級
+[OK]   t=5.0s 缂╁皬灏氭湭寮€濮嬶紙scale=1锛?
+[OK]   t=5.3s EaseIn 缂╁埌 ~0.88锛堝疄寰?0.881锛?
+[OK]   t=5.6s 缂╂垚鍦嗙偣锛坰cale=0.05, opacity=0锛屽疄寰?0.050/0.000锛?
+[OK]   t=10s 鐘舵€佷笉鍐嶅彉鍖栵紙宸插畬鎴愶級
+
+銆愬伐鍏风銆戜笁涓悎鍏ョ殑宸ュ叿蹇呴』鑳芥棤 UI 鏋勯€犲苟鍗曚緥鎵撳紑
+[OK]   FAIL 鎺掕 FctFailRanker 鏃?UI 鏋勯€犳垚鍔燂紙22 涓《灞傛帶浠讹級
+[OK]   鍙栨暟鎵撳寘 FctFetcher 鏃?UI 鏋勯€犳垚鍔燂紙21 涓《灞傛帶浠讹級
+[OK]   TDMS 娉㈠舰 FctTdmsViewer 鏃?UI 鏋勯€犳垚鍔燂紙3 涓《灞傛帶浠讹級
+[OK]   涓荤▼搴忛噷宸叉棤鍐呯疆妯℃澘 xml 璧勬簮锛堝垎鍙戝櫒宸茬嫭绔嬶紝瀹炲緱 0 涓級
+[OK]   鍐呭祵鍥炬爣浠嶅湪锛堝彇鏁?TDMS 宸ュ叿闈?EndsWith("app_icon.ico") 鎵惧畠锛?
+[OK]   鍥涗釜 MainForm 鍏卞瓨浜庡悓涓€绋嬪簭闆嗭紙闈犲懡鍚嶇┖闂撮殧绂伙紝鏃犻渶鏀瑰悕锛?
+
+銆愰鏍肩粺涓€銆戜富棰樺櫒鍙敼澶栬锛屼笉鑳界甯冨眬
+[OK]   FAIL 鎺掕锛氫笂涓婚鍚?**23 涓帶浠朵綅缃昂瀵稿叏閮ㄦ湭鍙?*
+[OK]   FAIL 鎺掕锛氬簳鑹?瀛椾綋宸茬粺涓€锛?40,240,240 / Microsoft YaHei UI锛?
+[OK]   FAIL 鎺掕锛? 涓寜閽叏閮ㄦ敼鎴愮郴缁熷師鐢熼鏍硷紙v3.6.0 鍛婂埆鎵佸钩锛?
+[OK]   FAIL 鎺掕锛? 涓〃鏍肩殑琛ㄥご/缃戞牸绾垮凡缁熶竴
+[OK]   FAIL 鎺掕锛? 涓緭鍏ユ杈规宸茬粺涓€
+[OK]   鍙栨暟鎵撳寘锛氫笂涓婚鍚?**28 涓帶浠朵綅缃昂瀵稿叏閮ㄦ湭鍙?*
+[OK]   鍙栨暟鎵撳寘锛氬簳鑹?瀛椾綋宸茬粺涓€锛?40,240,240 / Microsoft YaHei UI锛?
+[OK]   鍙栨暟鎵撳寘锛? 涓寜閽叏閮ㄦ敼鎴愮郴缁熷師鐢熼鏍硷紙v3.6.0 鍛婂埆鎵佸钩锛?
+[OK]   鍙栨暟鎵撳寘锛? 涓〃鏍肩殑琛ㄥご/缃戞牸绾垮凡缁熶竴
+[OK]   鍙栨暟鎵撳寘锛? 涓緭鍏ユ杈规宸茬粺涓€
+[OK]   TDMS 娉㈠舰锛氫笂涓婚鍚?**22 涓帶浠朵綅缃昂瀵稿叏閮ㄦ湭鍙?*
+[OK]   TDMS 娉㈠舰锛氬簳鑹?瀛椾綋宸茬粺涓€锛?40,240,240 / Microsoft YaHei UI锛?
+[OK]   TDMS 娉㈠舰锛? 涓寜閽叏閮ㄦ敼鎴愮郴缁熷師鐢熼鏍硷紙v3.6.0 鍛婂埆鎵佸钩锛?
+[OK]   TDMS 娉㈠舰锛? 涓〃鏍肩殑琛ㄥご/缃戞牸绾垮凡缁熶竴
+[OK]   TDMS 娉㈠舰锛? 涓緭鍏ユ杈规宸茬粺涓€
+[OK]   鑷粯鎺т欢锛圞PI 鍗?/ 鐪嬫澘鍗★級琚富棰樺櫒璺宠繃
+[OK]   鏍囦簡 Tag="no-theme" 鐨勬帶浠朵笉琚埛
+
+銆愬幓閲嶃€戝洓浠?xlsx 鍐欏嚭鍣ㄥ悎骞朵负 FctShared.Xlsx锛岃緭鍑哄繀椤讳粛鐒跺悎娉?
+[OK]   鍏变韩鍐欏嚭鍣ㄧ敓鎴?xlsx锛?578 瀛楄妭锛?
+[OK]   鍖呴儴浠堕綈鍏?
+[OK]   鎵€鏈夐儴浠堕兘鏄弗鏍煎悎娉曠殑 XML锛堣浆涔夋病鍐欐紡锛?
+[OK]   鐗规畩瀛楃宸叉纭浆涔?
+[OK]   鍐荤粨琛屽凡鍐欏叆
+[OK]   鍚堝苟鍗曞厓鏍煎凡鍐欏叆
+[OK]   鏁板€兼寜涓嶅彉鏂囧寲鍐欏嚭锛堝皬鏁扮偣涓嶄細鍙樻垚閫楀彿锛?
+[OK]   宸ヤ綔琛ㄥ悕锛氶潪娉曞瓧绗︼紙/ :锛夊凡鎹㈡垚涓嬪垝绾?
+[OK]   宸ヤ綔琛ㄥ悕閲岀殑灏栨嫭鍙峰凡鍋?XML 杞箟锛堜笉浼氭妸 workbook.xml 鎼炲潖锛?
+[OK]   缁翠慨瀵煎嚭琛ㄥご浠嶅畬鏁?
+[OK]   缁翠慨瀵煎嚭鍐荤粨琛ㄥご锛坴2.9.3 鏂板锛泇2.9.2 鏃犲喕缁擄紝鏄埢鎰忎繚鐣欑殑鍞竴闀跨浉鍙樺寲锛?
+[OK]   鍚勫伐鍏风殑 styles.xml 浠嶆槸鍚勮嚜鐨勮皟鑹叉澘锛堝彧鍚堝苟浜嗗澹筹紝娌＄粺涓€闀跨浉锛?
+[OK]   鏍峰紡閮ㄤ欢鏍煎紡姝ｅ父
+
+銆愬浘鏍囥€戝繀椤昏兘浠庡祵鍏ヨ祫婧愭嬁鍒板灏哄鍥炬爣锛堜笉鑳介€€鎴愮郴缁熺伆鍥撅級
+[OK]   AppIcon.Load() 鑳芥嬁鍒板浘鏍?
+[OK]   **鎷垮埌鐨勬槸搴旂敤鍥炬爣鑰屼笉鏄郴缁熺伆鍥?*锛堝祵鍏ヨ祫婧愯鍙栨垚鍔燂級
+[OK]   鍙寜灏哄鍙栧浘鏍囷紙鎵樼洏鐢?16脳16锛屽疄寰?16脳16锛?
+[OK]   鍥炬爣宸茬紦瀛橈紙涓嶄細姣忎釜绐楀彛閲嶆柊瑙ｄ竴閬?160KB 鐨?ico锛?
+[OK]   app_icon.ico 鏄悎娉?ICO 瀹瑰櫒
+[OK]   **鍥炬爣鍖呭惈 6 涓昂瀵?*锛堜换鍔℃爮/鎵樼洏/澶у浘鏍囧悇鑷湁娓呮鐨勯偅涓€浠斤級
+[OK]   鍏抽敭灏哄榻愬叏锛?6/32/48/64/128/256
+[OK]   涓嶆槸鍗犱綅鍥撅紙104 KB锛屾棫鐨勫崰浣嶅浘鍙湁 285 瀛楄妭锛?
+[OK]   xlsx 宸茬敓鎴愶紙3834 瀛楄妭锛?
+[OK]   csv 宸茬敓鎴愶紙2085 瀛楄妭锛?
+[OK]   CSV 鍏紡娉ㄥ叆闃叉姢锛? 寮€澶村姞鍗曞紩鍙峰墠缂€
+[OK]   CSV 鍏紡娉ㄥ叆闃叉姢锛? 寮€澶村姞鍗曞紩鍙峰墠缂€
+[OK]   CSV 鍏紡娉ㄥ叆闃叉姢锛? 寮€澶村姞鍗曞紩鍙峰墠缂€
+[OK]   CSV 鍏紡娉ㄥ叆闃叉姢锛欯 寮€澶村姞鍗曞紩鍙峰墠缂€
+[OK]   CSV 鍏紡娉ㄥ叆闃叉姢锛歕t 寮€澶村姞鍗曞紩鍙峰墠缂€
+[OK]   CSV 鍏紡娉ㄥ叆闃叉姢锛歕r 寮€澶村姞鍗曞紩鍙峰墠缂€锛堝惈 \r 琚紩鍙峰寘瑁癸級
+[OK]   CSV 鍏紡娉ㄥ叆闃叉姢锛? 寮€澶存湭琚紩鍙峰寘瑁癸紙寮曞彿鍖呰９瀵瑰叕寮忔棤鏁堬級
+[OK]   xlsx 閮ㄤ欢榻愬叏涓旀墍鏈?XML 涓ユ牸鍙В鏋?
+[OK]   12 鍒楄〃澶撮綈鍏紙鏂板銆屾洿鏂版椂闂淬€嶏級
+[OK]   鏂扮姸鎬佸湪瀵煎嚭閲屾槸涓枃锛堜笉鏄師濮?unknown/investigating锛?
+[OK]   瀵煎嚭閲屾病鏈夋紡璇戠殑鑻辨枃 key锛堝崟涓€瀛楀吀鐢熸晥锛?
+[OK]   鍒楀瀹氫箟 12 涓紙搴斾笌 12 鍒椾竴鑷达級
+[OK]   12 涓垪瀹藉€间笌浜虹溂纭杩囩殑涓€鑷达紙6/24/14/22/30/10/10/12/30/24/20/20锛?
+[OK]   琛ㄥご搴曡壊浠嶆槸 #4472C4 娣辫摑锛堣皟鑹叉澘鏈鍏变韩鍐欏嚭鍣ㄥ甫璺戯級
+[OK]   琛ㄥご浠嶆槸鐧借壊绮椾綋
+[OK]   瀛椾綋浠嶆槸寰蒋闆呴粦
+[OK]   csv 甯?UTF-8 BOM 涓庢爣棰樿锛圗xcel 鐩村紑涓嶄贡鐮侊級
+[OK]   csv 绗?2 琛屾槸瀵煎嚭鏃堕棿
+[OK]   csv 琛ㄥご 12 鍒楋紙鍚€屾洿鏂版椂闂淬€嶏級
+[OK]   csv 鏈€鍚庝竴鍒楁槸銆屾洿鏂版椂闂淬€?
+[OK]   csv 鏁版嵁琛?15 鏉?== 璁板綍 15 鏉★紙姝ｇ‘澶勭悊浜嗗紩鍙峰寘瑁圭殑鎹㈣锛?
+[OK]   姣忔潯鏁版嵁閮芥槸 12 涓瓧娈碉紙寮傚父琛?0 鏉★級
+[OK]   csv 閲屼篃娌℃湁婕忚瘧鐨勮嫳鏂囩姸鎬?
+
+浜х墿鐣欏瓨锛堝彲鐢?Excel 鎵撳紑浜哄伐纭锛?
+  C:\Users\admin\AppData\Local\Temp\fct_agg_33d44b\缁翠慨璁板綍.xlsx
+  C:\Users\admin\AppData\Local\Temp\fct_agg_33d44b\缁翠慨璁板綍.csv
+
+銆愭満鍙拌仛鍚堟帹閫併€慒AIL 浜嬩欢鏂囦欢 / 蹇冭烦 / 鏂嚎琛ュ伩 / 缁帹
+[OK]   鑱氬悎鎺ㄩ€侊細鏈惎鐢ㄩ厤缃笅涓嶆縺娲?
+[OK]   鑱氬悎鎺ㄩ€侊細鏈惎鐢ㄦ椂鍏变韩鐩綍涓嶄骇鐢熶换浣曟枃浠?
+[OK]   鑱氬悎鎺ㄩ€侊細鏈惎鐢ㄦ椂涓嶅啓 agg_state/agg_queue
+[OK]   鑱氬悎鎺ㄩ€侊細鍏堝叆搴?3 鏉?FAIL锛堝疄寰?3锛?
+[OK]   鑱氬悎鎺ㄩ€侊細鍚姩缁帹鎵弿琛ラ綈 3 涓?fail 鏂囦欢
+[OK]   鑱氬悎鎺ㄩ€侊細fail-1.json 宸插啓鍏?
+[OK]   fail-1.json 瀛楁 machine/type/seq/ts 姝ｇ‘
+[OK]   fail-1.json data 鍐?sn/result 姝ｇ‘
+[OK]   鑱氬悎鎺ㄩ€侊細fail-2.json 宸插啓鍏?
+[OK]   fail-2.json 瀛楁 machine/type/seq/ts 姝ｇ‘
+[OK]   fail-2.json data 鍐?sn/result 姝ｇ‘
+[OK]   鑱氬悎鎺ㄩ€侊細fail-3.json 宸插啓鍏?
+[OK]   fail-3.json 瀛楁 machine/type/seq/ts 姝ｇ‘
+[OK]   fail-3.json data 鍐?sn/result 姝ｇ‘
+[OK]   鑱氬悎鎺ㄩ€侊細鏃?.tmp 娈嬬暀锛堝厛鍐欎复鏃跺啀鏀瑰悕锛?
+[OK]   agg_state.json max_seq=3 姝ｇ‘
+[OK]   LastSeq = 3锛堝凡鎺ㄩ€佹渶澶?seq锛?
+[OK]   鑱氬悎鎺ㄩ€侊細PASS 璁板綍涓嶇敓鎴?fail 鏂囦欢
+[OK]   鑱氬悎鎺ㄩ€侊細浜嬩欢椹卞姩瀹炴椂鎺ㄩ€侊紙鍏?5 涓枃浠讹級
+[OK]   seq 涓?test_records 鑷 id 涓€涓€瀵瑰簲锛堝崟璋冦€佹棤閲嶅锛?
+[OK]   閲嶅 seq 骞傜瓑璺宠繃锛堟枃浠朵笉閲嶅啓銆佷笉鏂板锛?
+[OK]   鍘婚噸鍚庨槦鍒椾负绌恒€丩astSeq 涓嶅彉
+[OK]   鑱氬悎鎺ㄩ€侊細鏂嚎鍓嶅叆搴?2 鏉?FAIL锛堝疄寰?2锛?
+[OK]   鍐欏叡浜け璐?-> 浜嬩欢鍏ㄩ儴杩涘唴瀛橀槦鍒?
+[OK]   鏂嚎鏈熼棿鍏变韩鐩綍鏃犱换浣曟枃浠?
+[OK]   agg_queue.json 钀界洏 2 鏉℃湭鎺ㄩ€佷簨浠讹紙鍚師濮?JSON锛岄噸鍚笉涓㈤槦锛?
+[OK]   鍏变韩鎭㈠鍚庤嚜鍔ㄨˉ鎺?2 涓?fail 鏂囦欢
+[OK]   琛ユ帹瀹屾垚锛氶槦鍒楁竻绌恒€丩astSeq=2
+[OK]   agg_state.json 鏇存柊 max_seq
+[OK]   蹇冭烦鏂囦欢 heartbeat.json 宸茬敓鎴?
+[OK]   蹇冭烦瀛楁姝ｇ‘涓?last_seq=1锛堟渶杩戝凡鎺ㄩ€?seq锛?
+[OK]   蹇冭烦鎸夊懆鏈熸寔缁鐩栨洿鏂?
+[OK]   閲嶅惎鍓嶏細2 鏉′簨浠舵粸鐣欓槦鍒?
+[OK]   鍋滄鏃?agg_queue.json 钀界洏
+[OK]   閲嶅惎鍚庤ˉ鎺?2 涓?fail 鏂囦欢锛堥槦鍒楄ˉ鎺?+ 鏁版嵁搴撶画鎺ㄥ厹搴曪級
+[OK]   琛ユ帹瀹屾垚锛氶槦鍒楁竻绌恒€丩astSeq=2锛堢姸鎬佺画鎺ㄨ捣鐐规纭級
+[OK]   琛ユ帹鍚?agg_queue.json 娓呯┖
+    鑱氬悎鎺ㄩ€佽嚜妫€瀹屾垚
+
+銆愯仛鍚堢鐩戝惉銆慉ggDatabase 骞傜瓑 / 鍒濆鎵弿 / 澧為噺浜嬩欢 / 蹇冭烦绂荤嚎
+[OK]   AggDatabase锛氶娆℃彃鍏?(FCT1,seq=5) 杩斿洖 1 鏂板叆搴擄紝鍥炲啓 Id=1
+[OK]   AggDatabase锛氭彃鍏ユ垚鍔熷洖鍐欒嚜澧?Id
+[OK]   AggDatabase锛氬悓 (machine,seq) 浜屾鎻掑叆杩斿洖 0锛堝箓绛夊拷鐣ワ級
+[OK]   AggDatabase锛氬叏搴撹鏁?= 1锛堝疄寰?1锛?
+[OK]   AggDatabase锛歈ueryFails 鍙洖 1 鏉★紙瀹炲緱 1锛?
+[OK]   AggDatabase锛氬洖璇?17 涓瓧娈靛叏閮ㄦ纭紙瀛楃涓?鏃堕棿/甯冨皵/鏁板瓧/璺緞锛?
+[OK]   AggDatabase锛欶CT1 涓ゆ潯 + FCT2 涓€鏉″叏閮ㄥ叆搴?
+[OK]   AggDatabase锛氳鏁版寜鏈哄彴闅旂锛團CT1=2, FCT2=1, 鍏ㄥ簱=3锛?
+[OK]   AggDatabase锛歈ueryFails(machine=FCT2) 鍙洖 FCT2 鐨勮褰?
+[OK]   AggDatabase锛歈ueryFails 鎸?ingest_ts DESC 鎺掑簭锛堟渶鏂板湪鍓嶏級
+[OK]   鍒濆鎵弿锛? 涓?fail 鏂囦欢鍚姩鍗冲叆搴擄紙ProcessedFiles=2, TotalFails=2锛?
+[OK]   鍒濆鎵弿锛欸etMachines 璇嗗埆鍑?FCT1锛孎ailCount=2锛孡astFailAt 闈炵┖
+[OK]   鍒濆鎵弿锛欶irstSeenAt 鏈夊€硷紙鍙?MIN(ingest_ts)锛?
+[OK]   澧為噺鍓嶇疆锛氬垵濮?2 涓枃浠跺凡鍏ュ簱
+[OK]   澧為噺锛?tmp鈫扢ove 鍚?fail-3 鍏ュ簱锛圥rocessedFiles=3, TotalFails=3锛?
+[OK]   澧為噺锛歴eq=3 璁板綍瀛楁鍥炶姝ｇ‘锛坰n=SN-FCT1-3锛?
+[OK]   澧為噺锛?tmp 宸茶鏀瑰悕锛屾棤娈嬬暀
+[OK]   骞傜瓑鍓嶇疆锛氬垵濮?2 涓枃浠跺凡鍏ュ簱
+[OK]   骞傜瓑锛氶噸澶?seq=2 鏂囦欢琚鐞嗕絾涓嶈鏁帮紙鍝ㄥ叺 seq=3 鍒拌揪鍚?ProcessedFiles=3锛屽疄寰?3锛?
+[OK]   骞傜瓑锛氬叏搴?3 鏉°€丗CT1 3 鏉★紙閲嶅鏂囦欢鏈骇鐢熸柊琛岋級
+[OK]   蹇冭烦锛欶CT1 涓婄嚎锛?s 瓒呮椂闃堝€煎唴鍒ゅ畾锛夛紝last_seq=7/queued=3 浠庡績璺宠鍑?
+[OK]   蹇冭烦锛歵s 钀藉悗瓒呮椂闃堝€煎悗鍒ょ绾匡紙杞 1s 鍐呯炕杞級
+[OK]   鏂版満鍙颁笂绾垮墠缃細FCT1 宸插湪绾?
+[OK]   鏂版満鍙颁笂绾匡細杩愯涓嚭鐜扮殑 FCT2 鐩綍 + 蹇冭烦琚疆璇㈠彂鐜颁笖鍦ㄧ嚎
+[OK]   鏂版満鍙颁笂绾匡細鏈哄彴鍒楄〃鍏?2 鍙帮紙瀹炲緱 2锛?
+    鑱氬悎绔洃鍚嚜妫€瀹屾垚
+
+銆怘TTP 鍙岄€氶亾銆戞満鍙扮鐩存帹 / 蹇冭烦 / 鏂嚎琛ュ伩 / 鑱氬悎绔帴鏀?/ 鍏ㄩ摼璺?/ 璺敱
+[OK]   http 鎺ㄩ€侊細http 妯″紡婵€娲伙紙transport=http 涓?url 闈炵┖锛?
+[OK]   http 鎺ㄩ€侊細鏀跺埌 2 鏉?fail POST body锛堜袱鏉?FAIL 浜嬩欢锛?
+[OK]   http 鎺ㄩ€侊細搴撻噷 2 鏉?FAIL锛堝疄寰?2锛?
+[OK]   http 鎺ㄩ€侊細SN=SN-H1A 鐨?body 宸叉敹鍒?
+[OK]   http 鎺ㄩ€侊細body 椤跺眰 machine/type/seq/ts 姝ｇ‘锛坰eq=1锛?
+[OK]   http 鎺ㄩ€侊細body data 鍐?sn/fail_reason/result 姝ｇ‘锛圫N=SN-H1A锛?
+[OK]   http 鎺ㄩ€侊細body 鏈熬鏃犳崲琛岋紙449 瀛楃锛屼笌鏂囦欢鐗堜竴鑷达級
+[OK]   http 鎺ㄩ€侊細SN=SN-H1B 鐨?body 宸叉敹鍒?
+[OK]   http 鎺ㄩ€侊細body 椤跺眰 machine/type/seq/ts 姝ｇ‘锛坰eq=2锛?
+[OK]   http 鎺ㄩ€侊細body data 鍐?sn/fail_reason/result 姝ｇ‘锛圫N=SN-H1B锛?
+[OK]   http 鎺ㄩ€侊細body 鏈熬鏃犳崲琛岋紙449 瀛楃锛屼笌鏂囦欢鐗堜竴鑷达級
+[OK]   http 鎺ㄩ€侊細涓嶄骇鐢熶换浣曞叡浜洰褰曟枃浠讹紙share 鐩綍涓嶅瓨鍦級
+[OK]   http 蹇冭烦锛氬悗鍙扮嚎绋嬫寜鍛ㄦ湡 POST 蹇冭烦
+[OK]   http 蹇冭烦锛歮achine/type/ts 瀛楁姝ｇ‘
+[OK]   http 蹇冭烦锛氬惈 last_seq/queued 瀛楁
+[OK]   http 蹇冭烦锛氬悗缁懆鏈熸寔缁?POST锛堢疮璁?>= 2 鏉★級
+[OK]   http 鏂嚎鍓嶇疆锛歴eq=1 body 宸插埌杈?
+[OK]   http 鏂嚎鍓嶇疆锛歴eq=1 宸茬‘璁ゅ嚭闃燂紙鍝嶅簲鏀惰锛孌ispose 鏃?in-flight 绔炴€侊級
+[OK]   http 鏂嚎锛氱 2 鏉℃粸鐣欏唴瀛橀槦鍒?
+[OK]   http 鏂嚎锛歛gg_queue.json 宸茶惤鐩樹笖鍚柇绾?seq锛堥噸鍚笉涓㈤槦锛?
+[OK]   http 鏂嚎锛氭帴鏀剁鎭㈠鍚庤嚜鍔ㄨˉ鎺ㄧ 2 鏉?
+[OK]   http 鏂嚎锛氳ˉ鎺ㄧ殑 body 鏄畬鏁?JSON锛堟棤灏炬崲琛岋級
+[OK]   http 鏂嚎锛氳ˉ鎺ㄥ畬鎴愰槦鍒楁竻绌恒€丩astSeq=2
+[OK]   HttpIngest锛歋tart 鍚庤繘鍏ョ洃鍚姸鎬?
+[OK]   HttpIngest锛歅OST /api/fail 鍥?200锛堝疄寰?200锛?
+[OK]   HttpIngest锛歰nFail 鍥炶皟鏀跺埌 1 鏉?
+[OK]   HttpIngest锛歊eceivedCount=1锛堝悎娉曡姹傛墠璁℃暟锛?
+[OK]   HttpIngest锛歰nFail 鏀跺埌鐨勫唴瀹逛笌 POST 鐨?JSON 瀹屽叏涓€鑷达紙鍘熸牱閫忎紶锛?
+[OK]   HttpIngest锛歅OST /api/heartbeat 鍥?200
+[OK]   HttpIngest锛歰nHeartbeat 鍥炶皟鏀跺埌 1 鏉?
+[OK]   HttpIngest锛歰nHeartbeat 鏀跺埌鐨勫唴瀹逛笌 POST 涓€鑷?
+[OK]   http 鍏ㄩ摼璺細POST /api/fail 涓?/api/heartbeat 鍧囧洖 200
+[OK]   http 鍏ㄩ摼璺細HTTP 鎺ㄩ€佺殑鏈哄彴鑷姩鍑虹幇鍦ㄧ湅鏉夸笖鍦ㄧ嚎銆丗ailCount=1锛堟棤鍏变韩鏂囦欢涔熷垱寤猴級
+[OK]   http 鍏ㄩ摼璺細蹇冭烦瓒呮椂(1s)鍚庤疆璇㈠垽绂荤嚎锛圠astSeen 缁熶竴鍦ㄧ嚎鍒ゅ畾锛?
+[OK]   http 鍏ㄩ摼璺細閲嶅 seq 閲嶅彂鍥?200
+[OK]   http 鍏ㄩ摼璺細閲嶅 seq 骞傜瓑锛孎ailCount 涓嶅鍔?
+[OK]   璺敱锛欻ttpIngest 宸茬洃鍚?
+[OK]   璺敱锛歅OST /api/fail -> 200
+[OK]   璺敱锛欸ET /api/fail -> 405
+[OK]   璺敱锛歅OST /nope -> 404
+[OK]   璺敱锛歅OST /锛堟牴璺緞锛夋寜 body type=fail 鍒嗗彂 -> 200
+    HTTP 鍙岄€氶亾鑷瀹屾垚
+
+銆愯仛鍚堥摼璺繛閫氭€с€戠姸鎬佹満 / 涓诲鑱氬悎绔?/ 鏂繛鎭㈠ / 闃熷垪婧㈠嚭璁℃暟
+[OK]   涓诲鑱氬悎绔細涓讳笉鍙揪鑷姩鍒囧鐢紝涓ゆ潯 FAIL 鍧囬€佽揪澶囩敤绔?
+[OK]   涓诲鑱氬悎绔細閾捐矾鐘舵€佹甯革紙瀹炲緱 Degraded锛?
+[OK]   涓诲鑱氬悎绔細褰撳墠鐩爣宸插垏鍒板鐢ㄥ湴鍧€锛堝疄寰?http://127.0.0.1:58271/锛?
+[OK]   鏂繛鐘舵€佹満锛氳仛鍚堢鍏ㄤ笉鍙揪 鈫?鍒?Disconnected锛堣繛缁け璐ラ槇鍊硷級
+[OK]   鏂繛鐘舵€佹満锛歀inkStateChanged 浜嬩欢鎼哄甫鏂繛缈昏浆
+[OK]   鏂繛鐘舵€佹満锛氳繛缁け璐ヨ鏁?鈮?锛堝疄寰?3锛?
+[OK]   鏂繛鐘舵€佹満锛氭柇杩炴湡闂翠簨浠朵繚鐣欏湪闃熷垪锛堟柇绾胯ˉ鍋夸笉娓呯┖锛?
+[OK]   閾捐矾鎭㈠锛氳仛鍚堢鍏ㄦ寕 鈫?鍏堟柇杩?
+[OK]   閾捐矾鎭㈠锛氬鐢ㄧ鎭㈠鍚庤嚜鍔ㄩ噸杩烇紙鐘舵€佸洖鍒版甯革級
+[OK]   閾捐矾鎭㈠锛氭柇杩炴湡闂寸Н鍘嬬殑 FAIL 鑷姩琛ユ帹
+[OK]   闃熷垪婧㈠嚭锛氳秴涓婇檺涓㈡渶鑰佸苟璁℃暟锛堝疄寰?50锛?
+[OK]   闃熷垪婧㈠嚭锛氶槦鍒楅暱搴︿笉瓒呰繃涓婇檺锛堝疄寰?5000锛?
+    鑱氬悎閾捐矾杩為€氭€ц嚜妫€瀹屾垚
+
+銆怶eb 鑱氬悎鏈嶅姟銆戦〉闈笌 API / 鎺ㄩ€佸叆搴?/ XML 涓嬭浇鐧藉悕鍗?/ CSV 瀵煎嚭 / 璺敱閿欒鐮?
+[OK]   Web 鏈嶅姟锛歋tart 鍚庤繘鍏ョ洃鍚姸鎬?
+[OK]   GET / -> 200 text/html锛堢湅鏉块〉锛?
+[OK]   GET /锛氶〉闈㈠惈鐪嬫澘鏍囬鍏冪礌
+[OK]   GET /api/health -> 200
+[OK]   GET /api/health锛欽SON 涓?{"ok":true}
+[OK]   GET /api/machines -> 200
+[OK]   GET /api/machines锛氱┖搴撴椂杩斿洖鍚堟硶 JSON 鏁扮粍 []
+[OK]   GET /api/fails -> 200
+[OK]   GET /api/fails锛氱┖搴撴椂杩斿洖鍚堟硶 JSON 鏁扮粍 []
+[OK]   Web 鏈嶅姟锛氬悎娉曡姹傝鍏?ReceivedCount锛堝疄寰?4锛?
+[OK]   POST /api/mesh/fail锛堝悎娉?fail JSON锛?> 200
+[OK]   鎺ㄩ€佸叆搴擄細鑱氬悎搴?FailCount=1锛堝疄寰?1锛?
+[OK]   GET /api/fails锛氬洖璇昏鏉¤褰曞瓧娈垫纭紙machine/sn/fail_reason/result锛?
+[OK]   POST /api/mesh/heartbeat -> 200
+[OK]   POST /api/mesh/heartbeat锛氭満鍙?FCT1 鍑虹幇鍦ㄧ湅鏉夸笖鍦ㄧ嚎
+[OK]   POST /锛坆ody type=fail锛?> 200
+[OK]   POST /锛坆ody type=heartbeat锛?> 200
+[OK]   POST / 鍒嗗彂锛歠ail 宸插叆搴擄紙FailCount=2锛孎CT1+FCT2 鍚勪竴鏉★級
+[OK]   XML 鐧藉悕鍗曪細POST fail锛坸ml_path 鎸囧悜鐧藉悕鍗曞唴鏂囦欢锛?> 200
+[OK]   XML 鐧藉悕鍗曪細甯?xml_path 鐨勮褰曞凡鍏ュ簱锛堝彇鍒?id锛?
+[OK]   GET /api/file?id=3 -> 200
+[OK]   GET /api/file?id=锛氬唴瀹逛笌 resultsRoot 涓嬫枃浠朵竴鑷?
+[OK]   GET /api/file?path=锛堢櫧鍚嶅崟鍐呯粷瀵硅矾寰勶級-> 200
+[OK]   GET /api/file?path=../secret.txt锛堢洰褰曠┛瓒婏級-> 403
+[OK]   GET /api/file?path={resultsRoot 澶栫湡瀹炴枃浠秨 -> 403
+[OK]   GET /api/file?id=999999锛堣褰曚笉瀛樺湪锛?> 404
+[OK]   GET /api/file?id=abc锛堥潪鏁板瓧锛?> 400
+[OK]   GET /api/export.csv -> 200
+[OK]   CSV锛氫互 UTF-8 BOM锛圗F BB BF锛夊紑澶?
+[OK]   CSV锛氳〃澶村惈銆屾椂闂淬€嶃€屾満鍙般€?
+[OK]   CSV锛氭暟鎹鍚凡鍏ュ簱鐨?sn/fail_reason
+[OK]   CSV 娉ㄥ叆锛歅OST fail锛坒ail_reason 浠?= 寮€澶达級-> 200
+[OK]   CSV 娉ㄥ叆锛氭敞鍏ヨ褰曞凡鍏ュ簱锛團ailCount=4锛?
+[OK]   CSV 娉ㄥ叆锛? 寮€澶村瓧娈佃鍔犲崟寮曞彿鍓嶇紑锛?=cmd...锛夛紝Excel 涓嶆墽琛屽叕寮?
+[OK]   GET /api/nope锛堟湭鐭ヨ矾寰勶級-> 404
+[OK]   PUT /api/mesh/fail锛堟柟娉曚笉绗︼級-> 405
+[OK]   GET /api/mesh/fail锛堟柟娉曚笉绗︼級-> 405
+[OK]   POST /api/mesh/fail锛坆ody 瓒?1MB锛?> 413
+    Web 鑱氬悎鏈嶅姟鑷瀹屾垚
+
+銆愯仛鍚堥壌鏉冧笌鍒嗛〉銆慳gg_token 403 / 鍒嗛〉 offset / 鎼滅储 q / FAIL 鎬绘暟 / XML 鍐呭钀界洏
+[OK]   鑱氬悎閴存潈锛氬甫 token 鐨?Web 鏈嶅姟宸插惎鍔?
+[OK]   GET /api/machines锛堟棤 token锛?> 403
+[OK]   POST /api/mesh/fail锛堟棤 token锛?> 403
+[OK]   鑱氬悎閴存潈锛?03 鐨勬帹閫佹湭鍏ュ簱锛團ailCount=0锛?
+[OK]   GET /api/machines锛堥敊璇?token锛?> 403
+[OK]   POST /api/mesh/fail锛堟纭?token 澶达級-> 200
+[OK]   鑱氬悎閴存潈锛氭纭?token 鐨勬帹閫佸凡鍏ュ簱锛團ailCount=1锛?
+[OK]   鑱氬悎閴存潈锛氬叡鍏ュ簱 4 鏉★紙FailCount=4锛?
+[OK]   鍒嗛〉:limit=2&offset=0 -> 杩斿洖 2 鏉?
+[OK]   鍒嗛〉:limit=2&offset=2 -> 杩斿洖 2 鏉★紙绗簩椤碉級
+[OK]   鍒嗛〉:limit=2&offset=4 -> 杩斿洖 0 鏉★紙瓒婄晫绌洪〉锛?
+[OK]   鎼滅储:q=SN-103 -> 鍙懡涓?1 鏉′笖 SN 姝ｇ‘
+[OK]   鎼滅储:q=12V_Rail -> 鍙懡涓?fail_reason 鍖归厤鐨?1 鏉?
+[OK]   鎼滅储:q=涓嶅瓨鍦?-> 0 鏉?
+[OK]   GET /api/fails/count -> 200
+[OK]   GET /api/fails/count锛氬叏搴撴€绘暟 = 4
+[OK]   GET /api/fails/count?q=5V_Rail锛氳繃婊ゅ悗鎬绘暟 = 2
+[OK]   XML 鍐呭钀界洏:甯?xml_content 鐨勬帹閫佸凡鍏ュ簱锛團ailCount=5锛?
+[OK]   XML 鍐呭钀界洏:XmlPath 宸叉敼鍐欎负鑱氬悎绔湰鍦版枃浠朵笖瀛樺湪
+[OK]   GET /api/file?id=5锛堣法鏈哄彴 XML 鏈湴钀界洏锛?> 200
+[OK]   GET /api/file?id=锛氬唴瀹逛笌涓婇€佺殑 xml_content 涓€鑷?
+[OK]   GET /api/settings锛堝甫 token锛?> 200
+[OK]   GET /api/settings锛氳繑鍥炲叏閮ㄨ仛鍚堥厤缃瓧娈碉紙绔彛/token/webhook/姹囨€?閫氶亾/鐧藉悕鍗曪級
+[OK]   GET /api/settings锛堟棤 token 涓旀棤 Cookie锛?> 403锛堣缃〉涔熻閴存潈锛?
+[OK]   GET /api/machines锛堜笉甯︿换浣?token锛屽嚟鍏堝墠涓嬪彂鐨?Cookie锛?> 200
+[OK]   GET /锛氶〉闈㈠惈銆岃缃€嶉〉绛句笌璁剧疆瑙嗗浘瀹瑰櫒
+[OK]   GET /锛氶〉闈?JS 璋冪敤 /api/settings锛堣缃〉鍔犺浇锛?
+    鑱氬悎閴存潈涓庡垎椤佃嚜妫€瀹屾垚
+
+銆怶eb 鐩綍娴忚銆?api/list 鐧藉悕鍗曚笌鎺掑簭 / 涓嬭浇鍥炲綊 / 椤甸潰鏂囦欢椤电
+[OK]   鐩綍娴忚锛歐eb 鏈嶅姟杩涘叆鐩戝惉鐘舵€?
+[OK]   GET /api/list锛堟棤 path = 鏍圭洰褰曪級-> 200
+[OK]   GET /api/list锛氭牴鐩綍 3 椤癸紙test.xml + sub + empty-dir锛屽疄寰?3锛?
+[OK]   GET /api/list锛氱洰褰曟帓鍓嶃€佹枃浠舵帓鍚?
+[OK]   GET /api/list锛氱洰褰?鏂囦欢鍚勮嚜鎸夊悕绉版帓搴忥紙OrdinalIgnoreCase锛?
+[OK]   GET /api/list锛氱洰褰?Size=0
+[OK]   GET /api/list锛歅ath=璇ラ」瀹屾暣璺緞锛堝彲鐩存帴鍥炰紶 /api/list 鎴?/api/file锛?
+[OK]   GET /api/list锛氭枃浠?Size=瀹為檯瀛楄妭鏁?
+[OK]   GET /api/list锛歁odified 鏍煎紡 yyyy-MM-dd HH:mm:ss
+[OK]   GET /api/list?path=sub锛堢浉瀵硅矾寰勶級-> 200
+[OK]   GET /api/list?path=sub锛氬垪鍑?sub.txt
+[OK]   GET /api/list?path=<鏍逛笅瀛愮洰褰曠粷瀵硅矾寰? -> 200
+[OK]   GET /api/list?path=缁濆璺緞锛氬悓鏍峰垪鍑?sub.txt
+[OK]   GET /api/list?path=../outside锛堢洰褰曠┛瓒婏級-> 403
+[OK]   GET /api/list?path=C:\Windows锛堢粷瀵硅矾寰勮秺鏉冿級-> 403
+[OK]   GET /api/list 403锛氳繑鍥炰腑鏂囨彁绀恒€屾嫆缁濊闂細鐩綍涓嶅湪鍏佽鑼冨洿鍐呫€?
+[OK]   GET /api/list?path=涓嶅瓨鍦ㄧ洰褰?-> 404
+[OK]   GET /api/file?path=锛堝洖褰掞級200 涓斿唴瀹逛笌纾佺洏鏂囦欢涓€鑷?
+[OK]   GET /锛氶〉闈㈠惈銆屾枃浠躲€嶉〉绛?
+[OK]   GET /锛氶〉闈㈠惈鏂囦欢娴忚瀹瑰櫒涓庤〃鏍?
+[OK]   GET /锛氶〉闈?JS 璋冪敤浜?/api/list
+    鐩綍娴忚鑷瀹屾垚
+
+銆愪竴閿儴缃层€戦粯璁よ仛鍚堥厤缃敓鎴愶紙JSON 鍐呭涓庡悎娉曟€э級
+[OK]   涓€閿儴缃?BuildDefaultAggConfigJson 杩斿洖闈炵┖ JSON
+[OK]   涓€閿儴缃?station_id=AGG-NODE
+[OK]   涓€閿儴缃?results_root=D:\Results
+[OK]   涓€閿儴缃?mesh_port=8081
+[OK]   涓€閿儴缃?peers 涓虹┖鏁扮粍锛堝崟鑺傜偣璧锋锛?
+[OK]   涓€閿儴缃?agg_token 鑷姩鐢熸垚 32 浣嶉殢鏈轰覆锛?f449b3f鈥︼級
+[OK]   涓€閿儴缃?agg_summary_minutes=60
+[OK]   涓€閿儴缃?log_level=INFO
+[OK]   涓€閿儴缃?JSON 鍚堟硶鍙В鏋?
+[OK]   涓€閿儴缃?JSON 宸茬缉杩涳紙WriteIndented 鍙鏍煎紡锛?
+[OK]   AggDeployer:BuildDefaultConfigJson 涓?Program 杞彂鐗堜竴鑷达紙鍐呭祵鍗曚竴鏉ユ簮锛宼oken 闅忔満闄ゅ锛?
+[OK]   AggDeployer:IsAdmin 鍙皟鐢紙Windows 涓嬭繑鍥炲竷灏旓紝涓嶆姏寮傚父锛?
+
+銆怘-1 鍥炲綊銆?api/mesh/xml 鏈湴璇诲彇杩囩櫧鍚嶅崟锛堜吉閫?xml_path 鎷掔粷璇诲彇锛?
+[OK]   涓ゆ潯鎺ㄩ€佸凡鍏ュ簱锛?锛?
+[OK]   鏈鏍￠獙鍣ㄦ椂淇濇寔鏃ц涓猴紙鐧藉悕鍗曞唴鍙锛?
+[OK]   璁炬牎楠屽櫒鍚庯細鐧藉悕鍗曞唴 xml_path 鐓у父鍙
+[OK]   璁炬牎楠屽櫒鍚庯細浼€犵殑鐧藉悕鍗曞 xml_path 鎷掔粷璇诲彇锛堣繑鍥?404锛屼笉鍐嶆硠鏂囦欢锛?
+[OK]   骞界伒璁板綍涓嶅瓨鍦紙闃插憜纭锛?
+
+銆愭洿鏂板櫒銆戞湰鍦版洿鏂板寘妫€娴?/ 鐗堟湰瀵规瘮 / RELEASE.txt 鐗圭偣 / 宸叉彁绀哄幓閲?
+[OK]   瑙ｆ瀽鏇存柊鍖呭悕 Argus-v9.9.9-update.zip -> 9.9.9
+[OK]   鍏煎瀹屾暣鍖呭悕 Argus-v3.5.3.zip -> 3.5.3
+[OK]   涓や綅鐗堟湰鍙?Argus-v1.2.zip -> 1.2
+[OK]   闈?zip 鏂囦欢鍚?-> null
+[OK]   鎵弿鍒版柊鍖?v2.0.0锛堝綋鍓?v1.0.0.0锛?
+[OK]   杩斿洖鐨?zip 璺緞姝ｇ‘
+[OK]   鏂扮増鏈垵濮嬫湭鎻愮ず杩?
+[OK]   MarkPrompted 鍚庡凡璁板綍
+[OK]   宸叉彁绀鸿繃鐨勭増鏈笉鍐嶅脊鍑猴紙鍘婚噸鐢熸晥锛?
+[OK]   RELEASE.txt 鎻愬彇鍒?2.0.0 鐨勭増鏈壒鐐癸紙鍚€屾洿鏂板櫒涓婄嚎銆嶏級
+[OK]   鐗堟湰鐗圭偣鍚?GUI 鍘熺敓鍥炲綊璇存槑
+[OK]   鐗圭偣娈典笉瓒婄晫鍒颁笅涓€鑺傦紙鍒板垎闅旂嚎/鏍囬涓烘锛?
+[OK]   涓庡綋鍓嶇増鏈浉鍚岀殑鍖呬笉瑙﹀彂锛堝凡鎻愮ず鐨勪粛琚繃婊わ級
+
+銆怭0 鎬ц兘銆慉ggDatabase 璇诲啓鍒嗙骞跺彂 / InsertBatch / 鎺ユ敹绔粍鎻愪氦 / 璁℃暟缂撳瓨 / 姣忔棩缁存姢 / RETURNING
+[OK]   InsertBatch锛氶鎵?120 鏉″崟浜嬪姟鍏ㄩ儴鎻掑叆
+[OK]   InsertBatch锛氭柊鎻掑叆琛岀殑鑷 Id 鍏ㄩ儴鍥炲～
+[OK]   InsertBatch锛氶噸澶嶆壒锛堝悓 machine,seq锛夊叏閮ㄥ拷鐣ワ紝杩斿洖 0
+[OK]   InsertBatch锛氶噸澶嶆壒涓嶆敼鍐欏凡鏈夎鐨?Id
+[OK]   娣峰悎鎵规鍙彃鍏ユ柊鐨?20 鏉★紙鎻掑墠 FCT3 瀛橀噺 = 0锛?
+[OK]   InsertBatch 鍚庤鏁版纭紙鍏ㄥ簱 140 / FCT1=60 / FCT3=20锛?
+[OK]   FailCountCached 涓庣洿鏌ヤ竴鑷达紙60锛?
+[OK]   TTL 鍐呯紦瀛樺懡涓細鐩存彃涓€鏉″悗缂撳瓨鍊间笉鍙橈紙COUNT 涓嶈楂橀鍐欐墦鏂級
+[OK]   ClearCountCache 鍚庤鍒版渶鏂拌鏁?
+[OK]   璇诲啓鍒嗙锛氬啓绾跨▼ + 3 璇荤嚎绋嬪叏绋嬫棤 SQLITE_BUSY / 鏃犲紓甯?
+[OK]   璇诲啓鍒嗙锛氬苟鍙戞湡闂?300 鏉″啓鍏ュ叏閮ㄨ惤搴撲笉涓㈠け
+[OK]   缁勬彁浜わ細50 璺苟鍙?HandleFail 闆跺紓甯?
+[OK]   缁勬彁浜わ細宸叉彁浜よ鏁?= 50锛堝疄寰?50锛?
+[OK]   缁勬彁浜ゅ悎骞剁敓鏁堬細50 琛屼粎鐢?2 涓簨鍔℃壒娆℃彁浜わ紙灏忎簬琛屾暟鍗宠鏄庢敀鎵规垚鍔燂級
+[OK]   缁勬彁浜わ細HandleFail 杩斿洖鍚庢暟鎹嵆鍒诲彲鏌ワ紙杩斿洖鍗冲凡鎻愪氦璇箟淇濇寔锛?
+[OK]   缁勬彁浜わ細涓茶鍗曟帹 10 鏉″悓鏍峰叏閮ㄥ叆搴?
+[OK]   缁存姢锛氬皬搴撹蛋 checkpoint 鍒嗘敮涓嶈Е鍙?VACUUM锛坵al_checkpoint 瀹屾垚锛? MB 鏈揪 VACUUM 闃堝€硷級锛岃€楁椂 2 ms锛?
+[OK]   缁存姢锛氳秴闃堝€艰Е鍙?VACUUM 鎴愬姛锛坵al_checkpoint 瀹屾垚, VACUUM 瀹屾垚锛? MB 搴擄級锛岃€楁椂 4 ms锛?
+[OK]   缁存姢瀹屾垚鍚庡簱浠嶆甯歌鍐?
+[OK]   RETURNING锛氭湰鍦板簱鎵归噺鎻?3 鏉″叏閮ㄦ彃鍏?
+[OK]   RETURNING锛歊ecordsInserted 浜嬩欢鍥炰紶 3 涓潪闆朵簰寮傝嚜澧?id
+[OK]   RETURNING锛氭壒閲忓唴鑷 id 淇濇寔閫掑锛堥『搴忚涔変笉鍥為€€锛?
+[OK]   RETURNING锛氶噸澶?xml_path 鎵规鍏ㄩ儴蹇界暐锛岃繑鍥?0
+[OK]   RETURNING锛氶噸澶嶆壒涓嶈Е鍙戞柊澧炰簨浠?
+    P0 鎬ц兘鏀归€犺嚜妫€瀹屾垚
+
+銆愬湪绾?XML 鏌ョ湅銆慞arseReportText 鍙ｅ緞 / KPI / 澶辫触鏍囩孩 / 鎺掗櫎椤?/ 鏃堕棿浼樺厛绾?
+[OK]   鏂囨湰瑙ｆ瀽鎴愬姛锛圖TD Prohibit 闃?XXE 璺緞鍙蛋锛?
+[OK]   SN 鎻愬彇姝ｇ‘
+[OK]   PANEL 鐘舵€佹彁鍙栨纭?
+[OK]   TESTER 鎻愬彇姝ｇ‘
+[OK]   USER 鎻愬彇姝ｇ‘
+[OK]   鏃?filePath 鏃?BatchTimestamp 涓虹┖锛堜笉鍐嶈 XML 灞炴€ф椂闂达級
+[OK]   鍏ㄩ儴 TEST 椤规敹闆嗭紙鍚?PASS锛屼笉鍙け璐ワ級
+[OK]   鐘舵€佸窘绔?FAIL锛堜富绾級
+[OK]   澶辫触椤规爣绾紙st-fail锛?
+[OK]   鎺掗櫎椤圭伆鑹叉爣娉紙Get Unit Information锛?
+[OK]   KPI锛氭祴璇曢」鎬绘暟 4
+[OK]   KPI锛氬け璐ヨ鍏ヤ笉鑹?1锛堟帓闄ら」涓嶈锛?
+[OK]   KPI锛氶€氳繃椤?2
+[OK]   娓叉煋杈撳嚭鏃犺剼鏈敞鍏?
+[OK]   PASS 寰界珷锛堝ⅷ榛戯級
+[OK]   PASS 鎶ュ憡澶辫触璁℃暟涓?0
+
+銆愯仛鍚堝簱杩佺Щ銆戝叏鏂板簱寤鸿〃 / v3.5.3 鑰佸簱鍗囩骇锛堣〃宸插瓨鍦級/ 骞傜瓑閲嶅叆
+[OK]   鍏ㄦ柊搴撹縼绉诲悗 user_version=7锛堟湡鏈?7锛?
+[OK]   鍏ㄦ柊搴撹縼绉诲悗 agg_records 琛ㄥ瓨鍦?
+[OK]   鍏ㄦ柊搴撹縼绉诲悗鍙彃鍏ワ紙琛ㄧ粨鏋勫彲鐢級
+[OK]   v3.5.3 鑰佸簱锛堣〃宸插瓨鍦?+ user_version=0锛夎縼绉讳笉鎶涘紓甯?
+[OK]   鑰佸簱鍗囩骇鍚?user_version=7锛堟湡鏈?7锛?
+[OK]   鑰佸簱鍗囩骇鍚庢棦鏈夋暟鎹繚鐣欙紙FCT3/seq=100 浠嶅湪锛?
+[OK]   鑰佸簱鍗囩骇鍚庡彲缁х画鎻掑叆鏂拌
+[OK]   閲嶅 Migrate 骞傜瓑锛坲ser_version 涓嶅啀澧為暱锛?
+
+銆愯壇鐜囨棩缁熻銆憉psert 骞傜瓑 / 鏌ヨ杩囨护 / 蹇冭烦钀藉簱 / 鍙樺寲妫€娴?/ 鑰佹牸寮忓吋瀹?
+[OK]   杩佺Щ v2 鍚?yld_daily 琛ㄥ瓨鍦?
+[OK]   3 涓?(machine,date) 閿?=> 3 琛岋紙鍚岄敭閲嶅 upsert 鍙暀 1 琛岋級
+[OK]   鍚岄敭 upsert 鏇存柊涓烘柊鍊硷紙骞傜瓑瑕嗙洊锛?
+[OK]   machine=FCT1 杩囨护 => 2 琛?
+[OK]   from/to 鏃ユ湡绐楀彛杩囨护姝ｇ‘
+[OK]   蹇冭烦鎼哄甫缁熻 -> yld_daily 钀藉簱
+[OK]   鍚屽€奸噸澶嶅績璺充笉閲嶅鍐欙紙鍙樺寲妫€娴嬶級
+[OK]   缁熻鍊煎彉鍖?-> 鏇存柊鍚屼竴琛?
+[OK]   鑰佹牸寮忓績璺筹紙鏃?today锛変笉鍐欏簱涓斾笉鎶ラ敊
+[OK]   缂哄け machine 鐨勫績璺宠蹇界暐锛堜笉鎶涘紓甯革級
+
+銆愭潈闄愪笌瀹¤銆慞asswordHasher / users upsert / audit 钀藉簱 / 瀹芥澗妯″紡 / token 妯″紡瑙掕壊鍒嗙骇
+[OK]   杩佺Щ v3 鍚?users 琛ㄥ瓨鍦?
+[OK]   PasswordHasher锛氭纭瘑鐮佹牎楠岄€氳繃
+[OK]   PasswordHasher锛氶敊璇瘑鐮佹牎楠屽け璐?
+[OK]   PasswordHasher锛氶潪娉曟牸寮忚繑鍥?false 涓嶆姏
+[OK]   PasswordHasher锛氬瓨鍌ㄦ牸寮?iterations.salt.hash
+[OK]   UpsertUser锛氭柊鐢ㄦ埛甯?32hex token
+[OK]   upsert 鏇存柊淇濈暀鏃?token
+[OK]   upsert 鏇存柊瀵嗙爜鐢熸晥
+[OK]   GetUserByToken 鍛戒腑
+[OK]   ListUsers 杩斿洖 2 浜?
+[OK]   DeleteUser 鍒犻櫎鎴愬姛
+[OK]   QueryAudit 鍊掑簭杩斿洖 2 鏉?
+[OK]   閴存潈缁勶細瀹芥澗妯″紡鏈嶅姟杩涘叆鐩戝惉
+[OK]   瀹芥澗妯″紡 GET /api/status -> 200
+[OK]   瀹芥澗妯″紡 status.role=admin锛堝疄闄?admin锛?
+[OK]   status 鍚?today_yield 瀛楁
+[OK]   POST /api/users 鍒涘缓 viewer 杩斿洖 token
+[OK]   POST /api/login 姝ｇ‘瀵嗙爜 -> 200
+[OK]   POST /api/login 閿欒瀵嗙爜 -> 401
+[OK]   鍒涘缓鐢ㄦ埛鍚庡尶鍚嶈闂?/api/audit -> 403锛堥壌鏉冩敹绱э級
+[OK]   viewer token 璁块棶 /api/audit -> 403锛堣鑹蹭笉瓒筹級
+[OK]   閴存潈缁勶細瀹¤鎸傜偣鏈嶅姟杩涘叆鐩戝惉
+[OK]   GET /api/export.csv -> 200
+[OK]   瀹¤鍖呭惈 export.csv 璁板綍锛堝鍑烘寕鐐圭敓鏁堬級
+[OK]   閴存潈缁勶細token 妯″紡鏈嶅姟杩涘叆鐩戝惉
+[OK]   token 妯″紡锛氭棤 token 璁块棶 -> 403
+[OK]   agg_token 閫氶亾鍒涘缓 engineer -> 200
+[OK]   u2 鐧诲綍鎷垮埌 token锛坙ogin 绔偣璞佸厤閴存潈锛?
+[OK]   engineer token 璁块棶 /api/status -> 200
+[OK]   engineer 璁块棶 /api/audit -> 403锛堣鑹蹭笉瓒筹級
+[OK]   agg_token(admin) 璁块棶 /api/audit -> 200
+
+銆愭寚鏍囦笌鍙娴嬨€戝叆搴?鎺ユ敹/蹇界暐璁℃暟 / /api/metrics 璺敱 / 鏃ュ織婊氬姩
+[OK]   InsertFail 璁℃暟锛? 鏉℃柊鎻掑叆 + 1 鏉￠噸澶嶅拷鐣?=> InsertCount=2锛堟湡鏈?2锛?
+[OK]   InsertBatch 璁℃暟锛?2 鏂版彃鍏ワ紙1 閲嶅涓嶈锛?> InsertCount=4锛堟湡鏈?4锛?
+[OK]   HandleFail 璁℃暟锛氭帴鏀?2 / 蹇界暐 1锛堝疄寰?2/1锛?
+[OK]   缁勬彁浜ゅ鐞嗚鏁帮紙鍚噸澶嶏級= 2锛堟湡鏈?2锛?
+[OK]   鎺ユ敹绔叆搴撹鍏?InsertCount锛堝幓閲嶅悗 4+1=5锛夛細5
+[OK]   鎸囨爣缁勶細鏈嶅姟杩涘叆鐩戝惉
+[OK]   /api/metrics 鍚?web.requests / web.rejected_503
+[OK]   /api/metrics 鍚?db.inserts >= 1
+[OK]   /api/metrics 鏃?mesh 鏃?receiver 涓?null锛堜笉鐐革級
+[OK]   /api/metrics 鏃?mesh 鏃?pusher 涓?null锛堜笉鐐革級
+[OK]   /api/metrics 鍚?ok/uptime_sec
+[OK]   鏃ュ織瓒呴槇鍊煎悗婊氬姩鍑?app.log.1
+[OK]   婊氬姩鍚庢柊 app.log 缁х画鍐欏叆
+
+銆愬浠戒笌瀹圭伨銆戝壇鏈簱/鏈哄彴搴撴瘡鏃ュ浠?/ XML 瀹圭伨缂撳瓨鍛戒腑
+[OK]   鍓湰搴撴瘡鏃ュ浠芥枃浠剁敓鎴?
+[OK]   澶囦唤搴撳彲鎵撳紑涓旇鏁颁竴鑷达紙2 鏉★級
+[OK]   鍚屾棩閲嶅澶囦唤骞傜瓑璺宠繃
+[OK]   澶囦唤鍙繚鐣欐渶杩?7 浠斤紙瀹炲緱 7锛?
+[OK]   鏈哄彴鏈湴搴撴瘡鏃ュ浠界敓鎴?
+[OK]   鏈哄彴搴撳浠藉彲鎵撳紑涓旇鏁颁竴鑷达紙2 鏉★級
+[OK]   鏈哄彴搴撳悓鏃ラ噸澶嶅浠藉箓绛夎烦杩?
+[OK]   棣栨鎷夊彇锛堟湰鏈鸿矾寰勶級鎴愬姛
+[OK]   鎷夊彇鎴愬姛鍚庡鐏剧紦瀛樿惤鐩橈紙machine/date 鍒嗙洰褰曪級
+[OK]   婧愭枃浠跺垹闄ゅ悗鍛戒腑瀹圭伨缂撳瓨锛屼粛鍙鍙?
+
+銆怭3+P4銆慒AIL 鍙岃鍥惧垎缁?楂橀鏍囪壊/鑷畾涔夊垪/瀵煎嚭 + 婧愭満妫€绱㈠苟鍙?缂撳瓨/闆惰啫鑳€/鍦ㄧ嚎 XML 鑱斿姩
+[OK]   QueryTestRecords 鍏ㄩ噺 => 5 鏉★紙鏈熸湜 5锛屽惈 PASS锛?
+[OK]   鎸?Machine=FCT6 => 3 鏉★紙鏈熸湜 3锛?
+[OK]   鎸?Result=FAIL 鍏ㄦ満鍙?=> 3 鏉★紙鏈熸湜 3锛?
+[OK]   鎸?Machine=FCT6 + Result=FAIL => 2 鏉?
+[OK]   鎸?Result=PASS 鍏ㄦ満鍙?=> 2 鏉★紙鏈熸湜 2锛?
+[OK]   鎸?SN 妯＄硦 SN-A => 3 鏉★紙鏈熸湜 3锛?
+[OK]   鎸夊瀷鍙?E301 => 2 鏉★紙鏈熸湜 2锛?
+[OK]   鎸夋棩鏈?20260821-20260822 => 4 鏉★紙鏈熸湜 4锛?
+[OK]   limit=2 offset=1 => 2 鏉?
+[OK]   缂撳瓨鍒濆鏈懡涓?
+[OK]   缂撳瓨鍐欏叆鍚庡懡涓?
+[OK]   缂撳瓨璁℃暟 1
+[OK]   ClearCache 鍚?0
+[OK]   CacheKey 褰掍竴鍖栵紙澶у皬鍐?绌烘牸锛?
+[OK]   楂橀 鈮? 鏍囩孩 (KL30=5 => hot5)
+[OK]   涓 鈮? 璀﹀憡 (Vref_3V3=2 => hot2)
+[OK]   浣庨鏃犳爣鑹?(CAN_Bus=1 => none)
+[OK]   鍒嗙粍鎸夋鏁板€掑簭
+[OK]   瀵煎嚭闃叉姢锛? 寮€澶村姞 '
+[OK]   瀵煎嚭闃叉姢锛欯 寮€澶村姞 '
+[OK]   瀵煎嚭闃叉姢锛氬惈閫楀彿鍔犲紩鍙?
+[OK]   瀵煎嚭闃叉姢锛氬紩鍙风炕鍊?
+[OK]   POST /api/mesh/query 鏃?token 鈫?403
+[OK]   POST /api/mesh/query/local锛圥ASS锛夆啋 200
+[OK]   local 鏌ヨ鍚?PASS锛堝叏閲忥級
+[OK]   POST /api/mesh/query 鑱氬悎 鈫?200锛堝疄寰?200锛?
+[OK]   鑱氬悎鍝嶅簲 ok=true
+[OK]   鑱氬悎鎬绘暟 4锛堜袱鏈哄彴鍚?锛屽惈 PASS锛屽疄寰?4锛?
+[OK]   results 闀垮害 4锛堝疄寰?4锛?
+[OK]   缁撴灉鍚?FCT7 鏈哄彴锛堟墖鍑烘垚鍔燂級
+[OK]   鑱氬悎鏌ヨ闆惰啫鑳€锛圓ggDatabase 鏈啓鍏?PASS锛?
+[OK]   浜屾鍚屾潯浠舵煡璇㈠懡涓紦瀛橈紙cached=true锛宐ody={"ok":true,"cached":true,"total":4,"results":[{"Machine":"FCT7","Id":2,"Sn":"SN-B002","Model":"E301","Result":"PASS","Te锛?
+[OK]   骞跺彂 10 璺煡璇㈠叏閮?200
+[OK]   GET /api/mesh/query 鈫?405
+[OK]   GET /api/xmlview?path= 鏈満 PASS/FAIL 娓叉煋鎴愬姛锛堝彛寰勪竴鑷达級
+[OK]   GET /api/xmlview?path= 璺ㄦ満鎷夊彇 200锛堣仈鍔級
+[OK]   DTD Prohibit锛氭伓鎰?DOCTYPE 鏈瑙ｆ瀽涓烘枃浠跺唴瀹?
+[OK]   鐧藉悕鍗曞璺緞 /api/xmlview?path= 鈫?404
+
+銆怭5銆戠淮淇湅鏉?4 鍒楃姸鎬佹満 legacy + 寰呭姙鍚堝苟浼樺厛绾?0/5 + 浜哄憳鏀瑰悕鍚屾 + 12鍒楀鍑篊SV娉ㄥ叆闃叉姢CWE-1236 + API閴存潈涓夎鑹?
+[OK]   P5 杩佺Щ鍚?user_version=7锛堟湡鏈?7锛?
+[OK]   P5 杩佺Щ鍚?maintenance_records 瀛樺湪
+[OK]   P5 杩佺Щ鍚?todo_items 瀛樺湪
+[OK]   P5 杩佺Щ鍚?dismissed_todos 瀛樺湪
+[OK]   P5 杩佺Щ鍚?resolvers 瀛樺湪
+[OK]   鐘舵€佷綋绯?4 鍒楅『搴?unknown鈫抩pen鈫抜n_progress鈫抮esolved
+[OK]   legacy closed鈫抮esolved
+[OK]   legacy investigating鈫抩pen
+[OK]   legacy Zh 褰掑苟姝ｇ‘
+[OK]   鍚勫垪璁℃暟 correct
+[OK]   resolved 鍚?legacy closed (2)
+[OK]   ListMaintenance 鍏ㄩ噺 5 鏉★紙瀹炲緱 5锛?
+[OK]   鎷栨嫿鏀圭姸鎬?in_progress
+[OK]   鐘舵€佸凡鏇存柊
+[OK]   鍏ㄥ瓧娈垫洿鏂版垚鍔?
+[OK]   澶氫汉 resolver 鍐欏叆姝ｇ‘
+[OK]   鍒犻櫎缁翠慨璁板綍鎴愬姛
+[OK]   鍒犻櫎鍚庝笉鍦ㄥ簱
+[OK]   CSV 瀵煎嚭 12 鍒楀ご瀹屾暣
+[OK]   CSV 娉ㄥ叆闃叉姢锛?+-@ 鍓嶇紑杞箟锛?
+[OK]   xlsx 瀵煎嚭鏂囦欢鐢熸垚涓旈潪绌?
+[OK]   鏀瑰悕鍚屾鍘嗗彶璁板綍 1 鏉★紙鏈熸湜 1>0锛?
+[OK]   鏀瑰悕鍚庢棫鍚嶆秷澶便€佹柊鍚嶅嚭鐜?
+[OK]   SyncTodo 鍚堝苟澶ч」锛? 鏉?FAIL锛堝惈 2 鏉″悓绫伙級鈫?鏂扮櫥璁?2 鏉″緟鍔?
+[OK]   澶ч」鍚堝苟锛?V_Rail VariantCount=2
+[OK]   鍚堝苟椤圭疮璁℃鏁?2
+[OK]   TodoGrouping.KeyOf 鍚岀被椤瑰悓閿?
+[OK]   浼樺厛绾?20/5 闃堝€兼纭?
+[OK]   纭寰呭姙寤哄崟 #1
+[OK]   纭鍚庣寮€寰呭姙鍒?
+[OK]   鍒犻櫎涓嶅瓨鍦ㄥ緟鍔炶繑鍥?false
+[OK]   寰呭垹闄ら」瀛樺湪
+[OK]   鍒犻櫎寰呭姙鎴愬姛
+[OK]   宸插垹闄ょ殑寰呭姙涓嶅啀澶嶇幇锛坉ismissed_todos锛?
+[OK]   P5 Web 鏈嶅姟杩涘叆鐩戝惉
+[OK]   viewer GET /api/maintenance 鈫?200
+[OK]   viewer GET /api/maintenance/counts 鈫?200
+[OK]   counts 鍚?counts 瀛楁
+[OK]   viewer GET /api/todos 鈫?200
+[OK]   viewer GET /api/resolvers 鈫?200
+[OK]   viewer POST /api/maintenance 鈫?403
+[OK]   engineer POST /api/maintenance 鍗曟潯 鈫?200
+[OK]   鍒涘缓杩斿洖 id=1
+[OK]   engineer POST 鎵归噺鍒涘缓 鈫?200
+[OK]   engineer POST 鍚堝苟涓轰竴鏉?鈫?200
+[OK]   鍚堝苟涓轰竴鏉?ids 闀垮害 1
+[OK]   engineer PATCH 鏀圭姸鎬?鈫?200
+[OK]   engineer DELETE 鈫?200
+[OK]   GET /api/export/maintenance?format=csv 鈫?200 text/csv
+[OK]   CSV 瀵煎嚭娉ㄥ叆闃叉姢锛? 鍓嶇紑杞箟锛?
+[OK]   GET /api/export/maintenance?format=xlsx 鈫?200
+[OK]   xlsx content-type 姝ｇ‘
+[OK]   engineer POST /api/resolvers 鈫?200
+[OK]   POST /api/resolvers/rename 鈫?200
+[OK]   DELETE /api/resolvers 鈫?200
+[OK]   寰呭姙 API 鍛戒腑 P5_TODO_API id=1
+[OK]   POST /api/todos/ack 鈫?200
+[OK]   DELETE /api/todos 鈫?OK锛堥鏈?200 鎴?404 宸?ack锛?
+[OK]   鏃?token 鏃?GET /api/maintenance 鈫?403
+
+銆怭6+P7+P2-A銆戣澶囩洃鎺э紙蹇冭烦杞婚噺+5min鍏ㄩ噺+L1缁村害+閲囨牱婊氬姩7澶?FCT.ini锛? 鏃犲ご鏈嶅姟鍖?+ 鏁版嵁鎷夊彇瓒嬪娍/鍒嗗竷闆忓舰
+[OK]   P6 杩佺Щ鍚?user_version=7锛堟湡鏈?7锛?
+[OK]   P6 杩佺Щ鍚?device_info 瀛樺湪
+[OK]   P6 杩佺Щ鍚?device_samples 瀛樺湪
+[OK]   P6 杩佺Щ鍚?device_fct 瀛樺湪
+[OK]   Config 榛樿 device_info_enabled=true
+[OK]   Config 榛樿 device_info_interval_sec=300
+[OK]   Config 榛樿 device_samples_retain_days=7
+[OK]   Config 榛樿 device_alert_disk_free_gb=10
+[OK]   Config 榛樿 device_alert_cpu_pct=90
+[OK]   Config 榛樿 device_alert_offline_minutes=5
+[OK]   Config 闈炴硶 device_info_interval_sec=5 琚拷鐣ュ洖閫€ 300
+[OK]   闈炴硶 retain_days=0 鍥為€€ 7
+[OK]   闈炴硶 cpu_pct=-1 鍥為€€ 90
+[OK]   Collector CollectFull machine 姝ｇ‘
+[OK]   Collector hostname 闈炵┖
+[OK]   Collector cpu_cores >0
+[OK]   Collector mem_total >=0
+[OK]   Collector 杞婚噺 cpu 0-100
+[OK]   Collector FCT machine 姝ｇ‘
+[OK]   UpsertDeviceInfo + Get 姝ｇ‘
+[OK]   UpsertDeviceLight 淇濈暀 hostname 浠呮洿鏂拌交閲?
+[OK]   UpsertDeviceLight 鏂版満鍙板崰浣嶅垱寤?
+[OK]   ListDeviceInfos 2 鍙帮紙瀹炲緱 2锛?
+[OK]   閲囨牱 2 鏉★紙瀹炲緱 2锛?
+[OK]   閲囨牱鎸夋椂闂村崌搴忚繑鍥烇紙棣栨潯涓烘棫锛?
+[OK]   PurgeOld 7 澶╁垹闄?1 鏉℃棫閲囨牱锛堝疄鍒?1锛?
+[OK]   Purge 鍚庡墿 1 鏉?
+[OK]   Upsert/Get DeviceFct 姝ｇ‘
+[OK]   ListDeviceFcts 1 鏉?
+[OK]   蹇冭烦 JSON 鍚?system.cpu_usage 杞婚噺瀛楁
+[OK]   鏃?lightProvider 鏃跺績璺充笉鍚?system锛堝悜鍚庡吋瀹癸級
+[OK]   HandleInfo 钀藉簱姝ｇ‘
+[OK]   HandleFctIni 钀藉簱姝ｇ‘
+[OK]   HandleHeartbeat light 鏇存柊 cpu锛堜繚鐣?hostname锛?
+[OK]   HandleInfo 鍚?peer 瑙嗗浘鍚?RDEV
+[OK]   P6 Web 鏈嶅姟杩涘叆鐩戝惉
+[OK]   鏃?token GET /api/devices 鈫?403
+[OK]   POST /api/mesh/info 鈫?200
+[OK]   POST /api/mesh/fctini 鈫?200
+[OK]   GET /api/devices 鈫?200
+[OK]   devices 鎬昏鍚?WEBDEV
+[OK]   devices 5s 缂撳瓨鍛戒腑鍐呭涓€鑷?
+[OK]   GET /api/devices/WEBDEV 鈫?200
+[OK]   璇︽儏鍚?machine/hostname
+[OK]   GET /api/devices/WEBDEV/samples 鈫?200
+[OK]   samples 鍚?cpu_usage
+[OK]   GET /api/devices/WEBDEV/fct 鈫?200
+[OK]   GET /api/trends 鈫?200
+[OK]   trends 鍚?yield
+[OK]   GET /api/distribution 鈫?200
+[OK]   distribution 鍚?count
+[OK]   POST /api/fetch 鈫?200锛堝紓姝ヤ换鍔″垱寤猴級
+[OK]   fetch 杩斿洖 job_id=c671d7a8
+[OK]   GET /api/fetch/status 鈫?200
+[OK]   fetch status 鍚姸鎬佸瓧娈?
+[OK]   GET /api/fetch/jobs 鈫?200
+[OK]   GET /api/fetch 鈫?405锛堜粎 POST锛?
+[OK]   鏃?token POST /api/mesh/info 鈫?403
+[OK]   HeadlessService Mesh 闈炵┖
+[OK]   HeadlessService Db 闈炵┖
+[OK]   HeadlessService Start 鏃犲紓甯?
+[OK]   HeadlessService Stop 鏃犲紓甯?
+[OK]   HeadlessService Dispose 鏃犲紓甯?
+[OK]   HeadlessService withEngine=true 鍚?Engine
+[OK]   HeadlessService(with Engine) Start 鏃犲紓甯?
+[OK]   ServiceManager 绫诲瀷瀛樺湪
+[OK]   ServiceManager.Exists() 璋冪敤鏃犲紓甯革紙杩斿洖 False锛?
+[OK]   ServiceManager.Install 鏂规硶瀛樺湪
+[OK]   ServiceManager.Uninstall 鏂规硶瀛樺湪
+[OK]   缁存姢鍓嶉噰鏍?1 鏉?
+[OK]   缁存姢 RunNow 鍚庢棫閲囨牱琚竻鐞嗭紙鍓╀綑 0锛?
+[OK]   Config 榛樿 yield_alert_yield_pct=90
+[OK]   Config 榛樿 yield_alert_enabled=true
+[OK]   Config yield 闃堝€煎彲璧嬪€?
+[OK]   鏂?Config 瀹炰緥浠嶉粯璁?90锛圫ave 鏈薄鏌撳叏灞€锛?
+[OK]   DbMigrator v7 alert_history 琛ㄥ凡鍒涘缓
+[OK]   InsertAlertHistory 杩斿洖 id=1
+[OK]   ListAlertHistory 鎸夋満鍙拌繃婊ゅ懡涓?2 鏉?
+[OK]   CountAlertHistory yield 璁℃暟 1
+[OK]   鎸?rule 杩囨护鍛戒腑 yield
+[OK]   MeshPusher per-peer 2 涓紙骞跺彂鏀归€犲悗浠嶅叡浜槦鍒楋級
+[OK]   per-peer metrics 鍚?failure_rate/sent/failed
+[OK]   MeshPusher 骞跺彂璺緞瀛樺湪锛圥arallel.ForEach 鎸?peer 鐙珛浠诲姟锛?
+[OK]   Gossiper 鍒濆闂撮殧 30s锛堝疄寰?30s锛?
+[OK]   Gossiper stable鈫?0s 鍙娴嬶紙鍦ㄧ嚎绋冲畾鏀惧ぇ锛?
+[OK]   Gossiper gap鈫?0s 鍙娴嬶紙妫€娴嬬己鍙ｆ敹绱э級
+[OK]   Gossiper recovered鈫?0s 鍙娴嬶紙鍒氭仮澶嶆敹绱э級
+[OK]   GetAlertRulesSnapshot 鍚洓瑙勫垯 yield/disk/cpu/offline
+[OK]   瑙勫垯蹇収鍚?threshold锛坈onfig.json 鍙厤闃堝€煎彲瑙傛祴锛?
+[OK]   瑙勫垯蹇収鍚?yield 闃堝€?90
+[OK]   WebAggServer 鍚憡璀﹁鍒欒矾鐢憋紙Lite-Infra region锛?
+[OK]   GET /api/alerts/rules 鈫?200
+[OK]   rules 鍚?yield/disk锛堢粺涓€瑙勫垯涓績锛?
+[OK]   rules 鍚?threshold锛坈onfig.json 鍙厤闃堝€煎彲瑙傛祴锛?
+[OK]   GET /api/alerts/history 鈫?200
+[OK]   history 鍚缃満鍙帮紙鍓嶇鍛婅椤靛巻鍙诧級
+[OK]   GET /api/alerts/history?rule=yield 鈫?200
+[OK]   history?rule=yield 杩斿洖 yield 鐩稿叧
+[OK]   GET /api/gossiper/status 鈫?200锛堣嚜閫傚簲闂撮殧鍙娴嬶級
+[OK]   gossiper status 鍚?interval_sec/reason
+[OK]   GET /api/metrics 鈫?200锛坧er-peer 澶辫触鐜?+ gossiper 鑷€傚簲锛?
+[OK]   metrics 鍚?pusher.per_peer锛坧er-peer 澶辫触鐜囧彲瑙傛祴锛?
+[OK]   metrics 鍚?gossiper 鎴?pusher 缁撴瀯锛堣嚜閫傚簲闂撮殧鍙娴嬶級
+[OK]   GET /api/compare/trends 鈫?200锛堝鏈哄彴瀵规瘮瓒嬪娍锛?
+[OK]   compare trends 鍚弻鏈哄彴锛坥verview 瀵规瘮鎬佸熀纭€锛?
+[OK]   GET /api/compare/distribution 鈫?200锛堝鏈哄彴瀵规瘮鍒嗗竷锛?
+[OK]   compare distribution 鍚満鍙版垨 distributions
+[OK]   鏃?token GET /api/alerts/rules 鈫?403
+
+銆怢ite-Settings銆戠敤鎴风鐞哢I/瑙掕壊鍒嗙骇/甯冨眬鎸佷箙鍖栧弻鍐?鏀惰棌/鍏ㄥ眬鎼滅储绌烘牸鍒嗚瘝鑱氬悎/鑷畾涔夋嫋鎷?鏉冮檺鏄鹃殣
+[OK]   鍒濆 layout/favorites 涓虹┖
+[OK]   SetUserLayout 鎴愬姛
+[OK]   GetUserLayout 鍥炶涓€鑷?
+[OK]   SetUserFavorites 鎴愬姛
+[OK]   GetUserFavorites 鍥炶涓€鑷?
+[OK]   涓嶅瓨鍦ㄧ敤鎴?SetUserLayout 杩斿洖 false
+[OK]   GetUserLayout 澶у皬鍐欎笉鏁忔劅
+[OK]   SetUserLayout 澶у皬鍐欎笉鏁忔劅瑕嗙洊
+[OK]   Lite-Settings锛氭湇鍔¤繘鍏ョ洃鍚?
+[OK]   鏈甫 token GET /api/users/me -> 403
+[OK]   viewer GET /api/users/me -> 200
+[OK]   viewer 韬唤 role=viewer
+[OK]   viewer 韬唤 name=viewer1
+[OK]   agg_token GET /api/users/me -> 200
+[OK]   agg_token 韬唤 name=agg_token
+[OK]   viewer GET /api/users/me/layout -> 200
+[OK]   layout GET 鍚?layout 瀛楁
+[OK]   viewer PATCH /api/users/me/layout -> 200
+[OK]   layout PATCH 鍚庡洖璇讳竴鑷达紙瀹炲緱 {"overviewOrder":["FCT7","FCT6"]})
+[OK]   鏈甫 token PATCH /api/users/me/layout -> 403
+[OK]   engineer PATCH /api/users/me/favorites -> 200
+[OK]   favorites 鍥炶涓€鑷?
+[OK]   viewer POST /api/users -> 403
+[OK]   admin POST /api/users -> 200
+[OK]   鍒涘缓杩斿洖 32hex token
+[OK]   admin DELETE /api/users -> 200
+[OK]   viewer DELETE /api/users -> 403
+[OK]   GET /api/search?q=FCT6 5V -> 200
+[OK]   鎼滅储 tokens 绌烘牸鍒嗚瘝涓?2
+[OK]   鎼滅储 FAIL 鍛戒腑 >=1锛堝疄寰?1锛?
+[OK]   鎼滅储鑱氬悎鍚?maintenance/devices/yields 璁℃暟
+[OK]   鎼滅储缁撴灉鍚?hash 璺宠浆 link锛?/fails 绛夛級
+[OK]   绌烘牸鍒嗚瘝 AND锛欶CT6 CAN 涓嶅簲鍛戒腑 5V_Rail锛堝疄寰?0锛?
+[OK]   鏈甫 token GET /api/search -> 403
+[OK]   绌?q 鎼滅储 -> 200
+
+銆怢ite-Fetch銆戞暟鎹媺鍙栧畬鏁村鍑?鐑姏/鎶ュ憡鎽樿褰掓。瀵规瘮/绋嬪簭鏃ュ織鐧昏鏃堕棿杞村弬鏁癲iff + 缁熶竴CSV娉ㄥ叆BOM
+[OK]   Lite-Fetch 杩佺Щ鍚?user_version=7锛堟湡鏈?7锛?
+[OK]   杩佺Щ鍚?proc_change_log 瀛樺湪
+[OK]   杩佺Щ鍚?report_archive 瀛樺湪
+[OK]   CreateProcLog 杩斿洖 id=1
+[OK]   绗簩鏉?id=2 > 1
+[OK]   GetProcLog 鍥炶姝ｇ‘
+[OK]   ListProcLogs 2 鏉★紙瀹炲緱 2锛?
+[OK]   鏃堕棿杞存寜 changed_at 鍊掑簭锛團CT1 鍚袱鏉★紝鏈€鏂板湪鍓嶏級
+[OK]   鏈哄彴缁村害 FCT2 鍙懡涓竴鏉?
+[OK]   Diff: added paramC銆乺emoved paramB銆乧hanged paramA锛堝疄寰?added=paramC removed=paramB changed=1锛?
+[OK]   鏃犳湭鍙樻洿鍙傛暟
+[OK]   CsvUtil 娉ㄥ叆闃叉姢涓庡紩鍙峰寘瑁?
+[OK]   CsvUtil.Write 甯?BOM
+[OK]   CsvUtil 鍐欏叆鍚敞鍏ヨ浆涔?
+[OK]   DeleteProcLog 鎴愬姛
+[OK]   鍒犻櫎鍚庝笉鍦ㄥ簱
+[OK]   Fetcher 鍏ㄩ噺瀵煎嚭瀹屾垚锛坉one锛?
+[OK]   瀵煎嚭鏂囦欢鐢熸垚 E:\4.9\FctAggregator\selftest\bin\Release\net8.0-windows\data\fetch_exports\59912d75.xlsx
+[OK]   xlsx 鍚?worksheets 閮ㄤ欢
+[OK]   xlsx 鎵€鏈夐儴浠跺悎娉?XML
+[OK]   鏄庣粏 Sheet 琛ㄥご瀹屾暣
+[OK]   鍚?4 Sheet锛堟槑缁?瓒嬪娍/鍒嗗竷/鐑姏锛?
+[OK]   鎸夋満鍙?鍨嬪彿杩囨护瀵煎嚭瀹屾垚
+[OK]   FCT1+E300 杩囨护鍚?2 鏉★紙瀹炲緱 2锛?
+[OK]   鐑姏鍚?machines/dates/matrix
+[OK]   鐑姏 machines 闈炵┖
+[OK]   瓒嬪娍 2 澶╀笖鍚?yield
+[OK]   鍒嗗竷鍚?label/count
+[OK]   zip 鎵撳寘瀹屾垚
+[OK]   zip 鏂囦欢鐢熸垚 E:\4.9\FctAggregator\selftest\bin\Release\net8.0-windows\data\fetch_exports\f610ed4e.zip
+[OK]   csv 瀵煎嚭瀹屾垚
+[OK]   csv 鏂囦欢鐢熸垚
+[OK]   csv 甯?BOM
+[OK]   ArchiveReport 杩斿洖 id=1
+[OK]   ListReportArchives 鍛戒腑
+[OK]   GetReportArchive 鍥炶
+[OK]   Lite-Fetch Web 鏈嶅姟杩涘叆鐩戝惉
+[OK]   鏈甫 token GET /api/heatmap 鈫?403
+[OK]   viewer GET /api/report/summary 鈫?200
+[OK]   鎶ュ憡鎽樿鍚?SN 涓?total
+[OK]   viewer POST /api/report/archive 鈫?403
+[OK]   engineer POST /api/report/archive 鈫?200
+[OK]   GET /api/report/archive 鈫?200
+[OK]   GET /api/report/compare 鈫?200
+[OK]   鐗堟湰瀵规瘮鍚?batch/tests
+[OK]   GET /api/heatmap 鈫?200
+[OK]   鐑姏鍚?machines/matrix
+[OK]   POST /api/fetch 鈫?200
+[OK]   fetch 杩斿洖 job_id=7fa04fb3
+[OK]   fetch 浠诲姟杞鑷?done
+[OK]   GET /api/fetch/progress 鈫?200
+[OK]   progress 鍚?100 鎴?done
+[OK]   GET /api/fetch/download 鈫?200
+[OK]   涓嬭浇鏂囦欢涓?zip/xlsx锛圥K 澶达級
+[OK]   viewer POST /api/proc-log 鈫?403
+[OK]   engineer POST /api/proc-log 鈫?200
+[OK]   绗簩娆?proc-log 鍒涘缓 鈫?200
+[OK]   GET /api/proc-log/timeline 鈫?200
+[OK]   鏃堕棿杞村惈涓ゆ潯璁板綍
+[OK]   GET /api/proc-log/diff 鈫?200
+[OK]   diff 鍚?added/changed
+[OK]   鏃?token GET /api/fetch/download 鈫?403
+
+==== 鍏ㄩ儴閫氳繃 ====

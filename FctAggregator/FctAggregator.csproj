@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    FCT 工具套件（v3.0.0：单 exe 工具箱，数据分发已独立出去）
+
+    v2.9.0 曾把 5 个独立项目合并进这一个程序集；v3.0.0 又把**数据分发**拆了出去
+    （它能改时间戳/造数/批量投放，不该出现在产线机台的主程序里，见 FctDistributor/）。
+    现在这里是：主程序 = 采集聚合，外加 3 个「工具箱」入口，
+    源码在 modules\<Name>\ 下，各自保留自己的 namespace（FctFailRanker /
+    FctFetcher / FctTdmsViewer），所以 MainForm / Program / XlsxWriter 这些同名类不会打架。
+
+    ⚠ 4 个 Program 各有一个 Main -> 用 <StartupObject> 显式指定主入口，
+      否则 CS0017「程序定义了多个入口点」。各工具的 Main 保留着（内含 CLI 逻辑），
+      由 FctAggregator.Program 按子命令转发。
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Argus</AssemblyName>
+    <RootNamespace>FctAggregator</RootNamespace>
+    <StartupObject>FctAggregator.Program</StartupObject>
+    <!-- v3.8.0：public/ 静态服务 + 在线 XML + 窗口细分 + 机台卡自定义已实现，版本号同步提升（规范 §3.1） -->
+    <!-- v3.9.0：P1 剩余落地 —— yld_daily 心跳日统计 + users 三角色 + audit_log + /api/status（规范 §3.1：Y=新功能） -->
+    <!-- v3.10.0：P1-A 可观测 —— /api/metrics 指标 + Logger 日志滚动（架构方案 P1-1/P1-4） -->
+    <!-- v3.11.0：P1-B 容灾 + P3 良率页 + 前端白屏修复 -->
+    <!-- v3.13.0：P5 维修/待办全功能服务端化（Agent B，2026-08-28） -->
+    <!-- v3.15.0：Lite-Settings 剩余前端设置与体验层（Agent Lite，2026-08-28） -->
+    <!-- v3.14.0：P6 设备监控 + P2-A 无头服务化 + P7 数据拉取雏形（Agent C，2026-08-28） -->
+    <!-- v3.16.0：Lite-Fetch 数据拉取完整 + 报告中心 + 程序日志（2026-08-28，零第三方、手写OOXML、真实xlsx/zip、热力、归档对比、时间轴diff） -->
+    <!-- v3.18.0：Lite-Ops 告警规则热更新（PATCH /api/alerts/rules，admin+审计+越界校验，免重启）+ 待办自定义区间 UI -->
+    <Version>3.18.5</Version>
+    <AssemblyVersion>3.18.5.0</AssemblyVersion>
+    <FileVersion>3.18.5.0</FileVersion>
+    <Company>Argus</Company>
+    <Product>FCT 工具套件</Product>
+    <ApplicationIcon>app_icon.ico</ApplicationIcon>
+    <!-- 单文件、框架依赖发布时体积最小 -->
+    <SelfContained>false</SelfContained>
+    <!-- 依赖锁定：还原时生成 packages.lock.json，保证可复现构建 -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 自检工程独立编译，不属于主程序（不排除的话它的 obj\AssemblyInfo.cs 会被当成源码 -> CS0579 特性重复） -->
+    <Compile Remove="selftest\**" />
+    <None Remove="selftest\**" />
+    <EmbeddedResource Remove="selftest\**" />
+    <Compile Remove="selftest-distributor\**" />
+    <None Remove="selftest-distributor\**" />
+    <EmbeddedResource Remove="selftest-distributor\**" />
+    <!-- tools\xlsxdump\ 同理：它是独立小工程（xlsx 长相核对），
+         不排除的话它的 obj\AssemblyInfo.cs 会被默认 glob 当成主程序源码 -> CS0579 -->
+    <Compile Remove="tools\**" />
+    <None Remove="tools\**" />
+    <EmbeddedResource Remove="tools\**" />
+
+    <!-- 取数/TDMS 工具从嵌入资源里找图标（按 EndsWith("app_icon.ico") 匹配，一份就够） -->
+    <EmbeddedResource Include="app_icon.ico" />
+    <!-- v3.1.0 开启动画素材（SplashForm 按 EndsWith("argus_splash.png") 匹配） -->
+    <EmbeddedResource Include="assets\splash\argus_splash.png" />
+    <!-- v3.8.0 演示/前端模块化：public/ 静态资源随构建复制到输出目录（WebAggServer 经 /public/* 服务） -->
+    <Content Include="public\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
+    <!-- CVE-2025-6965/70873 修复:8.0.x 传递依赖仍是 SQLitePCLRaw 2.1.6(SQLite 3.41.2,低于修复线 3.50.2),
+         显式覆盖到 2.1.12(自带 SQLite 3.53.3) -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <!-- TDMS 波形查看（原 fct-tdms-viewer 的依赖） -->
+    <PackageReference Include="TDMSReader" Version="3.1.0" />
+  </ItemGroup>
+
+</Project>

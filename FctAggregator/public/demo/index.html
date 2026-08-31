@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Argus 测试工程师工作台 · 旧版演示链接</title>
+<!-- 旧链接兼容：/public/demo/ 自动跳转到模块化前端 /public/（不产生 404） -->
+<meta http-equiv="refresh" content="0; url=../">
+<script>
+  // 双保险：meta refresh 之外再走 JS 跳转，并保留 ?token= 查询参数（鉴权模式不丢）
+  (function () {
+    var target = "../";
+    if (window.location.search) target += window.location.search;
+    window.location.replace(target);
+  })();
+</script>
+<style>
+  body{background:#0E1116;color:#9AA5B1;font-family:"Microsoft YaHei UI",sans-serif;
+       display:flex;align-items:center;justify-content:center;height:100vh;font-size:13px}
+</style>
+</head>
+<body>正在跳转到模块化前端…（如未自动跳转请<a href="../" style="color:#FF5C5C">手动点击这里</a>）</body>
+</html>

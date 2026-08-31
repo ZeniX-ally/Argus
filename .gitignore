@@ -1,48 +1,55 @@
-# ---- .NET 编译产物 ----
-bin/
-obj/
-publish*/
+# ===== Build =====
+**/bin/
+**/obj/
+**/out/
+**/dist/
+*.zip
+
+# ===== Runtime data / logs =====
+**/data/
+**/logs/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+data/agg_xml/
+data/mesh_*.json
+data/agg_*.json
+data/*.log
+
+# ===== Snapshots / releases =====
+_releases/
+.snap/
+.wt-xlsxcmp/
+*.snap/
+Releases/
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ===== IDE / OS =====
+.vs/
+.vscode/
+.idea/
 *.user
 *.suo
-
-# ---- 打包 / 发布产物 ----
-package_v*/
-dist/
-*.zip
-*.tar.gz
-*.bak
-
-# ---- 运行期数据(含机台真实数据,不入库) ----
-data/
-logs/
-*.db
-*.db-shm
-*.db-wal
-*.log
-
-# ---- 含敏感信息的本地配置(飞书 webhook token) ----
-# 只提交 config.example.json 模板,实际 config.json 由各机台本地维护
-fct-aggregator-cs/config.json
-fct-aggregator-cs/dist/config.json
-
-# ---- 编辑器 / 工具本地状态 ----
-.vs/
-.reasonix/
-.claude/settings.local.json
+.DS_Store
 Thumbs.db
 desktop.ini
 
-# GUI 截图产物
-.snap/
-
-# 发布产物与历史包（v2.9.0 起移出仓库，只留最新一版在 _releases/）
-_releases/
-
-# ---- Linux 侧构建产物（Directory.Build.props 把非 Windows 的中间产物隔离到这里）----
-obj-linux/
-bin-linux/
-
-# ---- AI 会话/进度产物(不入库) ----
-session-*.json
-项目进度记录.json
+# ===== Agent / editor toolchain =====
+.opencode/
+.workbuddy/
 .mimosa/
+
+# ===== Screenshots / temp =====
+ArgusScreenshots/
+
+# ===== Secrets / local config =====
+# config.json 含现场 token/路径，提交请用 config.example.json
+# 若需忽略本地现场配置，取消下行注释：
+# config.json
