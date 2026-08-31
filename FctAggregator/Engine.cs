@@ -22,6 +22,8 @@ public class Engine
     private const int StableRetryDelayMs = 30000;
     private readonly ConcurrentQueue<(string Path, int Attempt, long DueAt)> _retryQueue = new();
     private Thread? _retryThread;
+    // 域1 A: 新测试项 pending_review 去重集（v3.19.0）
+    private static readonly HashSet<string> _seenFailReasons = new(StringComparer.OrdinalIgnoreCase);
 
     public Database Db => _db;
     public string ResolvedStationId => _stationId;
@@ -169,7 +171,9 @@ public class Engine
             foreach (var d in Directory.GetDirectories(catDir))
             {
                 var name = Path.GetFileName(d);
-                if (StationDetector.IsValidModel(name)) models.Add(name);
+                  if (StationDetector.IsValidModel(name)) models.Add(name);
+                  else if (name.Length >= 3 && name.Any(char.IsLetterOrDigit) && !name.StartsWith("."))
+                      Logger.Info($"[pending_review] 未知型号目录: {name} at {catDir}");
             }
         }
         return models.OrderBy(x => x).ToList();
@@ -312,6 +316,29 @@ public class Engine
             var processor = new Processor(_cfg, _stationId, Parsing.ParserRegistry.Instance, _db);
         var rec = processor.ParseAndClassify(path);
         if (rec == null) return;
+
+        // 域1 A: 新不良项 pending_review（v3.19.0，per-run 去重）
+        if (rec.HasFailItems)
+        {
+            foreach (var ft in rec.FailedTests)
+            {
+                var name = string.IsNullOrWhiteSpace(ft.Name) ? rec.FailReason : ft.Name;
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                lock (_seenFailReasons)
+                {
+                    if (_seenFailReasons.Add(name!))
+                        Logger.Info($"[pending_review] 新不良项: {name} at {rec.Model} / {rec.StationId}");
+                }
+            }
+            if (rec.FailedTests.Count == 0 && !string.IsNullOrWhiteSpace(rec.FailReason))
+            {
+                lock (_seenFailReasons)
+                {
+                    if (_seenFailReasons.Add(rec.FailReason!))
+                        Logger.Info($"[pending_review] 新不良项: {rec.FailReason} at {rec.Model} / {rec.StationId}");
+                }
+            }
+        }
 
         try
         {
