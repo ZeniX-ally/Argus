@@ -1,4 +1,4 @@
-using FctAggregator;
+﻿using FctAggregator;
 using Microsoft.Data.Sqlite;
 using System.Net;
 using System.Net.Http;
@@ -135,6 +135,22 @@ class SelfTest
         Check(TimeUtil.Normalize("2026-08-14T07:17:29Z") == "2026-08-14 07:17:29", "ISO Z 后缀同样支持");
         Check(TimeUtil.Normalize("2026-08-14T07:17:29.004-05:00") == "2026-08-14 07:17:29",
               "负偏移按原墙上时间取（不换算成机器本地）");
+
+
+        // ---------- 域名1 智能时间：文件名时间 + 系统时间近邻校验（v3.19.0） ----------
+        // 正常文件名时间戳（贴近系统时间）应解析出来；
+        // 纯数字但离系统时间 >30 天的段（SN/批次号被 TsSegRe 误抓）应判空，交由调用方回退目录日期。
+        Check(TimeUtil.ResolveFileNameTime("P_20260722124700283.xml", new DateTime(2026,7,22)) == "2026-07-22 12:47:00",
+              "域名1: 文件名 17 位时间贴近系统时间可解析");
+        Check(TimeUtil.ResolveFileNameTime("P_20260722124700.xml", new DateTime(2026,7,22)) == "2026-07-22 12:47:00",
+              "域名1: 文件名 14 位时间贴近系统时间可解析");
+        Check(TimeUtil.ResolveFileNameTime("P_20240101120000.xml", new DateTime(2026,7,22)) == "",
+              "域名1: 文件名时间与系统偏差 >30 天判为 SN/误匹配返回空");
+        Check(TimeUtil.ResolveFileNameTime("SN_20260101.xml", new DateTime(2026,7,22)) == "",
+              "域名1: 非时间纯数字段且偏差过大判空");
+        Check(TimeUtil.ResolveFileNameTime("no_time_here.xml", new DateTime(2026,7,22)) == "",
+              "域名1: 无 14/17 位数字段返回空");
+        Check(TimeUtil.ResolveFileNameTime(null) == "", "域名1: 空输入返回空");
 
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {

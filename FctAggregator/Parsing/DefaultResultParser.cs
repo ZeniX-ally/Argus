@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.IO;
 using System.Xml;
 using FctAggregator;
@@ -96,7 +96,12 @@ public sealed class DefaultResultParser : IResultParser
             if (string.IsNullOrEmpty(snFromName)) snFromName = pr.Sn;
         }
 
-        var ts = info.FileTime != null ? TimeUtil.Normalize(info.FileTime) : null;
+        // 域1 智能时间：文件名时间优先，但用系统时间近邻校验判 SN/误匹配（v3.19.0）。
+        // 真正新落盘的 log 文件名时间最贴近系统时间；与系统偏差 >30 天则视为
+        // SN/批次号误匹配（TsSegRe 常见陷阱），回退到目录日期。
+        var ts = info.FileTime != null
+            ? TimeUtil.ResolveFileNameTime(info.FileTime, DateTime.Now)
+            : "";
         if (string.IsNullOrEmpty(ts))
             ts = info.TestDate.Length == 8
                 ? $"{info.TestDate[..4]}-{info.TestDate[4..6]}-{info.TestDate[6..8]}T00:00:00"

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using FctAggregator;
 
@@ -107,6 +107,9 @@ public sealed class PathMeta
             info.Sn = sn;
             if (sn.Length >= 8) info.ModelFromName = sn[..8];
         }
+        // 注意：这里只做「原始提取」。FileTime 可能是 SN/批次号被误当时间，
+        // 是否可信由 DefaultResultParser 用 TimeUtil.ResolveFileNameTime 的系统时间
+        // 近邻校验决定（域1 智能时间）：偏差过大则判为误匹配，回退目录日期。
         var ft = TsSegRe.Match(stem);
         if (ft.Success) info.FileTime = ft.Groups[1].Value;
         return info;
