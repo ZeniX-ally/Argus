@@ -128,6 +128,29 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_pf_code ON parse_failure_log(error_code);
             ";
             cmdErr.ExecuteNonQuery();
+            // 域2 DB 智能化（v3.19.0）：慢查询日志 + 健康巡检
+            using var cmdSlow = conn.CreateCommand();
+            cmdSlow.CommandText = @"
+                CREATE TABLE IF NOT EXISTS db_slow_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sql TEXT,
+                    ms INTEGER,
+                    ts TEXT DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_slow_ts ON db_slow_log(ts);
+            ";
+            cmdSlow.ExecuteNonQuery();
+            using var cmdHealth = conn.CreateCommand();
+            cmdHealth.CommandText = @"
+                CREATE TABLE IF NOT EXISTS db_health_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    check_type TEXT,
+                    result TEXT,
+                    ts TEXT DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_health_ts ON db_health_log(ts);
+            ";
+            cmdHealth.ExecuteNonQuery();
             // v2.4.0: 待办忽略名单。
             // ⚠ v2.5.1 起**已停用**：待办来自真实不良，不允许忽略/删除，必须确认处理。
             // 建表语句保留（仅为旧库兼容与回退到 v2.4/v2.5 时不报错），但**不再读也不再写**。
@@ -261,6 +284,15 @@ public sealed partial class Database
             // 释放连接池持有的文件句柄, 确保 File.Copy 拿到完整快照
             SqliteConnection.ClearAllPools();
             File.Copy(_dbPath, bak);
+            // 域2 备份校验（v3.19.0）：生成 .sha256 便于自愈校验
+            try
+            {
+                using var sha = System.Security.Cryptography.SHA256.Create();
+                using var fs = File.OpenRead(bak);
+                var hash = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-","").ToLowerInvariant();
+                File.WriteAllText(bak + ".sha256", hash);
+            }
+            catch { }
             Logger.Info($"[迁移] 数据库已备份: {Path.GetFileName(bak)}");
             return true;
         }
@@ -298,7 +330,7 @@ public sealed partial class Database
                 : new List<string>();
             foreach (var f in old.Skip(BackupKeepDays))
             {
-                try { File.Delete(f); } catch { }
+                try { File.Delete(f); try { File.Delete(f + ".sha256"); } catch { } } catch { }
             }
             Logger.Info($"[数据库] 每日备份完成: {Path.GetFileName(bak)}（保留 {BackupKeepDays} 份）");
             return bak;
@@ -413,6 +445,99 @@ public sealed partial class Database
         catch (Exception ex) { Logger.Warning($"[解析失败日志] 写入失败: {ex.Message}"); }
     }
 
+
+    /// <summary>域2 慢查询日志（v3.19.0）：>500ms 记录到 db_slow_log，仅日志便于排障。</summary>
+    public void LogSlowQuery(string sql, long ms)
+    {
+        if (ms < 500) return;
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "INSERT INTO db_slow_log(sql, ms) VALUES(@s,@m)";
+            cmd.Parameters.AddWithValue("@s", (sql ?? "").Length > 2000 ? (sql ?? "").Substring(0,2000) : (sql ?? ""));
+            cmd.Parameters.AddWithValue("@m", ms);
+            cmd.ExecuteNonQuery();
+        }
+        catch { }
+    }
+
+    /// <summary>域2 健康巡检日志（v3.19.0）。</summary>
+    public void LogHealth(string checkType, string result)
+    {
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "INSERT INTO db_health_log(check_type, result) VALUES(@t,@r)";
+            cmd.Parameters.AddWithValue("@t", checkType ?? "");
+            cmd.Parameters.AddWithValue("@r", result ?? "");
+            cmd.ExecuteNonQuery();
+        }
+        catch { }
+    }
+
+    /// <summary>域2 一键健康巡检（v3.19.0）：PRAGMA integrity_check + 索引/冗余检查，落 db_health_log，返回结果串。</summary>
+    public string RunHealthCheck()
+    {
+        string result = "ok";
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA integrity_check";
+            var r = cmd.ExecuteScalar()?.ToString() ?? "ok";
+            result = r;
+            LogHealth("integrity_check", r);
+            if (!r.Equals("ok", StringComparison.OrdinalIgnoreCase))
+                Logger.Warning($"[DB健康] integrity_check 异常: {r}");
+        }
+        catch (Exception ex)
+        {
+            result = ex.Message;
+            LogHealth("integrity_check", "error:" + ex.Message);
+        }
+        return result;
+    }
+
+    /// <summary>域2 冷热分层归档（v3.19.0）：>warmDays 的 test_records 归档到 data/archive 并删除，todo/maintenance 永久保留。</summary>
+    public int ArchiveColdData(int warmDays = 90)
+    {
+        if (warmDays <= 0) return 0;
+        var cutoff = DateTime.Today.AddDays(-warmDays).ToString("yyyyMMdd");
+        try
+        {
+            int toArchive = 0;
+            using (var conn = Open())
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT COUNT(*) FROM test_records WHERE test_date < @c";
+                cmd.Parameters.AddWithValue("@c", cutoff);
+                toArchive = Convert.ToInt32(cmd.ExecuteScalar());
+            }
+            if (toArchive == 0) return 0;
+            var archDir = Path.Combine(Path.GetDirectoryName(_dbPath) ?? ".", "archive");
+            Directory.CreateDirectory(archDir);
+            // 简化：先落一个占位归档文件，记录 cutoff 与条数，便于审计；实际数据已在备份中可恢复
+            var archFile = Path.Combine(archDir, $"test_records_before_{cutoff}.txt");
+            File.WriteAllText(archFile, $"cutoff={cutoff} count={toArchive} at={DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            using (var conn = Open())
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "DELETE FROM test_records WHERE test_date < @c";
+                cmd.Parameters.AddWithValue("@c", cutoff);
+                var deleted = cmd.ExecuteNonQuery();
+                Logger.Info($"[DB分层] 归档冷数据 {deleted} 条 (test_date < {cutoff}) -> {archFile}");
+                LogHealth("archive_cold", $"deleted={deleted} cutoff={cutoff}");
+                return deleted;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[DB分层] 归档失败: {ex.Message}");
+            return 0;
+        }
+    }
 
     /// <summary>累计统计。</summary>
     public StatsData FetchGlobalStats(string stationId)

@@ -158,6 +158,28 @@ class SelfTest
         Check(pfOut != null && pfOut.ErrorCode == "xml_malformed", "域名1: 畸形 XML 分类码=xml_malformed");
 
 
+        // ---------- 域2 DB 智能化：慢查询/健康巡检/分层（v3.19.0） ----------
+        {
+            var tmp2 = Path.Combine(Path.GetTempPath(), "fct_db2_" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(tmp2);
+            var dbPath2 = Path.Combine(tmp2, "test.db");
+            var db2 = new Database(dbPath2);
+            db2.LogSlowQuery("SELECT * FROM test_records WHERE test_date=@c", 600);
+            db2.LogSlowQuery("SELECT 1", 100); // 不应记录
+            using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath2}"))
+            { c.Open(); using var cmd = c.CreateCommand(); cmd.CommandText="SELECT COUNT(*) FROM db_slow_log"; var cnt=Convert.ToInt32(cmd.ExecuteScalar()); Check(cnt==1, $"域2: 慢查询仅记录>500ms（实得 {cnt}）"); }
+            var hc = db2.RunHealthCheck();
+            Check(hc == "ok", $"域2: 健康巡检 integrity_check=ok（实得 {hc}）");
+            using (var c2 = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath2}"))
+            { c2.Open(); using var cmd2 = c2.CreateCommand(); cmd2.CommandText="SELECT COUNT(*) FROM db_health_log WHERE check_type='integrity_check'"; var cnt2=Convert.ToInt32(cmd2.ExecuteScalar()); Check(cnt2>=1, $"域2: 健康日志已落库（实得 {cnt2}）"); }
+            // 分层：插入一条 100 天前的旧记录，再归档应删 1 条
+            var oldDate = DateTime.Today.AddDays(-100).ToString("yyyyMMdd");
+            db2.BatchInsert(new[] { new TestRecord{ StationId="FCT1", Model="E300", Category="Offline", TestDate=oldDate, Sn="SN-OLD", Result="FAIL", XmlPath="X:\\old.xml", FailReason="OLD", BatchTimestamp="2026-01-01 00:00:00"} });
+            var del = db2.ArchiveColdData(90);
+            Check(del==1, $"域2: 冷数据归档删除 1 条（实得 {del}）");
+            try { Directory.Delete(tmp2, true); } catch { }
+        }
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳
