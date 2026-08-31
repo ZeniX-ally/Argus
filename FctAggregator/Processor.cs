@@ -1,4 +1,4 @@
-namespace FctAggregator;
+﻿namespace FctAggregator;
 
 /// <summary>
 /// 核心处理：解析单个 xml → TestRecord。
@@ -14,16 +14,19 @@ public class Processor
     private readonly AppConfig _cfg;
     private readonly string _defaultStation;
     private readonly Parsing.ParserRegistry _registry;
+    private readonly Database? _db;
 
+    /// <summary>默认构造：全局解析注册表 + 不记录解析失败日志。</summary>
     public Processor(AppConfig cfg, string defaultStation)
-        : this(cfg, defaultStation, Parsing.ParserRegistry.Instance) { }
+        : this(cfg, defaultStation, Parsing.ParserRegistry.Instance, null) { }
 
     /// <summary>可注入解析注册表（多格式/测试用）。默认使用全局单例（含内置默认解析器）。</summary>
-    public Processor(AppConfig cfg, string defaultStation, Parsing.ParserRegistry registry)
+    public Processor(AppConfig cfg, string defaultStation, Parsing.ParserRegistry registry, Database? db = null)
     {
         _cfg = cfg;
         _defaultStation = defaultStation;
         _registry = registry;
+        _db = db;
     }
 
     /// <summary>解析并分类。返回 null 表示跳过(debug/无法识别/解析失败)。</summary>
@@ -37,6 +40,7 @@ public class Processor
         catch (Exception ex)
         {
             Logger.Warning($"[解析] 读取文件失败，跳过 {path}: {ex.Message}");
+            _db?.LogParseFailure(path, "read_error", "read file failed", _defaultStation);
             return null;
         }
 
@@ -46,12 +50,18 @@ public class Processor
         {
             Logger.Error($"[解析] 责任链异常 {path}: {ex.Message}");
             AppState.IncParseError();
+            _db?.LogParseFailure(path, "registry_exception", ex.Message, _defaultStation);
             return null;
         }
 
         if (outp == null) { Logger.Warning($"[跳过] 无解析器适用: {path}"); return null; }
         if (outp.Skipped) return null;                       // debug/非目标格式
-        if (outp.Error) { AppState.IncParseError(); return null; }
+        if (outp.Error)
+        {
+            AppState.IncParseError();
+            _db?.LogParseFailure(path, outp.ErrorCode, outp.SkipReason ?? "", outp.StationId);
+            return null;
+        }
 
         return new TestRecord
         {

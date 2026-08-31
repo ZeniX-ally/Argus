@@ -41,6 +41,7 @@ public class ParseOutput
 {
     public bool Skipped;            // 主动跳过（debug/非目标）
     public bool Error;              // 解析异常（调用方记解析错误）
+    public string ErrorCode = "";   // 域名1 解析失败分类：xml_malformed/unsupported_prefix/invalid_result/vacant（v3.19.0）
     public string? SkipReason;
 
     public string Result = "";      // PASS/FAIL/INTERRUPTED/INVALID

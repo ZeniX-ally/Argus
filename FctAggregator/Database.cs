@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 
 namespace FctAggregator;
 
@@ -114,6 +114,20 @@ public sealed partial class Database
             ";
             cmd3.ExecuteNonQuery();
 
+            // 域名1 解析失败日志（v3.19.0）：记录解析器判定失败/异常的 xml，分类码用于排障。
+            using var cmdErr = conn.CreateCommand();
+            cmdErr.CommandText = @"
+                CREATE TABLE IF NOT EXISTS parse_failure_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    xml_path TEXT NOT NULL,
+                    error_code TEXT,
+                    skip_reason TEXT,
+                    station_id TEXT,
+                    created_at TEXT DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_pf_code ON parse_failure_log(error_code);
+            ";
+            cmdErr.ExecuteNonQuery();
             // v2.4.0: 待办忽略名单。
             // ⚠ v2.5.1 起**已停用**：待办来自真实不良，不允许忽略/删除，必须确认处理。
             // 建表语句保留（仅为旧库兼容与回退到 v2.4/v2.5 时不报错），但**不再读也不再写**。
@@ -382,6 +396,23 @@ public sealed partial class Database
     }
 
     public int InsertOne(TestRecord rec) => BatchInsert(new[] { rec });
+    /// <summary>记录一次解析失败（域名1，v3.19.0）。失败不影响采集主流程，仅留痕。</summary>
+    public void LogParseFailure(string xmlPath, string errorCode, string skipReason, string stationId)
+    {
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "INSERT INTO parse_failure_log(xml_path, error_code, skip_reason, station_id) VALUES(@p,@c,@s,@st)";
+            cmd.Parameters.AddWithValue("@p", xmlPath ?? "");
+            cmd.Parameters.AddWithValue("@c", errorCode ?? "");
+            cmd.Parameters.AddWithValue("@s", skipReason ?? "");
+            cmd.Parameters.AddWithValue("@st", stationId ?? "");
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex) { Logger.Warning($"[解析失败日志] 写入失败: {ex.Message}"); }
+    }
+
 
     /// <summary>累计统计。</summary>
     public StatsData FetchGlobalStats(string stationId)

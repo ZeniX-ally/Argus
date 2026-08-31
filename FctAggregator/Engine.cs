@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 
 namespace FctAggregator;
 
@@ -186,7 +186,7 @@ public class Engine
                 sid = "UNKNOWN";
                 Logger.Warning("[历史扫描] station_id 未配置且无法自动检测, 使用 UNKNOWN 继续扫描入库");
             }
-            var processor = new Processor(_cfg, _stationId);
+            var processor = new Processor(_cfg, _stationId, Parsing.ParserRegistry.Instance, _db);
 
             // 阶段一: 扫描收集所有文件
             AppState.SetScanProgress(phase: "scanning", total: 0, parsed: 0);
@@ -309,7 +309,7 @@ public class Engine
             return;
         }
 
-        var processor = new Processor(_cfg, _stationId);
+            var processor = new Processor(_cfg, _stationId, Parsing.ParserRegistry.Instance, _db);
         var rec = processor.ParseAndClassify(path);
         if (rec == null) return;
 
@@ -361,11 +361,18 @@ public class Engine
     /// 实际要采样 stableChecks+1 次 —— 旧实现稳定检查 2 次要 3 次采样(1.5s)，
     /// 每个实时事件都白等 1.5s。修法：先做一次"基线"采样当 prev，再进入稳定计数。
     /// </summary>
-    private bool WaitForStable(string path, int stableChecks = 2, int intervalMs = 500, int timeoutMs = 10000)
+    /// <summary>按文件大小自适应稳定检查次数（域名1 智能等待，v3.19.0）：
+    /// 小文件（&lt;100KB）写入快取 2 次、中文件（100KB~1MB）3 次、大文件（&gt;1MB）4 次，
+    /// 避免大文件/慢盘漏读。显式传入 stableChecks&gt;0 时以调用方为准。</summary>
+    private bool WaitForStable(string path, int stableChecks = 0, int intervalMs = 500, int timeoutMs = 10000)
     {
         long prev;
         try { prev = new FileInfo(path).Length; }
         catch { return false; }
+
+        if (stableChecks <= 0)
+            stableChecks = prev < (100 * 1024) ? 2 : (prev <= (1024 * 1024) ? 3 : 4);
+
 
         int same = 0;
         var start = Environment.TickCount64;

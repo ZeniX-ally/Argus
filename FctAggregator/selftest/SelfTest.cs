@@ -152,6 +152,12 @@ class SelfTest
               "域名1: 无 14/17 位数字段返回空");
         Check(TimeUtil.ResolveFileNameTime(null) == "", "域名1: 空输入返回空");
 
+        var badXml = "<root><FACTORY USER=\\\"x\\\"></root>";
+        var pfOut = new FctAggregator.Parsing.DefaultResultParser(FctAggregator.Parsing.ParserRuleSet.Default, "FCT1").Parse("D:\\Results\\Offline\\E300\\20260812\\F_20260722124700_xxx.xml", badXml);
+        Check(pfOut != null && pfOut.Error == true, "域名1: 畸形 XML 应判解析失败");
+        Check(pfOut != null && pfOut.ErrorCode == "xml_malformed", "域名1: 畸形 XML 分类码=xml_malformed");
+
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳

@@ -70,7 +70,7 @@ public sealed class DefaultResultParser : IResultParser
             var pr = ParseXml(rawXml);
             if (pr.Error)
             {
-                return new ParseOutput { Error = true, SkipReason = "xml 解析异常" };
+                return new ParseOutput { Error = true, ErrorCode = "xml_malformed", SkipReason = "xml 解析异常" };
             }
             if (_rules.IsDebug(pr.FactoryUser))
                 return new ParseOutput { Skipped = true, SkipReason = "debug" };
@@ -85,7 +85,7 @@ public sealed class DefaultResultParser : IResultParser
             };
             if (result == "INVALID")
             {
-                return new ParseOutput { Error = true, SkipReason = "INVALID 前缀" };
+                return new ParseOutput { Error = true, ErrorCode = "invalid_result", SkipReason = "INVALID 前缀" };
             }
             user = pr.FactoryUser;
             tester = pr.Tester;
