@@ -47,6 +47,48 @@ e:/4.9/
 └── data/                     本地运行数据（全忽略，禁提交）
 ```
 
+## 1.5 核心文件速查（按域，新 agent 快速定位）
+
+**入口**：`Program.cs` — 子命令分发（GUI / agg / agg --web / --service install|start|stop|status）。
+
+| 域 | 文件 → 职责（何时动它） |
+|---|---|
+| **Core/** 采集引擎 | `Engine.cs` 后台引擎：型号发现/实时监控/历史扫描/FAIL 推送+心跳日统计 · `Processor.cs` 单文件处理流水线 · `Classifier.cs` 前缀分类+debug 判定 · `XmlParser.cs` BATCH XML 解析（深度/轻量/报告三模式）· `StationDetector.cs` 机台号 IP 映射/型号校验 · `TestRecord.cs` 数据模型 · `AppState.cs` 线程安全统计 · `FctIni.cs` FCT.ini 解析+COM 检测 · `FctIniWatcher.cs` FCT.ini 变更哈希检测 · `AgentPusher.cs`/`AggWatcher.cs` 遗留 Obsolete 勿扩展 |
+| **Db/** 数据层 | `Database.cs`(94K) 机台本地库：建表/批量入库/统计/维修/待办 · `AggDatabase.cs` 聚合库主体（单写者 WAL）· `AggDatabase.Accuracy/Alert/AlertPredict/Device/DeviceIntelligent/Maintenance/ProcLog/Settings.cs` 聚合库 partial 按功能分文件 · `DbMigrator.cs` schema 迁移（当前 v10，改表必加新版本号）· `DbMaintenance.cs` 每日维护（checkpoint/VACUUM/备份/对账） |
+| **Mesh/** P2P | `MeshNode.cs` 节点组装/邻居管理 · `MeshPusher.cs` 事件推送（per-peer 并发，(machine,seq) 幂等）· `MeshReceiver.cs` 接收入库 · `MeshGossiper.cs` 对账补推（自适应 10/60s）· `MeshQueryService.cs` 跨机查询（含 PASS 检索）· `TodoSync.cs` 全局待办池广播/合并 |
+| **Agg/** 服务端 | `WebAggServer.cs`(256K) **全部 /api/\* 路由**（新端点进新 region，旧 region 禁改）· `RoutePipeline.cs` 路由管线 · `HttpIngest.cs` HTTP 接收 · `AggDeployer.cs` 一键部署 · `AggAlertService.cs` 告警轮询/飞书卡/alert_history · `HeadlessService.cs` 无头服务组装 · `ServiceManager.cs` Windows Service 管理 · `FetcherService.cs` 异步导出（真实 xlsx/zip）· `DeviceModels.cs`+`DeviceInfoCollector.cs` 设备模型/采集 · `XmlReportHtml.cs` 在线 XML 渲染 |
+| **Intelligence/** 智能 | `ConfigValidator.cs`/`ConfigAdvisor.cs` 配置校验/推荐 · `DevicePredictor.cs`/`DeviceInspector.cs` 设备预测/巡检 · `PriorityScorer.cs`/`FlowAdvisor.cs`/`TodoSuggester.cs` 维修优先级/流转/待办 · `LayoutAdvisor.cs`/`HighlightEngine.cs` 布局/高亮 · `AlertHealer.cs`/`AlertPredictor.cs` 告警自愈/预警 · `PredictAccuracyReconciler.cs` 预测对账+阈值推荐 |
+| **Ui/** WinForms | `MainForm.cs`(43K) 主窗口/导航/KPI · `AggCenterForm.cs`(54K) 聚合看板 GUI · `Theme.cs` 视觉令牌单一来源 · `UiWidgets.cs` 自绘控件 · `MaintenanceBoard/Panel/Status/Exporter.cs` 维修看板/面板/状态机/导出 · `FailListPanel.cs` FAIL 页+XmlViewerForm · `DeviceStatusPanel.cs`/`DebugPanel.cs` 设备/调试页 · `BoardCard.cs`/`CardPreview.cs`/`TodoCard.cs`/`TodoGrouping.cs`/`FailItemPicker.cs`/`ResolverManager.cs` 卡片交互/预览/待办/合并/故障项/维修人 · `SplashForm.cs`/`DesktopNotifier.cs`/`UpdatePromptForm.cs`/`AppIcon.cs` 启动/托盘/更新提示/图标 |
+| **Infra/** 横切 | `Config.cs` AppConfig 单例（新键 Load/Save/known-keys 三处同步）· `Logger.cs` 日志 · `TimeUtil.cs` 时间解析 · `CsvUtil.cs` CSV 写出+CWE-1236 防护（所有导出必走）· `Xlsx.cs` 手写 OOXML（四处导出共用）· `FeishuNotifier.cs` 飞书卡片 · `UpdateChecker.cs` 两阶段自更新 |
+| **Parsing/** 解析 | `IResultParser.cs` 接口+注册表 · `ParserConfig.cs` 配置模型 · `DefaultResultParser.cs` 内置兜底 · `ConfigurableResultParser.cs` parsers.json 驱动 |
+| **modules/**（各自 namespace，勿与主程序互改） | `FailRanker/`（XmlScanner/CsvExporter/XlsxExporter/XmlViewerForm）· `Fetcher/`（Scanner/Exporter/Packager/XlsxWriter/FileLocator）· `TdmsViewer/`（TdmsDoc/WaveformPanel/Exporter/JsonDumper） |
+| **public/** 前端（零依赖 SPA） | `index.html` · `css/theme.css` 视觉令牌 · `js/loader.js` 路由注册 · `js/core.js` App 壳（auth/layout/favorites/search）· `js/page-{overview,fails,yield,devices,maintenance,fetch,report,proc,alerts,settings,compare,xml}.js` 十二页面 |
+| **selftest/** | `SelfTest.cs` 全部断言（显式分组）· `SelfTest.csproj` 目录通配编主源码（无需为新文件改动） |
+| **脚本** | `scripts/make_release.ps1` 一键发版 · `FctAggregator/tools/make_package.ps1`/`make_package_agg.ps1` 打包器 · `tools/smoke_{gui,notify,cli}.ps1` 冒烟 · `tools/snap_gui.ps1` 截图 · `tools/xlsx_check.ps1` xlsx 对比 · `tools/{deploy_update,upgrade_drill,diag_fctini}.ps1` · `tools/inidiag/`+`tools/xlsxdump/` 诊断工具（递归通配编主源码） |
+| **FctDistributor/**（16 文件平铺，稳定期） | `Distributor.cs` 核心 · `Planner.cs` 计划 · `NameParser.cs` · `TemplateGenerator.cs` · `SnExporter.cs` · `Xlsx.cs`+`XlsxWriter.cs` · `XmlTimeScanner.cs` · `FileTimeUtil.cs` · `StationDetector.cs` · `MainForm.cs` · `Program.cs` · `RestampScopeDialog.cs` · `AppIcon.cs` · `tools/make_package.ps1` |
+
+根级随包文件（**禁止移动**，打包脚本按根相对路径引用）：`config.json`、`config.example.json`、`parsers.example.json`、`app_icon.ico`、`启动.bat`、`更新日志.md`、`版本更新说明.md`、`聚合服务说明.md`、`TECHNICAL_DOCUMENTATION.md`、`packages.lock.json`。
+
+## 1.6 任务路由表（要改什么 → 去哪里）
+
+| 要改什么 | 位置 |
+|---|---|
+| Web API 新端点 | `Agg/WebAggServer.cs`（新 region + 鉴权 + audit） |
+| 数据库表/查询/迁移 | `Db/DbMigrator.cs`（新版本号）+ `Db/AggDatabase.*.cs` |
+| 采集/解析行为 | `Core/Engine.cs`、`Core/Processor.cs`、`Parsing/` |
+| 良率统计/口径 | `Core/Engine.cs`（心跳日统计）+ `Agg/WebAggServer.cs`（yield API） |
+| 告警规则/阈值/推送 | `Agg/AggAlertService.cs` + `Intelligence/AlertHealer·AlertPredictor.cs` |
+| 设备监控/预测/巡检 | `Agg/DeviceInfoCollector.cs` + `Intelligence/DevicePredictor·DeviceInspector.cs` |
+| 维修/待办流转 | `Ui/Maintenance*.cs` + `Mesh/TodoSync.cs` + `Intelligence/PriorityScorer·FlowAdvisor.cs` |
+| 配置项增改 | `Infra/Config.cs`（三处同步）+ `config.example.json` |
+| 前端页面/样式 | `public/js/page-*.js` + `public/css/theme.css`（令牌在 Theme.cs 与 theme.css 同步） |
+| 导出格式（xlsx/csv） | `Infra/Xlsx.cs` + `Infra/CsvUtil.cs` |
+| 飞书通知文案/卡片 | `Infra/FeishuNotifier.cs` |
+| 自检断言 | `selftest/SelfTest.cs`（沿用显式分组注释风格） |
+| 打包/发版 | `scripts/make_release.ps1`（版本自动读 csproj）+ `tools/make_package*.ps1` |
+| 服务化/CLI 子命令 | `Agg/HeadlessService.cs` + `Agg/ServiceManager.cs` + `Program.cs` |
+| 在线 XML 查看 | `Agg/XmlReportHtml.cs` + `Agg/WebAggServer.cs`（/api/xmlview）+ `public/js/page-xml.js` |
+
 ## 2. 代码概况与关键约束
 
 | 约束 | 说明 |
