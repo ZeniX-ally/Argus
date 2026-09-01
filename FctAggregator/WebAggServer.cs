@@ -138,6 +138,9 @@ public class WebAggServer : IDisposable
         _pipeline.Add("GET", "/api/devices/predict", ctx => { CountHit(); ServeDevicesPredict(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/devices/inspect", ctx => { CountHit(); ServeDevicesInspect(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fct/changes", ctx => { CountHit(); ServeFctChanges(ctx); return Task.CompletedTask; });
+        // 域7 维修/待办智能（v3.19.0）：优先级/流转
+        _pipeline.Add("GET", "/api/todos/suggest", ctx => { CountHit(); ServeTodoSuggest(ctx); return Task.CompletedTask; });
+        _pipeline.Add("GET", "/api/maintenance/advise", ctx => { CountHit(); ServeMaintenanceAdvise(ctx); return Task.CompletedTask; });
 
         _pipeline.Add("GET", "/api/machines", ctx => { CountHit(); ServeMachines(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fails", ctx => { CountHit(); ServeFails(ctx); return Task.CompletedTask; });
@@ -997,6 +1000,31 @@ public class WebAggServer : IDisposable
             var dto = list.Select(x=> new { id=x.id, ts=x.ts, machine=x.machine, detail=x.detail, hash=x.hash });
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, changes = dto }, JsonOpts));
         } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
+    }
+    // ===== 域7 维修/待办智能 — 建议/流转 API（v3.19.0） =====
+    private void ServeTodoSuggest(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try{
+            var list = TodoSuggester.Suggest(_db, 30);
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, suggests=list }, JsonOpts));
+        } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeMaintenanceAdvise(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try{
+            var q=ctx.Request.QueryString;
+            string cur = (q["status"] ?? q["current"] ?? "open").Trim();
+            if(string.IsNullOrEmpty(cur)) cur="open";
+            var idStr = q["id"] ?? "";
+            if(long.TryParse(idStr, out var id) && id>0){
+                var rec = _db.GetMaintenance((int)id);
+                if(rec!=null) cur = rec.Status;
+            }
+            var adv = FlowAdvisor.Advise(cur, _db);
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, advise=adv }, JsonOpts));
+        } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
     }
 
     /// <summary>机台状态列表：v3.5.0 去中心化下取 MeshReceiver peer 视图（含自身）；旧中心模式取 watcher 缓存。</summary>
@@ -2166,7 +2194,7 @@ public class WebAggServer : IDisposable
                 catch { }
             }
             if (id <= 0) { RespondText(ctx, 400, "id required"); return; }
-            var rec = _db.GetMaintenance(id);
+            var rec = _db.GetMaintenance((int)id);
             if (rec == null) { RespondText(ctx, 404, "not found"); return; }
             if (!_db.DeleteMaintenance(id)) { RespondText(ctx, 500, "delete failed"); return; }
             var (_, who) = ResolveRole(ctx);

@@ -115,6 +115,10 @@
     <Compile Include="..\DeviceInspector.cs" />
     <Compile Include="..\FctIniWatcher.cs" />
     <Compile Include="..\AggDatabase.DeviceIntelligent.cs" />
+    <!-- v3.19.0 域7 维修/待办智能 -->
+    <Compile Include="..\PriorityScorer.cs" />
+    <Compile Include="..\FlowAdvisor.cs" />
+    <Compile Include="..\TodoSuggester.cs" />
     <!-- FetcherService 已在 3.14 列表，CsvUtil/ProcLog 为新增显式 -->
     <!-- v3.4.0：一键部署（agg install 子命令）的 config 生成逻辑可测（系统操作不实跑，只编译） -->
     <Compile Include="..\Program.cs" />

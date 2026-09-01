@@ -255,6 +255,66 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
+        // ---------- 域7 维修/待办智能：优先级/流转/去重（v3.19.0） ----------
+        {
+            var tmp7 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fct_dom7_" + Guid.NewGuid().ToString("N")[..6]);
+            System.IO.Directory.CreateDirectory(tmp7);
+            var agg7 = new AggDatabase(System.IO.Path.Combine(tmp7, "agg.db")); agg7.Open();
+            // PriorityScorer
+            var scHigh = PriorityScorer.Score(25, 4, 10);
+            Check(scHigh.Level=="high" && scHigh.Zh=="高", $"域7: 高优先级判定（{scHigh.Level}/{scHigh.Score}）");
+            var scLow = PriorityScorer.Score(2, 1, 1);
+            Check(scLow.Level=="low", $"域7: 低优先级判定（{scLow.Level}）");
+            var scMid = PriorityScorer.Score(8, 2, 3);
+            Check(scMid.Level=="medium", $"域7: 中优先级判定（{scMid.Level}）");
+            // TodoGrouping 机台上下文：同 fail 不同机台应分不同待办（station_id 维度）
+            // 模拟多条 FAIL 登记
+            agg7.InsertBatch(new[]{
+                new AggFailRow{ Machine="FCT1", StationId="FCT1", Seq=1, TestDate=DateTime.Today.ToString("yyyyMMdd"), Result="FAIL", FailReason="5V_Rail", Model="M1", Sn="SN1"},
+                new AggFailRow{ Machine="FCT2", StationId="FCT2", Seq=1, TestDate=DateTime.Today.ToString("yyyyMMdd"), Result="FAIL", FailReason="5V_Rail", Model="M1", Sn="SN2"},
+                new AggFailRow{ Machine="FCT1", StationId="FCT1", Seq=2, TestDate=DateTime.Today.ToString("yyyyMMdd"), Result="FAIL", FailReason="5V_Rail", Model="M1", Sn="SN3"},
+            });
+            agg7.SyncTodoItems(30);
+            var todos = agg7.ListTodoView();
+            Check(todos.Count>=2, $"域7: 同 fail 不同机台应分卡（实得 {todos.Count}）");
+            Check(todos.Any(x=> x.GroupKey==TodoGrouping.KeyOf("5V_Rail")), "域7: KeyOf 归一命中");
+            // 去重：同机台同 fail 重复登记不应新增
+            int before7 = todos.Count;
+            agg7.SyncTodoItems(30);
+            Check(agg7.ListTodoView().Count==before7, "域7: 重复 SyncTodo 不新增（去重）");
+            // FlowAdvisor：构造历史流转 open->in_progress
+            agg7.CreateMaintenance(new MaintenanceRecord{ StationId="FCT1", FailItem="FlowTest", Status="open", Severity="major" });
+            var recs = agg7.ListMaintenance("", 100);
+            var first = recs.FirstOrDefault(r=> r.FailItem=="FlowTest");
+            if(first!=null){ agg7.UpdateMaintenanceStatus(first.Id, "in_progress"); }
+            agg7.CreateMaintenance(new MaintenanceRecord{ StationId="FCT1", FailItem="FlowTest2", Status="open", Severity="major" });
+            recs = agg7.ListMaintenance("", 100);
+            var f2 = recs.FirstOrDefault(r=> r.FailItem=="FlowTest2");
+            if(f2!=null){ agg7.UpdateMaintenanceStatus(f2.Id, "in_progress"); agg7.UpdateMaintenanceStatus(f2.Id, "resolved"); }
+            var adv = FlowAdvisor.Advise("open", agg7);
+            Check(adv.Suggested=="in_progress", $"域7: 流转推荐 open->in_progress（实得 {adv.Suggested}）");
+            var adv2 = FlowAdvisor.Advise("in_progress", agg7);
+            Check(adv2.Suggested.Length>0, $"域7: 流转推荐 in_progress 有建议（{adv2.Suggested}）");
+            // API smoke
+            try{
+                agg7.UpsertUser("d7admin", PasswordHasher.Hash("pwd"), "admin");
+                var tok = agg7.GetUserByName("d7admin")!.Token;
+                int port = GetFreePort();
+                var localDb = new Database(System.IO.Path.Combine(tmp7, "local.db"));
+                var mesh = new MeshNode(new AppConfig{ StationId="D7TEST", AggToken="d7tok", Peers=new List<string>() }, "D7TEST", localDb, agg7, new string[0]);
+                var srv = new WebAggServer(port, mesh, agg7, tmp7, tmp7, "d7tok");
+                srv.Start(); System.Threading.Thread.Sleep(400);
+                var baseUrl = $"http://127.0.0.1:{port}";
+                var r1 = HttpGetWithToken(baseUrl+"/api/todos/suggest", tok);
+                Check(r1.StatusCode==System.Net.HttpStatusCode.OK && r1.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("suggests"), "域7: GET /api/todos/suggest → 200");
+                var r2 = HttpGetWithToken(baseUrl+"/api/maintenance/advise?status=open", tok);
+                Check(r2.StatusCode==System.Net.HttpStatusCode.OK && r2.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("advise"), "域7: GET /api/maintenance/advise → 200");
+                srv.Stop(); mesh.Stop();
+            } catch(Exception ex){ Check(false, $"域7 API smoke 异常: {ex.Message}"); }
+            try{ System.IO.Directory.Delete(tmp7, true);} catch{}
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        }
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳
