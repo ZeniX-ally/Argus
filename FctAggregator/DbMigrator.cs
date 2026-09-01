@@ -11,7 +11,7 @@ namespace FctAggregator;
 public static class DbMigrator
 {
     /// <summary>当前期望的 schema 版本（= 迁移数组最后一项的版本号）；库已达该值即视为最新。</summary>
-    public const int LatestVersion = 7;
+    public const int LatestVersion = 8;
 
     /// <summary>
     /// 有序迁移列表：Version 严格升序、与库的 user_version 一一对应；
@@ -248,6 +248,20 @@ public static class DbMigrator
                 @"CREATE INDEX IF NOT EXISTS idx_alert_ts ON alert_history(ts);",
                 @"CREATE INDEX IF NOT EXISTS idx_alert_machine ON alert_history(machine);",
                 @"CREATE INDEX IF NOT EXISTS idx_alert_rule ON alert_history(rule);",
+            }
+        ),
+        // v8 domain4
+        (
+            8,
+            "v8 domain4",
+            new string[]
+            {
+                @"CREATE TABLE IF NOT EXISTS fct_change_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, machine TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL DEFAULT '');",
+                @"CREATE INDEX IF NOT EXISTS idx_fct_change_machine ON fct_change_log(machine);",
+                @"CREATE INDEX IF NOT EXISTS idx_fct_change_ts ON fct_change_log(ts);",
+                @"CREATE TABLE IF NOT EXISTS device_predict_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, machine TEXT NOT NULL, metric TEXT NOT NULL, level TEXT NOT NULL DEFAULT 'warn', predicted REAL, days_to_exhaust INTEGER, detail TEXT);",
+                @"CREATE INDEX IF NOT EXISTS idx_predict_machine ON device_predict_log(machine);",
+                @"CREATE INDEX IF NOT EXISTS idx_predict_ts ON device_predict_log(ts);",
             }
         ),
     };

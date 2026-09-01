@@ -212,7 +212,7 @@ public sealed class MeshReceiver
         {
             var row = ParseDeviceFct(json);
             if (string.IsNullOrEmpty(row.Machine)) { Logger.Warning("[Mesh接收] fctini 缺少 machine，忽略"); return; }
-            try { _db.UpsertDeviceFct(row); }
+            try { FctIniWatcher.CheckAndLog(_db, row); }
             catch (Exception ex) { Logger.Error($"[Mesh接收] device_fct 落库失败 machine={row.Machine}: {ex.Message}"); }
         }
         catch (JsonException ex) { Logger.Warning($"[Mesh接收] fctini JSON 解析失败，忽略: {ex.Message}"); }

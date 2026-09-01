@@ -134,6 +134,10 @@ public class WebAggServer : IDisposable
         _pipeline.Add("GET", "/api/config/recommend", ctx => { CountHit(); ServeConfigRecommend(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/config/rollback", ctx => { CountHit(); ServeConfigRollback(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/config/backups", ctx => { CountHit(); ServeConfigBackups(ctx); return Task.CompletedTask; });
+        // 域4 设备智能化（v3.19.0）：预测/巡检/变更
+        _pipeline.Add("GET", "/api/devices/predict", ctx => { CountHit(); ServeDevicesPredict(ctx); return Task.CompletedTask; });
+        _pipeline.Add("GET", "/api/devices/inspect", ctx => { CountHit(); ServeDevicesInspect(ctx); return Task.CompletedTask; });
+        _pipeline.Add("GET", "/api/fct/changes", ctx => { CountHit(); ServeFctChanges(ctx); return Task.CompletedTask; });
 
         _pipeline.Add("GET", "/api/machines", ctx => { CountHit(); ServeMachines(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fails", ctx => { CountHit(); ServeFails(ctx); return Task.CompletedTask; });
@@ -959,6 +963,39 @@ public class WebAggServer : IDisposable
             var ok = AppConfig.Rollback(target);
             if (ok) try { SettingsChanged?.Invoke(); } catch {}
             Respond(ctx, ok?200:404, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(ok? "{\"ok\":true}":"{\"ok\":false,\"msg\":\"not found\"}"));
+        } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
+    }
+    // ===== 域4 设备智能化 — 预测/巡检/变更 API（v3.19.0） =====
+    private void ServeDevicesPredict(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try
+        {
+            var preds = DevicePredictor.Predict(_db, 7);
+            // 可选落库（避免每次重复写，限制频率可忽略）
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, predicts = preds }, JsonOpts));
+        } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeDevicesInspect(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try
+        {
+            var sug = DeviceInspector.Inspect(_db);
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, suggests = sug }, JsonOpts));
+        } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeFctChanges(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try
+        {
+            var q = ctx.Request.QueryString;
+            var machine = (q["machine"] ?? "").Trim();
+            int limit = 100; if(int.TryParse(q["limit"], out var l) && l>0) limit=Math.Min(l,500);
+            var list = _db.QueryFctChanges(string.IsNullOrEmpty(machine)?null:machine, limit);
+            var dto = list.Select(x=> new { id=x.id, ts=x.ts, machine=x.machine, detail=x.detail, hash=x.hash });
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, changes = dto }, JsonOpts));
         } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
     }
 

@@ -202,6 +202,59 @@ class SelfTest
             try { Directory.Delete(tmp3, true); } catch {}
         }
 
+        // ---------- 域4 设备智能化：预测/变更/巡检（v3.19.0） ----------
+        {
+            var tmp4 = Path.Combine(Path.GetTempPath(), "fct_dev4_" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(tmp4);
+            var agg4 = new AggDatabase(Path.Combine(tmp4, "agg.db")); agg4.Open();
+            // 预置 device_info + samples 触发预测
+            agg4.UpsertDeviceInfo(new DeviceInfoRow{ Machine="FCT_PRED", DiskFreeGb=3, CpuUsage=85, LastSeen=DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), UpdatedAt=DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") });
+            for(int i=6;i>=0;i--){
+                var ts=DateTime.Now.AddDays(-i).ToString("yyyy-MM-dd HH:mm:ss");
+                // cpu 递增 5%/天，disk 递减 2GB/天，制造明显趋势
+                agg4.InsertDeviceSample(new DeviceSampleRow{ Machine="FCT_PRED", Ts=ts, CpuUsage=55 + (6-i)*5, MemUsedMb=4000, DiskFreeGb=20 - (6-i)*2 });
+            }
+            var preds = DevicePredictor.Predict(agg4, 7);
+            Check(preds.Count >= 1, $"域4: 预测应检出异常（实得 {preds.Count}）");
+            Check(preds.Any(x=>x.Metric=="disk"), "域4: 磁盘耗尽预测应命中");
+            // FCT 变更
+            var fct1 = new DeviceFctRow{ Machine="FCT_PRED", Found=true, IniPath="C:/FCT.ini", Models=new List<string>{"M1"}, FwVersions=new List<(string,string)>{("FW1","1.0")}, Devices=new List<FctDeviceInfo>{ new FctDeviceInfo{Name="Dev1", Port="COM1", Type="com", Online=true}}};
+            var changed1 = FctIniWatcher.CheckAndLog(agg4, fct1);
+            Check(changed1, "域4: 首次 FCT 上报应记变更");
+            var changed2 = FctIniWatcher.CheckAndLog(agg4, fct1);
+            Check(!changed2, "域4: 相同 FCT 重复上报不应重复记");
+            var fct2 = new DeviceFctRow{ Machine="FCT_PRED", Found=true, IniPath="C:/FCT.ini", Models=new List<string>{"M1","M2"}, FwVersions=new List<(string,string)>{("FW1","2.0")}, Devices=new List<FctDeviceInfo>{ new FctDeviceInfo{Name="Dev1", Port="COM1", Type="com", Online=false}}};
+            var changed3 = FctIniWatcher.CheckAndLog(agg4, fct2);
+            Check(changed3, "域4: 型号/FW 变更应记");
+            var logs = agg4.QueryFctChanges("FCT_PRED", 10);
+            Check(logs.Count >= 2, $"域4: fct_change_log 应有 ≥2 条（实得 {logs.Count}）");
+            // 巡检
+            agg4.UpsertDeviceInfo(new DeviceInfoRow{ Machine="FCT_LOW", DiskFreeGb=4, CpuUsage=10, LastSeen=DateTime.Now.AddMinutes(-10).ToString("yyyy-MM-dd HH:mm:ss") });
+            var sug = DeviceInspector.Inspect(agg4);
+            Check(sug.Any(s=>s.Machine=="FCT_LOW" && s.Kind=="disk"), "域4: 巡检应检出磁盘低");
+            Check(sug.Any(s=>s.Machine=="FCT_PRED" && s.Kind=="com"), "域4: 巡检应检出 COM 离线");
+            // API smoke: /api/devices/predict 与 /api/fct/changes
+            try{
+                agg4.UpsertUser("d4admin", PasswordHasher.Hash("pwd"), "admin");
+                var tok = agg4.GetUserByName("d4admin")!.Token;
+                int port = GetFreePort();
+                var localDb = new Database(Path.Combine(tmp4, "local.db"));
+                var mesh = new MeshNode(new AppConfig{ StationId="D4TEST", AggToken="d4tok", Peers=new List<string>() }, "D4TEST", localDb, agg4, new string[0]);
+                var srv = new WebAggServer(port, mesh, agg4, tmp4, tmp4, "d4tok");
+                srv.Start(); System.Threading.Thread.Sleep(400);
+                var baseUrl = $"http://127.0.0.1:{port}";
+                var r1 = HttpGetWithToken(baseUrl+"/api/devices/predict", tok);
+                Check(r1.StatusCode==System.Net.HttpStatusCode.OK, "域4: GET /api/devices/predict → 200");
+                var r2 = HttpGetWithToken(baseUrl+"/api/fct/changes?machine=FCT_PRED", tok);
+                Check(r2.StatusCode==System.Net.HttpStatusCode.OK && r2.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("FCT_PRED"), "域4: GET /api/fct/changes → 命中");
+                var r3 = HttpGetWithToken(baseUrl+"/api/devices/inspect", tok);
+                Check(r3.StatusCode==System.Net.HttpStatusCode.OK, "域4: GET /api/devices/inspect → 200");
+                srv.Stop(); mesh.Stop();
+            } catch(Exception ex){ Check(false, $"域4 API smoke 异常: {ex.Message}"); }
+            try { Directory.Delete(tmp4, true); } catch {}
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        }
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳

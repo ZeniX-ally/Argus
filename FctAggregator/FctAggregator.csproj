@@ -31,9 +31,9 @@
     <!-- v3.14.0：P6 设备监控 + P2-A 无头服务化 + P7 数据拉取雏形（Agent C，2026-08-28） -->
     <!-- v3.16.0：Lite-Fetch 数据拉取完整 + 报告中心 + 程序日志（2026-08-28，零第三方、手写OOXML、真实xlsx/zip、热力、归档对比、时间轴diff） -->
     <!-- v3.18.0：Lite-Ops 告警规则热更新（PATCH /api/alerts/rules，admin+审计+越界校验，免重启）+ 待办自定义区间 UI -->
-    <Version>3.18.5</Version>
-    <AssemblyVersion>3.18.5.0</AssemblyVersion>
-    <FileVersion>3.18.5.0</FileVersion>
+    <Version>3.19.0</Version>
+    <AssemblyVersion>3.19.0.0</AssemblyVersion>
+    <FileVersion>3.19.0.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

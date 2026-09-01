@@ -110,6 +110,11 @@
     <!-- v3.19.0 域3 配置智能化 -->
     <Compile Include="..\ConfigValidator.cs" />
     <Compile Include="..\ConfigAdvisor.cs" />
+    <!-- v3.19.0 域4 设备智能化 -->
+    <Compile Include="..\DevicePredictor.cs" />
+    <Compile Include="..\DeviceInspector.cs" />
+    <Compile Include="..\FctIniWatcher.cs" />
+    <Compile Include="..\AggDatabase.DeviceIntelligent.cs" />
     <!-- FetcherService 已在 3.14 列表，CsvUtil/ProcLog 为新增显式 -->
     <!-- v3.4.0：一键部署（agg install 子命令）的 config 生成逻辑可测（系统操作不实跑，只编译） -->
     <Compile Include="..\Program.cs" />
