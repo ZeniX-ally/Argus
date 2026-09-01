@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -129,6 +129,11 @@ public class WebAggServer : IDisposable
 
         _pipeline.Add("GET", "/api/settings", ctx => { CountHit(); ServeSettings(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/settings", ctx => { CountHit(); ServeSettingsSave(ctx); return Task.CompletedTask; });
+        // 域3 配置智能化（v3.19.0）：校验/推荐/回滚
+        _pipeline.Add("GET", "/api/config/validate", ctx => { CountHit(); ServeConfigValidate(ctx); return Task.CompletedTask; });
+        _pipeline.Add("GET", "/api/config/recommend", ctx => { CountHit(); ServeConfigRecommend(ctx); return Task.CompletedTask; });
+        _pipeline.Add("POST", "/api/config/rollback", ctx => { CountHit(); ServeConfigRollback(ctx); return Task.CompletedTask; });
+        _pipeline.Add("GET", "/api/config/backups", ctx => { CountHit(); ServeConfigBackups(ctx); return Task.CompletedTask; });
 
         _pipeline.Add("GET", "/api/machines", ctx => { CountHit(); ServeMachines(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fails", ctx => { CountHit(); ServeFails(ctx); return Task.CompletedTask; });
@@ -908,6 +913,53 @@ public class WebAggServer : IDisposable
             Logger.Warning($"[Web 服务] 设置 JSON 非法: {ex.Message}");
             ctx.Response.StatusCode = 400;
         }
+    }
+
+    // ===== 域3 配置智能化 — 校验/推荐/回滚 API（v3.19.0） =====
+    private void ServeConfigValidate(HttpListenerContext ctx)
+    {
+        try
+        {
+            var cfg = AppConfig.Instance;
+            var errs = ConfigValidator.Validate(cfg);
+            var resp = new { ok = errs.Count==0, errors = errs };
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(resp, JsonOpts));
+        } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeConfigRecommend(HttpListenerContext ctx)
+    {
+        try
+        {
+            var cfg = AppConfig.Instance;
+            var recs = ConfigAdvisor.Recommend(cfg, _db);
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, recommends = recs }, JsonOpts));
+        } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeConfigBackups(HttpListenerContext ctx)
+    {
+        try
+        {
+            var list = AppConfig.ListBackups(20).Select(f=> new { file = Path.GetFileName(f), path = f, time = File.GetLastWriteTime(f).ToString("yyyy-MM-dd HH:mm:ss") });
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, backups = list }, JsonOpts));
+        } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeConfigRollback(HttpListenerContext ctx)
+    {
+        string body; try { body = ReadBody(ctx.Request); } catch (BodyTooLargeException) { ctx.Response.StatusCode=413; ctx.Response.KeepAlive=false; return; }
+        try
+        {
+            string? target = null;
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                try { using var doc = JsonDocument.Parse(body); if (doc.RootElement.TryGetProperty("file", out var v) && v.ValueKind==JsonValueKind.String) target = v.GetString(); } catch {}
+                if (string.IsNullOrEmpty(target)) target = body.Trim().Trim('\"');
+                if (!string.IsNullOrEmpty(target) && !Path.IsPathRooted(target))
+                    target = Path.Combine(AppConfig.BaseDir, "data", "config_backups", Path.GetFileName(target));
+            }
+            var ok = AppConfig.Rollback(target);
+            if (ok) try { SettingsChanged?.Invoke(); } catch {}
+            Respond(ctx, ok?200:404, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(ok? "{\"ok\":true}":"{\"ok\":false,\"msg\":\"not found\"}"));
+        } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
     }
 
     /// <summary>机台状态列表：v3.5.0 去中心化下取 MeshReceiver peer 视图（含自身）；旧中心模式取 watcher 缓存。</summary>

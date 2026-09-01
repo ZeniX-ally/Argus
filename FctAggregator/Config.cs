@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text.Json;
 
 namespace FctAggregator;
@@ -237,6 +237,19 @@ public class AppConfig
     public bool Save()
     {
         var path = Path.Combine(BaseDir, "config.json");
+        // 域3 配置智能化 — 保存前快照（v3.19.0）：保留最近 20 份
+        try
+        {
+            if (File.Exists(path))
+            {
+                var bakDir = Path.Combine(BaseDir, "data", "config_backups");
+                Directory.CreateDirectory(bakDir);
+                var bak = Path.Combine(bakDir, $"config_backup_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N[..6]}.json");
+                File.Copy(path, bak);
+                var olds = Directory.GetFiles(bakDir, "config_backup_*.json").OrderByDescending(f=>f).ToList();
+                foreach (var f2 in olds.Skip(20)) try{ File.Delete(f2);}catch{}
+            }
+        } catch {}
         try
         {
             // 读现有 JSON 保留未知字段；读不到/损坏则从空开始
@@ -318,5 +331,38 @@ public class AppConfig
             Logger.Error($"保存 config.json 失败: {ex.Message}");
             return false;
         }
+
+    }
+    // ===== 域3 配置智能化 — 校验/推荐/回滚（v3.19.0） =====
+    public List<string> Validate() => ConfigValidator.Validate(this);
+
+    public static List<string> ValidateCurrent() => ConfigValidator.Validate(Load());
+
+    /// <summary>列出最近快照（按时间倒序）。</summary>
+    public static List<string> ListBackups(int take = 20)
+    {
+        try
+        {
+            var dir = Path.Combine(BaseDir, "data", "config_backups");
+            if (!Directory.Exists(dir)) return new List<string>();
+            return Directory.GetFiles(dir, "config_backup_*.json").OrderByDescending(f=>f).Take(take).ToList();
+        } catch { return new List<string>(); }
+    }
+
+    /// <summary>一键回滚到指定快照（或最近一份）。返回是否成功。</summary>
+    public static bool Rollback(string? backupPath = null)
+    {
+        try
+        {
+            var dir = Path.Combine(BaseDir, "data", "config_backups");
+            if (string.IsNullOrEmpty(backupPath))
+                backupPath = Directory.GetFiles(dir, "config_backup_*.json").OrderByDescending(f=>f).FirstOrDefault();
+            if (string.IsNullOrEmpty(backupPath) || !File.Exists(backupPath)) return false;
+            var dest = Path.Combine(BaseDir, "config.json");
+            File.Copy(backupPath, dest, overwrite:true);
+            _instance = null;
+            Logger.Info($"[配置] 已回滚到 {Path.GetFileName(backupPath)}");
+            return true;
+        } catch (Exception ex) { Logger.Error($"[配置] 回滚失败: {ex.Message}"); return false; }
     }
 }

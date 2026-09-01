@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     自检工程：不属于主程序，独立运行。
@@ -107,6 +107,9 @@
     <Compile Include="..\CsvUtil.cs" />
     <!-- v3.17.0：Lite-Infra 并发+自适应+告警规则中心（yield/disk/cpu/offline、alert_history） -->
     <Compile Include="..\AggDatabase.Alert.cs" />
+    <!-- v3.19.0 域3 配置智能化 -->
+    <Compile Include="..\ConfigValidator.cs" />
+    <Compile Include="..\ConfigAdvisor.cs" />
     <!-- FetcherService 已在 3.14 列表，CsvUtil/ProcLog 为新增显式 -->
     <!-- v3.4.0：一键部署（agg install 子命令）的 config 生成逻辑可测（系统操作不实跑，只编译） -->
     <Compile Include="..\Program.cs" />

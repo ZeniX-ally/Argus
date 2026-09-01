@@ -180,6 +180,28 @@ class SelfTest
             try { Directory.Delete(tmp2, true); } catch { }
         }
 
+        // ---------- 域3 配置智能化：校验/推荐/快照回滚（v3.19.0） ----------
+        {
+            var badCfg = new AppConfig{ MeshPort=0, AggHttpPort=99999, ResultsRoot="", Peers = new List<string>{"not-a-url"}, DeviceAlertCpuPct=200, TodoScanDays=0 };
+            var errs = ConfigValidator.Validate(badCfg);
+            Check(errs.Count >= 3, $"域3: 校验应检出多项错误（实得 {errs.Count}）");
+            Check(errs.Any(e=>e.Contains("peer")), "域3: 校验应检出 peer 非法");
+            var goodCfg = new AppConfig{ MeshPort=8081, AggHttpPort=8080, ResultsRoot="D:\\Results", Peers = new List<string>{"http://192.168.1.10:8081"}, DeviceAlertCpuPct=90, DeviceAlertDiskFreeGb=10, YieldAlertYieldPct=90, TodoScanDays=30, DbMaintenanceHour=3 };
+            var errs2 = ConfigValidator.Validate(goodCfg);
+            Check(errs2.Count==0, $"域3: 合法配置校验应 0 错误（实得 {errs2.Count}）");
+            // 推荐（空库不应抛）
+            var tmp3 = Path.Combine(Path.GetTempPath(), "fct_cfg3_" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(tmp3);
+            var aggTmp = new AggDatabase(Path.Combine(tmp3, "agg.db")); aggTmp.Open();
+            var recs = ConfigAdvisor.Recommend(goodCfg, aggTmp);
+            Check(recs != null, "域3: 推荐应返回列表（空库）");
+            // 注入一些 yld_daily 模拟低良率以触发推荐
+            for(int dd=0; dd<10; dd++){ var date=DateTime.Today.AddDays(-dd).ToString("yyyyMMdd"); aggTmp.UpsertDailyStats("FCT1", date, new AggDatabase.DailyStats(100, 85, 15, 0, 5)); }
+            var recs2 = ConfigAdvisor.Recommend(goodCfg, aggTmp);
+            Check(recs2 != null, $"域3: 有数据时推荐应返回（实得 {(recs2==null?-1:recs2.Count)} 条）");
+            try { Directory.Delete(tmp3, true); } catch {}
+        }
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳
