@@ -79,57 +79,46 @@ FAIL 记录报告查看、调试工具页；**v3.5.0 起多机台经 P2P Mesh �
 ```
 FctAggregator/
 ├── Program.cs                # 入口：子命令分发 → 单实例 Mutex → 读配置 → 启动 Engine → Application.Run
-├── Config.cs                 # AppConfig：读 config.json（单例 + BaseDir 解析，含 agg_*/mesh_port/peers 全字段）
-├── Engine.cs                 # 后台引擎：型号发现 / 实时监控 / 历史扫描 / FAIL 推送 + Mesh 节点组装
-├── Processor.cs              # 单文件处理：路径解析 + 分类 + 组装 TestRecord
+├── Core/                     # 采集引擎与数据模型：Engine / Processor / Classifier / XmlParser /
+│                             #   StationDetector / TestRecord / AppState / FctIni / FctIniWatcher
+│                             #   （遗留 AgentPusher / AggWatcher 也在此，已标 Obsolete）
+├── Db/                       # SQLite 数据层：Database（本地库）/ AggDatabase.*.cs（聚合库 partial：
+│                             #   Accuracy/Alert/AlertPredict/Device/DeviceIntelligent/Maintenance/ProcLog/Settings）
+│                             #   / DbMigrator（schema 版本化迁移）/ DbMaintenance（每日维护）
+├── Mesh/                     # v3.5.0 P2P 去中心化：MeshNode / MeshPusher / MeshReceiver /
+│                             #   MeshGossiper / MeshQueryService / TodoSync（全局待办池）
+├── Agg/                      # 聚合服务端：WebAggServer / RoutePipeline / HttpIngest / AggDeployer /
+│                             #   AggAlertService / HeadlessService / ServiceManager / FetcherService /
+│                             #   DeviceModels / DeviceInfoCollector / XmlReportHtml（/api/xmlview 渲染）
+├── Intelligence/             # 智能化域（v3.19/3.20）：ConfigValidator / ConfigAdvisor / DevicePredictor /
+│                             #   DeviceInspector / PriorityScorer / FlowAdvisor / TodoSuggester /
+│                             #   LayoutAdvisor / HighlightEngine / AlertHealer / AlertPredictor /
+│                             #   PredictAccuracyReconciler（预测准确率对账）
+├── Ui/                       # WinForms 界面层：MainForm / SplashForm / Theme / UiWidgets / AppIcon /
+│                             #   AggCenterForm / 各 Panel 与看板（DeviceStatusPanel / Maintenance* /
+│                             #   FailListPanel / DebugPanel）/ BoardCard / CardPreview / TodoCard /
+│                             #   TodoGrouping / FailItemPicker / ResolverManager / MaintenanceExporter /
+│                             #   DesktopNotifier / UpdatePromptForm
+├── Infra/                    # 横切基础设施：Config / Logger / TimeUtil / CsvUtil / Xlsx（手写 OOXML）/
+│                             #   FeishuNotifier / UpdateChecker
 ├── Parsing/                  # v3.5.0 插件式解析器：IResultParser / ParserConfig / ParserRegistry / Default / Configurable
-├── XmlParser.cs              # BATCH XML 解析（深度 / 轻量 / 报告三种模式）
-├── Classifier.cs             # 前缀分类 + debug 判定
-├── StationDetector.cs        # 机台号 IP 映射 / 型号校验 / AutoStart（.lnk 自启）
-├── Database.cs               # 本地 SQLite：建表、批量入库去重、统计、维修记录、待办登记表、全局待办池(v3.5.0)
-├── TestRecord.cs             # TestRecord / FailedTest 数据模型
-├── AppState.cs               # 全局共享状态（统计 / 扫描进度），线程安全
-├── Logger.cs                 # 文件日志 logs/app.log + GUI 内存队列（上限 5000 行）
-├── FeishuNotifier.cs         # 飞书群机器人卡片推送（FAIL / 状态变更 / 聚合链路告警）
-├── FctIni.cs                 # FCT.ini 解析 + COM 口在线检测（共享读取模式）
-├── MainForm.cs               # 主窗口外壳：侧边导航 / 顶栏胶囊 / KPI 总览 / 状态栏（含「聚合设置」对话框）
-├── Theme.cs                  # 视觉规范单一来源：颜色 / 字体 / 圆角 / DrawCard·DrawChip·MakeButton·Apply
-├── Xlsx.cs                   # FctShared.Xlsx：共享的 OOXML 写出器（四处导出共用外壳，样式各自保留）
-├── UiWidgets.cs              # 自绘控件：NavButton(带角标) / KpiCard / ChipBar / SectionPanel
-├── DeviceStatusPanel.cs      # 设备状态页
-├── MaintenancePanel.cs       # 维修记录/待办页（看板/列表切换）+ 新增/编辑表单 MaintenanceForm
-├── MaintenanceBoard.cs       # 维修记录看板：5 列 / 自绘卡片 / 拖拽改状态 / QuickResolveForm
-├── MaintenanceStatus.cs      # MaintenanceMeta：状态与严重度的中文/颜色**单一来源**
-├── FailItemPicker.cs         # 从 FAIL 记录挑故障项（去重 / 不显示 SN / 可深扫 XML）
-├── ResolverManager.cs        # ResolverUtil(多人拆合) + 名单管理 + **多选框** ResolverPickerForm
-├── MaintenanceExporter.cs    # 维修记录导出 xlsx / csv（零依赖 OOXML，12 列）
-├── BoardCard.cs              # BoardCardBase：看板卡片交互基类（hover/起拖/单击预览/双击/右键）
-├── CardPreview.cs            # 单击卡片弹出的详情预览 popup（含合并 fail 项清单+各自次数）
-├── TodoCard.cs               # 未确认不良卡（看板「待办」列）+ 确认框 + 时间区间选择
-├── TodoGrouping.cs           # 待办「大项合并」归一化 + 优先级阈值（单一来源）
-├── TodoSync.cs               # v3.5.0 全局待办池：本地状态变更广播 TodoEvent + 远程合并(版本号)
-├── DesktopNotifier.cs        # Windows 原生桌面提示（托盘 NotifyIcon + BalloonTip，节流合并）
-├── DebugPanel.cs             # 调试工具页
-├── FailListPanel.cs          # FAIL 记录页 + XmlViewerForm 报告查看器
-├── UpdateChecker.cs          # 两阶段自更新：扫描 data/updates/*-update.zip → 暂存备份 → 重启提交
-├── UpdatePromptForm.cs       # 更新提示框（立即更新 / 稍后提醒）
-├── SplashForm.cs             # 启动画面（嵌入资源 argus_splash.png）
-├── XmlReportHtml.cs          # v3.8.0 在线 XML 报告 HTML 渲染（Web 看板 /api/xmlview 用）
-├── FctAggregator.csproj      # net8.0-windows / WinForms / SelfContained=false / Version 3.8.0
+├── FctAggregator.csproj      # net8.0-windows / WinForms / SelfContained=false
 ├── config.json               # 运行配置
 ├── public/                   # v3.8.0 Web 看板静态前端（SPA 模块化，随构建复制到输出目录）
 ├── app_icon.ico              # 多分辨率图标(16~256)，同时作为 EmbeddedResource
-├── AppIcon.cs                # 图标唯一取用口：嵌入资源优先 → 文件 → 系统图标
 ├── assets/icon/              # 图标源 PNG（tools/make_icon.py 可重建 ico）
 ├── modules/                  # v2.9.0 合入、v3.0.0 拆分后的三个工具（各自保留 namespace）
 │   ├── FailRanker/           #   原 fct-fail-ranker（FctFailRanker）
 │   ├── Fetcher/              #   原 fct-fetcher-cs，含 CLI（FctFetcher）
-│   └── TdmsViewer/           #   原 fct-tdms-viewer，含 CLI，依赖 TDMSReader（FctTdmsViewer）
-├── selftest/                 # 自检工程（不属主程序，<Compile Include> 直接编主源码，669 项断言）
+│   └── TdmsViewer/           #   原 fct-tdm-viewer，含 CLI，依赖 TDMSReader（FctTdmsViewer）
+├── selftest/                 # 自检工程（不属主程序，按目录通配编主源码，1000+ 项断言）
 ├── data/                     # SQLite 数据库（{station_id}.db + mesh_agg.db + agg_xml/）
 ├── logs/                     # app.log
 └── dist/                     # 发布产物（含 启动.bat）
 ```
+
+> 2026-09-01 起根目录源码按域分组到 Core/Db/Mesh/Agg/Intelligence/Ui/Infra 七个子目录，
+> 命名空间不变（全部 `namespace FctAggregator`），移动不影响解析与行为。
 
 ### 2.1 依赖包
 

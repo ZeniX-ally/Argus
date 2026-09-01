@@ -80,7 +80,7 @@ public static class XlsxDump
             Step("3 维修记录", () =>
             {
                 var d = new Database(db);
-                SeedMaintenance(d, db);
+                SeedMaintenance(d);
                 var recs = d.ListMaintenance("", 500);
                 var p = Path.Combine(outDir, "3-维修记录.xlsx");
                 MaintenanceExporter.ExportXlsx(p, recs);
@@ -94,5 +94,28 @@ public static class XlsxDump
 
         Console.WriteLine($"[XlsxDump] 完成：成功 {ok}，失败 {fail}");
         return fail == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 给目视核对用的维修记录种子数据（v3.18.5 仓库同步时原定义遗失，2026-09-01 补回）。
+    /// 仅当表为空时插入，避免污染实库；覆盖三种严重度与三种状态，让导出的
+    /// 颜色/状态列有东西可看。
+    /// </summary>
+    static void SeedMaintenance(Database d)
+    {
+        if (d.ListMaintenance("", 1).Count > 0) return;   // 已有数据（如实库）不种
+        var rows = new[]
+        {
+            new MaintenanceRecord { StationId = "FCT1", EquipmentModel = "E3002624", EquipmentSn = "SN0001",
+                FailItem = "Voltage Test", FailReason = "读数超上限", Severity = "critical", Status = "open",
+                Notes = "目视核对种子数据", CreatedAt = "2026-07-01 08:00:00" },
+            new MaintenanceRecord { StationId = "FCT2", EquipmentModel = "E3002757", EquipmentSn = "SN0002",
+                FailItem = "Current Test", FailReason = "接触不良", Severity = "major", Status = "in_progress",
+                Resolver = "张三", Notes = "目视核对种子数据", CreatedAt = "2026-07-02 09:30:00" },
+            new MaintenanceRecord { StationId = "FCT3", EquipmentModel = "E3002781", EquipmentSn = "SN0003",
+                FailItem = "USB Detect", FailReason = "识别不到设备", Severity = "minor", Status = "resolved",
+                Resolver = "李四", Resolution = "更换 USB 线", Notes = "目视核对种子数据", CreatedAt = "2026-07-03 14:20:00" },
+        };
+        foreach (var m in rows) d.CreateMaintenance(m);
     }
 }

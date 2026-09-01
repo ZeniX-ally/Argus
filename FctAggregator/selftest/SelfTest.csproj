@@ -23,115 +23,21 @@
 
   <ItemGroup>
     <Compile Include="SelfTest.cs" />
-    <Compile Include="..\AgentPusher.cs" />
-    <Compile Include="..\SplashForm.cs" />
-    <Compile Include="..\Database.cs" />
-    <Compile Include="..\MaintenanceStatus.cs" />
-    <Compile Include="..\MaintenanceExporter.cs" />
-    <Compile Include="..\Logger.cs" />
-    <Compile Include="..\TestRecord.cs" />
-    <Compile Include="..\Config.cs" />
-    <Compile Include="..\MaintenanceBoard.cs" />
-    <Compile Include="..\FailItemPicker.cs" />
-    <Compile Include="..\ResolverManager.cs" />
-    <Compile Include="..\MaintenancePanel.cs" />
-    <Compile Include="..\BoardCard.cs" />
-    <Compile Include="..\TodoCard.cs" />
-    <Compile Include="..\TodoGrouping.cs" />
-    <Compile Include="..\TimeUtil.cs" />
-    <Compile Include="..\CardPreview.cs" />
-    <Compile Include="..\DesktopNotifier.cs" />
-    <Compile Include="..\Engine.cs" />
-    <Compile Include="..\Processor.cs" />
-    <Compile Include="..\XmlParser.cs" />
-    <Compile Include="..\XmlReportHtml.cs" />
-    <Compile Include="..\Classifier.cs" />
-    <Compile Include="..\AppState.cs" />
-    <Compile Include="..\FeishuNotifier.cs" />
-    <Compile Include="..\StationDetector.cs" />
-    <Compile Include="..\FctIni.cs" />
-    <!-- v2.8.0 GUI 重构：主窗口布局要能被自检验证（停靠顺序写错很容易错而不报错） -->
-    <Compile Include="..\Theme.cs" />
-    <Compile Include="..\Xlsx.cs" />
-    <Compile Include="..\AppIcon.cs" />
-    <!-- 与主程序一致：图标作为嵌入资源，否则 AppIcon 会退到系统灰图（断言就白做了） -->
-    <EmbeddedResource Include="..\app_icon.ico" />
-    <Compile Include="..\UiWidgets.cs" />
-    <Compile Include="..\MainForm.cs" />
-    <Compile Include="..\DeviceStatusPanel.cs" />
-    <Compile Include="..\DebugPanel.cs" />
-    <Compile Include="..\FailListPanel.cs" />
+    <!-- 2026-09-01 源码分组后改目录通配：与主工程默认 glob 同集，新增文件不再漏加（历史注释的坑） -->
+    <Compile Include="..\Core\**\*.cs" />
+    <Compile Include="..\Db\**\*.cs" />
+    <Compile Include="..\Mesh\**\*.cs" />
+    <Compile Include="..\Agg\**\*.cs" />
+    <Compile Include="..\Intelligence\**\*.cs" />
+    <Compile Include="..\Ui\**\*.cs" />
+    <Compile Include="..\Infra\**\*.cs" />
+    <Compile Include="..\Program.cs" />
+    <Compile Include="..\Parsing\**\*.cs" />
     <!-- v2.9.0：四个合入的工具（各自 namespace，同名类不打架）。
          它们的 Program 都有 Main，所以本工程也要显式指定 StartupObject -->
     <Compile Include="..\modules\**\*.cs" />
-    <!-- Phase 2 聚合端：看板/库/监听器（测试用例由协作方在 SelfTest.cs 里加） -->
-    <Compile Include="..\AggCenterForm.cs" />
-    <Compile Include="..\AggDatabase.cs" />
-    <Compile Include="..\AggWatcher.cs" />
-    <Compile Include="..\HttpIngest.cs" />
-    <Compile Include="..\WebAggServer.cs" />
-    <!-- v3.4.2：聚合端飞书告警/汇总服务 -->
-    <Compile Include="..\AggAlertService.cs" />
-    <!-- v3.4.4：聚合服务一键部署（内嵌，不依赖 bat） -->
-    <Compile Include="..\AggDeployer.cs" />
-    <!-- v3.6.0 更新器：本地更新包检测 / RELEASE.txt / 自包含更新（可测解析、扫描、去重、特点提取） -->
-    <Compile Include="..\UpdateChecker.cs" />
-    <Compile Include="..\UpdatePromptForm.cs" />
-    <!-- v3.5.0 去中心化：P2P 节点 + 全局待办池 + 解析框架 -->
-    <Compile Include="..\MeshNode.cs" />
-    <Compile Include="..\MeshPusher.cs" />
-    <Compile Include="..\MeshReceiver.cs" />
-    <Compile Include="..\MeshGossiper.cs" />
-    <Compile Include="..\MeshQueryService.cs" />
-    <Compile Include="..\DbMaintenance.cs" />
-    <Compile Include="..\TodoSync.cs" />
-    <Compile Include="..\Parsing\**\*.cs" />
-    <!-- v3.8.0：无头服务组装层（argus agg web 模式用）。显式列表漏加会导致 selftest 编译失败 -->
-    <Compile Include="..\HeadlessService.cs" />
-    <!-- v3.8.0：聚合库 schema 版本化迁移（AggDatabase.Open 引用，漏加同样编译失败） -->
-    <Compile Include="..\DbMigrator.cs" />
-    <!-- v3.8.0：WebAggServer 路由管线（WebAggServer 引用） -->
-    <Compile Include="..\RoutePipeline.cs" />
-    <!-- v3.13.0：聚合库维修/待办扩展（P5，Agent B） -->
-    <Compile Include="..\AggDatabase.Maintenance.cs" />
-    <!-- v3.14.0：P6 设备监控 + P2-A 服务化 + P7 雏形（Agent C） -->
-    <Compile Include="..\DeviceModels.cs" />
-    <Compile Include="..\DeviceInfoCollector.cs" />
-    <Compile Include="..\AggDatabase.Device.cs" />
-    <Compile Include="..\ServiceManager.cs" />
-    <Compile Include="..\FetcherService.cs" />
-    <!-- v3.15.0：Lite-Settings 布局/收藏双写（Agent Lite） -->
-    <Compile Include="..\AggDatabase.Settings.cs" />
-    <!-- v3.16.0：Lite-Fetch 数据拉取完整 + 报告中心 + 程序日志（proc_change_log + report_archive + CsvUtil + Fetch 真实导出） -->
-    <Compile Include="..\AggDatabase.ProcLog.cs" />
-    <Compile Include="..\CsvUtil.cs" />
-    <!-- v3.17.0：Lite-Infra 并发+自适应+告警规则中心（yield/disk/cpu/offline、alert_history） -->
-    <Compile Include="..\AggDatabase.Alert.cs" />
-    <!-- v3.19.0 域3 配置智能化 -->
-    <Compile Include="..\ConfigValidator.cs" />
-    <Compile Include="..\ConfigAdvisor.cs" />
-    <!-- v3.19.0 域4 设备智能化 -->
-    <Compile Include="..\DevicePredictor.cs" />
-    <Compile Include="..\DeviceInspector.cs" />
-    <Compile Include="..\FctIniWatcher.cs" />
-    <Compile Include="..\AggDatabase.DeviceIntelligent.cs" />
-    <!-- v3.19.0 域7 维修/待办智能 -->
-    <Compile Include="..\PriorityScorer.cs" />
-    <Compile Include="..\FlowAdvisor.cs" />
-    <Compile Include="..\TodoSuggester.cs" />
-    <!-- v3.19.0 域8 UI 智能 -->
-    <Compile Include="..\LayoutAdvisor.cs" />
-    <Compile Include="..\HighlightEngine.cs" />
-    <!-- v3.19.0 域9 告警智能 -->
-    <Compile Include="..\AlertHealer.cs" />
-    <Compile Include="..\AlertPredictor.cs" />
-    <Compile Include="..\AggDatabase.AlertPredict.cs" />
-    <!-- v3.20.0 规格 02：预测准确率自反馈（对账表 + 对账器） -->
-    <Compile Include="..\AggDatabase.Accuracy.cs" />
-    <Compile Include="..\PredictAccuracyReconciler.cs" />
-    <!-- FetcherService 已在 3.14 列表，CsvUtil/ProcLog 为新增显式 -->
-    <!-- v3.4.0：一键部署（agg install 子命令）的 config 生成逻辑可测（系统操作不实跑，只编译） -->
-    <Compile Include="..\Program.cs" />
+    <!-- 与主程序一致：图标作为嵌入资源，否则 AppIcon 会退到系统灰图（断言就白做了） -->
+    <EmbeddedResource Include="..\app_icon.ico" />
   </ItemGroup>
 
   <ItemGroup>

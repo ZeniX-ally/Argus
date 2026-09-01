@@ -33,8 +33,9 @@
 
   <ItemGroup>
     <Compile Include="XlsxDump.cs" />
-    <Compile Include="..\..\*.cs" />
-    <Compile Include="..\..\modules\**\*.cs" />
+    <!-- 2026-09-01 主源码分组到子目录：递归通配全量引入，排除构建产物与工程目录（obj 防父工程 AssemblyInfo CS0579）。
+         旧版本 tag 检出时连带旧 csproj，原 ..\..\*.cs 通配照常工作，新旧对比诉求不受影响 -->
+    <Compile Include="..\..\**\*.cs" Exclude="..\..\bin\**;..\..\obj\**;..\..\selftest\**;..\..\tools\**" />
     <EmbeddedResource Include="..\..\app_icon.ico" />
   </ItemGroup>
 

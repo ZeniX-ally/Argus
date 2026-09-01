@@ -25,8 +25,8 @@
 
   <ItemGroup>
     <Compile Include="IniDiag.cs" />
-    <Compile Include="..\..\*.cs" />
-    <Compile Include="..\..\modules\**\*.cs" />
+    <!-- 2026-09-01 主源码分组到子目录：递归通配全量引入，排除构建产物与工程目录（obj 防父工程 AssemblyInfo CS0579） -->
+    <Compile Include="..\..\**\*.cs" Exclude="..\..\bin\**;..\..\obj\**;..\..\selftest\**;..\..\tools\**" />
     <EmbeddedResource Include="..\..\app_icon.ico" />
   </ItemGroup>
 

@@ -38,24 +38,28 @@ Argus.exe agg --web          # 手动常驻看板宿主（前台），浏览器�
 ## 目录结构
 
 ```
-fct-aggregator-cs/
-├── FctAggregator.csproj      唯一工程（WinExe，StartupObject = FctAggregator.Program，Version 3.8.0）
-├── *.cs                      主程序：采集引擎 / 待办看板 / GUI 外壳(Theme+UiWidgets) /
-│                             P2P Mesh(MeshNode/Pusher/Receiver/Gossiper) / Web 看板(WebAggServer)
+FctAggregator/
+├── FctAggregator.csproj      唯一工程（WinExe，StartupObject = FctAggregator.Program）
+├── Program.cs                入口（子命令分发：GUI / agg / agg --web / --service）
+├── Core/                     采集引擎与数据模型（Engine/Processor/Classifier/XmlParser/StationDetector/...
+│                             遗留 AgentPusher/AggWatcher 也在此，已标 Obsolete）
+├── Db/                       两个 SQLite 库 + 迁移维护（Database / AggDatabase.*.cs / DbMigrator / DbMaintenance）
+├── Mesh/                     P2P 去中心化（MeshNode/Pusher/Receiver/Gossiper/QueryService/TodoSync）
+├── Agg/                      聚合服务端（WebAggServer/RoutePipeline/HttpIngest/AggAlertService/FetcherService/...）
+├── Intelligence/             智能化域（v3.19/3.20：预测/巡检/优先级/布局/高亮/自愈/对账器/...）
+├── Ui/                       WinForms 全家（MainForm/AggCenterForm/各 Panel/Theme/UiWidgets/...）
+├── Infra/                    横切基础设施（Config/Logger/TimeUtil/CsvUtil/Xlsx/FeishuNotifier/UpdateChecker）
 ├── Parsing/                  插件式 XML 解析器（IResultParser / ParserRegistry）
 ├── public/                   Web 看板静态前端（SPA 模块化，构建时复制到输出目录）
-├── Xlsx.cs                   FctShared.Xlsx：共享 xlsx 写出器（四处导出共用，样式各自保留）
-├── AppIcon.cs                图标唯一取用口（嵌入资源优先，带缓存）
 ├── assets/icon/              图标源 PNG；python tools/make_icon.py 重建 app_icon.ico
 ├── modules/                  合入的三个工具，各自保留 namespace
 │   ├── FailRanker/           FctFailRanker
 │   ├── Fetcher/              FctFetcher
 │   └── TdmsViewer/           FctTdmsViewer
-├── selftest/                 主自检（含 GUI 几何断言、待办闭环、工具构造、Mesh/Web 服务；669 项断言）
+├── selftest/                 主自检（含 GUI 几何断言、待办闭环、工具构造、Mesh/Web 服务）
 ├── tools/                    打包与冒烟脚本（含 xlsx 长相新旧对比 xlsx_check/xlsx_cmp/xlsxdump）
 ├── 更新日志.md               面向技术（改了什么、为什么、踩了什么坑）
 ├── 版本更新说明.md           面向使用（怎么点、看什么）
-├── 覆盖说明.md               升级/覆盖步骤（随更新包发出）
 └── TECHNICAL_DOCUMENTATION.md 架构、数据库、设计约定（含 P2P Mesh §3.1）
 ```
 
