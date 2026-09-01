@@ -158,6 +158,9 @@ public class WebAggServer : IDisposable
         // v3.8.0 P1 D1：良率日统计（yld_daily，心跳携带），总纲 L1 的 /api/stats
         _pipeline.Add("GET", "/api/stats", ctx => { CountHit(); ServeStats(ctx); return Task.CompletedTask; });
 
+        // v3.20.0 规格 02：预测准确率对账（rule/machine/days 可选过滤）
+        _pipeline.Add("GET", "/api/predict/accuracy", ctx => { CountHit(); ServePredictAccuracy(ctx); return Task.CompletedTask; });
+
         // ===== v3.8.0 P1 D3：权限（users 三角色）+ 审计 + 状态 =====
         // /api/login 在 Handle 层豁免 agg_token 校验（未登录也能到达），其余路由照常
         // （async handler 直接返回其 Task，避免 CS4014 未等待警告）
@@ -1142,6 +1145,109 @@ public class WebAggServer : IDisposable
         {
             Logger.Warning($"[Web 服务] 查询日统计失败: {ex.Message}");
             RespondText(ctx, 500, "查询日统计失败");
+        }
+    }
+
+    /// <summary>
+    /// 预测准确率对账（v3.20.0 规格 02）：GET /api/predict/accuracy?days=30&rule=yield&machine=FCT3
+    /// 返回 ReconcileSummary JSON（summary/per_machine/threshold_tuning）。
+    /// viewer 角色可读；阈值推荐只读不写，应用由 /api/config/recommend/apply（v3.20.1）承担。
+    /// </summary>
+    private void ServePredictAccuracy(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try
+        {
+            var q = ctx.Request.QueryString;
+            var days = 30;
+            if (int.TryParse(q["days"], out var d) && d > 0) days = Math.Min(d, 180);
+            var force = string.Equals(q["force"], "1", StringComparison.Ordinal);
+
+            // 实时触发一次对账（自检 + 现场"立即看"用；dashboard 拉取走缓存节奏时省去）
+            // 用 force=1 显式触发；否则仅在 hour 与 cron_hour 匹配时跑（节流）
+            var cfg = AppConfig.Instance;
+            if (force || DateTime.Now.Hour == cfg.PredictReconcileCronHour)
+            {
+                try { PredictAccuracyReconciler.RunOnce(_db, cfg); } catch { /* RunOnce 内部已 try */ }
+            }
+
+            // 拉对账数据汇总（窗口 = days；与 PredictAccuracyReconciler.BuildSummary 用的是 PredictReconcileHorizonDays*2 = 28d，等价于 days 默认 30）
+            var summary = new PredictAccuracyReconciler.ReconcileSummary
+            {
+                WindowDays = days,
+                Summary = new System.Collections.Generic.Dictionary<string, PredictAccuracyReconciler.RuleStat>(),
+                PerMachine = new System.Collections.Generic.List<PredictAccuracyReconciler.MachineHitRate>(),
+                ThresholdTuning = new System.Collections.Generic.List<PredictAccuracyReconciler.ThresholdTune>(),
+                GeneratedAt = DateTime.Now,
+            };
+            foreach (var rule in new[] { "yield", "cpu", "disk", "offline" })
+            {
+                var (total, hit, lead) = _db.CountPredictAccuracyByRule(rule, days);
+                summary.Summary[rule] = new PredictAccuracyReconciler.RuleStat
+                {
+                    Total = total,
+                    Hit = hit,
+                    Accuracy = total > 0 ? Math.Round((double)hit / total, 4) : 0.0,
+                    AvgLeadDays = Math.Round(lead, 2),
+                };
+            }
+            var recent = _db.QueryPredictAccuracy(days: days, limit: 5000);
+            foreach (var g in recent.GroupBy(r => (r.Machine, r.Rule)))
+            {
+                var ordered = g.OrderByDescending(r => r.ReconciledAt).ToList();
+                var hits = ordered.Count(r => r.Hit);
+                var total = ordered.Count;
+                var streak = 0;
+                foreach (var r in ordered) { if (!r.Hit) streak++; else break; }
+                summary.PerMachine.Add(new PredictAccuracyReconciler.MachineHitRate
+                {
+                    Machine = g.Key.Machine,
+                    Rule = g.Key.Rule,
+                    HitRate = total > 0 ? Math.Round((double)hits / total, 4) : 0.0,
+                    MissStreak = streak,
+                });
+            }
+            // 阈值推荐（仅 tune 开启）
+            if (cfg.PredictTuneEnabled)
+            {
+                RecommendThresholdTuning(summary, cfg);
+            }
+
+            Respond(ctx, 200, "application/json; charset=utf-8",
+                JsonSerializer.SerializeToUtf8Bytes(summary, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 预测准确率查询失败: {ex.Message}");
+            RespondText(ctx, 500, "predict accuracy query failed");
+        }
+    }
+
+    /// <summary>yield 阈值推荐（rule=yield 专用；cpu/disk/offline 阈值暂不动）。</summary>
+    private static void RecommendThresholdTuning(PredictAccuracyReconciler.ReconcileSummary summary, AppConfig cfg)
+    {
+        if (!summary.Summary.TryGetValue("yield", out var stat)) return;
+        var current = cfg.YieldAlertYieldPct;
+        if (stat.Total < cfg.PredictTuneMinSamples) return;
+        if (stat.Accuracy < 0.30 && current < 99.0)
+        {
+            summary.ThresholdTuning.Add(new PredictAccuracyReconciler.ThresholdTune
+            {
+                Rule = "yield",
+                Current = Math.Round(current, 2),
+                Recommended = Math.Round(Math.Min(99.0, current + 5.0), 2),
+                Reason = $"命中率 {stat.Accuracy:P0} < 30%（{stat.Total} 样本），放宽阈值减少误报",
+            });
+        }
+        else if (stat.Accuracy > 0.85 && stat.Total >= cfg.PredictTuneMinSamples && current > 50.0)
+        {
+            summary.ThresholdTuning.Add(new PredictAccuracyReconciler.ThresholdTune
+            {
+                Rule = "yield",
+                Current = Math.Round(current, 2),
+                Recommended = Math.Round(Math.Max(50.0, current - 5.0), 2),
+                Reason = $"命中率 {stat.Accuracy:P0} > 85%（{stat.Total} 样本），收紧阈值减少漏报",
+            });
         }
     }
 

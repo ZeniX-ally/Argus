@@ -31,9 +31,11 @@
     <!-- v3.14.0：P6 设备监控 + P2-A 无头服务化 + P7 数据拉取雏形（Agent C，2026-08-28） -->
     <!-- v3.16.0：Lite-Fetch 数据拉取完整 + 报告中心 + 程序日志（2026-08-28，零第三方、手写OOXML、真实xlsx/zip、热力、归档对比、时间轴diff） -->
     <!-- v3.18.0：Lite-Ops 告警规则热更新（PATCH /api/alerts/rules，admin+审计+越界校验，免重启）+ 待办自定义区间 UI -->
-    <Version>3.19.0</Version>
-    <AssemblyVersion>3.19.0.0</AssemblyVersion>
-    <FileVersion>3.19.0.0</FileVersion>
+    <!-- v3.19.0：智能化九域（域1/2/3/4/7/8/9：时间识别/DB巡检/配置校验推荐/设备预测/维修智能/布局高亮/告警自愈预测） -->
+    <!-- v3.20.0：算法优化规格02 预测准确率自反馈 —— DbMigrator v10 predict_accuracy_log + PredictAccuracyReconciler 对账 + /api/predict/accuracy -->
+    <Version>3.20.0</Version>
+    <AssemblyVersion>3.20.0.0</AssemblyVersion>
+    <FileVersion>3.20.0.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

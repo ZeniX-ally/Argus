@@ -97,5 +97,25 @@ public sealed class DbMaintenance
         {
             Logger.Warning($"[库维护] 设备采样清理失败: {ex.Message}");
         }
+        // v3.20.0 规格 02：预测准确率对账（每日凌晨顺带）
+        try
+        {
+            PredictAccuracyReconciler.RunOnce(_db, AppConfig.Instance);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] 预测对账失败: {ex.Message}");
+        }
+        // v3.20.0 规格 02：滚动清理 predict_accuracy_log
+        try
+        {
+            var retain = AppConfig.Instance.PredictAccuracyRetainDays;
+            var purged = _db.PurgeOldPredictAccuracy(retain);
+            if (purged > 0) Logger.Info($"[库维护] 预测对账清理: 删除 {purged} 条（保留 {retain} 天）");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] 预测对账清理失败: {ex.Message}");
+        }
     }
 }

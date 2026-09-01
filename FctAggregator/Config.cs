@@ -99,6 +99,19 @@ public class AppConfig
     public double YieldAlertYieldPct { get; set; } = 90;
     /// <summary>良率告警是否启用（默认 true，阈值 0 时仍关闭）。config.json: yield_alert_enabled。</summary>
     public bool YieldAlertEnabled { get; set; } = true;
+    // ===== 预测准确率自反馈（v3.20.0 规格 02）=====
+    /// <summary>预测对账总开关（默认 true）。关后既不对账也不推荐阈值。config.json: predict_reconcile_enabled。</summary>
+    public bool PredictReconcileEnabled { get; set; } = true;
+    /// <summary>对账时间窗：14 天前的预测必查（天）。config.json: predict_reconcile_horizon_days。</summary>
+    public int PredictReconcileHorizonDays { get; set; } = 14;
+    /// <summary>每日对账触发时刻（小时 0-23，默认 4 凌晨）。config.json: predict_reconcile_cron_hour。</summary>
+    public int PredictReconcileCronHour { get; set; } = 4;
+    /// <summary>阈值自动推荐开关（默认 true）。仅写推荐，不自动应用。config.json: predict_tune_enabled。</summary>
+    public bool PredictTuneEnabled { get; set; } = true;
+    /// <summary>推荐阈值最低样本量：< N 不推荐（避免冷启动抖）。config.json: predict_tune_min_samples。</summary>
+    public int PredictTuneMinSamples { get; set; } = 30;
+    /// <summary>预测准确率对账保留天数（默认 180）。config.json: predict_accuracy_retain_days。</summary>
+    public int PredictAccuracyRetainDays { get; set; } = 180;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();

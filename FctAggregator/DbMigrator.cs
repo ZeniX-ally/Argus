@@ -11,7 +11,7 @@ namespace FctAggregator;
 public static class DbMigrator
 {
     /// <summary>当前期望的 schema 版本（= 迁移数组最后一项的版本号）；库已达该值即视为最新。</summary>
-    public const int LatestVersion = 9;
+    public const int LatestVersion = 10;
 
     /// <summary>
     /// 有序迁移列表：Version 严格升序、与库的 user_version 一一对应；
@@ -273,6 +273,36 @@ public static class DbMigrator
                 @"CREATE TABLE IF NOT EXISTS alert_predict_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, machine TEXT NOT NULL, rule TEXT NOT NULL, level TEXT NOT NULL DEFAULT 'warn', current REAL, predicted REAL, detail TEXT);",
                 @"CREATE INDEX IF NOT EXISTS idx_alert_pred_machine ON alert_predict_log(machine);",
                 @"CREATE INDEX IF NOT EXISTS idx_alert_pred_ts ON alert_predict_log(ts);",
+            }
+        ),
+        // v10 预测准确率对账表（规格 02）：把 alert_predict_log / device_predict_log 的预测
+        // 与后来实际值对账，落 (predict_table, predict_id) UNIQUE 一行。
+        // predict_table = 'alert' | 'device'；rule 在 alert_predict_log 中是 yield，
+        // 在 device_predict_log 中是 metric（cpu/disk/offline）—— 对账层做归一。
+        // 滚动保留 180 天（DbMaintenance.RunNow 顺带清理）；hit / lead_days / actual_value 供 /api/predict/accuracy 与阈值自调。
+        (
+            10,
+            "predict_accuracy_log 预测准确率对账表（规格 02）",
+            new string[]
+            {
+                @"CREATE TABLE IF NOT EXISTS predict_accuracy_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule TEXT NOT NULL,
+                    machine TEXT NOT NULL,
+                    predict_id INTEGER NOT NULL,
+                    predict_table TEXT NOT NULL,
+                    predicted_value REAL,
+                    actual_value REAL,
+                    threshold REAL,
+                    hit INTEGER NOT NULL,
+                    lead_days REAL,
+                    predicted_at TEXT NOT NULL,
+                    reconciled_at TEXT NOT NULL,
+                    note TEXT
+                );",
+                @"CREATE UNIQUE INDEX IF NOT EXISTS idx_acc_unique ON predict_accuracy_log(predict_table, predict_id);",
+                @"CREATE INDEX IF NOT EXISTS idx_acc_rule_time ON predict_accuracy_log(rule, reconciled_at);",
+                @"CREATE INDEX IF NOT EXISTS idx_acc_machine_rule ON predict_accuracy_log(machine, rule);",
             }
         ),
     };

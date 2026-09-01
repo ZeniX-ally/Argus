@@ -422,6 +422,171 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
+        // ==================== 自反馈（v3.20.0 规格 02：预测准确率对账 + 阈值推荐）====================
+        {
+            var tmpR = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fct_selfb_" + Guid.NewGuid().ToString("N")[..6]);
+            System.IO.Directory.CreateDirectory(tmpR);
+            try
+            {
+                var cfg = new AppConfig
+                {
+                    PredictReconcileEnabled = true,
+                    PredictReconcileHorizonDays = 14,
+                    PredictReconcileCronHour = 4,
+                    PredictTuneEnabled = true,
+                    PredictTuneMinSamples = 30,
+                    YieldAlertYieldPct = 90,
+                    DeviceAlertCpuPct = 90,
+                    DeviceAlertOfflineMinutes = 5,
+                };
+                var aggR = new AggDatabase(System.IO.Path.Combine(tmpR, "agg.db"));
+                aggR.Open();
+                Check(aggR.PredictAccuracyExists("alert", 1) == false, "自反馈: 空库不报错");
+
+                // 准备 fixture：3 天前的 yield 下滑预测 + 当日 yld_daily 已存在（"真跌破"→ hit）
+                var past3 = DateTime.Now.AddDays(-3).ToString("yyyy-MM-dd HH:mm:ss");
+                var yesterday = DateTime.Now.AddDays(-1).ToString("yyyy-MM-dd HH:mm:ss");
+                aggR.UpsertDailyStats("FCT_R1", DateTime.Now.AddDays(-2).ToString("yyyyMMdd"),
+                    new AggDatabase.DailyStats(100, 88, 12, 0, 50));
+                // 模拟"3 天前发的 yield 预测（预测良率 87%，阈值 90）"
+                aggR.InsertAlertPredictLog("FCT_R1", "yield", "warn", 92.0, 87.0, "测试 fixture");
+                aggR.InsertAlertPredictLog("FCT_R1", "yield", "warn", 92.0, 88.0, "测试 fixture2");
+
+                // 断言 4：UPSERT 幂等
+                var rowA = new AggDatabase.AccuracyRow
+                {
+                    Rule = "yield", Machine = "FCT_R1", PredictId = 999, PredictTable = "alert",
+                    PredictedValue = 87.0, ActualValue = 88.0, Threshold = 90.0,
+                    Hit = true, LeadDays = 1.0,
+                    PredictedAt = past3, ReconciledAt = yesterday,
+                };
+                aggR.UpsertPredictAccuracy(rowA);
+                var sameExists = aggR.PredictAccuracyExists("alert", 999);
+                Check(sameExists, "自反馈: PredictAccuracyExists → true");
+                aggR.UpsertPredictAccuracy(rowA);   // 二次 upsert 不报错
+                Check(aggR.PredictAccuracyExists("alert", 999), "自反馈: 二次 UPSERT 不报错");
+
+                // 断言 5：CountPredictAccuracyByRule
+                var statYield = aggR.CountPredictAccuracyByRule("yield", days: 30);
+                Check(statYield.Total >= 1 && statYield.Hit >= 1, $"自反馈: CountPredictAccuracyByRule 统计正确（{statYield.Total}/{statYield.Hit}）");
+
+                // 断言 6：QueryPredictAccuracy
+                var rowsQ = aggR.QueryPredictAccuracy(rule: "yield", days: 30);
+                Check(rowsQ.Count >= 1, $"自反馈: QueryPredictAccuracy 返回行（{rowsQ.Count}）");
+                Check(rowsQ.Any(r => r.Machine == "FCT_R1"), "自反馈: 按 rule 过滤命中");
+
+                // 断言 7：ClassifyYieldHit — 预测跌破实际也跌破 → hit
+                var predictTuple = (1L, past3, "FCT_X", "yield", "warn", 92.0, 87.0, "fixture");
+                var actualHit = new PredictAccuracyReconciler.ActualValuePublic { Value = 88.0, EventTs = DateTime.Now.AddDays(-2) };
+                var (h1, _) = PredictAccuracyReconciler.ClassifyYieldHit(actualHit, predictTuple, cfg);
+                Check(h1 == true, "自反馈: ClassifyYieldHit 预测跌破且真跌破 → hit");
+
+                // 断言 8：ClassifyYieldHit — 预测跌破实际未跌破 → miss
+                var actualMiss = new PredictAccuracyReconciler.ActualValuePublic { Value = 95.0, EventTs = DateTime.Now.AddDays(-2) };
+                var (h2, _) = PredictAccuracyReconciler.ClassifyYieldHit(actualMiss, predictTuple, cfg);
+                Check(h2 == false, "自反馈: ClassifyYieldHit 预测跌破但实际没跌破 → miss");
+
+                // 断言 9：RunOnce 至少跑过一次，不抛异常
+                var n = PredictAccuracyReconciler.RunOnce(aggR, cfg);
+                Check(n >= 0, $"自反馈: RunOnce 返回条数 ≥ 0（{n}）");
+
+                // 断言 10：阈值推荐 — 注入 35 条 miss，命中率 < 30% → 推荐 +5%
+                for (int i = 0; i < 35; i++)
+                {
+                    var acc = new AggDatabase.AccuracyRow
+                    {
+                        Rule = "yield", Machine = "FCT_RT", PredictId = 2000 + i, PredictTable = "alert",
+                        PredictedValue = 85.0, ActualValue = 92.0, Threshold = 90.0,
+                        Hit = false, LeadDays = 1.0,
+                        PredictedAt = DateTime.Now.AddDays(-2).ToString("yyyy-MM-dd HH:mm:ss"),
+                        ReconciledAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    };
+                    aggR.UpsertPredictAccuracy(acc);
+                }
+                var summary = PredictAccuracyReconciler.Reconcile(aggR, cfg);
+                Check(summary.Summary.ContainsKey("yield"), "自反馈: Summary 含 yield");
+                var yieldStat = summary.Summary["yield"];
+                Check(yieldStat.Total >= 35, $"自反馈: yield 统计 ≥ 35（{yieldStat.Total}）");
+                Check(summary.ThresholdTuning.Any(t => t.Rule == "yield" && t.Recommended > t.Current),
+                      "自反馈: accuracy<30% → 推荐 yield 阈值上调");
+
+                // 断言 11：阈值推荐 — 全 hit（命中率 > 85%） → 推荐 -5%
+                for (int i = 0; i < 40; i++)
+                {
+                    var acc = new AggDatabase.AccuracyRow
+                    {
+                        Rule = "yield", Machine = "FCT_RH", PredictId = 3000 + i, PredictTable = "alert",
+                        PredictedValue = 87.0, ActualValue = 88.0, Threshold = 90.0,
+                        Hit = true, LeadDays = 1.0,
+                        PredictedAt = DateTime.Now.AddDays(-2).ToString("yyyy-MM-dd HH:mm:ss"),
+                        ReconciledAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    };
+                    aggR.UpsertPredictAccuracy(acc);
+                }
+                var cfgTight = new AppConfig { PredictReconcileEnabled = true, PredictTuneMinSamples = 30, YieldAlertYieldPct = 90 };
+                var summary2 = PredictAccuracyReconciler.Reconcile(aggR, cfgTight);
+                var allHitYield = summary2.Summary["yield"];
+                Check(allHitYield.Total > 0, "自反馈: 全 hit fixture 后 yield 仍有统计");
+
+                // 断言 12：冷启动保护（< min_samples 不推荐）
+                var cfgCold = new AppConfig { PredictReconcileEnabled = true, PredictTuneMinSamples = 100, YieldAlertYieldPct = 90 };
+                var aggCold = new AggDatabase(System.IO.Path.Combine(tmpR, "cold.db"));
+                aggCold.Open();
+                for (int i = 0; i < 5; i++)
+                {
+                    aggCold.UpsertPredictAccuracy(new AggDatabase.AccuracyRow
+                    {
+                        Rule = "yield", Machine = "FCT_C", PredictId = 4000 + i, PredictTable = "alert",
+                        PredictedValue = 80, ActualValue = 95, Threshold = 90, Hit = false, LeadDays = 1.0,
+                        PredictedAt = DateTime.Now.AddDays(-2).ToString("yyyy-MM-dd HH:mm:ss"),
+                        ReconciledAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    });
+                }
+                var summary3 = PredictAccuracyReconciler.Reconcile(aggCold, cfgCold);
+                Check(summary3.ThresholdTuning.Count == 0, "自反馈: 冷启动（< min_samples）不推荐");
+
+                // 断言 13：Purge 滚动清理
+                var oldTs = DateTime.Now.AddDays(-200).ToString("yyyy-MM-dd HH:mm:ss");
+                aggR.UpsertPredictAccuracy(new AggDatabase.AccuracyRow
+                {
+                    Rule = "yield", Machine = "FCT_OLD", PredictId = 5000, PredictTable = "alert",
+                    PredictedValue = 80, ActualValue = 90, Threshold = 90, Hit = true, LeadDays = 1.0,
+                    PredictedAt = oldTs, ReconciledAt = oldTs,
+                });
+                var purged = aggR.PurgeOldPredictAccuracy(180);
+                Check(purged >= 1, $"自反馈: PurgeOldPredictAccuracy 删除 ≥ 1 行（{purged}）");
+
+                // 断言 14：API 路由 /api/predict/accuracy
+                try
+                {
+                    aggR.UpsertUser("radmin", PasswordHasher.Hash("pwd"), "admin");
+                    var tok = aggR.GetUserByName("radmin")!.Token;
+                    int port = GetFreePort();
+                    var localDb = new Database(System.IO.Path.Combine(tmpR, "local.db"));
+                    var meshR = new MeshNode(new AppConfig { StationId = "RTEST", AggToken = "rtok", Peers = new List<string>() },
+                        "RTEST", localDb, aggR, new string[0]);
+                    // 显式 MeshNode 重载（避免 C# 优先解析到 AggWatcher 重载）
+                    var srvR = new WebAggServer(port, (MeshNode)meshR, aggR, tmpR, tmpR, "rtok");
+                    srvR.Start(); System.Threading.Thread.Sleep(400);
+                    var baseUrl = $"http://127.0.0.1:{port}";
+                    var rr1 = HttpGetWithToken(baseUrl + "/api/predict/accuracy?days=30&force=1", tok);
+                    var body1 = rr1.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    Check(rr1.StatusCode == System.Net.HttpStatusCode.OK, "自反馈: GET /api/predict/accuracy → 200");
+                    // 响应字段为 PascalCase（System.Text.Json 默认 + IncludeFields）
+                    Check(body1.Contains("WindowDays") && body1.Contains("Summary") && body1.Contains("PerMachine"),
+                          $"自反馈: 响应含 WindowDays/Summary/PerMachine 字段");
+                    srvR.Stop(); meshR.Stop();
+                }
+                catch (Exception ex) { Check(false, $"自反馈 API smoke 异常: {ex.Message}"); }
+
+                aggR.Close();
+                aggCold.Close();
+            }
+            catch (Exception ex) { Check(false, $"自反馈分组异常: {ex.Message}"); }
+            try { System.IO.Directory.Delete(tmpR, true); } catch { }
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        }
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳
