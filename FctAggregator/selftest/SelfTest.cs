@@ -315,6 +315,68 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
+        // ---------- 域8 UI 智能：布局/高亮/搜索（v3.19.0） ----------
+        {
+            // LayoutAdvisor
+            var orderViewer = LayoutAdvisor.SuggestOrder(new Dictionary<string,int>{{"fails",10},{"overview",2}}, "viewer");
+            Check(orderViewer[0]=="fails", $"域8: 布局建议按频次 fails 置顶（实得 {orderViewer[0]}）");
+            var orderEng = LayoutAdvisor.SuggestOrder(new Dictionary<string,int>{{"maintenance",5}}, "engineer");
+            Check(orderEng[0]=="maintenance", $"域8: engineer 维护频次置顶（实得 {orderEng[0]}）");
+            // HighlightEngine
+            var tmp8 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fct_dom8_" + Guid.NewGuid().ToString("N")[..6]);
+            System.IO.Directory.CreateDirectory(tmp8);
+            var agg8 = new AggDatabase(System.IO.Path.Combine(tmp8, "agg.db")); agg8.Open();
+            agg8.UpsertDeviceInfo(new DeviceInfoRow{ Machine="FCT_HL", DiskFreeGb=2, CpuUsage=95, LastSeen=DateTime.Now.AddMinutes(-10).ToString("yyyy-MM-dd HH:mm:ss") });
+            var cfg = new AppConfig{ DeviceAlertDiskFreeGb=10, DeviceAlertCpuPct=90, DeviceAlertOfflineMinutes=5 };
+            var hl = HighlightEngine.GetHighlights(agg8, cfg);
+            Check(hl.Any(x=> x.Machine=="FCT_HL"), $"域8: 高亮应命中磁盘/CPU/离线异常（实得 {hl.Count}）");
+            // 前端文件存在性
+            var baseDir = AppContext.BaseDirectory;
+            // 从程序目录往上找 public
+            string FindPublic(string start){
+                var dir = new System.IO.DirectoryInfo(start);
+                for(int i=0;i<6 && dir!=null; i++, dir=dir.Parent){
+                    var cand = System.IO.Path.Combine(dir.FullName, "public", "js", "loader.js");
+                    if(System.IO.File.Exists(cand)) return cand;
+                    var cand2 = System.IO.Path.Combine(dir.FullName, "FctAggregator", "public", "js", "loader.js");
+                    if(System.IO.File.Exists(cand2)) return cand2;
+                }
+                return "";
+            }
+            var loaderPath = FindPublic(baseDir);
+            if(loaderPath!=""){
+                var txt = System.IO.File.ReadAllText(loaderPath);
+                Check(txt.Contains("LayoutAdvisor"), "域8: loader.js 含 LayoutAdvisor");
+                Check(txt.Contains("record"), "域8: loader.js 含频次记录");
+            } else {
+                Check(false, "域8: 未找到 loader.js");
+            }
+            var cssPath = loaderPath.Replace("loader.js", "../css/theme.css");
+            if(System.IO.File.Exists(cssPath)){
+                var css = System.IO.File.ReadAllText(cssPath);
+                Check(css.Contains("highlight-critical"), "域8: theme.css 含高亮样式");
+                Check(css.Contains("pulse-highlight"), "域8: theme.css 含脉冲动画");
+            }
+            // API smoke
+            try{
+                agg8.UpsertUser("d8admin", PasswordHasher.Hash("pwd"), "admin");
+                var tok = agg8.GetUserByName("d8admin")!.Token;
+                int port = GetFreePort();
+                var localDb = new Database(System.IO.Path.Combine(tmp8, "local.db"));
+                var mesh = new MeshNode(new AppConfig{ StationId="D8TEST", AggToken="d8tok", Peers=new List<string>() }, "D8TEST", localDb, agg8, new string[0]);
+                var srv = new WebAggServer(port, mesh, agg8, tmp8, tmp8, "d8tok");
+                srv.Start(); System.Threading.Thread.Sleep(400);
+                var baseUrl = $"http://127.0.0.1:{port}";
+                var r1 = HttpGetWithToken(baseUrl+"/api/highlights", tok);
+                Check(r1.StatusCode==System.Net.HttpStatusCode.OK, "域8: GET /api/highlights → 200");
+                var r2 = HttpGetWithToken(baseUrl+"/api/layout/suggest?role=engineer", tok);
+                Check(r2.StatusCode==System.Net.HttpStatusCode.OK && r2.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("order"), "域8: GET /api/layout/suggest → 200");
+                srv.Stop(); mesh.Stop();
+            } catch(Exception ex){ Check(false, $"域8 API smoke 异常: {ex.Message}"); }
+            try{ System.IO.Directory.Delete(tmp8, true);} catch{}
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        }
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳

@@ -1,38 +1,30 @@
-/* ============================================================
-   Argus FCT 聚合系统 · 模块化前端基建
-   public/js/core.js
+﻿/* ============================================================
+   Argus FCT 鑱氬悎绯荤粺 路 妯″潡鍖栧墠绔熀寤?   public/js/core.js
    ----------------
-   职责：fetch 封装（SameSite cookie + 可选 URL 拼 token）、
-   通用渲染（卡片 / 表格 / 徽章 / toast / canvas 柱图）、
-   时间格式化、共享数据状态与轮询刷新、Lite-Settings 权限/布局/收藏/全局搜索。
-   模块格式：本文件不注册 page-* 模块，仅在 App 命名空间下
-   暴露公共 API；由 loader 作为所有页面模块的统一依赖注入。
-   ----------------
-   接口保持与 demo 一致（URL 不变）：
+   鑱岃矗锛歠etch 灏佽锛圫ameSite cookie + 鍙€?URL 鎷?token锛夈€?   閫氱敤娓叉煋锛堝崱鐗?/ 琛ㄦ牸 / 寰界珷 / toast / canvas 鏌卞浘锛夈€?   鏃堕棿鏍煎紡鍖栥€佸叡浜暟鎹姸鎬佷笌杞鍒锋柊銆丩ite-Settings 鏉冮檺/甯冨眬/鏀惰棌/鍏ㄥ眬鎼滅储銆?   妯″潡鏍煎紡锛氭湰鏂囦欢涓嶆敞鍐?page-* 妯″潡锛屼粎鍦?App 鍛藉悕绌洪棿涓?   鏆撮湶鍏叡 API锛涚敱 loader 浣滀负鎵€鏈夐〉闈㈡ā鍧楃殑缁熶竴渚濊禆娉ㄥ叆銆?   ----------------
+   鎺ュ彛淇濇寔涓?demo 涓€鑷达紙URL 涓嶅彉锛夛細
    /api/machines  /api/fails?limit&machine  /api/fails/count
    /api/health    /api/export.csv           /api/xmlview?id=  /api/file?id=
    /api/status    /api/users/me  /api/users/me/layout  /api/search
-   鉴权：后端 agg_token 有配置时 GET 校验 ?token= / Cookie / 头任一，
-   不匹配一律 403 → 页面提示"重新带 token 打开"。
-   ============================================================ */
+   閴存潈锛氬悗绔?agg_token 鏈夐厤缃椂 GET 鏍￠獙 ?token= / Cookie / 澶翠换涓€锛?   涓嶅尮閰嶄竴寰?403 鈫?椤甸潰鎻愮ず"閲嶆柊甯?token 鎵撳紑"銆?   ============================================================ */
 (function (window, document) {
   "use strict";
 
   var App = window.App = window.App || {};
-  // 基础命名空间（v3.18.0 静态加载：模块文件先于 loader 执行，须在此初始化）
+  // 鍩虹鍛藉悕绌洪棿锛坴3.18.0 闈欐€佸姞杞斤細妯″潡鏂囦欢鍏堜簬 loader 鎵ц锛岄』鍦ㄦ鍒濆鍖栵級
   App.Modules = App.Modules || {};
   App.Routes = App.Routes || {};
 
-  /* ---------------- 工具函数 ---------------- */
+  /* ---------------- 宸ュ叿鍑芥暟 ---------------- */
 
-  /* HTML 转义（防 XSS / 表格注入） */
+  /* HTML 杞箟锛堥槻 XSS / 琛ㄦ牸娉ㄥ叆锛?*/
   App.esc = function (s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   };
 
-  /* 后端序列化字段为 PascalCase（Machine/FailCount…），前端统一小写取法，两态兼容 */
+  /* 鍚庣搴忓垪鍖栧瓧娈典负 PascalCase锛圡achine/FailCount鈥︼級锛屽墠绔粺涓€灏忓啓鍙栨硶锛屼袱鎬佸吋瀹?*/
   App.pick = function (o, key) {
     if (!o) return undefined;
     var c = key.charAt(0).toLowerCase() + key.slice(1);
@@ -41,48 +33,46 @@
     return v;
   };
 
-  /* 运行时长格式化：3600s -> 1h05m */
+  /* 杩愯鏃堕暱鏍煎紡鍖栵細3600s -> 1h05m */
   App.fmtUp = function (s) {
     s = Math.floor(s || 0);
     var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
     return h > 0 ? h + "h" + m + "m" : m + "m" + Math.floor(s % 60) + "s";
   };
 
-  /* 时间戳显示：取 "MM-dd HH:mm" 段（与 demo 一致） */
+  /* 鏃堕棿鎴虫樉绀猴細鍙?"MM-dd HH:mm" 娈碉紙涓?demo 涓€鑷达級 */
   App.fmtTime = function (ts) {
     if (!ts) return "--";
     var s = String(ts);
     return s.length >= 16 ? s.slice(5, 16) : s;
   };
 
-  /* ---------------- token 处理 ----------------
-     规则：优先带 ?token= 打开页面（后端 POST 推送用 X-Agg-Token 头，
-     GET 看板/API 校验 token 参数或 Cookie）。这里读取 URL 上的 token，
-     之后所有 API 请求 / 链接都自动拼接，保证鉴权模式可用。 */
+  /* ---------------- token 澶勭悊 ----------------
+     瑙勫垯锛氫紭鍏堝甫 ?token= 鎵撳紑椤甸潰锛堝悗绔?POST 鎺ㄩ€佺敤 X-Agg-Token 澶达紝
+     GET 鐪嬫澘/API 鏍￠獙 token 鍙傛暟鎴?Cookie锛夈€傝繖閲岃鍙?URL 涓婄殑 token锛?     涔嬪悗鎵€鏈?API 璇锋眰 / 閾炬帴閮借嚜鍔ㄦ嫾鎺ワ紝淇濊瘉閴存潈妯″紡鍙敤銆?*/
   App.token = (function () {
     var m = /[?&]token=([^&]+)/.exec(window.location.search);
     return m ? decodeURIComponent(m[1]) : "";
   })();
 
-  /* 给 URL 拼接 token 参数（页面内 <a> 跳转 / iframe 用） */
+  /* 缁?URL 鎷兼帴 token 鍙傛暟锛堥〉闈㈠唴 <a> 璺宠浆 / iframe 鐢級 */
   App.withToken = function (url) {
     if (!App.token) return url;
     return url + (url.indexOf("?") < 0 ? "?" : "&") + "token=" + encodeURIComponent(App.token);
   };
 
-  /* ---------------- fetch 封装 ----------------
-     返回 Promise<json>；失败抛 Error("URL → HTTP 状态")；
-     401/403 额外 toast 提示重新带 token 打开。 */
+  /* ---------------- fetch 灏佽 ----------------
+     杩斿洖 Promise<json>锛涘け璐ユ姏 Error("URL 鈫?HTTP 鐘舵€?)锛?     401/403 棰濆 toast 鎻愮ず閲嶆柊甯?token 鎵撳紑銆?*/
   App.fetchJSON = function (path) {
     var u = path.indexOf("http") === 0 ? path : (window.location.origin + path);
     if (App.token) u = App.withToken(u);
     return fetch(u, { credentials: "same-origin", headers: { "Accept": "application/json" } })
       .then(function (r) {
         if (r.status === 401 || r.status === 403) {
-          App.toast("接口未授权（HTTP " + r.status + "）：请用 ?token=<聚合token> 重新打开本页", "err");
-          throw new Error(u + " → HTTP " + r.status + "（未授权，需带 token 访问）");
+          App.toast("鎺ュ彛鏈巿鏉冿紙HTTP " + r.status + "锛夛細璇风敤 ?token=<鑱氬悎token> 閲嶆柊鎵撳紑鏈〉", "err");
+          throw new Error(u + " 鈫?HTTP " + r.status + "锛堟湭鎺堟潈锛岄渶甯?token 璁块棶锛?);
         }
-        if (!r.ok) throw new Error(u + " → HTTP " + r.status);
+        if (!r.ok) throw new Error(u + " 鈫?HTTP " + r.status);
         return r.json();
       });
   };
@@ -90,7 +80,7 @@
     var u = path.indexOf("http") === 0 ? path : (window.location.origin + path);
     if (App.token) u = App.withToken(u);
     return fetch(u, { credentials: "same-origin" }).then(function (r) {
-      if (!r.ok) throw new Error(u + " → HTTP " + r.status);
+      if (!r.ok) throw new Error(u + " 鈫?HTTP " + r.status);
       return r.text();
     });
   };
@@ -99,7 +89,7 @@
     if (App.token) u = App.withToken(u);
     return fetch(u, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(body || {}) })
       .then(function (r) {
-        if (r.status === 401 || r.status === 403) { App.toast("权限不足（" + r.status + "）", "err"); throw new Error("HTTP " + r.status); }
+        if (r.status === 401 || r.status === 403) { App.toast("鏉冮檺涓嶈冻锛? + r.status + "锛?, "err"); throw new Error("HTTP " + r.status); }
         if (!r.ok) return r.text().then(function (t) { throw new Error(t || ("HTTP " + r.status)); });
         var ct = r.headers.get("content-type") || "";
         if (ct.indexOf("application/json") >= 0) return r.json();
@@ -111,7 +101,7 @@
     if (App.token) u = App.withToken(u);
     return fetch(u, { method: "PATCH", credentials: "same-origin", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(body) })
       .then(function (r) {
-        if (r.status === 401 || r.status === 403) { App.toast("权限不足（" + r.status + "）", "err"); throw new Error("HTTP " + r.status); }
+        if (r.status === 401 || r.status === 403) { App.toast("鏉冮檺涓嶈冻锛? + r.status + "锛?, "err"); throw new Error("HTTP " + r.status); }
         if (!r.ok) return r.text().then(function (t) { throw new Error(t || ("HTTP " + r.status)); });
         var ct = r.headers.get("content-type") || "";
         if (ct.indexOf("application/json") >= 0) return r.json();
@@ -119,7 +109,7 @@
       });
   };
 
-  /* ---------------- toast（轻提示） ---------------- */
+  /* ---------------- toast锛堣交鎻愮ず锛?---------------- */
   (function () {
     var zone = null;
     function ensure() {
@@ -145,7 +135,7 @@
     };
   })();
 
-  /* 全局错误横幅（#errbanner 常驻于 index.html 主区顶部） */
+  /* 鍏ㄥ眬閿欒妯箙锛?errbanner 甯搁┗浜?index.html 涓诲尯椤堕儴锛?*/
   App.showError = function (msg) {
     var b = document.getElementById("errbanner");
     if (b) {
@@ -158,15 +148,15 @@
     if (b) { b.textContent = ""; b.style.display = "none"; }
   };
 
-  /* ---------------- 通用渲染（卡片 / 表格 / 徽章） ---------------- */
+  /* ---------------- 閫氱敤娓叉煋锛堝崱鐗?/ 琛ㄦ牸 / 寰界珷锛?---------------- */
 
-  /* 徽章：FAIL -> 红，PASS 类 -> 绿，其余灰 */
+  /* 寰界珷锛欶AIL -> 绾紝PASS 绫?-> 缁匡紝鍏朵綑鐏?*/
   App.badge = function (text, kind) {
     var cls = kind === "fail" ? " badge fail" : kind === "pass" ? " badge pass" : "";
-    return '<span class="badge' + cls + '">' + App.esc(text || "—") + '</span>';
+    return '<span class="badge' + cls + '">' + App.esc(text || "鈥?) + '</span>';
   };
 
-  /* 表格：ths 数组 / rows 二维数组 / rowCls 可选行类函数 */
+  /* 琛ㄦ牸锛歵hs 鏁扮粍 / rows 浜岀淮鏁扮粍 / rowCls 鍙€夎绫诲嚱鏁?*/
   App.table = function (ths, rows, rowCls) {
     var head = '<thead><tr>';
     for (var i = 0; i < ths.length; i++) head += "<th>" + App.esc(ths[i]) + "</th>";
@@ -182,10 +172,10 @@
     return "<table>" + head + body + "</table>";
   };
 
-  /* 机台小卡（总览 / 设备共用形态；link 可选点击回调，compact 紧凑密度） */
+  /* 鏈哄彴灏忓崱锛堟€昏 / 璁惧鍏辩敤褰㈡€侊紱link 鍙€夌偣鍑诲洖璋冿紝compact 绱у噾瀵嗗害锛?*/
   App.machineCard = function (x, opts) {
     opts = opts || {};
-    var name = App.pick(x, "machine") || "—";
+    var name = App.pick(x, "machine") || "鈥?;
     var fc = App.pick(x, "failCount") || 0;
     var on = !!App.pick(x, "online");
     var cur = opts.sel && opts.sel === name;
@@ -194,13 +184,13 @@
     var html = '<div class="machine' + (cur ? " cur" : "") + '" draggable="' + (opts.draggable ? "true" : "false") + '" data-m="' + App.esc(name) + '">' + ops
       + '<div class="row1"><span class="dot ' + (on ? "ok" : "err") + '"></span>'
       + '<span class="name">' + App.esc(name) + "</span></div>"
-      + '<div class="st">' + (App.pick(x, "isSelf") ? "本机 · " : "") + (on ? "在线" : "离线") + "</div>"
-      + '<div class="fc ' + (fc > 0 ? "hot" : fc === 0 ? "zero" : "") + '">' + fc + '</div><div class="st">累计 FAIL</div>';
+      + '<div class="st">' + (App.pick(x, "isSelf") ? "鏈満 路 " : "") + (on ? "鍦ㄧ嚎" : "绂荤嚎") + "</div>"
+      + '<div class="fc ' + (fc > 0 ? "hot" : fc === 0 ? "zero" : "") + '">' + fc + '</div><div class="st">绱 FAIL</div>';
     for (var i = 0; i < extra.length; i++) html += extra[i];
     return html + "</div>";
   };
 
-  /* ---------------- Lite-Settings: 权限/布局/收藏/全局搜索 ---------------- */
+  /* ---------------- Lite-Settings: 鏉冮檺/甯冨眬/鏀惰棌/鍏ㄥ眬鎼滅储 ---------------- */
   App.auth = { who: "", role: "viewer", token: "", loaded: false };
   App.auth.isViewer = function () { return App.auth.role === "viewer"; };
   App.auth.canWrite = function () { return App.auth.role === "engineer" || App.auth.role === "admin"; };
@@ -211,7 +201,7 @@
       App.auth.role = (st.role || st.Role || "viewer").toLowerCase();
       if (App.auth.role !== "viewer" && App.auth.role !== "engineer" && App.auth.role !== "admin") App.auth.role = "viewer";
       App.auth.loaded = true;
-      // 同步尝试 /api/users/me 细化（layout/favorites 拥有者）
+      // 鍚屾灏濊瘯 /api/users/me 缁嗗寲锛坙ayout/favorites 鎷ユ湁鑰咃級
       return App.fetchJSON("/api/users/me").then(function (me) {
         if (me && me.role) App.auth.role = String(me.role).toLowerCase();
         if (me && me.name) App.auth.who = me.name;
@@ -219,7 +209,7 @@
         return me;
       }).catch(function () { applyRoleClass(); return st; });
     }).catch(function () {
-      // 未鉴权/宽松模式仍视为 admin（保持向后兼容）
+      // 鏈壌鏉?瀹芥澗妯″紡浠嶈涓?admin锛堜繚鎸佸悜鍚庡吋瀹癸級
       App.auth.role = "admin"; App.auth.who = "anonymous"; App.auth.loaded = true;
       applyRoleClass();
     });
@@ -230,13 +220,13 @@
     b.classList.add("role-" + App.auth.role);
     var rb = document.getElementById("roleBadge");
     if (rb) {
-      var zh = App.auth.role === "admin" ? "管理员" : App.auth.role === "engineer" ? "工程师" : "访客";
-      rb.textContent = zh + (App.auth.who ? " · " + App.auth.who : "");
+      var zh = App.auth.role === "admin" ? "绠＄悊鍛? : App.auth.role === "engineer" ? "宸ョ▼甯? : "璁垮";
+      rb.textContent = zh + (App.auth.who ? " 路 " + App.auth.who : "");
       rb.className = "badge role-badge " + App.auth.role;
       rb.style.display = "";
     }
     var hb = document.getElementById("htext");
-    if (hb && App.auth.who) hb.textContent = App.auth.who + "（" + App.auth.role + "）";
+    if (hb && App.auth.who) hb.textContent = App.auth.who + "锛? + App.auth.role + "锛?;
   }
   App.applyRoleVisibility = function (root) {
     root = root || document;
@@ -250,7 +240,7 @@
     for (var j = 0; j < hides.length; j++) hides[j].style.display = App.auth.isViewer() ? "none" : "";
   };
 
-  // 布局持久化（users.layout）：前端 localStorage + 后端同步双写
+  // 甯冨眬鎸佷箙鍖栵紙users.layout锛夛細鍓嶇 localStorage + 鍚庣鍚屾鍙屽啓
   App.layout = {
     key: "agg.layout",
     get: function () {
@@ -258,7 +248,7 @@
     },
     set: function (obj) {
       try { window.localStorage.setItem(App.layout.key, JSON.stringify(obj || {})); } catch (e) {}
-      // 后端同步（静默，失败不阻断）
+      // 鍚庣鍚屾锛堥潤榛橈紝澶辫触涓嶉樆鏂級
       if (App.auth.loaded && App.auth.who && App.auth.who !== "anonymous" && App.auth.who !== "agg_token") {
         try { App.patchJSON("/api/users/me/layout", { layout: JSON.stringify(obj || {}) }).catch(function () {}); } catch (e) {}
       }
@@ -307,8 +297,7 @@
     }
   };
 
-  // 全局搜索（空格分词，聚合 FAIL/维修/设备/良率，跳转 hash 联动下钻）
-  App.search = {
+  // 鍏ㄥ眬鎼滅储锛堢┖鏍煎垎璇嶏紝鑱氬悎 FAIL/缁翠慨/璁惧/鑹巼锛岃烦杞?hash 鑱斿姩涓嬮捇锛?  App.search = {
     query: function (q, limit) {
       if (!q || !q.trim()) return Promise.resolve({ ok: true, q: "", tokens: [], total: 0, results: {}, flat: [] });
       return App.fetchJSON("/api/search?q=" + encodeURIComponent(q) + "&limit=" + (limit || 8));
@@ -324,23 +313,20 @@
       } else {
         window.location.hash = link;
       }
-      // 关闭搜索面板
+      // 鍏抽棴鎼滅储闈㈡澘
       var p = document.getElementById("searchPanel");
       if (p) p.hidden = true;
     }
   };
 
-  /* ---------------- 共享数据状态 ---------------- */
+  /* ---------------- 鍏变韩鏁版嵁鐘舵€?---------------- */
   App.state = {
     machines: [],     // /api/machines
-    fails: [],        // /api/fails?limit=100（ingest 倒序）
-    failCount: 0,     // /api/fails/count
+    fails: [],        // /api/fails?limit=100锛坕ngest 鍊掑簭锛?    failCount: 0,     // /api/fails/count
     health: null,     // /api/health
-    sel: ""           // 机台筛选："" 全部机台；非空指定机台
-  };
+    sel: ""           // 鏈哄彴绛涢€夛細"" 鍏ㄩ儴鏈哄彴锛涢潪绌烘寚瀹氭満鍙?  };
 
-  var lastSig = "";   // 数据指纹：数据未变时跳过重渲染（3s 轮询大部分周期无变化）
-
+  var lastSig = "";   // 鏁版嵁鎸囩汗锛氭暟鎹湭鍙樻椂璺宠繃閲嶆覆鏌擄紙3s 杞澶ч儴鍒嗗懆鏈熸棤鍙樺寲锛?
   function dataSig() {
     var s = App.state;
     return JSON.stringify(s.machines) + "|" + JSON.stringify(s.fails) + "|" + s.failCount;
@@ -350,10 +336,10 @@
     var d = document.getElementById("hdot");
     var t = document.getElementById("htext");
     if (d) d.className = "dot " + (ok ? "ok" : "err");
-    if (t) t.textContent = text || (ok ? "正常" : "接口异常");
+    if (t) t.textContent = text || (ok ? "姝ｅ父" : "鎺ュ彛寮傚父");
   }
 
-  /* 机台选择器：选项 = 在线机台 ∪ FAIL 明细中出现过的机台（保留当前选中） */
+  /* 鏈哄彴閫夋嫨鍣細閫夐」 = 鍦ㄧ嚎鏈哄彴 鈭?FAIL 鏄庣粏涓嚭鐜拌繃鐨勬満鍙帮紙淇濈暀褰撳墠閫変腑锛?*/
   function fillMachineSel() {
     var s = document.getElementById("machineSel");
     if (!s) return;
@@ -367,14 +353,14 @@
     App.state.fails.forEach(function (f) { add(App.pick(f, "machine")); });
     set.sort(function (a, b) { return a.localeCompare(b, "zh"); });
     if (s.options.length !== set.length + 1 || (s.options[1] && s.options[1].value !== set[0])) {
-      var html = '<option value="">全部机台（汇总）</option>';
+      var html = '<option value="">鍏ㄩ儴鏈哄彴锛堟眹鎬伙級</option>';
       for (var i = 0; i < set.length; i++) html += '<option value="' + App.esc(set[i]) + '">' + App.esc(set[i]) + "</option>";
       s.innerHTML = html;
     }
     if (set.indexOf(cur) >= 0) s.value = cur; else s.value = App.state.sel;
   }
 
-  /* 数据加载：并行拉四个接口，更新状态并触发当前页重绘 */
+  /* 鏁版嵁鍔犺浇锛氬苟琛屾媺鍥涗釜鎺ュ彛锛屾洿鏂扮姸鎬佸苟瑙﹀彂褰撳墠椤甸噸缁?*/
   App.data = {
     load: function () {
       var s = App.state;
@@ -393,26 +379,25 @@
         setHealth(true);
         App.clearError();
         var sig = dataSig();
-        if (sig !== lastSig) {           // 数据未变 → 跳过全部重绘/重排（主要运行时优化）
-          lastSig = sig;
+        if (sig !== lastSig) {           // 鏁版嵁鏈彉 鈫?璺宠繃鍏ㄩ儴閲嶇粯/閲嶆帓锛堜富瑕佽繍琛屾椂浼樺寲锛?          lastSig = sig;
           if (App.Nav && App.Nav.rerender) App.Nav.rerender();
         }
       }).catch(function (e) {
         setHealth(false);
-        App.showError("数据加载失败：" + e.message + "（请确认聚合服务已启动）");
+        App.showError("鏁版嵁鍔犺浇澶辫触锛? + e.message + "锛堣纭鑱氬悎鏈嶅姟宸插惎鍔級");
       }).then(function () {
         var u = document.getElementById("uptime");
         if (u) u.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
       });
     },
-    /* 机台筛选入口：由页面/顶栏调用后重拉数据 */
+    /* 鏈哄彴绛涢€夊叆鍙ｏ細鐢遍〉闈?椤舵爮璋冪敤鍚庨噸鎷夋暟鎹?*/
     filter: function (sel) {
       App.state.sel = sel || "";
       try { window.localStorage.setItem("agg.machine", App.state.sel); } catch (e) { }
       App.clearError();
       App.data.load();
     },
-    /* 各机台最近一条 FAIL 时间映射（fails 按 ingest 倒序） */
+    /* 鍚勬満鍙版渶杩戜竴鏉?FAIL 鏃堕棿鏄犲皠锛坒ails 鎸?ingest 鍊掑簭锛?*/
     recentMap: function () {
       var recent = {};
       App.state.fails.forEach(function (f) {
@@ -421,7 +406,7 @@
       });
       return recent;
     },
-    /* 导出 CSV 地址（含机台过滤与 token） */
+    /* 瀵煎嚭 CSV 鍦板潃锛堝惈鏈哄彴杩囨护涓?token锛?*/
     exportUrl: function (machine) {
       var u = "/api/export.csv";
       var q = [];
@@ -429,12 +414,12 @@
       if (q.length) u += "?" + q.join("&");
       return App.withToken(u);
     },
-    /* XML 报告页地址（在线查看，服务端渲染 HTML；token 自动拼接） */
+    /* XML 鎶ュ憡椤靛湴鍧€锛堝湪绾挎煡鐪嬶紝鏈嶅姟绔覆鏌?HTML锛泃oken 鑷姩鎷兼帴锛?*/
     xmlUrl: function (id) { return App.withToken("/api/xmlview?id=" + id); },
     fileUrl: function (id) { return App.withToken("/api/file?id=" + id); }
   };
 
-  /* ---------------- canvas 柱状图（零依赖，迁自 demo） ---------------- */
+  /* ---------------- canvas 鏌辩姸鍥撅紙闆朵緷璧栵紝杩佽嚜 demo锛?---------------- */
   App.drawBar = function (cv, data) {
     if (!cv || !cv.getContext) return;
     var dpr = window.devicePixelRatio || 1;
@@ -443,11 +428,11 @@
     var g = cv.getContext("2d");
     g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
     var rows = (data || []).map(function (x) {
-      return { name: App.pick(x, "machine") || "—", v: App.pick(x, "failCount") || 0 };
+      return { name: App.pick(x, "machine") || "鈥?, v: App.pick(x, "failCount") || 0 };
     }).sort(function (a, b) { return b.v - a.v; }).slice(0, 12);
     if (!rows.length) {
       g.fillStyle = "#5E6874"; g.font = "12px sans-serif";
-      g.fillText("暂无数据", 8, 16);
+      g.fillText("鏆傛棤鏁版嵁", 8, 16);
       return;
     }
     var max = 1;
@@ -461,12 +446,12 @@
       g.fillStyle = "#9AA5B1"; g.font = "10px sans-serif";
       g.fillText(String(d.v), x + 2, y - 2);
       g.save(); g.translate(x + bw / 2, h - 4); g.rotate(-Math.PI / 5);
-      g.fillText(d.name.length > 8 ? d.name.slice(0, 7) + "…" : d.name, 0, 0);
+      g.fillText(d.name.length > 8 ? d.name.slice(0, 7) + "鈥? : d.name, 0, 0);
       g.restore();
     });
   };
 
-  /* ---------------- 全局搜索 UI（顶栏） ---------------- */
+  /* ---------------- 鍏ㄥ眬鎼滅储 UI锛堥《鏍忥級 ---------------- */
   function initGlobalSearch() {
     var inp = document.getElementById("globalSearch");
     var panel = document.getElementById("searchPanel");
@@ -478,12 +463,12 @@
       if (!data || !data.results) { hide(); return; }
       var r = data.results;
       var counts = data.counts || {};
-      var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:11px;color:var(--dim)">共 ' + data.total + ' 条 · FAIL ' + (counts.fails||0) + ' · 维修 ' + (counts.maintenance||0) + ' · 设备 ' + (counts.devices||0) + ' · 良率 ' + (counts.yields||0) + '</span><span style="cursor:pointer;color:var(--dim)" id="searchClose">✕</span></div>';
+      var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:11px;color:var(--dim)">鍏?' + data.total + ' 鏉?路 FAIL ' + (counts.fails||0) + ' 路 缁翠慨 ' + (counts.maintenance||0) + ' 路 璁惧 ' + (counts.devices||0) + ' 路 鑹巼 ' + (counts.yields||0) + '</span><span style="cursor:pointer;color:var(--dim)" id="searchClose">鉁?/span></div>';
       var groups = [
-        { key: "fails", label: "FAIL 明细", icon: "⚠" },
-        { key: "maintenance", label: "维修", icon: "🛠" },
-        { key: "devices", label: "设备", icon: "▭" },
-        { key: "yields", label: "良率", icon: "◈" }
+        { key: "fails", label: "FAIL 鏄庣粏", icon: "鈿? },
+        { key: "maintenance", label: "缁翠慨", icon: "馃洜" },
+        { key: "devices", label: "璁惧", icon: "鈻? },
+        { key: "yields", label: "鑹巼", icon: "鈼? }
       ];
       var has = false;
       for (var gi = 0; gi < groups.length; gi++) {
@@ -494,21 +479,21 @@
         html += '<div class="search-group"><h4><span>' + g.icon + " " + g.label + '</span><span class="badge">' + list.length + '</span></h4>';
         for (var i = 0; i < list.length; i++) {
           var it = list[i];
-          var title = App.esc(it.title || it.Title || "—");
+          var title = App.esc(it.title || it.Title || "鈥?);
           var sub = App.esc(it.subtitle || it.Subtitle || "");
           var badge = it.type || g.key;
           html += '<div class="search-item" data-link="' + App.esc(it.link || it.Link || "") + '"><span class="badge">' + App.esc(badge) + '</span><span class="t">' + title + '</span><span class="s">' + sub + '</span></div>';
         }
         html += '</div>';
       }
-      if (!has) html += '<div class="empty">无匹配结果</div>';
-      // 收藏快捷
+      if (!has) html += '<div class="empty">鏃犲尮閰嶇粨鏋?/div>';
+      // 鏀惰棌蹇嵎
       var favs = App.favorites.get();
       if (favs.length) {
-        html += '<div class="search-group"><h4>收藏筛选</h4>';
+        html += '<div class="search-group"><h4>鏀惰棌绛涢€?/h4>';
         for (var fi = 0; fi < favs.length; fi++) {
           var fv = favs[fi];
-          html += '<div class="search-item" data-q="' + App.esc(fv) + '"><span class="badge">★</span><span class="t">' + App.esc(fv) + '</span><span class="s">点击填入搜索</span></div>';
+          html += '<div class="search-item" data-q="' + App.esc(fv) + '"><span class="badge">鈽?/span><span class="t">' + App.esc(fv) + '</span><span class="s">鐐瑰嚮濉叆鎼滅储</span></div>';
         }
         html += '</div>';
       }
@@ -530,7 +515,7 @@
     }
     function doSearch(q) {
       if (!q || !q.trim()) { hide(); return; }
-      App.search.query(q).then(function (data) { renderGroups(data); }).catch(function () { panel.innerHTML = '<div class="empty">搜索失败</div>'; panel.hidden = false; });
+      App.search.query(q).then(function (data) { renderGroups(data); }).catch(function () { panel.innerHTML = '<div class="empty">鎼滅储澶辫触</div>'; panel.hidden = false; });
     }
     inp.addEventListener("input", function () {
       var v = inp.value;
@@ -546,15 +531,14 @@
     document.addEventListener("click", function (e) {
       if (!wrap.contains(e.target)) hide();
     });
-    // KPI 下钻联动：监听 KPI 点击（overview 广播事件）
-    window.addEventListener("argus:drill", function (ev) {
+    // KPI 涓嬮捇鑱斿姩锛氱洃鍚?KPI 鐐瑰嚮锛坥verview 骞挎挱浜嬩欢锛?    window.addEventListener("argus:drill", function (ev) {
       var d = ev.detail || {};
       if (d.q) { inp.value = d.q; doSearch(d.q); }
       if (d.link) App.search.go(d.link);
     });
   }
 
-  /* ---------------- 统一渲染组件 ---------------- */
+  /* ---------------- 缁熶竴娓叉煋缁勪欢 ---------------- */
 
   App.renderPanel = function (title, body, opts) {
     opts = opts || {};
@@ -592,7 +576,7 @@
 
   App.renderTable = function (headers, rows, opts) {
     opts = opts || {};
-    var emptyText = opts.emptyText || "暂无数据";
+    var emptyText = opts.emptyText || "鏆傛棤鏁版嵁";
     var cls = opts.cls ? " " + opts.cls : "";
     var h = '<thead><tr>';
     for (var i = 0; i < headers.length; i++) h += "<th>" + App.esc(headers[i]) + "</th>";
@@ -613,8 +597,8 @@
   };
 
   App.renderEmpty = function (icon, text, action) {
-    var html = '<div class="empty-state"><span class="es-icon">' + App.esc(icon || "📋") + '</span>'
-      + '<div class="es-text">' + App.esc(text || "暂无数据") + '</div>';
+    var html = '<div class="empty-state"><span class="es-icon">' + App.esc(icon || "馃搵") + '</span>'
+      + '<div class="es-text">' + App.esc(text || "鏆傛棤鏁版嵁") + '</div>';
     if (action) html += '<div class="es-hint">' + App.esc(action.hint || "") + '</div>' + (action.btn ? '<button class="btn btn-secondary" id="' + App.esc(action.btnId || "") + '">' + App.esc(action.btn) + '</button>' : '');
     html += "</div>";
     return html;
@@ -629,7 +613,7 @@
     return html;
   };
 
-  /* ---------------- boot：顶栏事件 + 轮询 ---------------- */
+  /* ---------------- boot锛氶《鏍忎簨浠?+ 杞 ---------------- */
   App.boot = function () {
     var sel = document.getElementById("machineSel");
     if (sel) {
@@ -638,19 +622,55 @@
       App.state.sel = saved;
       sel.addEventListener("change", function (e) { App.data.filter(e.target.value); });
     }
-    // 权限与布局/收藏后端同步
+    // 鏉冮檺涓庡竷灞€/鏀惰棌鍚庣鍚屾
     App.auth.refresh().then(function () {
-      // 登录后拉取 server layout/favorites 覆盖本地（若 server 有值）
+      // 鐧诲綍鍚庢媺鍙?server layout/favorites 瑕嗙洊鏈湴锛堣嫢 server 鏈夊€硷級
       App.layout.loadFromServer().catch(function () {});
       App.favorites.loadFromServer().catch(function () {});
       App.applyRoleVisibility(document);
     });
     initGlobalSearch();
     App.data.load();
-    window.setInterval(App.data.load, 3000);   // 3s 轮询（与 demo 一致）
+    window.setInterval(App.data.load, 3000);   // 3s 杞锛堜笌 demo 涓€鑷达級
     window.addEventListener("resize", function () {
       var h = (window.location.hash || "#/overview").replace(/^#\/?/, "");
       if (h === "overview" && App.Nav) App.Nav.rerender();
     });
   };
 })(window, document);
+
+/* ---------------- 域8 预警高亮：异常机台红边脉冲 ---------------- */
+App.Highlight = {
+  // 基于 /api/devices + /api/devices/predict 判断异常，返回 machine->reason 映射
+  fetch: function(){
+    return Promise.all([
+      App.fetchJSON("/api/devices").catch(function(){ return []; }),
+      App.fetchJSON("/api/devices/predict").catch(function(){ return {predicts:[]}; })
+    ]).then(function(rs){
+      var devices = Array.isArray(rs[0]) ? rs[0] : (rs[0].devices||[]);
+      var preds = rs[1].predicts || rs[1] || [];
+      var map = {};
+      // 预测 critical 预警
+      preds.forEach(function(p){
+        var m = p.machine || p.Machine;
+        var lv = (p.level||p.Level||"").toLowerCase();
+        if(m && lv==="critical") map[m] = p.detail||p.Detail||"预测异常";
+      });
+      // 前端阈值兜底（device_info 本身也可判定，但后端已算好，这里仅做脉冲来源）
+      return map;
+    });
+  },
+  applyToCards: function(container, highlightMap){
+    if(!container || !highlightMap) return;
+    var cards = container.querySelectorAll(".machine");
+    for(var i=0;i<cards.length;i++){
+      var m = cards[i].getAttribute("data-m");
+      if(m && highlightMap[m]){
+        cards[i].classList.add("highlight-critical");
+        cards[i].setAttribute("title", highlightMap[m]);
+        // 置顶：异常卡前置
+        if(cards[i].parentNode) cards[i].parentNode.insertBefore(cards[i], cards[i].parentNode.firstChild);
+      }
+    }
+  }
+};

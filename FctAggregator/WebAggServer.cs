@@ -141,6 +141,9 @@ public class WebAggServer : IDisposable
         // 域7 维修/待办智能（v3.19.0）：优先级/流转
         _pipeline.Add("GET", "/api/todos/suggest", ctx => { CountHit(); ServeTodoSuggest(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/maintenance/advise", ctx => { CountHit(); ServeMaintenanceAdvise(ctx); return Task.CompletedTask; });
+        // 域8 UI 智能：高亮/布局
+        _pipeline.Add("GET", "/api/highlights", ctx => { CountHit(); ServeHighlights(ctx); return Task.CompletedTask; });
+        _pipeline.Add("GET", "/api/layout/suggest", ctx => { CountHit(); ServeLayoutSuggest(ctx); return Task.CompletedTask; });
 
         _pipeline.Add("GET", "/api/machines", ctx => { CountHit(); ServeMachines(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fails", ctx => { CountHit(); ServeFails(ctx); return Task.CompletedTask; });
@@ -1024,6 +1027,41 @@ public class WebAggServer : IDisposable
             }
             var adv = FlowAdvisor.Advise(cur, _db);
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, advise=adv }, JsonOpts));
+        } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeHighlights(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try{
+            var list = HighlightEngine.GetHighlights(_db, AppConfig.Instance);
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, highlights=list }, JsonOpts));
+        } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeLayoutSuggest(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try{
+            var q=ctx.Request.QueryString;
+            var role = (q["role"] ?? "viewer").Trim();
+            string visitsJson = "";
+            try{ visitsJson = System.IO.File.ReadAllText(System.IO.Path.Combine(AppConfig.BaseDir, "data", "layout_visits.json")); } catch{}
+            // 也可从 users.layout 取
+            var freq = LayoutAdvisor.ParseFreq(visitsJson);
+            // 合并当前用户的 layout visits
+            try{
+                var who = ResolveRole(ctx).Item2;
+                if(!string.IsNullOrEmpty(who)){
+                    var u = _db.GetUserByName(who);
+                    if(u!=null && !string.IsNullOrEmpty(u.Layout)){
+                        var lay = System.Text.Json.JsonDocument.Parse(u.Layout);
+                        if(lay.RootElement.TryGetProperty("visits", out var v) && v.ValueKind==System.Text.Json.JsonValueKind.Object){
+                            foreach(var prop in v.EnumerateObject()) if(prop.Value.ValueKind==System.Text.Json.JsonValueKind.Number && prop.Value.TryGetInt32(out var c)) freq[prop.Name]=c;
+                        }
+                    }
+                }
+            } catch{}
+            var order = LayoutAdvisor.SuggestOrder(freq, role);
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, order=order, freq=freq }, JsonOpts));
         } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
     }
 

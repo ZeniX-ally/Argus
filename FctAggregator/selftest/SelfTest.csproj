@@ -119,6 +119,9 @@
     <Compile Include="..\PriorityScorer.cs" />
     <Compile Include="..\FlowAdvisor.cs" />
     <Compile Include="..\TodoSuggester.cs" />
+    <!-- v3.19.0 域8 UI 智能 -->
+    <Compile Include="..\LayoutAdvisor.cs" />
+    <Compile Include="..\HighlightEngine.cs" />
     <!-- FetcherService 已在 3.14 列表，CsvUtil/ProcLog 为新增显式 -->
     <!-- v3.4.0：一键部署（agg install 子命令）的 config 生成逻辑可测（系统操作不实跑，只编译） -->
     <Compile Include="..\Program.cs" />
