@@ -144,6 +144,9 @@ public class WebAggServer : IDisposable
         // 域8 UI 智能：高亮/布局
         _pipeline.Add("GET", "/api/highlights", ctx => { CountHit(); ServeHighlights(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/layout/suggest", ctx => { CountHit(); ServeLayoutSuggest(ctx); return Task.CompletedTask; });
+        // 域9 告警智能：预测/自愈
+        _pipeline.Add("GET", "/api/alerts/predict", ctx => { CountHit(); ServeAlertsPredict(ctx); return Task.CompletedTask; });
+        _pipeline.Add("GET", "/api/alerts/heal", ctx => { CountHit(); ServeAlertsHeal(ctx); return Task.CompletedTask; });
 
         _pipeline.Add("GET", "/api/machines", ctx => { CountHit(); ServeMachines(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fails", ctx => { CountHit(); ServeFails(ctx); return Task.CompletedTask; });
@@ -1045,9 +1048,7 @@ public class WebAggServer : IDisposable
             var role = (q["role"] ?? "viewer").Trim();
             string visitsJson = "";
             try{ visitsJson = System.IO.File.ReadAllText(System.IO.Path.Combine(AppConfig.BaseDir, "data", "layout_visits.json")); } catch{}
-            // 也可从 users.layout 取
             var freq = LayoutAdvisor.ParseFreq(visitsJson);
-            // 合并当前用户的 layout visits
             try{
                 var who = ResolveRole(ctx).Item2;
                 if(!string.IsNullOrEmpty(who)){
@@ -1062,6 +1063,29 @@ public class WebAggServer : IDisposable
             } catch{}
             var order = LayoutAdvisor.SuggestOrder(freq, role);
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, order=order, freq=freq }, JsonOpts));
+        } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeAlertsPredict(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try{
+            var preds = AlertPredictor.Predict(_db);
+            // 落库一次（避免重复写，限制频率）
+            try{ AlertPredictor.LogPredictions(_db, preds); } catch{}
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, predicts=preds }, JsonOpts));
+        } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
+    }
+    private void ServeAlertsHeal(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try{
+            var q=ctx.Request.QueryString;
+            var machine=(q["machine"]??"").Trim();
+            var rule=(q["rule"]??"disk").Trim();
+            if(string.IsNullOrEmpty(machine)){ RespondText(ctx, 400, "machine required"); return; }
+            var sug = AlertHealer.Heal(_db, machine, rule);
+            var feishu = AlertHealer.FormatForFeishu(machine, rule, sug);
+            Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, heals=sug, feishu=feishu }, JsonOpts));
         } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
     }
 

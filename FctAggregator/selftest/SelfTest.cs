@@ -377,6 +377,51 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
+        // ---------- 域9 告警智能：预测/自愈（v3.19.0） ----------
+        {
+            var tmp9 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fct_dom9_" + Guid.NewGuid().ToString("N")[..6]);
+            System.IO.Directory.CreateDirectory(tmp9);
+            var agg9 = new AggDatabase(System.IO.Path.Combine(tmp9, "agg.db")); agg9.Open();
+            // 构造 yld_daily 下滑趋势触发预测
+            for(int dd9=4; dd9>=0; dd9--){
+                var date = DateTime.Today.AddDays(-dd9).ToString("yyyyMMdd");
+                int pass = dd9==0 ? 91 : 95 - dd9; // 逐日下滑，末日仍在阈值上但预测跌破
+                agg9.UpsertDailyStats("FCT9", date, new AggDatabase.DailyStats(100, pass, 100-pass, 0, 5));
+            }
+            agg9.UpsertDeviceInfo(new DeviceInfoRow{ Machine="FCT9", DiskFreeGb=3, CpuUsage=92, LastSeen=DateTime.Now.AddMinutes(-10).ToString("yyyy-MM-dd HH:mm:ss") });
+            for(int i=6;i>=0;i--){ var ts=DateTime.Now.AddDays(-i).ToString("yyyy-MM-dd HH:mm:ss"); int elapsed=6-i; agg9.InsertDeviceSample(new DeviceSampleRow{ Machine="FCT9", Ts=ts, CpuUsage=60+elapsed*5, DiskFreeGb=20-elapsed*2.5, MemUsedMb=4000}); }
+            var preds = AlertPredictor.Predict(agg9);
+            Check(preds.Count>=1, $"域9: 预测应命中≥1（实得 {preds.Count}）");
+            Check(preds.Any(x=> x.Rule=="yield" || x.Rule=="disk" || x.Rule=="cpu"), "域9: 预测含 yield/disk/cpu");
+            AlertPredictor.LogPredictions(agg9, preds);
+            var logs = agg9.QueryAlertPredicts("FCT9", 10);
+            Check(logs.Count>=1, $"域9: 落库≥1（实得 {logs.Count}）");
+            // 自愈
+            var heals = AlertHealer.Heal(agg9, "FCT9", "disk");
+            Check(heals.Count>=1, $"域9: 自愈建议≥1（实得 {heals.Count}）");
+            Check(heals.Any(x=> x.Suggestion.Length>0), "域9: 自愈含建议文本");
+            var feishu = AlertHealer.FormatForFeishu("FCT9","disk", heals);
+            Check(feishu.Contains("FCT9"), "域9: 飞书卡片含机台");
+            // API smoke
+            try{
+                agg9.UpsertUser("d9admin", PasswordHasher.Hash("pwd"), "admin");
+                var tok = agg9.GetUserByName("d9admin")!.Token;
+                int port = GetFreePort();
+                var localDb = new Database(System.IO.Path.Combine(tmp9, "local.db"));
+                var mesh = new MeshNode(new AppConfig{ StationId="D9TEST", AggToken="d9tok", Peers=new List<string>() }, "D9TEST", localDb, agg9, new string[0]);
+                var srv = new WebAggServer(port, mesh, agg9, tmp9, tmp9, "d9tok");
+                srv.Start(); System.Threading.Thread.Sleep(400);
+                var baseUrl = $"http://127.0.0.1:{port}";
+                var r1 = HttpGetWithToken(baseUrl+"/api/alerts/predict", tok);
+                Check(r1.StatusCode==System.Net.HttpStatusCode.OK && r1.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("predicts"), "域9: GET /api/alerts/predict → 200");
+                var r2 = HttpGetWithToken(baseUrl+"/api/alerts/heal?machine=FCT9&rule=disk", tok);
+                Check(r2.StatusCode==System.Net.HttpStatusCode.OK && r2.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("heals"), "域9: GET /api/alerts/heal → 200");
+                srv.Stop(); mesh.Stop();
+            } catch(Exception ex){ Check(false, $"域9 API smoke 异常: {ex.Message}"); }
+            try{ System.IO.Directory.Delete(tmp9, true);} catch{}
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        }
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳
