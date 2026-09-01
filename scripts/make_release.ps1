@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 # SSH/CI 无控制台时静默进度条
 $ProgressPreference = 'SilentlyContinue'
 
-$repo = (Resolve-Path "$PSScriptRoot").Path
+$repo = (Resolve-Path "$PSScriptRoot\..").Path
 
 function Ok([string]$m)  { Write-Host "  [OK]   $m" -ForegroundColor Green }
 function Info([string]$m){ Write-Host "  [--]   $m" -ForegroundColor Gray }
