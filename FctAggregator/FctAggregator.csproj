@@ -50,9 +50,6 @@
     <Compile Remove="selftest\**" />
     <None Remove="selftest\**" />
     <EmbeddedResource Remove="selftest\**" />
-    <Compile Remove="selftest-distributor\**" />
-    <None Remove="selftest-distributor\**" />
-    <EmbeddedResource Remove="selftest-distributor\**" />
     <!-- tools\xlsxdump\ 同理：它是独立小工程（xlsx 长相核对），
          不排除的话它的 obj\AssemblyInfo.cs 会被默认 glob 当成主程序源码 -> CS0579 -->
     <Compile Remove="tools\**" />

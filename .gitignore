@@ -3,7 +3,12 @@
 **/obj/
 **/out/
 **/dist/
+dist-agg/
 *.zip
+
+# ===== Selftest run logs =====
+selftest_result*.txt
+%SELFTEST_LOG%
 
 # ===== Runtime data / logs =====
 **/data/
@@ -18,10 +23,8 @@ data/agg_*.json
 data/*.log
 
 # ===== Snapshots / releases =====
-_releases/
 .snap/
 .wt-xlsxcmp/
-*.snap/
 Releases/
 
 # ===== Python =====
@@ -45,6 +48,8 @@ desktop.ini
 .opencode/
 .workbuddy/
 .mimosa/
+.commandcode/
+.pi/
 
 # ===== Screenshots / temp =====
 ArgusScreenshots/
