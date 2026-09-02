@@ -2,7 +2,7 @@
 
 车间 FCT 测试线的一站式工具集。**v2.9.1 起原独立程序合并为一个 exe，工具内嵌为主窗口页面**。
 
-> ⚠ **v3.0.0：数据分发器已拆出去，成为独立程序** `FCT-Distributor.exe`（源码在 `../fct-distributor/`）。
+> ⚠ **v3.0.0：数据分发器已拆出去，成为独立程序** `FCT-Distributor.exe`（v1.9.2，**2026-09-02 起独立仓库** `e:/FctDistributor`）。
 > 它能改文件时间戳、按模板造数、批量投放 XML —— 这些操作不该出现在产线机台的主程序里，
 > 误点一次后果很重。现在只发给工程/测试人员，**不进产线包**。
 
@@ -88,9 +88,9 @@ python tools\xlsx_style_report.py <目录|xlsx>    # 把 styles.xml 翻成人话
 - **WinForms 停靠顺序是反的**：最后 `Add` 的最先停靠。`Dock=Fill` 的要最先 Add，
   侧栏要最后 Add。写反不报错，只是布局悄悄错位 —— 自检里有几何断言盯着。
 - **四个 `Main` 靠 `<StartupObject>` 消歧**，别删各工具的 `Main`（里面有 CLI）。
-- **数据分发已不在本工程**：要改它去 `../fct-distributor/`。那边有 `Xlsx.cs` / `AppIcon.cs` /
+- **数据分发已不在本工程**：2026-09-02 起在独立仓库 `e:/FctDistributor`。那边有 `Xlsx.cs` / `AppIcon.cs` /
   `StationDetector.cs` 的**副本**（彻底分家的代价），改本工程这三个文件时顺手看一眼那边；
-  分发器自检里有跨工程一致性断言（IP 映射表逐条比、`Xlsx.cs` 逐字节比）。
+  两个仓库已无自动比对（原跨工程一致性自检随拆分自动降级为跳过），副本同步靠人工纪律。
 - **内嵌的 Form 里别用 `FindForm()`**：它在 Form 自身上返回 this，拿顶层窗要用 `TopLevelControl`。
 - **要图标就用 `AppIcon.Load()/Apply()`**：别再 `new Icon(BaseDir\\app_icon.ico)`，发布包不一定有那个文件。
 - **要导 Excel 就用 `FctShared.Xlsx`**：外壳共享，自己只提供 `styles.xml` 与样式号，别再手写 zip/部件。

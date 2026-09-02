@@ -1,18 +1,19 @@
 ﻿# ============================================================================
-# Argus 统一发布脚本（2026-08-27）
+# Argus 主程序发布脚本（2026-09-02：FctDistributor 已拆分独立仓库，本脚本只出主程序 3 包）
 #
-# 一键完成：构建两个工程 -> 跑三个打包器 -> 统一归档纯净 zip 到 Releases\v{ver}\
+# 一键完成：构建主程序 -> 跑两个打包器 -> 统一归档纯净 zip 到 Releases\v{ver}\
 #  -> 生成 RELEASE.txt 发布清单（版本/日期/SHA256/内容说明/纯净校验）。
 #
-# 三个打包器各司其职（均已是纯净包，webhook 置空、不含 data/logs/db/pdb）：
+# 两个打包器各司其职（均已是纯净包，webhook 置空、不含 data/logs/db/pdb）：
 #   FctAggregator/tools/make_package.ps1        -> Argus-v{ver}.zip + Argus-v{ver}-update.zip
 #   FctAggregator/tools/make_package_agg.ps1    -> Argus-Agg-v{ver}.zip
-#   FctDistributor/tools/make_package.ps1       -> FCT-Distributor-v{ver}.zip + ...-update.zip
+#
+# 分发器（FCT-Distributor）已拆分到独立仓库 e:/FctDistributor，用其自己的
+#   tools/make_package.ps1 发版，不再由本脚本管辖。
 #
 # 产物来源目录：
 #   主程序  bin\Release\net8.0-windows\   （dotnet build 标准输出）
 #   聚合包  FctAggregator\dist-agg\
-#   分发器  FctDistributor\dist\
 #
 # 用法：
 #   .\make_release.ps1                 # 一键构建 + 打包 + 归档（幂等，不删历史版本）
@@ -43,12 +44,9 @@ if (-not $Version) {
 }
 if (-not $Version) { throw '无法确定版本号：FctAggregator.csproj 没有 <Version>，请用 -Version 指定' }
 
-$distVer   = [regex]::Match((Get-Content (Join-Path $repo 'FctDistributor\FctDistributor.csproj') -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
-$aggProj   = Join-Path $repo 'FctAggregator\FctAggregator.csproj'
-$distProj  = Join-Path $repo 'FctDistributor\FctDistributor.csproj'
 $outDir    = Join-Path $repo "Releases\v$Version"
 
-Head "Argus 统一发布 v$Version（分发器 v$distVer）"
+Head "Argus 发布 v$Version"
 Info "归档目录: $outDir"
 
 # ---------- 1) 构建 ----------
@@ -60,25 +58,17 @@ if (-not $SkipBuild) {
         if ($LASTEXITCODE -ne 0) { throw 'FctAggregator 构建失败' }
         Ok 'FctAggregator 构建成功'
     } finally { Pop-Location }
-
-    Push-Location (Join-Path $repo 'FctDistributor')
-    try {
-        dotnet publish FctDistributor.csproj -c Release -o dist | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw 'FctDistributor 发布失败' }
-        Ok 'FctDistributor 发布成功'
-    } finally { Pop-Location }
 } else {
     Head "1. 构建（已跳过 -SkipBuild）"
 }
 
-# ---------- 2) 三个打包器 ----------
+# ---------- 2) 两个打包器 ----------
 Head "2. 运行打包器（生成纯净 zip）"
-# ⚠ 三个打包器均用 $ErrorActionPreference='Stop' + throw 表达失败：
+# ⚠ 打包器均用 $ErrorActionPreference='Stop' + throw 表达失败：
 #   `&` 调用脚本失败会抛异常 -> 被本脚本外层 Stop 捕获中止，不依赖 $LASTEXITCODE。
 & (Join-Path $repo 'FctAggregator\tools\make_package.ps1') | Out-Host
 & (Join-Path $repo 'FctAggregator\tools\make_package_agg.ps1') | Out-Host
-& (Join-Path $repo 'FctDistributor\tools\make_package.ps1') | Out-Host
-Ok '三个打包器均完成'
+Ok '两个打包器均完成'
 
 # ---------- 3) 收集 zip ----------
 Head "3. 收集并归档 zip"
@@ -94,11 +84,6 @@ foreach ($n in @("Argus-v$Version.zip", "Argus-v$Version-update.zip")) {
 $aggPkg = Join-Path $repo 'FctAggregator\dist-agg'
 foreach ($n in @("Argus-Agg-v$Version.zip")) {
     if (Test-Path (Join-Path $aggPkg $n)) { $candidates += Join-Path $aggPkg $n }
-}
-# 分发器（dist\）
-$distPkg = Join-Path $repo 'FctDistributor\dist'
-foreach ($n in @("FCT-Distributor-v$distVer.zip", "FCT-Distributor-v$distVer-update.zip")) {
-    if (Test-Path (Join-Path $distPkg $n)) { $candidates += Join-Path $distPkg $n }
 }
 
 if ($candidates.Count -eq 0) { throw '没有收集到任何 zip，请检查打包器是否成功' }
@@ -135,9 +120,9 @@ foreach ($zip in $archived) {
 Head "5. 生成 RELEASE.txt"
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
 $sb = New-Object System.Text.StringBuilder
-[void]$sb.AppendLine("Argus 统一发布包  v$Version")
+[void]$sb.AppendLine("Argus 发布包  v$Version")
 [void]$sb.AppendLine("发布日期：$stamp")
-[void]$sb.AppendLine("主程序版本：$Version      分发器版本：$distVer")
+[void]$sb.AppendLine("主程序版本：$Version")
 [void]$sb.AppendLine("=" * 66)
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("包含的 zip：")
@@ -155,7 +140,7 @@ foreach ($zip in $archived) {
 [void]$sb.AppendLine("部署方式：")
 [void]$sb.AppendLine("  主程序更新：解压 Argus-v$Version-update.zip 到机台，用 tools\deploy_update.ps1 或手动覆盖（data/logs 不受影响）。")
 [void]$sb.AppendLine("  聚合后端：  解压 Argus-Agg-v$Version.zip，运行 一键部署聚合服务.bat。")
-[void]$sb.AppendLine("  分发器：    解压 FCT-Distributor-v$distVer.zip（工程/测试人员使用）。")
+[void]$sb.AppendLine("  分发器：    已独立仓库 e:/FctDistributor（FCT-Distributor v1.9.2），用其自带 make_package.ps1 单独发版。")
 $manifestPath = Join-Path $outDir 'RELEASE.txt'
 $sb.ToString() | Set-Content $manifestPath -Encoding UTF8
 Ok "RELEASE.txt 已生成（$manifestPath）"

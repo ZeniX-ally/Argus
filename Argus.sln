@@ -6,8 +6,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FctAggregator", "FctAggrega
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SelfTest", "FctAggregator\selftest\SelfTest.csproj", "{5154FCD5-13B4-4ED7-8D79-65CE65898812}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FctDistributor", "FctDistributor\FctDistributor.csproj", "{BF3DF948-C412-4F05-8B49-798496FDFB63}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -22,10 +20,6 @@ Global
 		{5154FCD5-13B4-4ED7-8D79-65CE65898812}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5154FCD5-13B4-4ED7-8D79-65CE65898812}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5154FCD5-13B4-4ED7-8D79-65CE65898812}.Release|Any CPU.Build.0 = Release|Any CPU
-		{BF3DF948-C412-4F05-8B49-798496FDFB63}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{BF3DF948-C412-4F05-8B49-798496FDFB63}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{BF3DF948-C412-4F05-8B49-798496FDFB63}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{BF3DF948-C412-4F05-8B49-798496FDFB63}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

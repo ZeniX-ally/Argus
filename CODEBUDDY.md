@@ -10,21 +10,21 @@
 | 项 | 值 |
 |---|---|
 | 主程序 | FctAggregator **v3.21.0**（WinForms + Web 看板，.NET 8 `net8.0-windows`，单 exe） |
-| 分发器 | FctDistributor **v1.9.2**（独立工具，与主程序"彻底分家"、代码持副本，勿跨工程共用文件） |
+| 分发器 | FctDistributor **v1.9.2**（**2026-09-02 起独立仓库** `e:/FctDistributor`，与本仓库彻底分离：各自 git、各自发版、代码持副本） |
 | 数据层 | SQLite 单写者 + WAL 短租读；DbMigrator schema 当前 **v10**（predict_accuracy_log） |
 | 互联 | P2P Mesh（无中心聚合端），mesh_port 默认 8081，(machine,seq) 幂等，Gossiper 自适应 10/60s |
 | 自检 | **1139 项断言**（v3.21.0 基线，随功能递增），全绿是任何提交的硬门槛 |
 | 智能化 | v3.19.0 九域（采集/DB/配置/设备/维修/UI/告警智能）+ v3.20.0 预测准确率自反馈（对账器，仅推荐不自动应用）+ v3.21.0 季节性分解（默认关，残差告警叠加） |
 | 算法路线 | 4 规格中 02、03 已落地；04 健康分 → 01 良率归因 依次排队（见 docs/算法优化/） |
-| 远程 | Gitea `http://192.168.1.16:3000/zenix/Argus.git`，分支 `main` |
-| 近期结构变更 | 2026-09-02：v3.21.0 季节性分解（规格 03，纯加法默认关）；2026-09-01：源码按域分组（§1）、根目录加 Argus.sln、清理过期文档 |
+| 远程 | Gitea `http://192.168.1.16:3000/zenix/Argus.git`，分支 `main`；分发器独立远程 `zenix/FCT-Distributor.git` |
+| 近期结构变更 | 2026-09-02：FctDistributor 拆分独立仓库（e:/FctDistributor，从零建史）；2026-09-02：v3.21.0 季节性分解（规格 03，纯加法默认关）；2026-09-01：源码按域分组（§1）、根目录加 Argus.sln、清理过期文档 |
 
 ## 1. 全局结构（重组后）
 
 ```
 e:/4.9/
 ├── CODEBUDDY.md              ← 本文件（唯一流程 Spec）
-├── Argus.sln                 ← 三工程一键构建（FctAggregator + SelfTest + FctDistributor）
+├── Argus.sln                 ← 两工程一键构建（FctAggregator + SelfTest；分发器已拆分，勿加回）
 ├── FctAggregator/            ← 主程序（源码按域分组，2026-09-01 起）
 │   ├── Program.cs            入口（子命令分发）
 │   ├── Core/                 采集引擎与数据模型（Engine/Processor/XmlParser/TestRecord/...）
@@ -40,11 +40,12 @@ e:/4.9/
 │   ├── selftest/             SelfTest.cs（显式分组）+ SelfTest.csproj（目录通配编主源码）
 │   ├── tools/                打包/冒烟/诊断脚本（make_package*.ps1、inidiag、xlsxdump）
 │   └── 更新日志.md           每版本一条目（自检/坑/明确不做 三段式）——先读最新 2 条再动手
-├── FctDistributor/           分发器（16 文件平铺，勿重组勿共用主程序源码）
 ├── docs/                     总纲.md（主线）+ 算法优化/（4 规格）+ 项目开发与发布规范.md + 机台端通信规范.md
-├── scripts/                  make_release.ps1（一键发版，自动读 csproj 版本）
+├── scripts/                  make_release.ps1（一键发版，自动读 csproj 版本，只出主程序 3 包）
 ├── Releases/                 历史发版 zip（忽略，禁删禁改）
 └── data/                     本地运行数据（全忽略，禁提交）
+
+e:/FctDistributor/            ← 分发器独立仓库（2026-09-02 拆分；勿在本仓库维护其源码）
 ```
 
 ## 1.5 核心文件速查（按域，新 agent 快速定位）
@@ -64,8 +65,7 @@ e:/4.9/
 | **modules/**（各自 namespace，勿与主程序互改） | `FailRanker/`（XmlScanner/CsvExporter/XlsxExporter/XmlViewerForm）· `Fetcher/`（Scanner/Exporter/Packager/XlsxWriter/FileLocator）· `TdmsViewer/`（TdmsDoc/WaveformPanel/Exporter/JsonDumper） |
 | **public/** 前端（零依赖 SPA） | `index.html` · `css/theme.css` 视觉令牌 · `js/loader.js` 路由注册 · `js/core.js` App 壳（auth/layout/favorites/search）· `js/page-{overview,fails,yield,seasonality,devices,maintenance,fetch,report,proc,alerts,settings,compare,xml}.js` 十三页面 |
 | **selftest/** | `SelfTest.cs` 全部断言（显式分组）· `SelfTest.csproj` 目录通配编主源码（无需为新文件改动） |
-| **脚本** | `scripts/make_release.ps1` 一键发版 · `FctAggregator/tools/make_package.ps1`/`make_package_agg.ps1` 打包器 · `tools/smoke_{gui,notify,cli}.ps1` 冒烟 · `tools/snap_gui.ps1` 截图 · `tools/xlsx_check.ps1` xlsx 对比 · `tools/{deploy_update,upgrade_drill,diag_fctini}.ps1` · `tools/inidiag/`+`tools/xlsxdump/` 诊断工具（递归通配编主源码） |
-| **FctDistributor/**（16 文件平铺，稳定期） | `Distributor.cs` 核心 · `Planner.cs` 计划 · `NameParser.cs` · `TemplateGenerator.cs` · `SnExporter.cs` · `Xlsx.cs`+`XlsxWriter.cs` · `XmlTimeScanner.cs` · `FileTimeUtil.cs` · `StationDetector.cs` · `MainForm.cs` · `Program.cs` · `RestampScopeDialog.cs` · `AppIcon.cs` · `tools/make_package.ps1` |
+| **脚本** | `scripts/make_release.ps1` 一键发版（只出主程序 3 包）· `FctAggregator/tools/make_package.ps1`/`make_package_agg.ps1` 打包器 · `tools/smoke_{gui,notify,cli}.ps1` 冒烟 · `tools/snap_gui.ps1` 截图 · `tools/xlsx_check.ps1` xlsx 对比 · `tools/{deploy_update,upgrade_drill,diag_fctini}.ps1` · `tools/inidiag/`+`tools/xlsxdump/` 诊断工具（递归通配编主源码） |
 
 根级随包文件（**禁止移动**，打包脚本按根相对路径引用）：`config.json`、`config.example.json`、`parsers.example.json`、`app_icon.ico`、`启动.bat`、`更新日志.md`、`版本更新说明.md`、`聚合服务说明.md`、`TECHNICAL_DOCUMENTATION.md`、`packages.lock.json`。
 
@@ -158,7 +158,7 @@ e:/4.9/
 3. 禁止改动：`Releases/`、历史发版、更新日志旧条目、`.gitignore` 兼容性条目、region 禁改清单（§4）。
 4. 禁止引入新第三方依赖（§2 白名单外一律不进）。
 5. 禁止绕过 selftest 直接提交；禁止在自检外新增测试框架。
-6. 禁止拆分巨文件（§2）、禁止在 FctDistributor 与 FctAggregator 间共享源码文件（副本政策是文档化约定）。
+6. 禁止拆分巨文件（§2）。分发器已拆分独立仓库（e:/FctDistributor），本仓库不再维护其源码；两侧的 Xlsx.cs/StationDetector.cs/AppIcon.cs 为各自持有的副本，改一处必须同步另一处（无自动比对，靠纪律）。
 7. Windows 环境命令用正斜杠 `e:/4.9`；工具输出 GBK 乱码是显示问题不是错误。
 
 ## 8. 深入文档索引（按需读，不要求通读）
