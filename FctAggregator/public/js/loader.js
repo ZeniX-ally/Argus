@@ -19,7 +19,8 @@
   App.Routes = {
     overview:    { module: "page-overview",    title: "鎬昏" },
     fails:       { module: "page-fails",       title: "FAIL 鏄庣粏" },
-    yield:       { module: "page-yield",       title: "鑹巼" },
+    yield:       { module: "page-yield",       title: "良率" },
+    seasonality: { module: "page-yield-seasonality", title: "季节性" },
     xml:         { module: "page-xml",         title: "鍦ㄧ嚎 XML 鏌ョ湅" },
     maintenance: { module: "page-maintenance", title: "缁翠慨" },
     devices:     { module: "page-devices",     title: "璁惧" },

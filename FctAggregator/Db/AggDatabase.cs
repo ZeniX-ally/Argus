@@ -437,6 +437,38 @@ public partial class AggDatabase : IDisposable
     /// <summary>一行 yld_daily 记录。</summary>
     public record YldDailyRow(string Machine, string TestDate, int Total, int Pass, int Fail, int Interrupted, int Products, string UpdatedTs);
 
+    /// <summary>
+    /// 查询机台原始记录（v3.21.0 规格 03 季节性分解用）：按日期窗口拉 agg_records 的 PASS/FAIL 行，
+    /// 小时分桶在调用方（YieldDecomposer）完成；batch_timestamp 原样返回（可空/空串，由调用方决定 fallback）。
+    /// 30 天数据 ~1 万行，全表扫 < 100ms，本期不加索引（规格 §6 明确）。
+    /// </summary>
+    public List<HourlyRawRow> QueryHourlyRaw(string machine, string fromYmd, string toYmd)
+    {
+        var rows = new List<HourlyRawRow>();
+        using var conn = OpenReader();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT test_date, batch_timestamp, result
+            FROM agg_records
+            WHERE machine = @m AND test_date >= @df AND test_date <= @dt
+              AND result IN ('PASS','FAIL')";
+        cmd.Parameters.AddWithValue("@m", machine);
+        cmd.Parameters.AddWithValue("@df", fromYmd);
+        cmd.Parameters.AddWithValue("@dt", toYmd);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            rows.Add(new HourlyRawRow(
+                r.GetString(0),
+                r.IsDBNull(1) ? "" : r.GetString(1),
+                r.GetString(2)));
+        }
+        return rows;
+    }
+
+    /// <summary>一条 agg_records 原始行（规格 03 用，batch_timestamp 可能为空串）。</summary>
+    public sealed record HourlyRawRow(string TestDate, string BatchTimestamp, string Result);
+
     // ==================== 权限与审计（v3.8.0 总纲 P1 D3）====================
 
     /// <summary>一条用户记录（role ∈ viewer|engineer|admin；token 为 32hex 静态令牌）。</summary>

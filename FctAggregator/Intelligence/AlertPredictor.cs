@@ -33,6 +33,13 @@ public static class AlertPredictor
                 if(declining && predicted < cfg.YieldAlertYieldPct && last >= cfg.YieldAlertYieldPct){
                     list.Add(new PredictItem{ Machine=g.Key, Rule="yield", Level="warn", Current=Math.Round(last,1), Predicted=Math.Round(predicted,1), Detail=$"良率下滑 {last:0.0}% → 预测 {predicted:0.0}% 跌破 {cfg.YieldAlertYieldPct}%"});
                 }
+                // v3.21.0 规格 03：季节性分解残差叠加告警（开关默认关，开启后残差太小自动回退老逻辑）
+                if(cfg.YieldSeasonalityEnabled){
+                    try{
+                        var seasonalAlerts = YieldDecomposer.PredictWithSeasonality(db, cfg, g.Key);
+                        if(seasonalAlerts != null && seasonalAlerts.Count > 0) list.AddRange(seasonalAlerts);
+                    }catch{}
+                }
             }
         } catch{}
 

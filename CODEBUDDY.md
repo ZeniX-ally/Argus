@@ -1,7 +1,7 @@
 # Argus 测试工程师工作台 — Agent 开发规范（唯一入口 Spec）
 
 > **本文件是任何 agent 参与本项目前必读、且流程层面仅需读的唯一 Spec。** CodeBuddy Code 每次会话自动加载本文件；其他 agent 工具请在动手前先读本文件。
-> 维护规则：全仓库流程规范**只维护这一个文件**。随每次发版更新 §0 版本快照；架构/历史细节一律走 §8 索引，不在此重复。最后更新：2026-09-01（v3.20.0）。
+> 维护规则：全仓库流程规范**只维护这一个文件**。随每次发版更新 §0 版本快照；架构/历史细节一律走 §8 索引，不在此重复。最后更新：2026-09-02（v3.21.0）。
 
 ---
 
@@ -9,15 +9,15 @@
 
 | 项 | 值 |
 |---|---|
-| 主程序 | FctAggregator **v3.20.0**（WinForms + Web 看板，.NET 8 `net8.0-windows`，单 exe） |
+| 主程序 | FctAggregator **v3.21.0**（WinForms + Web 看板，.NET 8 `net8.0-windows`，单 exe） |
 | 分发器 | FctDistributor **v1.9.2**（独立工具，与主程序"彻底分家"、代码持副本，勿跨工程共用文件） |
 | 数据层 | SQLite 单写者 + WAL 短租读；DbMigrator schema 当前 **v10**（predict_accuracy_log） |
 | 互联 | P2P Mesh（无中心聚合端），mesh_port 默认 8081，(machine,seq) 幂等，Gossiper 自适应 10/60s |
-| 自检 | **1114 项断言**（v3.20.0 基线，随功能递增），全绿是任何提交的硬门槛 |
-| 智能化 | v3.19.0 九域（采集/DB/配置/设备/维修/UI/告警智能）+ v3.20.0 预测准确率自反馈（对账器，仅推荐不自动应用） |
-| 算法路线 | 4 规格中 02 已落地；03 季节性分解 → 04 健康分 → 01 良率归因 依次排队（见 docs/算法优化/） |
+| 自检 | **1139 项断言**（v3.21.0 基线，随功能递增），全绿是任何提交的硬门槛 |
+| 智能化 | v3.19.0 九域（采集/DB/配置/设备/维修/UI/告警智能）+ v3.20.0 预测准确率自反馈（对账器，仅推荐不自动应用）+ v3.21.0 季节性分解（默认关，残差告警叠加） |
+| 算法路线 | 4 规格中 02、03 已落地；04 健康分 → 01 良率归因 依次排队（见 docs/算法优化/） |
 | 远程 | Gitea `http://192.168.1.16:3000/zenix/Argus.git`，分支 `main` |
-| 近期结构变更 | 2026-09-01：源码按域分组（§1）、根目录加 Argus.sln、清理过期文档 |
+| 近期结构变更 | 2026-09-02：v3.21.0 季节性分解（规格 03，纯加法默认关）；2026-09-01：源码按域分组（§1）、根目录加 Argus.sln、清理过期文档 |
 
 ## 1. 全局结构（重组后）
 
@@ -57,12 +57,12 @@ e:/4.9/
 | **Db/** 数据层 | `Database.cs`(94K) 机台本地库：建表/批量入库/统计/维修/待办 · `AggDatabase.cs` 聚合库主体（单写者 WAL）· `AggDatabase.Accuracy/Alert/AlertPredict/Device/DeviceIntelligent/Maintenance/ProcLog/Settings.cs` 聚合库 partial 按功能分文件 · `DbMigrator.cs` schema 迁移（当前 v10，改表必加新版本号）· `DbMaintenance.cs` 每日维护（checkpoint/VACUUM/备份/对账） |
 | **Mesh/** P2P | `MeshNode.cs` 节点组装/邻居管理 · `MeshPusher.cs` 事件推送（per-peer 并发，(machine,seq) 幂等）· `MeshReceiver.cs` 接收入库 · `MeshGossiper.cs` 对账补推（自适应 10/60s）· `MeshQueryService.cs` 跨机查询（含 PASS 检索）· `TodoSync.cs` 全局待办池广播/合并 |
 | **Agg/** 服务端 | `WebAggServer.cs`(256K) **全部 /api/\* 路由**（新端点进新 region，旧 region 禁改）· `RoutePipeline.cs` 路由管线 · `HttpIngest.cs` HTTP 接收 · `AggDeployer.cs` 一键部署 · `AggAlertService.cs` 告警轮询/飞书卡/alert_history · `HeadlessService.cs` 无头服务组装 · `ServiceManager.cs` Windows Service 管理 · `FetcherService.cs` 异步导出（真实 xlsx/zip）· `DeviceModels.cs`+`DeviceInfoCollector.cs` 设备模型/采集 · `XmlReportHtml.cs` 在线 XML 渲染 |
-| **Intelligence/** 智能 | `ConfigValidator.cs`/`ConfigAdvisor.cs` 配置校验/推荐 · `DevicePredictor.cs`/`DeviceInspector.cs` 设备预测/巡检 · `PriorityScorer.cs`/`FlowAdvisor.cs`/`TodoSuggester.cs` 维修优先级/流转/待办 · `LayoutAdvisor.cs`/`HighlightEngine.cs` 布局/高亮 · `AlertHealer.cs`/`AlertPredictor.cs` 告警自愈/预警 · `PredictAccuracyReconciler.cs` 预测对账+阈值推荐 |
+| **Intelligence/** 智能 | `ConfigValidator.cs`/`ConfigAdvisor.cs` 配置校验/推荐 · `DevicePredictor.cs`/`DeviceInspector.cs` 设备预测/巡检 · `PriorityScorer.cs`/`FlowAdvisor.cs`/`TodoSuggester.cs` 维修优先级/流转/待办 · `LayoutAdvisor.cs`/`HighlightEngine.cs` 布局/高亮 · `AlertHealer.cs`/`AlertPredictor.cs` 告警自愈/预警 · `PredictAccuracyReconciler.cs` 预测对账+阈值推荐 · `YieldDecomposer.cs` 季节性分解（规格 03，默认关） |
 | **Ui/** WinForms | `MainForm.cs`(43K) 主窗口/导航/KPI · `AggCenterForm.cs`(54K) 聚合看板 GUI · `Theme.cs` 视觉令牌单一来源 · `UiWidgets.cs` 自绘控件 · `MaintenanceBoard/Panel/Status/Exporter.cs` 维修看板/面板/状态机/导出 · `FailListPanel.cs` FAIL 页+XmlViewerForm · `DeviceStatusPanel.cs`/`DebugPanel.cs` 设备/调试页 · `BoardCard.cs`/`CardPreview.cs`/`TodoCard.cs`/`TodoGrouping.cs`/`FailItemPicker.cs`/`ResolverManager.cs` 卡片交互/预览/待办/合并/故障项/维修人 · `SplashForm.cs`/`DesktopNotifier.cs`/`UpdatePromptForm.cs`/`AppIcon.cs` 启动/托盘/更新提示/图标 |
 | **Infra/** 横切 | `Config.cs` AppConfig 单例（新键 Load/Save/known-keys 三处同步）· `Logger.cs` 日志 · `TimeUtil.cs` 时间解析 · `CsvUtil.cs` CSV 写出+CWE-1236 防护（所有导出必走）· `Xlsx.cs` 手写 OOXML（四处导出共用）· `FeishuNotifier.cs` 飞书卡片 · `UpdateChecker.cs` 两阶段自更新 |
 | **Parsing/** 解析 | `IResultParser.cs` 接口+注册表 · `ParserConfig.cs` 配置模型 · `DefaultResultParser.cs` 内置兜底 · `ConfigurableResultParser.cs` parsers.json 驱动 |
 | **modules/**（各自 namespace，勿与主程序互改） | `FailRanker/`（XmlScanner/CsvExporter/XlsxExporter/XmlViewerForm）· `Fetcher/`（Scanner/Exporter/Packager/XlsxWriter/FileLocator）· `TdmsViewer/`（TdmsDoc/WaveformPanel/Exporter/JsonDumper） |
-| **public/** 前端（零依赖 SPA） | `index.html` · `css/theme.css` 视觉令牌 · `js/loader.js` 路由注册 · `js/core.js` App 壳（auth/layout/favorites/search）· `js/page-{overview,fails,yield,devices,maintenance,fetch,report,proc,alerts,settings,compare,xml}.js` 十二页面 |
+| **public/** 前端（零依赖 SPA） | `index.html` · `css/theme.css` 视觉令牌 · `js/loader.js` 路由注册 · `js/core.js` App 壳（auth/layout/favorites/search）· `js/page-{overview,fails,yield,seasonality,devices,maintenance,fetch,report,proc,alerts,settings,compare,xml}.js` 十三页面 |
 | **selftest/** | `SelfTest.cs` 全部断言（显式分组）· `SelfTest.csproj` 目录通配编主源码（无需为新文件改动） |
 | **脚本** | `scripts/make_release.ps1` 一键发版 · `FctAggregator/tools/make_package.ps1`/`make_package_agg.ps1` 打包器 · `tools/smoke_{gui,notify,cli}.ps1` 冒烟 · `tools/snap_gui.ps1` 截图 · `tools/xlsx_check.ps1` xlsx 对比 · `tools/{deploy_update,upgrade_drill,diag_fctini}.ps1` · `tools/inidiag/`+`tools/xlsxdump/` 诊断工具（递归通配编主源码） |
 | **FctDistributor/**（16 文件平铺，稳定期） | `Distributor.cs` 核心 · `Planner.cs` 计划 · `NameParser.cs` · `TemplateGenerator.cs` · `SnExporter.cs` · `Xlsx.cs`+`XlsxWriter.cs` · `XmlTimeScanner.cs` · `FileTimeUtil.cs` · `StationDetector.cs` · `MainForm.cs` · `Program.cs` · `RestampScopeDialog.cs` · `AppIcon.cs` · `tools/make_package.ps1` |

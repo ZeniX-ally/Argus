@@ -587,6 +587,156 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
+        // ==================== 季节性（v3.21.0 规格 03：季节性分解）====================
+        {
+            var tmpR = Path.GetTempPath() + "fct_selfseason_" + Guid.NewGuid().ToString("N")[..6];
+            try
+            {
+                Directory.CreateDirectory(tmpR);
+                var dbPath = Path.Combine(tmpR, "season.db");
+                var aggR = new AggDatabase(dbPath);
+                aggR.Open();
+
+                // 注入小时粒度记录：每 (机台, 日期, 小时) 写 pass 条 PASS + fail 条 FAIL
+                void SeedHour(string m, int seq, string ymd, int hour, int pass, int fail)
+                {
+                    using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}");
+                    c.Open();
+                    using var cmd = c.CreateCommand();
+                    cmd.CommandText = "INSERT INTO agg_records (machine, seq, type, test_date, batch_timestamp, result) VALUES (@m,@s,'fail',@d,@ts,@r)";
+                    string ts = $"{ymd.Substring(0, 4)}-{ymd.Substring(4, 2)}-{ymd.Substring(6, 2)}T{hour:00}:30:00";
+                    for (int i = 0; i < pass + fail; i++)
+                    {
+                        cmd.Parameters.Clear();
+                        cmd.Parameters.AddWithValue("@m", m);
+                        cmd.Parameters.AddWithValue("@s", seq++);
+                        cmd.Parameters.AddWithValue("@d", ymd);
+                        cmd.Parameters.AddWithValue("@ts", ts);
+                        cmd.Parameters.AddWithValue("@r", i < pass ? "PASS" : "FAIL");
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+
+                // 断言 1：空输入不崩溃，OverallMean=100、Anomalies 空、长度 = daysBack
+                var decEmpty = YieldDecomposer.Decompose(aggR, "S_NODATA", YieldDecomposer.SeasonalityMode.Hourly, 28, 7, 1.5);
+                Check(decEmpty.OverallMean == 100 && decEmpty.Anomalies.Count == 0 && decEmpty.Trend.Count == 28 && decEmpty.Residual.Count == 28,
+                    "季节性: 空输入不崩溃 OverallMean=100/Anomalies 空/长度 28");
+                Check(decEmpty.Sigma == 0 && decEmpty.Seasonal.Count == 24, "季节性: 空输入 Seasonal=24 桶 σ=0");
+
+                // 断言 2+6：平稳数据（全 95%）→ sigma=0 不除零，PredictWithSeasonality 回退 null
+                for (int i = 27; i >= 0; i--)
+                    aggR.UpsertDailyStats("S_STABLE", DateTime.Today.AddDays(-i).ToString("yyyyMMdd"), new AggDatabase.DailyStats(100, 95, 5, 0, 50));
+                var cfgOn = new AppConfig { YieldSeasonalityEnabled = true, YieldSeasonalityMode = "weekly", YieldSeasonalityMinSigma = 0.5, YieldAlertYieldPct = 90 };
+                var decStable = YieldDecomposer.Decompose(aggR, "S_STABLE", YieldDecomposer.SeasonalityMode.Weekly, 28, 7, 1.5);
+                Check(decStable.Sigma == 0 && decStable.Anomalies.Count == 0, "季节性: 全相同数据 σ=0 不除零、无异常");
+                Check(YieldDecomposer.PredictWithSeasonality(aggR, cfgOn, "S_STABLE") == null,
+                    "季节性: 平稳数据（σ<min_sigma）回退 v3.19.0 老逻辑（返回 null）");
+
+                // 断言 3：27 天 95% + 今天 70% → 异常日被检出 + 预测产出 1 条（预测只看最新一天，异常必须落在今天）
+                var anomDay = DateTime.Today;
+                for (int i = 27; i >= 0; i--)
+                {
+                    int pct = DateTime.Today.AddDays(-i).Date == anomDay.Date ? 70 : 95;
+                    aggR.UpsertDailyStats("S_ANOM", DateTime.Today.AddDays(-i).ToString("yyyyMMdd"), new AggDatabase.DailyStats(100, pct, 100 - pct, 0, 50));
+                }
+                var decAnom = YieldDecomposer.Decompose(aggR, "S_ANOM", YieldDecomposer.SeasonalityMode.Weekly, 28, 7, 1.5);
+                Check(decAnom.Anomalies.Count >= 1 && decAnom.Anomalies.Any(a => a.Date.Date == anomDay.Date && a.Severity == "critical"),
+                    $"季节性: 显著异常日（70% vs 95%）被检出（{decAnom.Anomalies.Count} 个）");
+                var predAnom = YieldDecomposer.PredictWithSeasonality(aggR, cfgOn, "S_ANOM");
+                Check(predAnom != null && predAnom.Count == 1 && predAnom[0].Rule == "yield" && predAnom[0].Level == "warn",
+                    "季节性: 异常机台预测产出 1 条 yield/warn");
+
+                // 断言 4：hourly 白班 95% / 夜班 90% 循环 14 天 → 周期被识别，不误报
+                int seedSeq = 1;
+                for (int i = 13; i >= 0; i--)
+                {
+                    var ymd = DateTime.Today.AddDays(-i).ToString("yyyyMMdd");
+                    for (int h = 8; h <= 19; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 19, 1);   // 白天 95%
+                    for (int h = 20; h <= 23; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 9, 1);   // 夜 90%
+                    for (int h = 0; h <= 7; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 9, 1);     // 夜 90%
+                }
+                var decShift = YieldDecomposer.Decompose(aggR, "S_SHIFT", YieldDecomposer.SeasonalityMode.Hourly, 14, 7, 1.5);
+                Check(decShift.Anomalies.Count == 0, $"季节性: 白班/夜班周期不误报（异常 {decShift.Anomalies.Count} 个）");
+                Check(decShift.Seasonal.Count == 24 && Math.Abs(decShift.Seasonal[8]) > 0.5 && Math.Abs(decShift.Seasonal[0]) > 0.5,
+                    "季节性: 昼夜周期分量被捕获（白天桶 >0.5pp、深夜桶 <−0.5pp）");
+
+                // 断言 5：weekly 周一 85% / 其余 90% → 周一低点不当异常
+                for (int i = 27; i >= 0; i--)
+                {
+                    var dt = DateTime.Today.AddDays(-i);
+                    int pct = dt.DayOfWeek == DayOfWeek.Monday ? 85 : 90;
+                    aggR.UpsertDailyStats("S_WEEK", dt.ToString("yyyyMMdd"), new AggDatabase.DailyStats(100, pct, 100 - pct, 0, 50));
+                }
+                var decWeek = YieldDecomposer.Decompose(aggR, "S_WEEK", YieldDecomposer.SeasonalityMode.Weekly, 28, 7, 1.5);
+                Check(decWeek.Anomalies.Count == 0, $"季节性: 周一低 5pp 不被当异常（异常 {decWeek.Anomalies.Count} 个）");
+                Check(decWeek.Seasonal.Count == 7 && decWeek.Seasonal[(int)DayOfWeek.Monday] < -3,
+                    "季节性: 周一周期分量 ≈ −5pp");
+
+                // 断言 7：开关关 → 老逻辑零影响（集成回归）
+                var cfgOff = new AppConfig { YieldSeasonalityEnabled = false, YieldSeasonalityMode = "weekly", YieldAlertYieldPct = 90 };
+                Check(YieldDecomposer.PredictWithSeasonality(aggR, cfgOff, "S_ANOM") == null, "季节性: 开关关 PredictWithSeasonality 返回 null");
+                var predsOff = AlertPredictor.Predict(aggR);
+                Check(predsOff.All(p => !(p.Detail ?? "").Contains("季节性分解")), "季节性: 开关关 /api/alerts/predict 无季节性项（老逻辑回归）");
+
+                // 断言 8：跨机台独立分解不串
+                var decM1 = YieldDecomposer.Decompose(aggR, "S_ANOM", YieldDecomposer.SeasonalityMode.Weekly, 28, 7, 1.5);
+                var decM2 = YieldDecomposer.Decompose(aggR, "S_STABLE", YieldDecomposer.SeasonalityMode.Weekly, 28, 7, 1.5);
+                Check(decM1.Anomalies.Count >= 1 && decM2.Anomalies.Count == 0,
+                    "季节性: 跨机台独立分解（异常机台有 / 平稳机台无）");
+
+                // 断言 12：非法模式回退 hourly
+                Check(YieldDecomposer.ParseMode("garbage") == YieldDecomposer.SeasonalityMode.Hourly, "季节性: 非法 mode 回退 hourly");
+                Check(YieldDecomposer.ParseMode("weekly") == YieldDecomposer.SeasonalityMode.Weekly, "季节性: mode=weekly 解析正确");
+
+                // 断言 9-11：HTTP 端点 + 权限
+                try
+                {
+                    aggR.UpsertUser("sadmin", PasswordHasher.Hash("pwd"), "admin");
+                    aggR.UpsertUser("sviewer", PasswordHasher.Hash("pwd"), "viewer");
+                    var adminTok = aggR.GetUserByName("sadmin")!.Token;
+                    var viewerTok = aggR.GetUserByName("sviewer")!.Token;
+                    int port = GetFreePort();
+                    var localDb = new Database(Path.Combine(tmpR, "local.db"));
+                    var meshR = new MeshNode(new AppConfig { StationId = "SEASON", AggToken = "rtok", Peers = new List<string>() },
+                        "SEASON", localDb, aggR, new string[0]);
+                    var srvR = new WebAggServer(port, (MeshNode)meshR, aggR, tmpR, tmpR, "rtok");
+                    srvR.Start(); System.Threading.Thread.Sleep(400);
+                    var baseUrl = $"http://127.0.0.1:{port}";
+
+                    var rDec = HttpGetWithToken(baseUrl + "/api/yield/decompose?machine=S_ANOM&mode=weekly&days=28", viewerTok);
+                    var bDec = rDec.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    Check(rDec.StatusCode == System.Net.HttpStatusCode.OK, "季节性: GET /api/yield/decompose → 200");
+                    Check(bDec.Contains("Trend") && bDec.Contains("Seasonal") && bDec.Contains("Residual") && bDec.Contains("Sigma") && bDec.Contains("Anomalies"),
+                        "季节性: 响应含 Trend/Seasonal/Residual/Sigma/Anomalies 字段（PascalCase）");
+                    var rNoM = HttpGetWithToken(baseUrl + "/api/yield/decompose?days=28", viewerTok);
+                    Check(rNoM.StatusCode == System.Net.HttpStatusCode.BadRequest, "季节性: machine 缺失 → 400");
+
+                    // 权限：viewer 改配置 → 403
+                    var rV403 = HttpPostWithToken(baseUrl + "/api/yield/decompose/config", viewerTok, "{\"enabled\":true}");
+                    Check(rV403.StatusCode == System.Net.HttpStatusCode.Forbidden, "季节性: viewer POST config → 403");
+                    // admin 改配置 → 200 生效，GET config 回显
+                    var rAdmin = HttpPostWithToken(baseUrl + "/api/yield/decompose/config", adminTok, "{\"enabled\":true,\"mode\":\"daily\"}");
+                    Check(rAdmin.StatusCode == System.Net.HttpStatusCode.OK, "季节性: admin POST config → 200");
+                    var rCfg = HttpGetWithToken(baseUrl + "/api/yield/decompose/config", viewerTok);
+                    var bCfg = rCfg.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    Check(bCfg.Contains("\"enabled\":true") && bCfg.Contains("daily"), "季节性: 热生效后 GET config 回显 enabled=true/mode=daily");
+                    // 非法 mode → 400
+                    var rBad = HttpPostWithToken(baseUrl + "/api/yield/decompose/config", adminTok, "{\"mode\":\"monthly\"}");
+                    Check(rBad.StatusCode == System.Net.HttpStatusCode.BadRequest, "季节性: 非法 mode → 400");
+                    // 复位（不污染全局单例与后续断言）
+                    HttpPostWithToken(baseUrl + "/api/yield/decompose/config", adminTok, "{\"enabled\":false,\"mode\":\"hourly\"}");
+
+                    srvR.Stop(); meshR.Stop();
+                }
+                catch (Exception ex) { Check(false, $"季节性 HTTP smoke 异常: {ex.Message}"); }
+
+                aggR.Close();
+            }
+            catch (Exception ex) { Check(false, $"季节性分组异常: {ex.Message}"); }
+            try { Directory.Delete(tmpR, true); } catch { }
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        }
+
         // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
             // 标准 6 段 SN 场景：第 7 段 17 位时间戳

@@ -161,6 +161,11 @@ public class WebAggServer : IDisposable
         // v3.20.0 规格 02：预测准确率对账（rule/machine/days 可选过滤）
         _pipeline.Add("GET", "/api/predict/accuracy", ctx => { CountHit(); ServePredictAccuracy(ctx); return Task.CompletedTask; });
 
+        // v3.21.0 规格 03：季节性分解（新 region — viewer 读分解结果 / admin 热改开关，其余 region 一律禁改）
+        _pipeline.Add("GET", "/api/yield/decompose", ctx => { CountHit(); ServeYieldDecompose(ctx); return Task.CompletedTask; });
+        _pipeline.Add("GET", "/api/yield/decompose/config", ctx => { CountHit(); ServeYieldDecomposeConfigGet(ctx); return Task.CompletedTask; });
+        _pipeline.Add("POST", "/api/yield/decompose/config", ctx => { CountHit(); ServeYieldDecomposeConfig(ctx); return Task.CompletedTask; });
+
         // ===== v3.8.0 P1 D3：权限（users 三角色）+ 审计 + 状态 =====
         // /api/login 在 Handle 层豁免 agg_token 校验（未登录也能到达），其余路由照常
         // （async handler 直接返回其 Task，避免 CS4014 未等待警告）
@@ -1248,6 +1253,132 @@ public class WebAggServer : IDisposable
                 Recommended = Math.Round(Math.Max(50.0, current - 5.0), 2),
                 Reason = $"命中率 {stat.Accuracy:P0} > 85%（{stat.Total} 样本），收紧阈值减少漏报",
             });
+        }
+    }
+
+    // ==================== v3.21.0 规格 03：季节性分解实现（单一新 region，A/B/C/Lite-* 禁改）====================
+
+    /// <summary>
+    /// 季节性分解结果（v3.21.0 规格 03）：GET /api/yield/decompose?machine=&amp;mode=&amp;days=
+    /// mode 缺省取 cfg.YieldSeasonalityMode；days 默认 cfg.YieldSeasonalityDays，上限 90。
+    /// viewer 可读。返回 DecompositionResult（Trend/Seasonal/Residual/Sigma/Anomalies，PascalCase）。
+    /// </summary>
+    private void ServeYieldDecompose(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try
+        {
+            var q = ctx.Request.QueryString;
+            var machine = (q["machine"] ?? "").Trim();
+            if (string.IsNullOrEmpty(machine)) { RespondText(ctx, 400, "machine required"); return; }
+            var cfg = AppConfig.Instance;
+            var mode = YieldDecomposer.ParseMode(q["mode"] ?? cfg.YieldSeasonalityMode);
+            var days = cfg.YieldSeasonalityDays;
+            if (int.TryParse(q["days"], out var d) && d >= 7) days = Math.Min(d, 90);
+            var dec = YieldDecomposer.Decompose(_db, machine, mode, days,
+                cfg.YieldSeasonalityTrendWindow, cfg.YieldSeasonalityEpsilon);
+            Respond(ctx, 200, "application/json; charset=utf-8",
+                JsonSerializer.SerializeToUtf8Bytes(dec, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 季节性分解失败: {ex.Message}");
+            RespondText(ctx, 500, "seasonality decompose failed");
+        }
+    }
+
+    /// <summary>季节性开关状态读取（v3.21.0 规格 03）：GET /api/yield/decompose/config → {enabled, mode}。
+    /// viewer 可读（SPA 开关回显用；改走 POST）。</summary>
+    private void ServeYieldDecomposeConfigGet(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        var cfg = AppConfig.Instance;
+        var resp = new Dictionary<string, object?>
+        {
+            ["enabled"] = cfg.YieldSeasonalityEnabled,
+            ["mode"] = cfg.YieldSeasonalityMode,
+            ["epsilon"] = cfg.YieldSeasonalityEpsilon,
+            ["days"] = cfg.YieldSeasonalityDays,
+            ["min_sigma"] = cfg.YieldSeasonalityMinSigma,
+        };
+        Respond(ctx, 200, "application/json; charset=utf-8",
+            JsonSerializer.SerializeToUtf8Bytes(resp, JsonOpts));
+    }
+
+    /// <summary>
+    /// 季节性开关热更新（v3.21.0 规格 03）：POST /api/yield/decompose/config {enabled, mode?}
+    /// admin 专属，写 audit_log（yield.seasonality.save）；改内存单例 + cfg.Save() 原子落盘，
+    /// AlertPredictor 每轮轮询重读 Instance 即热生效（与 Lite-Ops 告警规则热更新同机制）。
+    /// mode 非法返回 400。
+    /// </summary>
+    private void ServeYieldDecomposeConfig(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "admin")) return;
+        string body;
+        try { body = ReadBody(ctx.Request); }
+        catch (BodyTooLargeException)
+        {
+            ctx.Response.StatusCode = 413;
+            ctx.Response.KeepAlive = false;   // 立即断开：客户端可能仍在发大 body，不排空避免挂起
+            return;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var cfg = AppConfig.Instance;
+            var changed = new List<string>();
+            if (root.TryGetProperty("enabled", out var pe) &&
+                (pe.ValueKind == JsonValueKind.True || pe.ValueKind == JsonValueKind.False))
+            {
+                cfg.YieldSeasonalityEnabled = pe.ValueKind == JsonValueKind.True;
+                changed.Add("yield_seasonality_enabled");
+            }
+            if (root.TryGetProperty("mode", out var pm) && pm.ValueKind == JsonValueKind.String)
+            {
+                var m = (pm.GetString() ?? "").Trim().ToLowerInvariant();
+                if (m != "hourly" && m != "daily" && m != "weekly")
+                {
+                    RespondText(ctx, 400, "mode 必须为 hourly|daily|weekly");
+                    return;
+                }
+                cfg.YieldSeasonalityMode = m;
+                changed.Add("yield_seasonality_mode");
+            }
+            if (changed.Count == 0)
+            {
+                Respond(ctx, 200, "application/json; charset=utf-8",
+                    Encoding.UTF8.GetBytes("{\"ok\":true,\"restart\":false,\"msg\":\"无变化\"}"));
+                return;
+            }
+            if (!cfg.Save())
+            {
+                RespondText(ctx, 500, "配置保存失败（看日志）");
+                return;
+            }
+            // v3.8.0 P1 D3：配置修改写审计（who/when/what）
+            try { var (_, who) = ResolveRole(ctx); _db.LogAudit(who ?? "?", "yield.seasonality.save", string.Join(",", changed)); }
+            catch (Exception ex) { Logger.Warning($"[Web 服务] 审计写入失败: {ex.Message}"); }
+            var resp = new Dictionary<string, object?>
+            {
+                ["ok"] = true,
+                ["restart"] = false,
+                ["msg"] = "已保存并生效。",
+                ["enabled"] = cfg.YieldSeasonalityEnabled,
+                ["mode"] = cfg.YieldSeasonalityMode,
+            };
+            Respond(ctx, 200, "application/json; charset=utf-8",
+                JsonSerializer.SerializeToUtf8Bytes(resp, JsonOpts));
+        }
+        catch (JsonException ex)
+        {
+            Logger.Warning($"[Web 服务] 季节性配置 JSON 非法: {ex.Message}");
+            ctx.Response.StatusCode = 400;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 季节性配置保存失败: {ex.Message}");
+            RespondText(ctx, 500, "seasonality config save failed");
         }
     }
 

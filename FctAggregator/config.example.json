@@ -28,6 +28,12 @@
     "predict_tune_enabled": true,
     "predict_tune_min_samples": 30,
     "predict_accuracy_retain_days": 180,
+    "yield_seasonality_enabled": false,
+    "yield_seasonality_mode": "hourly",
+    "yield_seasonality_epsilon": 1.5,
+    "yield_seasonality_days": 28,
+    "yield_seasonality_trend_window": 7,
+    "yield_seasonality_min_sigma": 0.5,
     "peers": [
         "http://10.0.0.2:8081/",
         "http://10.0.0.3:8081/"
