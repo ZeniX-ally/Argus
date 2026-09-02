@@ -22,7 +22,7 @@
 ## 1. 全局结构（重组后）
 
 ```
-e:/4.9/
+e:/Argus-main/
 ├── CODEBUDDY.md              ← 本文件（唯一流程 Spec）
 ├── Argus.sln                 ← 两工程一键构建（FctAggregator + SelfTest；分发器已拆分，勿加回）
 ├── FctAggregator/            ← 主程序（源码按域分组，2026-09-01 起）
@@ -159,7 +159,7 @@ e:/FctDistributor/            ← 分发器独立仓库（2026-09-02 拆分；�
 4. 禁止引入新第三方依赖（§2 白名单外一律不进）。
 5. 禁止绕过 selftest 直接提交；禁止在自检外新增测试框架。
 6. 禁止拆分巨文件（§2）。分发器已拆分独立仓库（e:/FctDistributor），本仓库不再维护其源码；两侧的 Xlsx.cs/StationDetector.cs/AppIcon.cs 为各自持有的副本，改一处必须同步另一处（无自动比对，靠纪律）。
-7. Windows 环境命令用正斜杠 `e:/4.9`；工具输出 GBK 乱码是显示问题不是错误。
+7. Windows 环境命令用正斜杠 `e:/Argus-main`；工具输出 GBK 乱码是显示问题不是错误。
 
 ## 8. 深入文档索引（按需读，不要求通读）
 
