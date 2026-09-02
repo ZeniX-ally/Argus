@@ -112,6 +112,19 @@ public class AppConfig
     public int PredictTuneMinSamples { get; set; } = 30;
     /// <summary>预测准确率对账保留天数（默认 180）。config.json: predict_accuracy_retain_days。</summary>
     public int PredictAccuracyRetainDays { get; set; } = 180;
+    // ===== 季节性/班次分解（v3.21.0 规格 03，默认全关保持 v3.19.0 行为）=====
+    /// <summary>季节性分解总开关（默认 false：行为 = v3.19.0 老逻辑，现场主动开才启用）。config.json: yield_seasonality_enabled。</summary>
+    public bool YieldSeasonalityEnabled { get; set; } = false;
+    /// <summary>分解模式：hourly（日内 24 时段）/ daily（日内 24 时段+7 日趋势）/ weekly（星期几 7 时段）。非法值回退 hourly。config.json: yield_seasonality_mode。</summary>
+    public string YieldSeasonalityMode { get; set; } = "hourly";
+    /// <summary>残差告警 σ 倍数（1.5 ≈ 87% 置信度）。config.json: yield_seasonality_epsilon。</summary>
+    public double YieldSeasonalityEpsilon { get; set; } = 1.5;
+    /// <summary>基线窗口（天，默认 28）。config.json: yield_seasonality_days。</summary>
+    public int YieldSeasonalityDays { get; set; } = 28;
+    /// <summary>趋势平滑窗口（天，默认 7，daily 模式用）。config.json: yield_seasonality_trend_window。</summary>
+    public int YieldSeasonalityTrendWindow { get; set; } = 7;
+    /// <summary>残差 σ 小于此值视作平稳，回退 v3.19.0 老逻辑（默认 0.5）。config.json: yield_seasonality_min_sigma。</summary>
+    public double YieldSeasonalityMinSigma { get; set; } = 0.5;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -223,6 +236,37 @@ public class AppConfig
                 // v3.17.0 P8 告警规则中心：良率跌破阈值（延续 device_alert_* 命名）
                 if (root.TryGetProperty("yield_alert_yield_pct", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var yp)) cfg.YieldAlertYieldPct = yp;
                 if (root.TryGetProperty("yield_alert_enabled", out v)) cfg.YieldAlertEnabled = v.ValueKind != JsonValueKind.False;
+                // v3.20.0 预测准确率自反馈（规格 02）—— v3.21.0 补三处接线（原版只加了属性漏了 Load/Save/known，config.json 写了不生效）
+                if (root.TryGetProperty("predict_reconcile_enabled", out v)) cfg.PredictReconcileEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("predict_reconcile_horizon_days", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var prh) && prh >= 1)
+                    cfg.PredictReconcileHorizonDays = prh;
+                if (root.TryGetProperty("predict_reconcile_cron_hour", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var prc) && prc >= 0 && prc <= 23)
+                    cfg.PredictReconcileCronHour = prc;
+                if (root.TryGetProperty("predict_tune_enabled", out v)) cfg.PredictTuneEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("predict_tune_min_samples", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var ptm) && ptm >= 1)
+                    cfg.PredictTuneMinSamples = ptm;
+                if (root.TryGetProperty("predict_accuracy_retain_days", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var par) && par >= 1)
+                    cfg.PredictAccuracyRetainDays = par;
+                // v3.21.0 规格 03 季节性分解
+                if (root.TryGetProperty("yield_seasonality_enabled", out v)) cfg.YieldSeasonalityEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("yield_seasonality_mode", out v) && v.ValueKind == JsonValueKind.String)
+                    cfg.YieldSeasonalityMode = v.GetString() ?? "hourly";
+                if (root.TryGetProperty("yield_seasonality_epsilon", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var yse) && yse > 0)
+                    cfg.YieldSeasonalityEpsilon = yse;
+                if (root.TryGetProperty("yield_seasonality_days", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var ysd) && ysd >= 7)
+                    cfg.YieldSeasonalityDays = ysd;
+                if (root.TryGetProperty("yield_seasonality_trend_window", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var ystw) && ystw >= 1)
+                    cfg.YieldSeasonalityTrendWindow = ystw;
+                if (root.TryGetProperty("yield_seasonality_min_sigma", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var ysms) && ysms >= 0)
+                    cfg.YieldSeasonalityMinSigma = ysms;
                 // 若未配置token，生成随机token并警告（防空token全网开放）
                 if (string.IsNullOrEmpty(cfg.AggToken))
                 {
@@ -282,6 +326,10 @@ public class AppConfig
                     "device_info_enabled", "device_info_interval_sec", "device_samples_retain_days",
                     "device_alert_disk_free_gb", "device_alert_cpu_pct", "device_alert_offline_minutes",
                     "yield_alert_yield_pct", "yield_alert_enabled",
+                    "predict_reconcile_enabled", "predict_reconcile_horizon_days", "predict_reconcile_cron_hour",
+                    "predict_tune_enabled", "predict_tune_min_samples", "predict_accuracy_retain_days",
+                    "yield_seasonality_enabled", "yield_seasonality_mode", "yield_seasonality_epsilon",
+                    "yield_seasonality_days", "yield_seasonality_trend_window", "yield_seasonality_min_sigma",
                 };
                 // 先写磁盘上的未知字段（保留原样），本类管理的字段随后覆盖
                 foreach (var prop in doc.RootElement.EnumerateObject())
@@ -332,6 +380,18 @@ public class AppConfig
                 writer.WriteNumber("device_alert_offline_minutes", DeviceAlertOfflineMinutes);
                 writer.WriteNumber("yield_alert_yield_pct", YieldAlertYieldPct);
                 writer.WriteBoolean("yield_alert_enabled", YieldAlertEnabled);
+                writer.WriteBoolean("predict_reconcile_enabled", PredictReconcileEnabled);
+                writer.WriteNumber("predict_reconcile_horizon_days", PredictReconcileHorizonDays);
+                writer.WriteNumber("predict_reconcile_cron_hour", PredictReconcileCronHour);
+                writer.WriteBoolean("predict_tune_enabled", PredictTuneEnabled);
+                writer.WriteNumber("predict_tune_min_samples", PredictTuneMinSamples);
+                writer.WriteNumber("predict_accuracy_retain_days", PredictAccuracyRetainDays);
+                writer.WriteBoolean("yield_seasonality_enabled", YieldSeasonalityEnabled);
+                writer.WriteString("yield_seasonality_mode", YieldSeasonalityMode);
+                writer.WriteNumber("yield_seasonality_epsilon", YieldSeasonalityEpsilon);
+                writer.WriteNumber("yield_seasonality_days", YieldSeasonalityDays);
+                writer.WriteNumber("yield_seasonality_trend_window", YieldSeasonalityTrendWindow);
+                writer.WriteNumber("yield_seasonality_min_sigma", YieldSeasonalityMinSigma);
                 writer.WriteEndObject();
             }
             var tmp = path + ".tmp";

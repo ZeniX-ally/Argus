@@ -5657,6 +5657,36 @@ Argus 统一发布包  v{newer}
             }
         }
 
+        // ---------- v3.21.0 补接线：predict_* 6 键 Load/known/Save 三处同步（原版只加属性，config.json 写了不生效）----------
+        {
+            var cfg = new AppConfig();
+            Check(cfg.PredictReconcileEnabled && cfg.PredictReconcileHorizonDays == 14 && cfg.PredictReconcileCronHour == 4,
+                "Config 默认 predict_reconcile_*=true/14/4");
+            Check(cfg.PredictTuneEnabled && cfg.PredictTuneMinSamples == 30 && cfg.PredictAccuracyRetainDays == 180,
+                "Config 默认 predict_tune_*/retain=true/30/180");
+            var cfgFile = Path.Combine(AppConfig.BaseDir, "config.json");
+            var backup2 = File.Exists(cfgFile) ? File.ReadAllText(cfgFile) : null;
+            try
+            {
+                // Load 接线：有效值读回
+                File.WriteAllText(cfgFile, "{\"predict_reconcile_enabled\":false,\"predict_reconcile_horizon_days\":21,\"predict_reconcile_cron_hour\":5,\"predict_tune_enabled\":false,\"predict_tune_min_samples\":50,\"predict_accuracy_retain_days\":90}");
+                var loaded = AppConfig.Load();
+                Check(!loaded.PredictReconcileEnabled && loaded.PredictReconcileHorizonDays == 21 && loaded.PredictReconcileCronHour == 5,
+                    "Config predict_reconcile_* config.json 写入后 Load 读回（接线验证）");
+                Check(!loaded.PredictTuneEnabled && loaded.PredictTuneMinSamples == 50 && loaded.PredictAccuracyRetainDays == 90,
+                    "Config predict_tune_*/retain config.json 写入后 Load 读回");
+                // 非法值回退默认（越界/负数/0）
+                File.WriteAllText(cfgFile, "{\"predict_reconcile_horizon_days\":0,\"predict_reconcile_cron_hour\":99,\"predict_tune_min_samples\":-1,\"predict_accuracy_retain_days\":0}");
+                var loaded2 = AppConfig.Load();
+                Check(loaded2.PredictReconcileHorizonDays == 14 && loaded2.PredictReconcileCronHour == 4 && loaded2.PredictTuneMinSamples == 30 && loaded2.PredictAccuracyRetainDays == 180,
+                    "Config predict_* 非法值全部回退默认（0/-1/99 不覆盖）");
+            }
+            finally
+            {
+                try { if (backup2 != null) File.WriteAllText(cfgFile, backup2); else File.Delete(cfgFile); } catch { }
+            }
+        }
+
         // ---------- DeviceInfoCollector 采集 ----------
         {
             var cfg = new AppConfig { StationId = "TEST-MACHINE", DeviceInfoEnabled = true, DeviceInfoIntervalSec = 300, Peers = new List<string>() };

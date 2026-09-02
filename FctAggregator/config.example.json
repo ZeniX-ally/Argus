@@ -22,6 +22,12 @@
     "device_alert_offline_minutes": 5,
     "yield_alert_yield_pct": 90,
     "yield_alert_enabled": true,
+    "predict_reconcile_enabled": true,
+    "predict_reconcile_horizon_days": 14,
+    "predict_reconcile_cron_hour": 4,
+    "predict_tune_enabled": true,
+    "predict_tune_min_samples": 30,
+    "predict_accuracy_retain_days": 180,
     "peers": [
         "http://10.0.0.2:8081/",
         "http://10.0.0.3:8081/"
