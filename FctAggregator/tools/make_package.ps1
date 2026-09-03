@@ -145,6 +145,7 @@ function Copy-WebRoot([string]$stage) {
 # 程序文件已在 build 时生成在 $out；补上随包文件与 data/logs 目录
 foreach ($f in $rootFiles) {
     if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $out }
+    elseif ($f -eq 'deploy_update.ps1') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $out }  # v3.22.1：部署引擎随包（图形升级向导/命令行部署兜底用）
     else { Copy-Item (Join-Path $root $f) $out }
 }
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $out }
@@ -161,6 +162,7 @@ Assert-DepsWinFiles $stage
 Copy-WebRoot $stage   # v3.8.0：public\ 前端静态资源（WebAggServer /public/* 依赖）
 foreach ($f in ($rootFiles + $docs)) {
     if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $stage }
+    elseif ($f -eq 'deploy_update.ps1') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $stage }
     else { Copy-Item (Join-Path $root $f) $stage }
 }
 Write-PackageConfig (Join-Path $stage 'config.json')        # 完整包模板同样置空 webhook
@@ -183,6 +185,7 @@ Assert-DepsWinFiles $stageUpd
 Copy-WebRoot $stageUpd   # v3.8.0：public\ 前端静态资源（看板升级也必须带上）
 Copy-Item (Join-Path $root '启动.bat') $stageUpd
 Copy-Item (Join-Path (Join-Path $root 'tools') '一键部署聚合服务.bat') $stageUpd  # 聚合服务端升级也可一键部署
+Copy-Item (Join-Path (Join-Path $root 'tools') 'deploy_update.ps1') $stageUpd     # v3.22.1：部署引擎随更新包（图形升级向导 Argus.exe upgrade 的兜底脚本源）
 Write-PackageConfig (Join-Path $stageUpd 'config.json')     # 配置模板（webhook 置空，部署端合并时保留现场值）
 Copy-Item (Join-Path $root 'app_icon.ico') $stageUpd                     # 图标也跟着更新
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $stageUpd }

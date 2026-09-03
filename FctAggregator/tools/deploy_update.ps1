@@ -38,6 +38,10 @@
 .PARAMETER NoStart
     部署完成后不自动启动程序做校验。
 
+.PARAMETER ExcludePid
+    停进程时排除的 PID（v3.22.1）：图形化升级向导（Argus.exe upgrade）本身也是
+    运行中的 Argus 进程，把自己 PID 传进来可避免部署引擎把向导一并停掉。
+
 .PARAMETER Rollback
     回滚：传入本工具生成的备份目录路径，把程序文件恢复原状。
 
@@ -63,6 +67,7 @@ param(
     [switch]$KeepLegacy,
     [switch]$NoDbBackup,
     [switch]$NoStart,
+    [int]$ExcludePid = 0,
     [string]$Rollback
 )
 
@@ -122,6 +127,11 @@ function Get-ArgusProcesses([string]$dest) {
         }
     } catch {
         # CIM 不可用（老系统/权限受限）时退回仅 Get-Process 的结果
+    }
+    # v3.22.1：图形化升级向导（Argus.exe upgrade）把自己 PID 传入 -ExcludePid，
+    # 部署阶段不停向导自身——否则向导会在"结束进程"一步把自己杀掉。
+    if ($ExcludePid -gt 0) {
+        $list = @($list | Where-Object { $_.Id -ne $ExcludePid })
     }
     return $list
 }

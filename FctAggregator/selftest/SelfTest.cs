@@ -6724,6 +6724,70 @@ Argus 统一发布包  v{newer}
             }
         }
 
+        // ==================== v3.22.1 图形化升级向导：包校验/脚本定位（纯逻辑，无 UI）====================
+        {
+            var tmpU = Path.Combine(work, "upgwiz_" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(tmpU);
+            try
+            {
+                // 合成"真实结构"更新包：扁平根 Argus.exe + config.json + public/ + runtimes/（对齐 make_package.ps1 产物）
+                var pkgRoot = Path.Combine(tmpU, "pkg");
+                Directory.CreateDirectory(Path.Combine(pkgRoot, "public"));
+                Directory.CreateDirectory(Path.Combine(pkgRoot, "runtimes", "win", "lib", "net8.0"));
+                var selfExe = Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                if (!string.IsNullOrEmpty(selfExe) && File.Exists(selfExe))
+                    File.Copy(selfExe, Path.Combine(pkgRoot, "Argus.exe"));
+                else
+                    File.WriteAllText(Path.Combine(pkgRoot, "Argus.exe"), "fake");
+                File.WriteAllText(Path.Combine(pkgRoot, "config.json"), "{}");
+                File.WriteAllText(Path.Combine(pkgRoot, "public", "x.txt"), "x");
+                File.WriteAllText(Path.Combine(pkgRoot, "runtimes", "win", "lib", "net8.0", "x.dll"), "x");
+                var zipPath = Path.Combine(tmpU, "Argus-v3.22.1-update.zip");
+                System.IO.Compression.ZipFile.CreateFromDirectory(pkgRoot, zipPath);
+
+                // 解包 → 校验通过 + 版本号可读
+                var stage1 = Path.Combine(tmpU, "stage_ok");
+                System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, stage1);
+                var (ok1, ver1, err1) = FctAggregator.modules.Upgrader.UpgradeWizard.ValidateStage(stage1);
+                Check(ok1, $"升级向导: 合成真实结构包校验通过{(ok1 ? "" : "：" + err1)}");
+                Check(!string.IsNullOrEmpty(ver1), $"升级向导: 包内版本号可读（v{ver1}）");
+
+                // 污染包：含 data\ → 拒绝（防覆盖现场数据）
+                var badPkg = Path.Combine(tmpU, "bad_pkg");
+                Directory.CreateDirectory(Path.Combine(badPkg, "data"));
+                File.Copy(Path.Combine(pkgRoot, "Argus.exe"), Path.Combine(badPkg, "Argus.exe"));
+                File.WriteAllText(Path.Combine(badPkg, "data", "x.db"), "x");
+                var (ok2, _, err2) = FctAggregator.modules.Upgrader.UpgradeWizard.ValidateStage(badPkg);
+                Check(!ok2 && err2.Contains("data"), $"升级向导: 含 data\\ 目录的包被拒绝（{err2}）");
+
+                // 缺 Argus.exe → 拒绝
+                var noExe = Path.Combine(tmpU, "no_exe");
+                Directory.CreateDirectory(noExe);
+                File.WriteAllText(Path.Combine(noExe, "config.json"), "{}");
+                var (ok3, _, err3) = FctAggregator.modules.Upgrader.UpgradeWizard.ValidateStage(noExe);
+                Check(!ok3 && err3.Contains("Argus.exe"), $"升级向导: 缺 Argus.exe 的包被拒绝（{err3}）");
+
+                // 部署脚本定位：tools\ 优先于安装目录根，最后才包内
+                var baseDir = Path.Combine(tmpU, "base");
+                Directory.CreateDirectory(Path.Combine(baseDir, "tools"));
+                File.WriteAllText(Path.Combine(baseDir, "tools", "deploy_update.ps1"), "# tools");
+                Check(FctAggregator.modules.Upgrader.UpgradeWizard.FindDeployScript(baseDir, noExe) == Path.Combine(baseDir, "tools", "deploy_update.ps1"),
+                    "升级向导: 脚本定位优先 tools\\deploy_update.ps1");
+                Directory.Delete(Path.Combine(baseDir, "tools"), recursive: true);
+                File.WriteAllText(Path.Combine(baseDir, "deploy_update.ps1"), "# root");
+                Check(FctAggregator.modules.Upgrader.UpgradeWizard.FindDeployScript(baseDir, noExe) == Path.Combine(baseDir, "deploy_update.ps1"),
+                    "升级向导: tools\\ 缺失时回落安装目录根");
+                File.Delete(Path.Combine(baseDir, "deploy_update.ps1"));
+                File.WriteAllText(Path.Combine(noExe, "deploy_update.ps1"), "# in-package");
+                Check(FctAggregator.modules.Upgrader.UpgradeWizard.FindDeployScript(baseDir, noExe) == Path.Combine(noExe, "deploy_update.ps1"),
+                    "升级向导: 安装目录没有时回落包内脚本（v3.22.1 更新包自带）");
+            }
+            finally
+            {
+                TryDeleteDir(tmpU);
+            }
+        }
+
         // ==================== v3.22.0 GET /api/devices/health（viewer 可读 + 鉴权）====================
         {
             var webRoot = Path.Combine(work, "web_health_" + Guid.NewGuid().ToString("N")[..6]);
