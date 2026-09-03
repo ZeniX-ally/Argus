@@ -39,9 +39,10 @@
     <!-- v3.22.1：图形化升级向导重写 —— deploy_update.ps1 GUI 前端（演练→执行→回滚命令）；-ExcludePid 防自杀；打包器随包带部署脚本 -->
     <!-- v3.23.0：暗黑模式 —— Theme 令牌双值属性 + config.ui_theme 持久化 + 顶栏一键切换；待办看板/预览撞色修复 -->
     <!-- v3.23.1：deploy_update.ps1 覆盖兜底 —— 进程漏网占用时再杀+重试，失败给回滚指引不裸抛 -->
-    <Version>3.23.1</Version>
-    <AssemblyVersion>3.23.1.0</AssemblyVersion>
-    <FileVersion>3.23.1.0</FileVersion>
+    <!-- v3.23.2：FAIL 记录页面升级 —— 文件名时间高精度识别（支持 17/14 位数字段到秒）；相同 SN 合并问题与树形分组折叠（Web 看板 + 客户端 WinForms） -->
+    <Version>3.23.2</Version>
+    <AssemblyVersion>3.23.2.0</AssemblyVersion>
+    <FileVersion>3.23.2.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

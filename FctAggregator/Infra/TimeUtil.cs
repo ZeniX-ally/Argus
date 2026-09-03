@@ -62,6 +62,33 @@ public static class TimeUtil
         new(@"(?:^|_)(\d{14}|\d{17})(?=_|$|[^0-9])", RegexOptions.Compiled);
 
     /// <summary>
+    /// 从 log 文件路径或文件名中提取测试时间（精确到秒：yyyy-MM-dd HH:mm:ss）。
+    /// 遍历匹配 17 位 (yyyyMMddHHmmssfff) 或 14 位 (yyyyMMddHHmmss) 的合法时间戳段，
+    /// 严格校验年(2020~2099)、月(1~12)、日(1~31)、时(0~23)、分(0~59)、秒(0~59)。
+    /// 遇到第一个合法的时间段即返回，避免误把后面的流水号段识别为时间。未找到有效时间段返回空字符串。
+    /// </summary>
+    public static string ExtractFileNameTime(string? pathOrFileName)
+    {
+        if (string.IsNullOrWhiteSpace(pathOrFileName)) return "";
+        var name = Path.GetFileNameWithoutExtension(pathOrFileName);
+        var matches = FileTimeRe.Matches(name);
+        foreach (Match m in matches)
+        {
+            var raw = m.Groups[1].Value;
+            var s14 = raw.Length >= 14 ? raw[..14] : raw;
+            if (DateTime.TryParseExact(s14, "yyyyMMddHHmmss", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var dt))
+            {
+                if (dt.Year >= 2020 && dt.Year <= 2099)
+                {
+                    return dt.ToString("yyyy-MM-dd HH:mm:ss");
+                }
+            }
+        }
+        return "";
+    }
+
+    /// <summary>
     /// 文件名时间戳提取 + 系统时间近邻校验（域1 智能时间，v3.19.0）。
     /// 真正新落盘的测试 log 其文件名时间一定最贴近系统当前时间，而 SN/批次号等纯数字
     /// 段与系统时间偏差巨大 —— 所以用 <paramref name="anchor"/>（系统当前时间）做锚：

@@ -152,6 +152,15 @@ class SelfTest
               "域名1: 无 14/17 位数字段返回空");
         Check(TimeUtil.ResolveFileNameTime(null) == "", "域名1: 空输入返回空");
 
+        // ---------- 文件名提取精准测试时间 (v3.23.2 现场实测文件名格式) ----------
+        Check(TimeUtil.ExtractFileNameTime("P_Fts_PEU_G49_FCT6_E3002781AFV75236898002K30500272_20260901105125969_20260901675353.xml") == "2026-09-01 10:51:25",
+              "ExtractFileNameTime: 真实现场 17 位时间戳提取年月日时分秒正确(排除后缀非时间段)");
+        Check(TimeUtil.ExtractFileNameTime("F_Fts_PEU_G49_FCT6_SN123456_20260901105125.xml") == "2026-09-01 10:51:25",
+              "ExtractFileNameTime: 14 位合法时间戳提取正确");
+        Check(TimeUtil.ExtractFileNameTime("P_Fts_PEU_G49_FCT6_SN_20260901675353.xml") == "",
+              "ExtractFileNameTime: 非法时分秒(小时67)无法转为有效DateTime返回空");
+        Check(TimeUtil.ExtractFileNameTime("no_time.xml") == "", "ExtractFileNameTime: 无时间段返回空");
+
         var badXml = "<root><FACTORY USER=\\\"x\\\"></root>";
         var pfOut = new FctAggregator.Parsing.DefaultResultParser(FctAggregator.Parsing.ParserRuleSet.Default, "FCT1").Parse("D:\\Results\\Offline\\E300\\20260812\\F_20260722124700_xxx.xml", badXml);
         Check(pfOut != null && pfOut.Error == true, "域名1: 畸形 XML 应判解析失败");
@@ -1977,6 +1986,20 @@ class SelfTest
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
                     .Invoke(panel, new object?[] { false });
                 Check((bool)treeMode.GetValue(panel)! == false && grid.Visible == true, "切回表格视图");
+
+                // ---------- 按 SN 合并问题 (v3.23.2) ----------
+                var sortBox = (ComboBox)typeof(FailListPanel).GetField("_sort",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(panel)!;
+                sortBox.SelectedItem = FailListPanel.SortSn;
+                Check(grid.Rows.Count == 3, $"SortSn 模式下表格展示 3 个独立 SN（{grid.Rows.Count}）");
+                Check(cntLabel.Text.Contains("3 个独立 SN（合并问题）"), $"SortSn 模式计数标签正确（{cntLabel.Text}）");
+                // 切树形验证 SN 分组折叠
+                typeof(FailListPanel).GetMethod("SetView",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .Invoke(panel, new object?[] { true });
+                Check(tree.Nodes.Count == 3, $"SortSn 模式下树形根节点为 3 个 SN（{tree.Nodes.Count}）");
+                Check(tree.Nodes[0].Text.StartsWith("SN:"), $"SortSn 模式树形根节点以 SN 标识（{tree.Nodes[0].Text}）");
+                Check(tree.Nodes[0].Nodes.Count >= 1, "SN 节点下包含具体失败问题子节点");
 
                 panel.Dispose();
             }

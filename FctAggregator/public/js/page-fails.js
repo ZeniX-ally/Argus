@@ -14,9 +14,43 @@
   "use strict";
   var App = window.App;
 
+  /* 从 log 文件名提取真实测试时间（精确到秒 yyyy-MM-dd HH:mm:ss） */
+  function extractFileNameTime(pathOrName) {
+    if (!pathOrName) return "";
+    var name = String(pathOrName).split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+    var re = /(?:^|_)(\d{14}|\d{17})(?=_|$|\.)/g;
+    var m;
+    while ((m = re.exec(name)) !== null) {
+      var s = m[1].slice(0, 14); // yyyyMMddHHmmss
+      var y = parseInt(s.slice(0, 4), 10);
+      var M = parseInt(s.slice(4, 6), 10);
+      var d = parseInt(s.slice(6, 8), 10);
+      var H = parseInt(s.slice(8, 10), 10);
+      var min = parseInt(s.slice(10, 12), 10);
+      var sec = parseInt(s.slice(12, 14), 10);
+      if (y >= 2020 && y <= 2099 && M >= 1 && M <= 12 && d >= 1 && d <= 31 &&
+          H >= 0 && H <= 23 && min >= 0 && min <= 59 && sec >= 0 && sec <= 59) {
+        return s.slice(0, 4) + "-" + s.slice(4, 6) + "-" + s.slice(6, 8) + " " +
+               s.slice(8, 10) + ":" + s.slice(10, 12) + ":" + s.slice(12, 14);
+      }
+    }
+    return "";
+  }
+
+  /* 统一解析单条记录展示时间：优先从 log 文件名提取 */
+  function resolveRowTime(x) {
+    var ft = extractFileNameTime(App.pick(x, "xmlPath") || App.pick(x, "xml_path"));
+    if (ft) return ft;
+    var bt = App.pick(x, "batchTimestamp") || App.pick(x, "batch_timestamp");
+    if (bt && bt.length >= 19) return bt.slice(0, 19).replace("T", " ");
+    var ts = App.pick(x, "ts") || App.pick(x, "ingestTs") || App.pick(x, "ingest_ts");
+    if (ts) return ts;
+    return App.pick(x, "testDate") || App.pick(x, "test_date") || "";
+  }
+
   /* 列定义（数据明细自定义列） */
   var COLS = [
-    { key: "time", label: "时间", get: function (x) { return App.fmtTime(App.pick(x, "ingestTs") || App.pick(x, "ts")); } },
+    { key: "time", label: "时间", get: function (x) { return App.fmtTime(resolveRowTime(x)); } },
     { key: "machine", label: "机台", get: function (x) { return App.pick(x, "machine") || "—"; } },
     { key: "model", label: "型号", get: function (x) { return App.pick(x, "model") || "—"; } },
     { key: "sn", label: "SN", get: function (x) { return App.pick(x, "sn") || "—"; } },
@@ -48,12 +82,12 @@
   function saveCols(v) { try { window.localStorage.setItem(STORAGE_COLS, JSON.stringify(v)); } catch (e) {} }
   function loadView() { try { var v = window.localStorage.getItem(STORAGE_VIEW); return v === "tree" || v === "table" ? v : "table"; } catch (e) { return "table"; } }
   function saveView(v) { try { window.localStorage.setItem(STORAGE_VIEW, v); } catch (e) {} }
-  function loadSort() { try { var v = window.localStorage.getItem(STORAGE_SORT); return v === "time" ? "time" : "group"; } catch (e) { return "group"; } }
+  function loadSort() { try { var v = window.localStorage.getItem(STORAGE_SORT); return v === "time" || v === "group" || v === "sn" ? v : "sn"; } catch (e) { return "sn"; } }
   function saveSort(v) { try { window.localStorage.setItem(STORAGE_SORT, v); } catch (e) {} }
 
   var colsVis = loadCols();
   var viewMode = loadView(); // tree | table
-  var sortMode = loadSort(); // group | time
+  var sortMode = loadSort(); // sn | group | time
 
   var refs = {};
   var lastSig = "";
@@ -108,10 +142,10 @@
     var out = [];
     for (var j = 0; j < order.length; j++) {
       var gk = order[j];
-      // 组内按时间倒序（ingestTs / ts）
+      // 组内按时间倒序（优先从文件名提取的时间）
       groups[gk].sort(function (a, b) {
-        var ta = App.pick(a, "ingestTs") || App.pick(a, "ts") || "";
-        var tb = App.pick(b, "ingestTs") || App.pick(b, "ts") || "";
+        var ta = resolveRowTime(a);
+        var tb = resolveRowTime(b);
         if (tb !== ta) return tb < ta ? -1 : 1;
         return 0;
       });
@@ -122,11 +156,69 @@
 
   function timeSorted(list) {
     return list.slice().sort(function (a, b) {
-      var ta = App.pick(a, "ingestTs") || App.pick(a, "ts") || "";
-      var tb = App.pick(b, "ingestTs") || App.pick(b, "ts") || "";
+      var ta = resolveRowTime(a);
+      var tb = resolveRowTime(b);
       if (tb !== ta) return tb < ta ? -1 : 1;
       return 0;
     });
+  }
+
+  /* 按 SN 分组聚合：相同 SN 合并问题项，并从对应 SN 的 log 文件名提取真实测试时间 */
+  function groupBySn(list) {
+    var groups = {};
+    var order = [];
+    for (var i = 0; i < list.length; i++) {
+      var row = list[i];
+      var sn = (App.pick(row, "sn") || "—").trim() || "—";
+      if (!groups[sn]) {
+        groups[sn] = {
+          sn: sn,
+          machine: App.pick(row, "machine") || "—",
+          model: App.pick(row, "model") || "—",
+          time: resolveRowTime(row),
+          tester: App.pick(row, "tester") || "—",
+          rows: []
+        };
+        order.push(sn);
+      }
+      var grp = groups[sn];
+      grp.rows.push(row);
+      var t = resolveRowTime(row);
+      if (t && (!grp.time || t > grp.time)) {
+        grp.time = t;
+        if (!grp.machine || grp.machine === "—") grp.machine = App.pick(row, "machine") || "—";
+        if (!grp.model || grp.model === "—") grp.model = App.pick(row, "model") || "—";
+      }
+    }
+    // 组内记录按时间倒序
+    for (var k = 0; k < order.length; k++) {
+      groups[order[k]].rows.sort(function (a, b) {
+        var ta = resolveRowTime(a), tb = resolveRowTime(b);
+        return tb < ta ? -1 : (tb > ta ? 1 : 0);
+      });
+    }
+    // 整体按 SN 最新时间倒序
+    order.sort(function (a, b) {
+      var ta = groups[a].time || "", tb = groups[b].time || "";
+      if (tb !== ta) return tb < ta ? -1 : 1;
+      return groups[b].rows.length - groups[a].rows.length;
+    });
+    var out = [];
+    for (var j = 0; j < order.length; j++) {
+      var item = groups[order[j]];
+      var reasons = [];
+      var seen = {};
+      for (var r = 0; r < item.rows.length; r++) {
+        var reason = (App.pick(item.rows[r], "failReason") || "—").trim();
+        if (reason && !seen[reason]) {
+          seen[reason] = true;
+          reasons.push(reason);
+        }
+      }
+      item.reasons = reasons;
+      out.push(item);
+    }
+    return out;
   }
 
   /* 渲染：聚合看板映射（KPI 区） */
@@ -176,6 +268,47 @@
     }
     if (refs.empty) refs.empty.style.display = "none";
 
+    var html = "";
+    if (sortMode === "sn") {
+      var snGroups = groupBySn(list);
+      for (var s = 0; s < snGroups.length; s++) {
+        var sg = snGroups[s];
+        var alt = s % 2 === 0 ? "" : ' style="background:var(--bg2)"';
+        var reasonsText = sg.reasons.join(", ");
+        if (sg.reasons.length > 1) reasonsText += " (共 " + sg.reasons.length + " 项)";
+        var hc = hotClass(sg.reasons.length);
+        html += '<tr class="' + (hc || "") + '"' + alt + '>';
+        for (var ci = 0; ci < visCols.length; ci++) {
+          var col = visCols[ci];
+          var val = "";
+          if (col.key === "sn") val = sg.sn;
+          else if (col.key === "time") val = App.fmtTime(sg.time);
+          else if (col.key === "machine") val = sg.machine;
+          else if (col.key === "model") val = sg.model;
+          else if (col.key === "failReason") val = reasonsText;
+          else if (col.key === "tester") val = sg.tester;
+          else if (col.key === "result") val = "FAIL";
+          else val = col.get(sg.rows[0]);
+
+          var esc = App.esc(val);
+          if (col.key === "failReason") {
+            html += '<td title="' + App.esc(sg.reasons.join("\n")) + '"' + hotStyle(sg.reasons.length) + '>' + esc + '</td>';
+          } else if (col.key === "result") {
+            html += '<td>' + App.badge("FAIL", "fail") + '</td>';
+          } else if (col.key === "time") {
+            html += '<td title="' + App.esc(sg.time) + '">' + esc + '</td>';
+          } else {
+            html += '<td title="' + esc + '">' + esc + '</td>';
+          }
+        }
+        var firstId = App.pick(sg.rows[0], "id");
+        html += '<td><a class="op" href="' + App.data.xmlUrl(firstId) + '" target="_blank">报告</a>'
+          + '<a class="op" href="' + App.data.fileUrl(firstId) + '" download>XML</a></td></tr>';
+      }
+      if (refs.tbody) refs.tbody.innerHTML = html;
+      return;
+    }
+
     var rows = [];
     if (sortMode === "time") {
       var sorted = timeSorted(list);
@@ -188,25 +321,26 @@
         gi++;
       }
     }
-    var html = "";
     for (var idx = 0; idx < rows.length; idx++) {
       var x = rows[idx].item, cnt = rows[idx].cnt, gidx = rows[idx].gi;
-      var alt = gidx % 2 === 0 ? "" : ' style="background:var(--bg2)"';
-      var hc = hotClass(cnt);
-      var cls = hc ? hc : "";
-      html += '<tr class="' + cls + '"' + alt + '>';
-      for (var ci = 0; ci < visCols.length; ci++) {
-        var col = visCols[ci];
-        var val = col.get(x);
-        var esc = App.esc(val);
-        if (col.key === "failReason") {
-          html += '<td title="' + esc + '"' + hotStyle(cnt) + '>' + esc + '</td>';
-        } else if (col.key === "result") {
-          var rc = (val || "").toUpperCase();
+      var alt2 = gidx % 2 === 0 ? "" : ' style="background:var(--bg2)"';
+      var hc2 = hotClass(cnt);
+      var cls2 = hc2 ? hc2 : "";
+      html += '<tr class="' + cls2 + '"' + alt2 + '>';
+      for (var ci2 = 0; ci2 < visCols.length; ci2++) {
+        var col2 = visCols[ci2];
+        var val2 = col2.get(x);
+        var esc2 = App.esc(val2);
+        if (col2.key === "failReason") {
+          html += '<td title="' + esc2 + '"' + hotStyle(cnt) + '>' + esc2 + '</td>';
+        } else if (col2.key === "result") {
+          var rc = (val2 || "").toUpperCase();
           var badge = rc === "FAIL" ? App.badge("FAIL", "fail") : rc ? App.badge(rc, "pass") : '<span class="badge">—</span>';
           html += '<td>' + badge + '</td>';
+        } else if (col2.key === "time") {
+          html += '<td title="' + App.esc(resolveRowTime(x)) + '">' + esc2 + '</td>';
         } else {
-          html += '<td title="' + esc + '">' + esc + '</td>';
+          html += '<td title="' + esc2 + '">' + esc2 + '</td>';
         }
       }
       var id = App.pick(x, "id");
@@ -222,15 +356,78 @@
       if (refs.treeBox) refs.treeBox.innerHTML = '<div class="empty">暂无 FAIL 数据</div>';
       return;
     }
-    var gs = sortMode === "time" ? null : grouped(list);
     var html = "";
+
+    // 模式 1：按 SN 合并问题折叠卡片
+    if (sortMode === "sn") {
+      var snGroups = groupBySn(list);
+      for (var s = 0; s < snGroups.length; s++) {
+        var sg = snGroups[s];
+        var failBadge = sg.reasons.length >= 5
+          ? '<span class="badge fail">' + sg.reasons.length + ' 项失败</span>'
+          : (sg.reasons.length >= 2
+            ? '<span class="badge" style="border-color:var(--amber);color:var(--amber)">' + sg.reasons.length + ' 项失败</span>'
+            : '<span class="badge">' + sg.reasons.length + ' 项失败</span>');
+        var reasonSummary = sg.reasons.join(", ");
+
+        html += '<div class="tree-group" style="margin-bottom:8px;border:1px solid var(--line);border-radius:4px;overflow:hidden">'
+          + '<div class="tree-head sn-tree-head" data-sn-idx="' + s + '" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg2);cursor:pointer;user-select:none">'
+          +   '<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">'
+          +     '<span class="sn-toggle-icon" style="font-size:11px;color:var(--dim);width:12px">▼</span>'
+          +     '<span style="font-weight:700;font-family:monospace;color:var(--ink);font-size:13px">SN: ' + App.esc(sg.sn) + '</span>'
+          +     '<span style="font-size:12px;color:var(--dim)">机台: ' + App.esc(sg.machine) + '</span>'
+          +     '<span style="font-size:12px;color:var(--dim)">型号: ' + App.esc(sg.model) + '</span>'
+          +     '<span style="font-size:12px;color:var(--text);font-family:monospace" title="文件名时间: ' + App.esc(sg.time) + '">时间: ' + App.esc(App.fmtTime(sg.time)) + '</span>'
+          +     failBadge
+          +     '<span style="font-size:12px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px" title="' + App.esc(reasonSummary) + '">' + App.esc(reasonSummary) + '</span>'
+          +   '</div>'
+          +   '<div style="font-size:11px;color:var(--dim)">展开/折叠</div>'
+          + '</div>'
+          + '<div class="tree-children sn-tree-children" id="sn-group-' + s + '" style="background:var(--bg)">';
+
+        for (var r = 0; r < sg.rows.length; r++) {
+          var item = sg.rows[r];
+          var fr = (App.pick(item, "failReason") || "—").trim() || "—";
+          var itime = resolveRowTime(item);
+          var id = App.pick(item, "id");
+          var tester = App.pick(item, "tester") || "—";
+          html += '<div class="tree-leaf" style="display:flex;align-items:center;justify-content:space-between;padding:6px 14px 6px 36px;border-top:1px solid var(--line-sub, #262626)">'
+            + '<div style="display:flex;align-items:center;gap:12px">'
+            +   '<span style="color:var(--red);font-weight:600">' + App.esc(fr) + '</span>'
+            +   '<span class="leaf-meta" style="font-size:11px;color:var(--dim)">测试员: ' + App.esc(tester) + ' · 准确时间: ' + App.esc(itime) + '</span>'
+            + '</div>'
+            + '<div class="leaf-ops" style="display:flex;gap:6px">'
+            +   '<a class="op" href="' + App.data.xmlUrl(id) + '" target="_blank">报告</a>'
+            +   '<a class="op" href="' + App.data.fileUrl(id) + '" download>XML</a>'
+            + '</div>'
+            + '</div>';
+        }
+        html += '</div></div>';
+      }
+      refs.treeBox.innerHTML = html;
+      var heads = refs.treeBox.querySelectorAll(".sn-tree-head");
+      for (var hi = 0; hi < heads.length; hi++) {
+        heads[hi].addEventListener("click", function () {
+          var idx = this.getAttribute("data-sn-idx");
+          var body = refs.treeBox.querySelector("#sn-group-" + idx);
+          var icon = this.querySelector(".sn-toggle-icon");
+          if (!body) return;
+          var hidden = body.style.display === "none";
+          body.style.display = hidden ? "block" : "none";
+          if (icon) icon.textContent = hidden ? "▼" : "▶";
+        });
+      }
+      return;
+    }
+
     if (sortMode === "time") {
       var sorted = timeSorted(list);
       // 按日期分组展示
       var byDate = {};
       var dates = [];
       for (var i = 0; i < sorted.length; i++) {
-        var d = (App.pick(sorted[i], "ingestTs") || App.pick(sorted[i], "ts") || "").slice(0, 10) || "未知日期";
+        var rowTime = resolveRowTime(sorted[i]);
+        var d = rowTime.slice(0, 10) || "未知日期";
         if (!byDate[d]) { byDate[d] = []; dates.push(d); }
         byDate[d].push(sorted[i]);
       }
@@ -241,15 +438,17 @@
         html += '<div class="tree-children">';
         for (var ri = 0; ri < arr.length; ri++) {
           var x2 = arr[ri], cnt2 = counts[(App.pick(x2, "failReason") || "—").trim() || "—"] || 0;
+          var itime2 = resolveRowTime(x2);
           html += '<div class="tree-leaf' + (hotClass(cnt2) ? ' ' + hotClass(cnt2) : '') + '"' + hotStyle(cnt2) + '>'
             + '<span class="leaf-main">' + App.esc(App.pick(x2, "failReason") || "—") + '</span>'
-            + '<span class="leaf-meta">' + App.esc(App.pick(x2, "machine") || "") + ' · ' + App.esc(App.pick(x2, "sn") || "") + ' · ' + App.esc(App.fmtTime(App.pick(x2, "ingestTs") || App.pick(x2, "ts"))) + '</span>'
+            + '<span class="leaf-meta">' + App.esc(App.pick(x2, "machine") || "") + ' · ' + App.esc(App.pick(x2, "sn") || "") + ' · ' + App.esc(App.fmtTime(itime2)) + '</span>'
             + '<span class="leaf-ops"><a class="op" href="' + App.data.xmlUrl(App.pick(x2, "id")) + '" target="_blank">报告</a><a class="op" href="' + App.data.fileUrl(App.pick(x2, "id")) + '" download>XML</a></span>'
             + '</div>';
         }
         html += '</div></div>';
       }
     } else {
+      var gs = grouped(list);
       for (var gi = 0; gi < gs.length; gi++) {
         var g = gs[gi];
         var hc = hotClass(g.count);
@@ -260,8 +459,9 @@
           + '</div><div class="tree-children">';
         for (var rj = 0; rj < g.rows.length; rj++) {
           var xr = g.rows[rj];
+          var itimeR = resolveRowTime(xr);
           html += '<div class="tree-leaf">'
-            + '<span class="leaf-meta">' + App.esc(App.pick(xr, "machine") || "") + ' · ' + App.esc(App.pick(xr, "sn") || "") + ' · ' + App.esc(App.pick(xr, "model") || "") + ' · ' + App.esc(App.fmtTime(App.pick(xr, "ingestTs") || App.pick(xr, "ts"))) + '</span>'
+            + '<span class="leaf-meta">' + App.esc(App.pick(xr, "machine") || "") + ' · ' + App.esc(App.pick(xr, "sn") || "") + ' · ' + App.esc(App.pick(xr, "model") || "") + ' · ' + App.esc(App.fmtTime(itimeR)) + '</span>'
             + '<span class="leaf-ops"><a class="op" href="' + App.data.xmlUrl(App.pick(xr, "id")) + '" target="_blank">报告</a><a class="op" href="' + App.data.fileUrl(App.pick(xr, "id")) + '" download>XML</a></span>'
             + '</div>';
         }
@@ -289,7 +489,9 @@
 
     var scopeTxt = (s.sel ? "（机台 " + s.sel + "）" : "") + (kw ? "（过滤命中 " + filtered.length + "/" + (s.fails || []).length + "）" : "");
     if (refs.count) {
-      var grpInfo = sortMode === "group" ? (function () { var g = grouped(filtered); return g.length + " 个失败项"; })() : "按时间倒序";
+      var grpInfo = sortMode === "sn"
+        ? (function () { var g = groupBySn(filtered); return g.length + " 个独立 SN（合并问题）"; })()
+        : (sortMode === "group" ? (function () { var g = grouped(filtered); return g.length + " 个失败项"; })() : "按时间倒序");
       refs.count.textContent = "共 " + filtered.length + " 条" + scopeTxt + " · " + grpInfo;
     }
 
@@ -342,6 +544,41 @@
   function exportCustomCsv() {
     var kw = refs.search ? (refs.search.value || "").trim() : "";
     var list = filterList(App.state.fails || [], kw);
+    if (sortMode === "sn") {
+      var snGroups = groupBySn(list);
+      var visCols = COLS.filter(function (c) { return colsVis[c.key]; });
+      if (!visCols.length) visCols = COLS.slice();
+      var header = visCols.map(function (c) { return c.label; }).join(",");
+      var lines = [header];
+      for (var s = 0; s < snGroups.length; s++) {
+        var sg = snGroups[s];
+        var vals = visCols.map(function (c) {
+          var v = "";
+          if (c.key === "sn") v = sg.sn;
+          else if (c.key === "time") v = sg.time;
+          else if (c.key === "machine") v = sg.machine;
+          else if (c.key === "model") v = sg.model;
+          else if (c.key === "failReason") v = sg.reasons.join("；");
+          else if (c.key === "tester") v = sg.tester;
+          else if (c.key === "result") v = "FAIL";
+          else v = c.get(sg.rows[0]) || "";
+          v = String(v);
+          if (v.length > 0 && (v[0] === "=" || v[0] === "+" || v[0] === "-" || v[0] === "@" || v[0] === "\t" || v[0] === "\r")) v = "'" + v;
+          if (v.indexOf(",") >= 0 || v.indexOf('"') >= 0 || v.indexOf("\n") >= 0 || v.indexOf("\r") >= 0) v = '"' + v.replace(/"/g, '""') + '"';
+          return v;
+        }).join(",");
+        lines.push(vals);
+      }
+      var csv = lines.join("\r\n");
+      var bom = "\uFEFF";
+      var blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = "fails_sn_merged_" + new Date().toISOString().slice(0, 10) + ".csv";
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+      return;
+    }
     if (sortMode === "time") list = timeSorted(list);
     else {
       var gs = grouped(list);
@@ -354,7 +591,7 @@
     var lines = [header];
     for (var r = 0; r < list.length; r++) {
       var vals = visCols.map(function (c) {
-        var v = c.get(list[r]) || "";
+        var v = c.key === "time" ? resolveRowTime(list[r]) : (c.get(list[r]) || "");
         v = String(v);
         if (v.length > 0 && (v[0] === "=" || v[0] === "+" || v[0] === "-" || v[0] === "@" || v[0] === "\t" || v[0] === "\r")) v = "'" + v;
         if (v.indexOf(",") >= 0 || v.indexOf('"') >= 0 || v.indexOf("\n") >= 0 || v.indexOf("\r") >= 0) v = '"' + v.replace(/"/g, '""') + '"';
@@ -405,7 +642,7 @@
             { type: "input", kind: "search", id: "search", placeholder: "搜索 失败项 / SN / 型号 / 机台…（空格分词）", width: "260px" },
             { type: "sep" },
             { type: "seg", name: "view", items: ["树形", "表格"], active: viewMode === "tree" ? 0 : 1 },
-            { type: "select", id: "sortSel", options: '<option value="group">按失败项分组</option><option value="time">按时间倒序</option>' },
+            { type: "select", id: "sortSel", options: '<option value="sn">按 SN 合并问题</option><option value="group">按失败项分组</option><option value="time">按时间倒序</option>' },
             { type: "sep" },
             { type: "btn", label: "导出 CSV", cls: "btn-secondary btn-sm", id: "btnCsv" },
             { type: "btn", label: "导出当前", cls: "btn-ghost btn-sm", id: "btnCsvCustom" },

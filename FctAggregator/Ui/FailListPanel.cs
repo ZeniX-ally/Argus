@@ -21,9 +21,11 @@ public sealed class FailListPanel : Panel
     private Button _btnTree = null!, _btnTable = null!;
     private ComboBox _sort = null!;
 
-    private const string SortGroup = "按失败项分组";
-    private const string SortTime = "按时间倒序";
-    private bool TimeMode => _sort.SelectedIndex == 1;
+    public const string SortGroup = "按失败项分组";
+    public const string SortSn = "按SN合并问题";
+    public const string SortTime = "按时间倒序";
+    private bool SnMode => (_sort.SelectedItem as string) == SortSn;
+    private bool TimeMode => (_sort.SelectedItem as string) == SortTime;
 
     /// <summary>最近一次加载的 FAIL 记录（过滤时重建视图用）。</summary>
     private List<FailRecord> _all = new();
@@ -31,12 +33,25 @@ public sealed class FailListPanel : Panel
     /// <summary>按失败项聚合后的分组（按次数倒序）。</summary>
     private List<GroupData> _groups = new();
 
+    /// <summary>按 SN 聚合后的分组（按最新时间倒序）。</summary>
+    private List<SnGroupData> _snGroups = new();
+
     private bool _treeMode = false;   // 默认表格视图（横向规范列对齐）
 
     private sealed class GroupData
     {
         public string FailItem = "";
         public int Count;
+        public List<FailRecord> Records = new();
+    }
+
+    private sealed class SnGroupData
+    {
+        public string Sn = "";
+        public string Model = "";
+        public string LatestTime = "";
+        public string PrimaryXmlPath = "";
+        public List<string> FailItems = new();
         public List<FailRecord> Records = new();
     }
 
@@ -106,13 +121,13 @@ public sealed class FailListPanel : Panel
         };
         bar.Controls.Add(hint, 5, 0);
 
-        // ---- 排序方式: 按失败项分组(默认) / 按时间倒序 ----
+        // ---- 排序方式: 按失败项分组(默认) / 按SN合并问题 / 按时间倒序 ----
         _sort = new ComboBox
         {
-            Width = 130, DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 140, DropDownStyle = ComboBoxStyle.DropDownList,
             Font = Theme.Body, Margin = new Padding(12, 2, 0, 0), Anchor = AnchorStyles.Left,
         };
-        _sort.Items.AddRange(new object[] { SortGroup, SortTime });
+        _sort.Items.AddRange(new object[] { SortGroup, SortSn, SortTime });
         _sort.SelectedIndex = 0;
         _sort.SelectedIndexChanged += (_, _) => RebuildActiveView();
         bar.Controls.Add(_sort, 6, 0);
@@ -182,6 +197,7 @@ public sealed class FailListPanel : Panel
         {
             _all = _engine.Db.AllFails(_engine.ResolvedStationId);
             ComputeGroups();
+            ComputeSnGroups();
             RebuildActiveView();
         }
         catch (Exception ex)
@@ -200,8 +216,7 @@ public sealed class FailListPanel : Panel
             {
                 FailItem = g.Key,
                 Count = g.Count(),
-                Records = g.OrderByDescending(r => TimeUtil.Normalize(r.TestDate))
-                           .ThenByDescending(r => TimeUtil.Normalize(r.Timestamp))
+                Records = g.OrderByDescending(DisplayTime)
                            .ToList(),
             })
             .OrderByDescending(g => g.Count)
@@ -209,18 +224,49 @@ public sealed class FailListPanel : Panel
             .ToList();
     }
 
-    /// <summary>时间列显示: 优先 batch 时间, 退目录日期; 统一格式(yyyy-MM-dd HH:mm:ss)。</summary>
-    private static string DisplayTime(FailRecord f) =>
-        TimeUtil.Normalize(f.Timestamp) is { Length: > 0 } t ? t : TimeUtil.Normalize(f.TestDate);
+    /// <summary>按 SN 聚合合并问题：组内记录按提取的最准时间倒序，组按最新测试时间倒序。</summary>
+    private void ComputeSnGroups()
+    {
+        _snGroups = _all
+            .GroupBy(f => string.IsNullOrWhiteSpace(f.Sn) ? "—" : f.Sn.Trim())
+            .Select(g =>
+            {
+                var recs = g.OrderByDescending(DisplayTime).ToList();
+                var items = recs.Select(r => r.FailItem).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().ToList();
+                var latestRec = recs.FirstOrDefault();
+                return new SnGroupData
+                {
+                    Sn = g.Key,
+                    Model = latestRec?.Model ?? "",
+                    LatestTime = latestRec != null ? DisplayTime(latestRec) : "",
+                    PrimaryXmlPath = latestRec?.XmlPath ?? "",
+                    FailItems = items,
+                    Records = recs,
+                };
+            })
+            .OrderByDescending(g => g.LatestTime)
+            .ThenByDescending(g => g.Records.Count)
+            .ToList();
+    }
+
+    /// <summary>时间列显示: 优先从 log 文件名提取真实测试时间(精确到秒 yyyy-MM-dd HH:mm:ss); 次选 batch 时间; 兜底目录日期。</summary>
+    private static string DisplayTime(FailRecord f)
+    {
+        var fnTime = TimeUtil.ExtractFileNameTime(f.XmlPath);
+        if (fnTime.Length > 0) return fnTime;
+        return TimeUtil.Normalize(f.Timestamp) is { Length: > 0 } t ? t : TimeUtil.Normalize(f.TestDate);
+    }
 
     private List<string> FilterKeys => _search.Text.Trim()
         .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();    private bool Hit(string s) => FilterKeys.All(k => s.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     private void RebuildActiveView()
     {
-        _countLabel.Text = TimeMode
-            ? $"共 {_all.Count} 条 FAIL · 按时间倒序"
-            : $"共 {_all.Count} 条 FAIL · {_groups.Count} 个失败项";
+        _countLabel.Text = SnMode
+            ? $"共 {_all.Count} 条 FAIL · {_snGroups.Count} 个独立 SN（合并问题）"
+            : (TimeMode
+                ? $"共 {_all.Count} 条 FAIL · 按时间倒序"
+                : $"共 {_all.Count} 条 FAIL · {_groups.Count} 个失败项");
         if (_treeMode) BuildTree();
         else BuildGrid();
     }
@@ -238,7 +284,37 @@ public sealed class FailListPanel : Panel
         try
         {
             int hitCount = 0;
-            if (TimeMode)
+            if (SnMode)
+            {
+                // 按 SN 合并问题: 每一行展示一个 SN, 失败项列合并展示
+                int gi = 0;
+                foreach (var g in _snGroups)
+                {
+                    bool match = !hasFilter || Hit(g.Sn) || Hit(g.Model) || g.FailItems.Any(Hit);
+                    if (!match) continue;
+                    hitCount += g.Records.Count;
+
+                    var alt = gi % 2 == 0 ? Theme.Surface : Theme.AltRowA;
+                    var fg = g.FailItems.Count >= 5 ? Theme.Danger
+                           : g.FailItems.Count >= 2 ? Theme.Warning
+                           : Theme.TextMain;
+                    int i = _grid.Rows.Add();
+                    var r = _grid.Rows[i];
+                    r.Tag = g.PrimaryXmlPath;
+                    r.DefaultCellStyle.BackColor = alt;
+
+                    var itemSummary = string.Join(", ", g.FailItems);
+                    if (g.FailItems.Count > 1) itemSummary += $" (共 {g.FailItems.Count} 项)";
+                    r.Cells[0].Value = itemSummary;
+                    r.Cells[0].Style.Font = Theme.BodyBold;
+                    r.Cells[0].Style.ForeColor = fg;
+                    r.Cells[1].Value = g.Sn;
+                    r.Cells[2].Value = g.Model;
+                    r.Cells[3].Value = g.LatestTime;
+                    gi++;
+                }
+            }
+            else if (TimeMode)
             {
                 // 平铺: 全部记录按时间倒序(日期 → 时间)。失败项次数从分组取, 高频仍标色
                 var counts = _groups.ToDictionary(g => g.FailItem, g => g.Count, StringComparer.OrdinalIgnoreCase);
@@ -309,7 +385,48 @@ public sealed class FailListPanel : Panel
         try
         {
             int hitCount = 0;
-            if (TimeMode)
+            if (SnMode)
+            {
+                // 按 SN 分组折叠: 每个 SN 为一个父节点, 展开后展示该 SN 具体每个失败问题明细
+                foreach (var g in _snGroups)
+                {
+                    bool snHit = !hasFilter || Hit(g.Sn) || Hit(g.Model);
+                    var shown = snHit
+                        ? g.Records
+                        : g.Records.Where(r => Hit(r.FailItem)).ToList();
+                    if (!snHit && shown.Count == 0) continue;
+                    hitCount += shown.Count;
+
+                    var itemsText = string.Join(", ", g.FailItems);
+                    var nodeTitle = $"SN: {g.Sn}   [{g.FailItems.Count} 项失败]  ·  {g.Model}  ·  {g.LatestTime}  ({itemsText})";
+                    var snNode = new TreeNode(nodeTitle)
+                    {
+                        Tag = g.PrimaryXmlPath,
+                        NodeFont = Theme.BodyBold,
+                    };
+                    if (g.FailItems.Count >= 5) snNode.ForeColor = Theme.Danger;
+                    else if (g.FailItems.Count >= 2) snNode.ForeColor = Theme.Warning;
+
+                    foreach (var f in shown)
+                    {
+                        var time = DisplayTime(f);
+                        var fn = string.IsNullOrEmpty(f.XmlPath) ? "" : System.IO.Path.GetFileName(f.XmlPath);
+                        var label = string.IsNullOrEmpty(fn)
+                            ? $"{f.FailItem}   ·   {time}"
+                            : $"{f.FailItem}   ·   {time}   ·   {fn}";
+                        var cn = new TreeNode(label)
+                        {
+                            Tag = f.XmlPath,
+                            ForeColor = Theme.TextMain,
+                            BackColor = Theme.Surface,
+                        };
+                        snNode.Nodes.Add(cn);
+                    }
+                    _tree.Nodes.Add(snNode);
+                    snNode.Expand();
+                }
+            }
+            else if (TimeMode)
             {
                 // 按日期分组: 每天一个父节点, 组内按时间倒序
                 var rows = _all.OrderByDescending(r => TimeUtil.Normalize(r.TestDate))
