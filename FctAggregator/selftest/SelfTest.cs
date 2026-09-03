@@ -6439,6 +6439,146 @@ Argus 统一发布包  v{newer}
                 Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             }
         }
+
+        // ==================== v3.21.1 规格 01 良率归因：DB 层 + 分析器 + LRU + ConfigWatcher ====================
+        {
+            var tmpA = Path.Combine(work, "yldattr_" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(tmpA);
+            try
+            {
+                var agg = new AggDatabase(Path.Combine(tmpA, "agg.db"));
+                agg.Open();
+                var today = DateTime.Now.ToString("yyyyMMdd");
+                var yest = DateTime.Now.AddDays(-1).ToString("yyyyMMdd");
+                // 混合 PASS/FAIL（归因 SQL 需要总测试量算 yield%，不能只造 FAIL）
+                agg.InsertBatch(new[]
+                {
+                    new AggFailRow { Machine="FCT_A", Seq=1, TestDate=yest, Result="FAIL", FailReason="Solder Short",   Model="MOD_X", Sn="SN1" },
+                    new AggFailRow { Machine="FCT_A", Seq=2, TestDate=yest, Result="FAIL", FailReason="Solder Short",   Model="MOD_X", Sn="SN2" },
+                    new AggFailRow { Machine="FCT_A", Seq=3, TestDate=today, Result="PASS", FailReason="",              Model="MOD_X", Sn="SN3" },
+                    new AggFailRow { Machine="FCT_A", Seq=4, TestDate=today, Result="FAIL", FailReason="Connector Loose", Model="MOD_Y", Sn="SN4" },
+                });
+
+                // 总失败计数（含 daysBack 边界）
+                Check(agg.GetRecentFailCount("FCT_A", 7) == 3, "归因: GetRecentFailCount 7 天 = 3（2 昨天 + 1 今天 FAIL）");
+                Check(agg.GetRecentFailCount("FCT_A", 0) == 1, "归因: daysBack=0 边界 → 只计今天 = 1");
+                Check(agg.GetRecentFailCount("FCT_NOPE", 7) == 0, "归因: 未知机台 → 0");
+
+                // 型号维度分解（yield% / 贡献度 / 排序）
+                var model = agg.DecomposeByModel("FCT_A", DateTime.Today.AddDays(-7), DateTime.Today, 20);
+                Check(model.Count == 2, $"归因: DecomposeByModel 2 个型号（实得 {model.Count}）");
+                var mx = model.First(x => x.Model == "MOD_X");
+                var my = model.First(x => x.Model == "MOD_Y");
+                Check(mx.Total == 3 && mx.Fail == 2 && mx.Pass == 1 && mx.Interrupted == 0, "归因: MOD_X Total=3/Fail=2/Pass=1/Int=0");
+                Check(Math.Abs(mx.YieldPct - 33.33) < 0.01, $"归因: MOD_X yield≈33.33（实得 {mx.YieldPct}）");
+                Check(Math.Abs(mx.Contribution - 100.0) < 0.1, $"归因: MOD_X 贡献度≈100（最大失败者自身，实得 {mx.Contribution}）——贡献度除零修复回归断言");
+                Check(Math.Abs(my.Contribution - 50.0) < 0.1, $"归因: MOD_Y 贡献度≈50.0（1/2 最大失败，实得 {my.Contribution}）");
+                Check(model[0].Model == "MOD_X" && model[0].Rank == 1, "归因: fail 降序 → MOD_X Rank=1");
+
+                // fixture 维度（fail_reason 前缀分组）
+                var fix = agg.DecomposeByFixture("FCT_A", DateTime.Today.AddDays(-7), DateTime.Today, 20);
+                Check(fix.Count == 2, $"归因: DecomposeByFixture 2 个前缀（实得 {fix.Count}）");
+                var solder = fix.First(x => x.Model == "Solder");
+                Check(solder.Fail == 2 && Math.Abs(solder.Contribution - 66.7) < 0.1, "归因: fixture Solder Fail=2 贡献≈66.7（基准=前缀失败总和 3，贡献度后算修复回归）");
+
+                // YieldAttributor 静态入口（含空结果边界）
+                var attr = YieldAttributor.AnalyzeModel(agg, "FCT_A", 7);
+                Check(attr.Count == 2 && attr[0].Model == "MOD_X", "归因: YieldAttributor.AnalyzeModel top1 = MOD_X");
+                Check(YieldAttributor.AnalyzeModel(agg, "FCT_NOPE", 7).Count == 0, "归因: AnalyzeModel 未知机台 → 空列表");
+
+                // ---------- ConfigWatcher：非法拒绝（天然回滚）/ 合法触发一次 ----------
+                var cfgPath = Path.Combine(tmpA, "config.json");
+                File.WriteAllText(cfgPath, "{\"log_level\":\"INFO\"}");
+                int fired = 0; string? firedJson = null;
+                using (var cw = new ConfigWatcher(cfgPath, 60))
+                {
+                    cw.ConfigChanged += (_, json) => { Interlocked.Increment(ref fired); firedJson = json; };
+                    File.WriteAllText(cfgPath, "{bad json");
+                    Thread.Sleep(300);
+                    Check(Interlocked.CompareExchange(ref fired, 0, 0) == 0, "ConfigWatcher: 非法 JSON 被拒绝（旧配置保持生效 = 天然回滚）");
+                    File.WriteAllText(cfgPath, "{\"log_level\":\"DEBUG\"}");
+                    Thread.Sleep(400);
+                    Check(Interlocked.CompareExchange(ref fired, 0, 0) == 1, $"ConfigWatcher: 合法变更防抖后触发一次（实得 {fired}）");
+                    Check(firedJson != null && firedJson.Contains("DEBUG"), "ConfigWatcher: 事件携带新配置原文");
+                }
+
+                // ---------- LRUCache：容量淘汰 / 命中不回调 / 精确过期淘汰 ----------
+                var lru = new LRUCache<string, string>(2);
+                lru.Set("A", "va"); lru.Set("B", "vb"); lru.Set("C", "vc");
+                Check(lru.Count == 2, $"LRU: 超容量淘汰最久未用 → Count=2（实得 {lru.Count}）");
+                int factCalls = 0;
+                var va2 = lru.GetOrSet("A", () => { factCalls++; return "regen"; });
+                Check(va2 == "regen" && factCalls == 1, "LRU: A 已被淘汰 → GetOrSet 重新生成");
+                // GetOrSet("A") 重新生成时容量满 → 挤掉 B（此刻链表尾），验证 C 仍命中
+                var vc = lru.GetOrSet("C", () => { factCalls++; return "x"; });
+                Check(vc == "vc" && factCalls == 1, "LRU: C 命中且不调 factory（GetOrSet A 未误删 C）");
+
+                // TTL 过期精确性（回归：原版 _order.RemoveFirst() 会误删最新条目）
+                // 余量放大抗 Windows Sleep 精度漂移（±16ms 粒度）：A/B/C 存活 250ms 全过期，D 存活 ~150ms 保留
+                var lru2 = new LRUCache<string, string>(10, TimeSpan.FromMilliseconds(200));
+                lru2.Set("A", "1"); lru2.Set("B", "2"); lru2.Set("C", "3");
+                Thread.Sleep(100);
+                lru2.Set("D", "4");   // D 在 A/B/C 过期判定前写入，CreatedAt 最新
+                Thread.Sleep(150);
+                lru2.TryPruneExpired();
+                Check(lru2.Count == 1, $"LRU: TTL 过期只淘汰 A/B/C、保留最新 D → Count=1（实得 {lru2.Count}）");
+                var d = lru2.GetOrSet("D", () => { factCalls++; return "y"; });
+                Check(d == "4" && factCalls == 1, "LRU: 未过期的 D 命中且未被误删");
+            }
+            finally
+            {
+                TryDeleteDir(tmpA);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            }
+        }
+
+        // ==================== v3.21.1 GET /api/yield/attribution（viewer 可读 + 边界 + 鉴权）====================
+        {
+            var webRoot = Path.Combine(work, "web_attr_" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(Path.Combine(webRoot, "public"));
+            File.WriteAllText(Path.Combine(webRoot, "public", "index.html"), "<html>attr</html>");
+            var aggDb = new AggDatabase(Path.Combine(webRoot, "agg.db"));
+            aggDb.Open();
+            var today = DateTime.Now.ToString("yyyyMMdd");
+            aggDb.UpsertUser("radmin", PasswordHasher.Hash("pwd"), "admin");
+            var tok = aggDb.GetUserByName("radmin")!.Token;
+            aggDb.InsertBatch(new[]
+            {
+                new AggFailRow { Machine="FCT_W", Seq=1, TestDate=today, Result="FAIL", FailReason="Solder Short", Model="MOD_W", Sn="SN1" },
+                new AggFailRow { Machine="FCT_W", Seq=2, TestDate=today, Result="PASS", FailReason="",             Model="MOD_W", Sn="SN2" },
+            });
+            int port = GetFreePort();
+            var localDb = new Database(Path.Combine(webRoot, "local.db"));
+            var mesh = new MeshNode(new AppConfig { StationId = "WEB_ATTR", AggToken = "attrtok", Peers = new List<string>() }, "WEB_ATTR", localDb, aggDb, new string[0]);
+            mesh.Receiver.SetPeerUrls(new string[0]);
+            var srv = new WebAggServer(port, mesh, aggDb, webRoot, webRoot, "attrtok");
+            var baseUrl = $"http://127.0.0.1:{port}";
+            srv.Start();
+            Thread.Sleep(500);
+            try
+            {
+                var r1 = HttpGetWithToken($"{baseUrl}/api/yield/attribution/FCT_W?days=7", tok);
+                var t1 = r1.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                Check(r1.StatusCode == HttpStatusCode.OK && t1.Contains("MOD_W"), "归因API: GET /api/yield/attribution/FCT_W → 200 且含 MOD_W");
+                Check(t1.Contains("\"total_fail\":1"), "归因API: total_fail=1（PASS 行不计入失败总数）");
+                var r2 = HttpGetWithToken($"{baseUrl}/api/yield/attribution/", tok);
+                Check(r2.StatusCode == HttpStatusCode.BadRequest, "归因API: 缺 machine 路径参数 → 400");
+                var r3 = HttpGetWithToken($"{baseUrl}/api/yield/attribution/FCT_W?days=999", tok);
+                Check(r3.StatusCode == HttpStatusCode.OK, "归因API: days=999 越界 → clamp 到 90 不报错");
+                // 无 token 403：必须用无 cookie 的独立 HttpClient（static _http 可能残留早期登录 Set-Cookie）
+                using (var httpNoCookie = new HttpClient())
+                {
+                    var r4 = httpNoCookie.GetAsync($"{baseUrl}/api/yield/attribution/FCT_W").GetAwaiter().GetResult();
+                    Check(r4.StatusCode == HttpStatusCode.Forbidden, "归因API: 无 token → 403");
+                }
+            }
+            finally
+            {
+                srv.Stop(); mesh.Stop();
+                TryDeleteDir(webRoot);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            }
+        }
     }
 
     static HttpResponseMessage HttpPostWithToken(string url, string token, string json){

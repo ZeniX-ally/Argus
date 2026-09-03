@@ -24,6 +24,7 @@ namespace FctAggregator;
 static class Program
 {
     private static Mutex? _singleInstanceMutex;
+    private static ConfigWatcher? _configWatcher; // v3.21.1 P1 配置热更新（static 保引用防 GC 回收）
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AttachConsole(int dwProcessId);
@@ -85,6 +86,10 @@ static class Program
 
                 case "rank":
                     return RunToolGui(() => new FctFailRanker.MainForm());
+
+                case "upgrade":
+                    // 升级向导：图形化一键升级工具（v3.21.1）- 简化版
+                    return FctAggregator.modules.Upgrader.UpgradeEntry.Run();
 
                 case "agg":
                     // 一键部署：config 生成 / 防火墙放行 / 开机自启 / 启动服务（优先于 --web）
@@ -186,6 +191,22 @@ static class Program
 
         // 启动后台引擎
         var engine = new Engine(cfg);
+        
+        // v3.21.1 P1: 配置热更新监听（在引擎启动后）
+        try
+        {
+            _configWatcher = new ConfigWatcher(Path.Combine(AppConfig.BaseDir, "config.json"));
+            _configWatcher.ConfigChanged += (sender, newCfg) =>
+            {
+                // 配置变更后，可选触发引擎重新加载某些动态参数
+                Logger.Info("[ConfigWatcher] 新配置已生效");
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[ConfigWatcher] 启动失败：{ex.Message}（将继续运行但无法热更新）");
+        }
+        
         engine.Start();
 
         // 开启动画（v3.1.0）：splash 先于主窗口播放；主窗口显示 450ms 后收起（视觉无缝）

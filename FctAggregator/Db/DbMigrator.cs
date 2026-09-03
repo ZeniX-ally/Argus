@@ -11,7 +11,7 @@ namespace FctAggregator;
 public static class DbMigrator
 {
     /// <summary>当前期望的 schema 版本（= 迁移数组最后一项的版本号）；库已达该值即视为最新。</summary>
-    public const int LatestVersion = 10;
+    public const int LatestVersion = 11;
 
     /// <summary>
     /// 有序迁移列表：Version 严格升序、与库的 user_version 一一对应；
@@ -303,6 +303,18 @@ public static class DbMigrator
                 @"CREATE UNIQUE INDEX IF NOT EXISTS idx_acc_unique ON predict_accuracy_log(predict_table, predict_id);",
                 @"CREATE INDEX IF NOT EXISTS idx_acc_rule_time ON predict_accuracy_log(rule, reconciled_at);",
                 @"CREATE INDEX IF NOT EXISTS idx_acc_machine_rule ON predict_accuracy_log(machine, rule);",
+            }
+        ),
+        // v11 慢查询索引补齐（v3.21.1 P1）：idx_agg_date, idx_agg_model, idx_agg_fixture, idx_yld_daily_date
+        (
+            11,
+            "慢查询索引补齐（P1 性能优化）",
+            new string[]
+            {
+                @"CREATE INDEX IF NOT EXISTS idx_agg_date ON agg_records(test_date);",
+                @"CREATE INDEX IF NOT EXISTS idx_agg_model ON agg_records(model);",
+                @"CREATE INDEX IF NOT EXISTS idx_agg_fixture ON agg_records(fail_reason);",
+                @"CREATE INDEX IF NOT EXISTS idx_yld_daily_date ON yld_daily(test_date);",
             }
         ),
     };

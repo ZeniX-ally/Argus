@@ -34,9 +34,10 @@
     <!-- v3.19.0：智能化九域（域1/2/3/4/7/8/9：时间识别/DB巡检/配置校验推荐/设备预测/维修智能/布局高亮/告警自愈预测） -->
     <!-- v3.20.0：算法优化规格02 预测准确率自反馈 —— DbMigrator v10 predict_accuracy_log + PredictAccuracyReconciler 对账 + /api/predict/accuracy -->
     <!-- v3.21.0：算法优化规格03 季节性分解 —— YieldDecomposer（hourly/daily/weekly）+ /api/yield/decompose(+config) + 季节性页 + predict_* 配置键补接线 -->
-    <Version>3.21.0</Version>
-    <AssemblyVersion>3.21.0.0</AssemblyVersion>
-    <FileVersion>3.21.0.0</FileVersion>
+    <!-- v3.21.1：算法优化规格01 良率归因 —— YieldAttributor + /api/yield/attribution + 归因页；DbMigrator v11 慢查询索引；ConfigWatcher 配置热更新校验；upgrade 升级向导子命令 -->
+    <Version>3.21.1</Version>
+    <AssemblyVersion>3.21.1.0</AssemblyVersion>
+    <FileVersion>3.21.1.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

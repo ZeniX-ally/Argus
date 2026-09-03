@@ -165,6 +165,9 @@ public class WebAggServer : IDisposable
         _pipeline.Add("GET", "/api/yield/decompose", ctx => { CountHit(); ServeYieldDecompose(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/yield/decompose/config", ctx => { CountHit(); ServeYieldDecomposeConfigGet(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/yield/decompose/config", ctx => { CountHit(); ServeYieldDecomposeConfig(ctx); return Task.CompletedTask; });
+        // v3.21.1 P0 规格 01：良率归因（按 model/category 分组 fail_count + yield%）
+        // 路由模板 {machine} 不被 RoutePipeline 支持（仅精确 + /* 通配）→ 用尾部通配注册，machine 由 handler 自行解析
+        _pipeline.Add("GET", "/api/yield/attribution/*", ctx => { CountHit(); ServeYieldAttribution(ctx); return Task.CompletedTask; });
 
         // ===== v3.8.0 P1 D3：权限（users 三角色）+ 审计 + 状态 =====
         // /api/login 在 Handle 层豁免 agg_token 校验（未登录也能到达），其余路由照常
@@ -1284,6 +1287,66 @@ public class WebAggServer : IDisposable
         {
             Logger.Warning($"[Web 服务] 季节性分解失败: {ex.Message}");
             RespondText(ctx, 500, "seasonality decompose failed");
+        }
+    }
+
+    /// <summary>
+    /// 良率归因查询（v3.21.1 P0 规格 01）：GET /api/yield/attribution/{machine} → 按 model/category 分组的 fail_count + yield%。
+    /// viewer 可读，返回 top N 型号贡献度。
+    /// </summary>
+    private void ServeYieldAttribution(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try
+        {
+            var path = ctx.Request.Url?.AbsolutePath ?? "";
+            // 解析/machine 路径参数
+            string machine = "";
+            var parts = path.Split('/');
+            for (int i = 0; i < parts.Length - 1; i++)
+            {
+                if (parts[i] == "attribution" && i + 1 < parts.Length)
+                {
+                    machine = parts[i + 1];
+                    break;
+                }
+            }
+            
+            if (string.IsNullOrEmpty(machine)) { RespondText(ctx, 400, "machine parameter required"); return; }
+            
+            int daysBack = 7;
+            if (int.TryParse(ctx.Request.QueryString["days"], out var d) && d >= 1)
+                daysBack = Math.Min(d, 90);
+            
+            // 调用智能分析器
+            var breakdown = YieldAttributor.AnalyzeModel(_db, machine, daysBack);
+            
+            var resp = new
+            {
+                machine,
+                days_back = daysBack,
+                total_fail = _db.GetRecentFailCount(machine, daysBack),
+                items = breakdown.Select(x => new
+                {
+                    x.Rank,
+                    x.Model,
+                    x.Category,
+                    x.Total,
+                    x.Pass,
+                    x.Fail,
+                    x.Interrupted,
+                    yield_pct = Math.Round(x.YieldPct, 2),
+                    contribution = Math.Round(x.Contribution, 1)
+                })
+            };
+            
+            Respond(ctx, 200, "application/json; charset=utf-8",
+                JsonSerializer.SerializeToUtf8Bytes(resp, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 良率归因失败：{ex.Message}");
+            RespondText(ctx, 500, "yield attribution failed");
         }
     }
 
