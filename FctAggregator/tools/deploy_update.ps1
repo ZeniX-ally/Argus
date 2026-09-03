@@ -136,6 +136,44 @@ function Get-ArgusProcesses([string]$dest) {
     return $list
 }
 
+# v3.23.1：覆盖前兜底杀进程——Get-ArgusProcesses 依赖 CIM 探测 dotnet 进程，
+# 部分产线机 WMI 受限会漏网，导致停进程"成功"但 Argus.dll 仍被占用。
+# 兜底用进程名直杀（不依赖 CIM）+ dotnet 命令行反查（尽力），排除 -ExcludePid。
+function Kill-ArgusForOverwrite {
+    $ids = @()
+    foreach ($n in @('Argus', 'FCT-Aggregator')) {
+        foreach ($p in (Get-Process -Name $n -ErrorAction SilentlyContinue)) {
+            if ($ExcludePid -gt 0 -and $p.Id -eq $ExcludePid) { continue }
+            $ids += $p.Id
+        }
+    }
+    try {
+        foreach ($p in (Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction Stop)) {
+            if ($p.CommandLine -and $p.CommandLine -match 'Argus\.(dll|exe)') {
+                if ($ExcludePid -gt 0 -and $p.ProcessId -eq $ExcludePid) { continue }
+                $ids += $p.ProcessId
+            }
+        }
+    } catch { }
+    $ids = @($ids | Select-Object -Unique)
+    foreach ($id in $ids) { try { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue } catch { } }
+    if ($ids.Count -gt 0) { Start-Sleep -Seconds 2 }   # 等文件句柄释放
+}
+
+# 覆盖单个文件：失败先兜底杀进程再重试（最多 3 次）。
+function Copy-FileRetry([string]$src, [string]$dest, [string]$name) {
+    for ($i = 1; $i -le 3; $i++) {
+        try {
+            Copy-Item -LiteralPath $src $dest -Force -ErrorAction Stop
+            return $true
+        } catch {
+            Kill-ArgusForOverwrite
+            if ($i -lt 3) { Start-Sleep -Seconds 1 }
+        }
+    }
+    return $false
+}
+
 function Write-Head([string]$t) {
     Write-Host ""
     Write-Host ("=" * 68) -ForegroundColor DarkCyan
@@ -521,19 +559,40 @@ if (-not $NoDbBackup) {
 }
 
 # 4.3 覆盖（config.json 跳过——它走下面的合并部署，不能直接盖）
-$copied = 0
+# v3.23.1：逐文件兜底（进程漏网占用 → 再杀 → 重试）；仍失败汇总提示回滚命令，不裸抛
+$copied = 0; $failed = @()
 foreach ($f in $pkgFiles) {
     if ($f.Name -eq 'config.json') { continue }
-    Copy-Item $f.FullName $dest -Force
-    $copied++
+    if (Copy-FileRetry $f.FullName $dest $f.Name) { $copied++ } else { $failed += $f.Name }
 }
 # runtimes 目录树（deps.json 声明的运行时文件，如 System.IO.Ports 实现版）——必须随包部署
 if (Test-Path (Join-Path $stage 'runtimes')) {
-    Copy-Item (Join-Path $stage 'runtimes') $dest -Recurse -Force
+    $rtOk = $false
+    for ($i = 1; $i -le 3; $i++) {
+        try { Copy-Item (Join-Path $stage 'runtimes') $dest -Recurse -Force -ErrorAction Stop; $rtOk = $true; break }
+        catch { Kill-ArgusForOverwrite; if ($i -lt 3) { Start-Sleep -Seconds 1 } }
+    }
+    if (-not $rtOk) { $failed += 'runtimes\' }
 }
 # v3.22.1：public\ 前端静态资源树（Web 看板全部页面）——此前漏部署导致升级后前端停留旧版
 if (Test-Path (Join-Path $stage 'public')) {
-    Copy-Item (Join-Path $stage 'public') $dest -Recurse -Force
+    try { Copy-Item (Join-Path $stage 'public') $dest -Recurse -Force -ErrorAction Stop } catch { Kill-ArgusForOverwrite }
+}
+if ($failed.Count -gt 0) {
+    Write-Host ("-" * 68) -ForegroundColor DarkYellow
+    Write-Host "  以下文件被占用未能覆盖，升级未完成：" -ForegroundColor Yellow
+    foreach ($n in $failed) { Write-Host "    - $n" -ForegroundColor Yellow }
+    Write-Host ""
+    Write-Host "  处理建议（任选其一）：" -ForegroundColor Yellow
+    Write-Host "    1) 完全退出正在运行的 Argus / FCT-Aggregator（含右下角托盘图标），然后重新执行本命令（幂等续跑）；" -ForegroundColor White
+    Write-Host "    2) 若注册为 Windows 服务：net stop Argus 后再重跑；" -ForegroundColor White
+    Write-Host "    3) 若用 Argus.exe upgrade 图形向导且程序由 启动.bat(dotnet) 启动——向导自身占用 Argus.dll，" -ForegroundColor White
+    Write-Host "       先退出程序再用本脚本命令行方式部署。" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  回滚命令（备份已就绪）：" -ForegroundColor Yellow
+    Write-Host "      powershell -ExecutionPolicy Bypass -File ""$($PSCommandPath)"" -Rollback ""$backupDir""" -ForegroundColor White
+    Write-Host ("-" * 68) -ForegroundColor DarkYellow
+    exit 1
 }
 Ok "已覆盖 $copied 个程序文件 + runtimes/public 运行时资源树（config.json 另行合并处理）"
 

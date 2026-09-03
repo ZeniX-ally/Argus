@@ -38,9 +38,10 @@
     <!-- v3.22.0：算法优化规格04 设备健康综合分 —— DeviceHealthScorer + /api/devices/health + 健康分页；规格01 补全真 FIXTURE_ID（DbMigrator v12）；LRUCache 接线 MeshQueryService -->
     <!-- v3.22.1：图形化升级向导重写 —— deploy_update.ps1 GUI 前端（演练→执行→回滚命令）；-ExcludePid 防自杀；打包器随包带部署脚本 -->
     <!-- v3.23.0：暗黑模式 —— Theme 令牌双值属性 + config.ui_theme 持久化 + 顶栏一键切换；待办看板/预览撞色修复 -->
-    <Version>3.23.0</Version>
-    <AssemblyVersion>3.23.0.0</AssemblyVersion>
-    <FileVersion>3.23.0.0</FileVersion>
+    <!-- v3.23.1：deploy_update.ps1 覆盖兜底 —— 进程漏网占用时再杀+重试，失败给回滚指引不裸抛 -->
+    <Version>3.23.1</Version>
+    <AssemblyVersion>3.23.1.0</AssemblyVersion>
+    <FileVersion>3.23.1.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
