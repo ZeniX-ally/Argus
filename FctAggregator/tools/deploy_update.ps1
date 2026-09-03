@@ -73,6 +73,23 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# v3.23.1：交互会话（双击/手动控制台）下脚本结束或报错都保持窗口，直接看清结果；
+# SSH / 计划任务等非交互会话（[Environment]::UserInteractive=false）自动跳过，不挂死。
+function Wait-Key {
+    if (-not [Environment]::UserInteractive) { return }
+    Write-Host ""
+    Read-Host "  按回车键退出..." | Out-Null
+}
+# 兜底捕获一切未处理错误（含 ErrorActionPreference=Stop 冒泡的裸异常）：显示错误后停留再退出
+trap {
+    Write-Host ""
+    Write-Host ("-" * 68) -ForegroundColor Red
+    Write-Host "  发生未处理错误：$($_.Exception.Message)" -ForegroundColor Red
+    Write-Host ("-" * 68) -ForegroundColor Red
+    Wait-Key
+    exit 1
+}
+
 # ---- v2.9.0 合并进单 exe / v3.0.1 改名后应当清理的旧程序 ----
 # 【重要】FCT-Distributor.exe 不在此列：v3.0.0 起数据分发器是独立程序，仍在使用，删了会让现场分发功能消失。
 $LegacyExe = @(
@@ -183,7 +200,7 @@ function Write-Head([string]$t) {
 function Ok([string]$m) { Write-Host "  [OK]   $m" -ForegroundColor Green }
 function Info([string]$m) { Write-Host "  [--]   $m" -ForegroundColor Gray }
 function Warn2([string]$m) { Write-Host "  [WARN] $m" -ForegroundColor Yellow; $script:Warn++ }
-function Die([string]$m) { Write-Host "  [FAIL] $m" -ForegroundColor Red; exit 1 }
+function Die([string]$m) { Write-Host "  [FAIL] $m" -ForegroundColor Red; Wait-Key; exit 1 }
 
 # ============================================================
 # 回滚模式
@@ -211,7 +228,7 @@ if ($Rollback) {
     Write-Host ""
     Write-Host "  注意：data\ 与 config.json 本次升级从未被改动，无需恢复。" -ForegroundColor Yellow
     Write-Host "  若要连数据库一起回到升级前，手动把 $Rollback\data\*.db 拷回 $dest\data\" -ForegroundColor Yellow
-    exit 0
+    Wait-Key; exit 0
 }
 
 # ============================================================
@@ -402,7 +419,7 @@ if ($Target) {
     if ($found.Count -gt 1) {
         Warn2 "找到 $($found.Count) 个安装位置，不敢自行猜测"
         Write-Host "         请用 -Target 明确指定要升级哪一个。" -ForegroundColor Yellow
-        exit 1
+        Wait-Key; exit 1
     }
     $dest = $found[0].Path
     Ok "锁定安装目录: $dest"
@@ -506,7 +523,7 @@ if (-not $Execute) {
     Write-Host "      .\deploy_update.ps1 -Execute" -ForegroundColor White
     Write-Host ("-" * 68) -ForegroundColor DarkYellow
     Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-    exit 0
+    Wait-Key; exit 0
 }
 
 # ============================================================
@@ -592,7 +609,7 @@ if ($failed.Count -gt 0) {
     Write-Host "  回滚命令（备份已就绪）：" -ForegroundColor Yellow
     Write-Host "      powershell -ExecutionPolicy Bypass -File ""$($PSCommandPath)"" -Rollback ""$backupDir""" -ForegroundColor White
     Write-Host ("-" * 68) -ForegroundColor DarkYellow
-    exit 1
+    Wait-Key; exit 1
 }
 Ok "已覆盖 $copied 个程序文件 + runtimes/public 运行时资源树（config.json 另行合并处理）"
 
@@ -757,5 +774,5 @@ Write-Host ""
 Write-Host "  回滚命令（如需）:" -ForegroundColor Gray
 Write-Host "      .\deploy_update.ps1 -Rollback ""$backupDir""" -ForegroundColor White
 Write-Host ""
-exit 0
+Wait-Key; exit 0
 
