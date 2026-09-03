@@ -459,9 +459,10 @@ public sealed class MeshPusher
             ["tester"] = rec.Tester, ["panel_status"] = rec.PanelStatus,
             ["batch_timestamp"] = rec.BatchTimestamp,
             ["has_fail_items"] = rec.HasFailItems ? 1 : 0, ["file_size"] = rec.FileSize,
-            // 轻量化：默认不随推带上 XML 内容，按需拉取（见 MeshReceiver 的 xml_available 标记）
+            // v3.22.0 规格01 fixture 归因：治具 ID 随推（对端老版本忽略未知字段，协议向后兼容；空则不带省流量）
             ["xml_available"] = 1,
         };
+        if (!string.IsNullOrEmpty(rec.FixtureId)) data["fixture_id"] = rec.FixtureId;
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["machine"] = _machine, ["type"] = "fail", ["seq"] = id,

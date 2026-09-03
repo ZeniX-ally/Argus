@@ -71,6 +71,24 @@ public class LRUCache<TKey, TValue> where TKey : notnull
         }
     }
 
+    /// <summary>尝试读取（不改变 LRU 顺序的轻量读；命中时刷新访问时间与 LRUCache.GetOrSet 语义一致）。</summary>
+    public bool TryGet(TKey key, out TValue value)
+    {
+        lock (_lock)
+        {
+            TryPruneExpired();
+            if (_cache.TryGetValue(key, out var entry))
+            {
+                entry.LastAccessed = DateTime.Now;
+                MoveToHead(key);
+                value = entry.Value;
+                return true;
+            }
+            value = default!;
+            return false;
+        }
+    }
+
     /// <summary>直接 Set 值（不调用 factory）。</summary>
     public void Set(TKey key, TValue value)
     {

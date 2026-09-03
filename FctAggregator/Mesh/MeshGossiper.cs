@@ -228,6 +228,7 @@ public sealed class MeshGossiper
             row.Sn = Str(data, "sn"); row.Result = Str(data, "result");
             row.XmlPath = Str(data, "xml_path"); row.FailReason = Str(data, "fail_reason");
             row.Tester = Str(data, "tester"); row.PanelStatus = Str(data, "panel_status");
+            row.FixtureId = Str(data, "fixture_id");   // v3.22.0 规格01：老版本对端不带该字段 → 空串（前缀回退）
             row.BatchTimestamp = Str(data, "batch_timestamp");
             row.HasFailItems = Num(data, "has_fail_items") != 0;
             row.FileSize = Num(data, "file_size");

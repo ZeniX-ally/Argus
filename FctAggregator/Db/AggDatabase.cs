@@ -13,6 +13,8 @@ public class AggFailRow
     public string IngestTs = "";    // 聚合端入库时间 yyyy-MM-dd HH:mm:ss
     public string StationId = "", Model = "", Category = "", TestDate = "", Sn = "", Result = "";
     public string FailReason = "", Tester = "", PanelStatus = "", BatchTimestamp = "", XmlPath = "";
+    /// <summary>治具/机台位 ID（v3.22.0 规格01 fixture 归因；老数据/老对端为空串 → 归因侧前缀回退）。</summary>
+    public string FixtureId = "";
     public bool HasFailItems;
     public long FileSize;
 }
@@ -155,17 +157,17 @@ public partial class AggDatabase : IDisposable
     private static readonly string InsertSql = @"
                 INSERT OR IGNORE INTO agg_records
                 (machine, seq, type, ts, ingest_ts, station_id, model, category, test_date, sn,
-                 result, fail_reason, tester, panel_status, batch_timestamp, has_fail_items, file_size, xml_path)
+                 result, fail_reason, tester, panel_status, batch_timestamp, has_fail_items, file_size, xml_path, fixture_id)
                 VALUES (@m,@seq,@type,@ts,@ingest,@st,@model,@cat,@date,@sn,
-                        @result,@reason,@tester,@panel,@bt,@hasfail,@size,@path)";
+                        @result,@reason,@tester,@panel,@bt,@hasfail,@size,@path,@fixture)";
 
-    /// <summary>预置好 18 个命名参数的 INSERT 命令（重复使用时只换 Value，不再新建参数对象）。</summary>
+    /// <summary>预置好 19 个命名参数的 INSERT 命令（重复使用时只换 Value，不再新建参数对象）。</summary>
     private static SqliteCommand NewInsertCmd(SqliteConnection conn)
     {
         var cmd = conn.CreateCommand();
         cmd.CommandText = InsertSql;
         var names = new[] { "@m", "@seq", "@type", "@ts", "@ingest", "@st", "@model", "@cat", "@date", "@sn",
-                            "@result", "@reason", "@tester", "@panel", "@bt", "@hasfail", "@size", "@path" };
+                            "@result", "@reason", "@tester", "@panel", "@bt", "@hasfail", "@size", "@path", "@fixture" };
         foreach (var n in names)
             cmd.Parameters.AddWithValue(n, DBNull.Value);
         return cmd;
@@ -192,6 +194,7 @@ public partial class AggDatabase : IDisposable
         p["@hasfail"].Value = row.HasFailItems ? 1 : 0;
         p["@size"].Value = (object?)row.FileSize ?? DBNull.Value;
         p["@path"].Value = (object?)row.XmlPath ?? DBNull.Value;
+        p["@fixture"].Value = string.IsNullOrEmpty(row.FixtureId) ? DBNull.Value : (object?)row.FixtureId;
     }
 
     /// <summary>某机台 FAIL 总数；machine 为空串/null 时统计全库。keyword 非空时加模糊过滤（分页总数用）。</summary>
@@ -289,7 +292,7 @@ public partial class AggDatabase : IDisposable
                 SELECT id, machine, seq, type, ts, ingest_ts,
                        station_id, model, category, test_date, sn,
                        result, fail_reason, tester, panel_status, batch_timestamp,
-                       has_fail_items, file_size, xml_path
+                       has_fail_items, file_size, xml_path, fixture_id
                   FROM agg_records
                  WHERE machine = @m AND seq > @from AND seq <= @to
                  ORDER BY seq ASC
@@ -320,7 +323,7 @@ public partial class AggDatabase : IDisposable
                 SELECT id, machine, seq, type, ts, ingest_ts,
                        station_id, model, category, test_date, sn,
                        result, fail_reason, tester, panel_status, batch_timestamp,
-                       has_fail_items, file_size, xml_path
+                       has_fail_items, file_size, xml_path, fixture_id
                   FROM agg_records {whereSql}
                  ORDER BY ingest_ts DESC, id DESC
                  LIMIT @lim OFFSET @off";
@@ -343,7 +346,7 @@ public partial class AggDatabase : IDisposable
                 SELECT id, machine, seq, type, ts, ingest_ts,
                        station_id, model, category, test_date, sn,
                        result, fail_reason, tester, panel_status, batch_timestamp,
-                       has_fail_items, file_size, xml_path
+                       has_fail_items, file_size, xml_path, fixture_id
                   FROM agg_records WHERE id = @id";
         cmd.Parameters.AddWithValue("@id", id);
         using var r = cmd.ExecuteReader();
@@ -360,7 +363,7 @@ public partial class AggDatabase : IDisposable
                 SELECT id, machine, seq, type, ts, ingest_ts,
                        station_id, model, category, test_date, sn,
                        result, fail_reason, tester, panel_status, batch_timestamp,
-                       has_fail_items, file_size, xml_path
+                       has_fail_items, file_size, xml_path, fixture_id
                   FROM agg_records ORDER BY id ASC";
         using var r = cmd.ExecuteReader();
         long n = 0;
@@ -685,6 +688,7 @@ public partial class AggDatabase : IDisposable
         HasFailItems = !r.IsDBNull(16) && r.GetInt64(16) != 0,
         FileSize = r.IsDBNull(17) ? 0 : r.GetInt64(17),
         XmlPath = r.IsDBNull(18) ? "" : r.GetString(18),
+        FixtureId = r.IsDBNull(19) ? "" : r.GetString(19),
     };
 
     /// <summary>关闭写连接（幂等；之后可再次 <see cref="Open"/>）。读连接均为短租，无需清理。</summary>

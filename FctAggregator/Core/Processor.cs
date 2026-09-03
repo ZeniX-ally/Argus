@@ -75,6 +75,7 @@ public class Processor
             FailReason = outp.FailReason,
             Tester = outp.Tester,
             PanelStatus = outp.PanelStatus,
+            FixtureId = outp.FixtureId,
             BatchTimestamp = outp.BatchTimestamp,
             HasFailItems = outp.HasFailItems,
             FailedTests = outp.FailedTests,

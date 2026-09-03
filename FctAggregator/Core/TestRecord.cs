@@ -24,6 +24,8 @@ public class TestRecord
     public string? FailReason { get; set; }
     public string? Tester { get; set; }
     public string? PanelStatus { get; set; }
+    /// <summary>治具/机台位 ID（v3.22.0 规格01 fixture 归因：BATCH XML FACTORY@FIXTURE_ID；老格式缺省为 null，走 fail_reason 前缀回退）。</summary>
+    public string? FixtureId { get; set; }
     public string? BatchTimestamp { get; set; }
     public bool HasFailItems { get; set; }
     public List<FailedTest> FailedTests { get; set; } = new();

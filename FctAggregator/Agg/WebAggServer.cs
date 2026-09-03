@@ -169,6 +169,9 @@ public class WebAggServer : IDisposable
         // 路由模板 {machine} 不被 RoutePipeline 支持（仅精确 + /* 通配）→ 用尾部通配注册，machine 由 handler 自行解析
         _pipeline.Add("GET", "/api/yield/attribution/*", ctx => { CountHit(); ServeYieldAttribution(ctx); return Task.CompletedTask; });
 
+        // ===== v3.22.0 规格04 设备健康综合分（新 region，旧 region 禁改）=====
+        _pipeline.Add("GET", "/api/devices/health", ctx => { CountHit(); ServeDeviceHealth(ctx); return Task.CompletedTask; });
+
         // ===== v3.8.0 P1 D3：权限（users 三角色）+ 审计 + 状态 =====
         // /api/login 在 Handle 层豁免 agg_token 校验（未登录也能到达），其余路由照常
         // （async handler 直接返回其 Task，避免 CS4014 未等待警告）
@@ -1349,6 +1352,52 @@ public class WebAggServer : IDisposable
             RespondText(ctx, 500, "yield attribution failed");
         }
     }
+
+    #region v3.22.0 规格04：设备健康综合分（单一 region，A/B/C/Lite-* 禁改）
+
+    /// <summary>
+    /// 设备健康综合分（v3.22.0 规格04）：GET /api/devices/health → 每机台 0..100 综合分 +
+    /// 4 子项（cpu/disk/memory/offline）raw/score/weight/trend + top_concern + 建议。
+    /// viewer 可读；health_score_enabled=false 时仍可查询（score 算法独立于高亮开关）。
+    /// </summary>
+    private void ServeDeviceHealth(HttpListenerContext ctx)
+    {
+        if (!RequireRole(ctx, "viewer")) return;
+        try
+        {
+            var report = DeviceHealthScorer.Score(_db, AppConfig.Instance);
+            var resp = new
+            {
+                machines = report.Machines.Select(m => new
+                {
+                    machine = m.Machine,
+                    health = m.Health,
+                    level = m.Level,
+                    components = m.Components.Select(c => new
+                    {
+                        name = c.Name,
+                        score = Math.Round(c.Score, 1),
+                        weight = c.Weight,
+                        raw = c.Raw,
+                        trend = c.Trend,
+                    }),
+                    top_concern = m.TopConcern,
+                    recommendation = m.Recommendation,
+                }),
+                summary = new { ok = report.Summary.Ok, warn = report.Summary.Warn, critical = report.Summary.Critical },
+                generated_at = report.GeneratedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+            };
+            Respond(ctx, 200, "application/json; charset=utf-8",
+                JsonSerializer.SerializeToUtf8Bytes(resp, JsonOpts));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[Web 服务] 设备健康分查询失败：{ex.Message}");
+            RespondText(ctx, 500, "device health failed");
+        }
+    }
+
+    #endregion
 
     /// <summary>季节性开关状态读取（v3.21.0 规格 03）：GET /api/yield/decompose/config → {enabled, mode}。
     /// viewer 可读（SPA 开关回显用；改走 POST）。</summary>
@@ -4003,6 +4052,7 @@ public class WebAggServer : IDisposable
             ["has_fail_items"] = row.HasFailItems ? 1 : 0, ["file_size"] = row.FileSize,
             ["xml_available"] = 1,
         };
+        if (!string.IsNullOrEmpty(row.FixtureId)) data["fixture_id"] = row.FixtureId;   // v3.22.0 规格01：Gossiper 增量拉取同格式带治具 ID
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["machine"] = row.Machine, ["type"] = "fail", ["seq"] = row.Seq,

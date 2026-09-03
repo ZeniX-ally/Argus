@@ -6579,6 +6579,190 @@ Argus 统一发布包  v{newer}
                 Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             }
         }
+
+        // ==================== v3.22.0 规格01 补全：真 FIXTURE_ID 解析/入库/归因 + LRU 接线 + 规格04 健康分 ====================
+        {
+            var tmpV = Path.Combine(work, "v3220_" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(tmpV);
+            var cfg = AppConfig.Instance;
+            var oldHealthOn = cfg.HealthScoreEnabled;
+            var oldWarn = cfg.HealthWarnThreshold;
+            var oldCrit = cfg.HealthCriticalThreshold;
+            var oldWC = cfg.HealthWeightCpu;
+            var oldWD = cfg.HealthWeightDisk;
+            var oldWM = cfg.HealthWeightMemory;
+            var oldWO = cfg.HealthWeightOffline;
+            var oldCpuPct = cfg.DeviceAlertCpuPct;
+            try
+            {
+                // ---------- ① fixture：解析侧 FACTORY@FIXTURE_ID → ParseOutput.FixtureId ----------
+                var xmlDir = Path.Combine(tmpV, "Online", "MODEL1", "20260903");
+                Directory.CreateDirectory(xmlDir);
+                var xmlPath = Path.Combine(xmlDir, "F_SN1_20260903120000_123.xml");
+                File.WriteAllText(xmlPath,
+                    "<FACTORY USER=\"op1\" TESTER=\"FCT6_T1\" FIXTURE_ID=\"FIX-01\"><PANEL STATUS=\"Passed\"/>"
+                    + "<DUT ID=\"SN-9\"><TEST NAME=\"Volt Check\" STATUS=\"Failed\" VALUE=\"1.1\" HILIM=\"1.0\" LOLIM=\"0.5\" UNIT=\"V\" RULE=\"LT\"/></DUT></FACTORY>");
+                var parsed = FctAggregator.Parsing.ParserRegistry.Instance.Resolve(xmlPath, File.ReadAllText(xmlPath));
+                Check(parsed != null && parsed.Result == "FAIL", "fixture: 默认解析器识别 F_ FAIL 文件");
+                Check(parsed != null && parsed.FixtureId == "FIX-01",
+                    $"fixture: FACTORY@FIXTURE_ID 解析进 ParseOutput（实得 {parsed?.FixtureId ?? "<null>"}）");
+                // 无 FIXTURE_ID 属性 → null（前缀回退兼容）
+                var xmlPath2 = Path.Combine(xmlDir, "F_SN2_20260903120001_124.xml");
+                File.WriteAllText(xmlPath2,
+                    "<FACTORY USER=\"op1\" TESTER=\"FCT6_T1\"><PANEL STATUS=\"Passed\"/>"
+                    + "<DUT ID=\"SN-8\"><TEST NAME=\"Old Step\" STATUS=\"Failed\"/></DUT></FACTORY>");
+                var parsed2 = FctAggregator.Parsing.ParserRegistry.Instance.Resolve(xmlPath2, File.ReadAllText(xmlPath2));
+                Check(parsed2 != null && string.IsNullOrEmpty(parsed2.FixtureId), "fixture: XML 无 FIXTURE_ID → null（老格式不受影响）");
+
+                // ---------- ② fixture：InsertBatch 入库 + QueryFails 回读 + 真治具归因分组 ----------
+                var agg = new AggDatabase(Path.Combine(tmpV, "agg.db"));
+                agg.Open();
+                var today = DateTime.Now.ToString("yyyyMMdd");
+                agg.InsertBatch(new[]
+                {
+                    new AggFailRow { Machine="FCT_FX", Seq=1, TestDate=today, Result="FAIL", FailReason="Solder Short",    Model="MOD_F", Sn="SN1", FixtureId="FIX-A" },
+                    new AggFailRow { Machine="FCT_FX", Seq=2, TestDate=today, Result="FAIL", FailReason="Solder Bridge",   Model="MOD_F", Sn="SN2", FixtureId="FIX-A" },
+                    new AggFailRow { Machine="FCT_FX", Seq=3, TestDate=today, Result="FAIL", FailReason="Connector Loose", Model="MOD_F", Sn="SN3", FixtureId="" },
+                    new AggFailRow { Machine="FCT_FX", Seq=4, TestDate=today, Result="FAIL", FailReason="Xtal Dead",       Model="MOD_F", Sn="SN4", FixtureId="FIX-B" },
+                });
+                var rows = agg.QueryFails(10, "FCT_FX");
+                Check(rows.Count == 4 && rows.Count(r => r.FixtureId == "FIX-A") == 2, "fixture: InsertBatch→QueryFails fixture_id 回读（含空串行）");
+                var fix = agg.DecomposeByFixture("FCT_FX", DateTime.Today.AddDays(-7), DateTime.Today, 20);
+                Check(fix.Count == 3, $"fixture: 真治具 ID 优先分组 → FIX-A/FIX-B/Connector 3 组（实得 {fix.Count}）");
+                var fixA = fix.FirstOrDefault(x => x.Model == "FIX-A");
+                Check(fixA != null && fixA.Fail == 2 && Math.Abs(fixA.Contribution - 50.0) < 0.1, "fixture: FIX-A Fail=2 贡献≈50（基准=前缀失败总和 4）");
+                Check(fix.Any(x => x.Model == "Connector"), "fixture: 无治具旧行回落 fail_reason 前缀分组（Connector 组存在）");
+                Check(!fix.Any(x => x.Model == "Solder"), "fixture: 有真治具 ID 的行不再按前缀分组（Solder 前缀组不存在）");
+                agg.Close();
+
+                // ---------- ③ LRU 接线：MeshQueryService 缓存容量 + TTL 由 LRUCache 托管 ----------
+                MeshQueryService.ClearCache();
+                for (int i = 0; i < 300; i++) MeshQueryService.PutCached($"k{i:000}", $"v{i}");
+                Check(MeshQueryService.CacheCount == 256, $"LRU接线: 300 次写入后容量封顶 256（实得 {MeshQueryService.CacheCount}）");
+                Check(!MeshQueryService.TryGetCached("k000", out _), "LRU接线: 最旧条目被淘汰（k000 未命中）");
+                Check(MeshQueryService.TryGetCached("k299", out var v299) && v299 == "v299", "LRU接线: 最新条目命中（k299）");
+                MeshQueryService.ClearCache();
+
+                // ---------- ④ 规格04：4 个子分单测（纯静态，无 IO） ----------
+                Check(DeviceHealthScorer.CpuScore(20, 0, cfg) == 80, "健康分: CpuScore(20%) = 80");
+                Check(DeviceHealthScorer.CpuScore(95, 0, cfg) == 5, "健康分: CpuScore(95%) = 5");
+                Check(DeviceHealthScorer.CpuScore(70, 10, cfg) == 0, "健康分: CPU 70%+趋势+10%/天（3 天外推 100>95）→ 扣 30 后 0");
+                Check(DeviceHealthScorer.CpuScore(50, 10, cfg) == 50, "健康分: CPU 50%+趋势+10%/天（3 天外推 80，未超）→ 不加罚");
+                Check(DeviceHealthScorer.DiskScore(25, null, cfg) == 100, "健康分: 磁盘 25GB(≥2×阈值) = 100");
+                Check(DeviceHealthScorer.DiskScore(12, null, cfg) == 70, "健康分: 磁盘 12GB(≥阈值) = 70");
+                Check(DeviceHealthScorer.DiskScore(3, null, cfg) == 10, "健康分: 磁盘 3GB(<0.5×阈值) = 10");
+                Check(DeviceHealthScorer.DiskScore(12, 2, cfg) == 40, "健康分: 磁盘 12GB + 2 天耗尽 → 70-30 = 40");
+                Check(DeviceHealthScorer.DiskScore(0, null, cfg) == 0, "健康分: 磁盘未知(0) → 保守扣到底（规格 §9）");
+                Check(DeviceHealthScorer.MemoryScore(4000, 8000) == 100, "健康分: 内存 50% = 100");
+                Check(DeviceHealthScorer.MemoryScore(7200, 8000) == 50, "健康分: 内存 90% = 50（<70→100/<85→80/<95→50 阶梯）");
+                Check(DeviceHealthScorer.MemoryScore(7700, 8000) == 20, "健康分: 内存 96.25%(≥95%) = 20");
+                Check(DeviceHealthScorer.MemoryScore(0, 0) == 100, "健康分: 内存 total=0 → 100（防除零）");
+                Check(DeviceHealthScorer.OfflineScore(0, 0, cfg) == 100, "健康分: 心跳正常 = 100");
+                Check(DeviceHealthScorer.OfflineScore(400, 80, cfg) == 0, "健康分: 真离线 400s（>300s=0，std 罚不穿 0）");
+                Check(DeviceHealthScorer.OfflineScore(0, 80, cfg) == 80, "健康分: 在线但心跳 std=80s → 100-20 = 80");
+
+                // ---------- ⑤ 规格04：Score 集成（device_info + samples 种子） ----------
+                var aggH = new AggDatabase(Path.Combine(tmpV, "health.db"));
+                aggH.Open();
+                var nowStr = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                aggH.UpsertDeviceInfo(new DeviceInfoRow { Machine="FCT_H", CpuUsage=20, MemTotalMb=8000, MemUsedMb=4000, DiskFreeGb=100, LastSeen=nowStr, UpdatedAt=nowStr });
+                for (int i = 4; i >= 0; i--)
+                    aggH.InsertDeviceSample(new DeviceSampleRow { Machine="FCT_H", Ts=DateTime.Now.AddMinutes(-5*i).ToString("yyyy-MM-dd HH:mm:ss"), CpuUsage=20, MemUsedMb=4000, DiskFreeGb=100 });
+                aggH.UpsertDeviceInfo(new DeviceInfoRow { Machine="FCT_B", CpuUsage=95, MemTotalMb=8000, MemUsedMb=4000, DiskFreeGb=100, LastSeen=nowStr, UpdatedAt=nowStr });
+                var offSeen = DateTime.Now.AddSeconds(-600).ToString("yyyy-MM-dd HH:mm:ss");
+                aggH.UpsertDeviceInfo(new DeviceInfoRow { Machine="FCT_O", CpuUsage=20, MemTotalMb=8000, MemUsedMb=4000, DiskFreeGb=100, LastSeen=offSeen, UpdatedAt=offSeen });
+                aggH.UpsertDeviceInfo(new DeviceInfoRow { Machine="FCT_CO", CpuUsage=95, MemTotalMb=8000, MemUsedMb=4000, DiskFreeGb=100, LastSeen=offSeen, UpdatedAt=offSeen });
+
+                var rep = DeviceHealthScorer.Score(aggH, cfg);
+                var h = rep.Machines.FirstOrDefault(x => x.Machine == "FCT_H");
+                var b = rep.Machines.FirstOrDefault(x => x.Machine == "FCT_B");
+                var o = rep.Machines.FirstOrDefault(x => x.Machine == "FCT_O");
+                var co = rep.Machines.FirstOrDefault(x => x.Machine == "FCT_CO");
+                Check(h != null && h.Health >= 80 && h.Level == "ok", $"健康分: 全健康机台 health={h?.Health} ≥80 level=ok");
+                Check(h != null && h.Components.Count == 4, "健康分: components 恰 4 子项（cpu/disk/memory/offline）");
+                Check(b != null && b.Level == "warn" && b.TopConcern == "cpu", $"健康分: CPU 95% 单项劣化 → health={b?.Health} warn + top_concern=cpu");
+                Check(o != null && o.Level != "ok" && DeviceHealthScorer.OfflineScore(600, 0, cfg) == 0, "健康分: last_seen 600s → offline_score=0、级别非 ok");
+                Check(co != null && co.Level == "critical", $"健康分: CPU95%+离线 600s 多指标齐崩 → health={co?.Health} critical");
+                Check(rep.Summary.Ok + rep.Summary.Warn + rep.Summary.Critical == rep.Machines.Count, "健康分: summary 三档计数守恒");
+
+                // 阈值边界：health=71.5 卡在 warn/critical 阈值间
+                cfg.HealthWarnThreshold = 72;
+                Check(DeviceHealthScorer.Score(aggH, cfg).Machines.First(x => x.Machine == "FCT_B").Level == "warn", "健康分: warn 阈值 72 → 71.5 判 warn");
+                cfg.HealthWarnThreshold = 71;
+                Check(DeviceHealthScorer.Score(aggH, cfg).Machines.First(x => x.Machine == "FCT_B").Level == "ok", "健康分: warn 阈值 71 → 71.5 判 ok（边界含端点）");
+                cfg.HealthWarnThreshold = oldWarn;
+                // 权重调整生效
+                cfg.HealthWeightCpu = 1.0; cfg.HealthWeightDisk = 0; cfg.HealthWeightMemory = 0; cfg.HealthWeightOffline = 0;
+                var bw = DeviceHealthScorer.Score(aggH, cfg).Machines.First(x => x.Machine == "FCT_B").Health;
+                Check(Math.Abs(bw - 5) < 0.01, $"健康分: weight_cpu=1.0 → FCT_B health=5（实得 {bw}，权重可配）");
+                cfg.HealthWeightCpu = oldWC; cfg.HealthWeightDisk = oldWD; cfg.HealthWeightMemory = oldWM; cfg.HealthWeightOffline = oldWO;
+                aggH.Close();
+
+                // ---------- ⑥ 规格04：HighlightEngine 软替换 + 开关回退 ----------
+                cfg.HealthScoreEnabled = true;
+                var hlNew = HighlightEngine.GetHighlights(aggH, cfg);
+                Check(hlNew.Any(x => x.Machine == "FCT_B" && x.Reason.Contains("健康分")), "健康分: enabled=true → 高亮为综合口径（含「健康分」字样）");
+                cfg.HealthScoreEnabled = false;
+                var hlOld = HighlightEngine.GetHighlights(aggH, cfg);
+                Check(hlOld.Any(x => x.Machine == "FCT_B" && x.Reason.Contains("CPU")), "健康分: enabled=false → 回退 v3.19.0 单指标高亮（CPU 阈值口径）");
+                cfg.HealthScoreEnabled = oldHealthOn;
+
+                // ---------- ⑦ 配置键默认值缺省可运行 ----------
+                var fresh = new AppConfig();
+                Check(fresh.HealthScoreEnabled && fresh.HealthWarnThreshold == 80 && fresh.HealthCriticalThreshold == 50,
+                    "健康分: config 默认 enabled=true / warn 80 / critical 50（缺省可运行）");
+                Check(Math.Abs(fresh.HealthWeightCpu + fresh.HealthWeightDisk + fresh.HealthWeightMemory + fresh.HealthWeightOffline - 1.0) < 0.001,
+                    "健康分: 默认权重加和 = 1.0");
+            }
+            finally
+            {
+                cfg.HealthScoreEnabled = oldHealthOn; cfg.HealthWarnThreshold = oldWarn; cfg.HealthCriticalThreshold = oldCrit;
+                cfg.HealthWeightCpu = oldWC; cfg.HealthWeightDisk = oldWD; cfg.HealthWeightMemory = oldWM; cfg.HealthWeightOffline = oldWO;
+                cfg.DeviceAlertCpuPct = oldCpuPct;
+                TryDeleteDir(tmpV);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            }
+        }
+
+        // ==================== v3.22.0 GET /api/devices/health（viewer 可读 + 鉴权）====================
+        {
+            var webRoot = Path.Combine(work, "web_health_" + Guid.NewGuid().ToString("N")[..6]);
+            Directory.CreateDirectory(Path.Combine(webRoot, "public"));
+            File.WriteAllText(Path.Combine(webRoot, "public", "index.html"), "<html>health</html>");
+            var aggDb = new AggDatabase(Path.Combine(webRoot, "agg.db"));
+            aggDb.Open();
+            aggDb.UpsertUser("radmin", PasswordHasher.Hash("pwd"), "admin");
+            var tok = aggDb.GetUserByName("radmin")!.Token;
+            var nowStr = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            aggDb.UpsertDeviceInfo(new DeviceInfoRow { Machine="FCT_W", CpuUsage=20, MemTotalMb=8000, MemUsedMb=4000, DiskFreeGb=100, LastSeen=nowStr, UpdatedAt=nowStr });
+            int port = GetFreePort();
+            var localDb = new Database(Path.Combine(webRoot, "local.db"));
+            var mesh = new MeshNode(new AppConfig { StationId = "WEB_HEALTH", AggToken = "healthtok", Peers = new List<string>() }, "WEB_HEALTH", localDb, aggDb, new string[0]);
+            mesh.Receiver.SetPeerUrls(new string[0]);
+            var srv = new WebAggServer(port, mesh, aggDb, webRoot, webRoot, "healthtok");
+            var baseUrl = $"http://127.0.0.1:{port}";
+            srv.Start();
+            Thread.Sleep(500);
+            try
+            {
+                var r1 = HttpGetWithToken($"{baseUrl}/api/devices/health", tok);
+                var t1 = r1.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                Check(r1.StatusCode == HttpStatusCode.OK && t1.Contains("FCT_W"), "健康API: GET /api/devices/health → 200 且含 FCT_W");
+                Check(t1.Contains("\"components\"") && t1.Contains("\"top_concern\"") && t1.Contains("\"summary\""),
+                    "健康API: JSON 字段齐全（components/top_concern/summary）");
+                using (var httpNoCookie = new HttpClient())
+                {
+                    var r2 = httpNoCookie.GetAsync($"{baseUrl}/api/devices/health").GetAwaiter().GetResult();
+                    Check(r2.StatusCode == HttpStatusCode.Forbidden, "健康API: 无 token → 403");
+                }
+            }
+            finally
+            {
+                srv.Stop(); mesh.Stop();
+                TryDeleteDir(webRoot);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            }
+        }
     }
 
     static HttpResponseMessage HttpPostWithToken(string url, string token, string json){

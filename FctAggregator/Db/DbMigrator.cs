@@ -11,7 +11,7 @@ namespace FctAggregator;
 public static class DbMigrator
 {
     /// <summary>当前期望的 schema 版本（= 迁移数组最后一项的版本号）；库已达该值即视为最新。</summary>
-    public const int LatestVersion = 11;
+    public const int LatestVersion = 12;
 
     /// <summary>
     /// 有序迁移列表：Version 严格升序、与库的 user_version 一一对应；
@@ -315,6 +315,16 @@ public static class DbMigrator
                 @"CREATE INDEX IF NOT EXISTS idx_agg_model ON agg_records(model);",
                 @"CREATE INDEX IF NOT EXISTS idx_agg_fixture ON agg_records(fail_reason);",
                 @"CREATE INDEX IF NOT EXISTS idx_yld_daily_date ON yld_daily(test_date);",
+            }
+        ),
+        // v12 fixture_id 列（v3.22.0 规格01 fixture 归因补全）：agg_records 增加真治具 ID。
+        // 老行为兼容：列可空，老数据/老对端为 NULL → DecomposeByFixture 回落 fail_reason 前缀分组（原口径不变）。
+        (
+            12,
+            "agg_records.fixture_id 列（规格01 fixture 归因真治具 ID）",
+            new string[]
+            {
+                @"ALTER TABLE agg_records ADD COLUMN fixture_id TEXT;",
             }
         ),
     };

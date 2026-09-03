@@ -106,6 +106,31 @@ public static class DevicePredictor
         return null;
     }
 
+    /// <summary>
+    /// 通用线性趋势斜率（每天变化量；规格 04 设备健康分用，复用 <see cref="LinearSlope"/>）。
+    /// metric = "cpu" → CPU% 每日变化；"disk" → 剩余 GB 每日变化（负数=在消耗）。
+    /// 样本 &lt; 2 或无法解析时间返回 NaN。
+    /// </summary>
+    public static double TrendPerDay(List<DeviceSampleRow> samples, string metric)
+    {
+        var n = samples.Count;
+        if (n < 2) return double.NaN;
+        var xs = new double[n];
+        var ys = new double[n];
+        var t0 = TryParseTime(samples[0].Ts);
+        for (int i = 0; i < n; i++)
+        {
+            xs[i] = (TryParseTime(samples[i].Ts) - t0).TotalDays;
+            ys[i] = metric switch
+            {
+                "cpu" => samples[i].CpuUsage,
+                "disk" => samples[i].DiskFreeGb,
+                _ => double.NaN,
+            };
+        }
+        return LinearSlope(xs, ys);
+    }
+
     private static double LinearSlope(double[] xs, double[] ys)
     {
         int n=xs.Length; if(n<2) return double.NaN;

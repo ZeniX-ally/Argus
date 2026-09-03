@@ -20,6 +20,8 @@ public static class XmlParser
         public string? PanelStatus { get; set; }
         public string? Sn { get; set; }
         public string? FailReason { get; set; }
+        /// <summary>治具/机台位 ID（v3.22.0 规格01：FACTORY/PANEL/DUT@FIXTURE_ID，缺省 null）。</summary>
+        public string? FixtureId { get; set; }
         public bool HasFailItems { get; set; }
         public List<FailedTest> FailedTests { get; set; } = new();
     }
@@ -58,8 +60,12 @@ public static class XmlParser
                     case "FACTORY":
                         r.FactoryUser = reader.GetAttribute("USER");
                         r.Tester = reader.GetAttribute("TESTER");
+                        // v3.22.0 规格01 fixture 归因：FACTORY@FIXTURE_ID（缺省保持 null）
+                        r.FixtureId ??= reader.GetAttribute("FIXTURE_ID");
                         break;
                     case "PANEL":
+                        // PANEL 也可能携带治具号（部分产线格式）：FACTORY 未命中时兜底
+                        r.FixtureId ??= reader.GetAttribute("FIXTURE_ID");
                         if (!panelSet)
                         {
                             r.PanelStatus = reader.GetAttribute("STATUS");
@@ -72,6 +78,7 @@ public static class XmlParser
                             r.Sn = reader.GetAttribute("ID");
                             snSet = true;
                         }
+                        r.FixtureId ??= reader.GetAttribute("FIXTURE_ID");
                         break;
                     case "TEST":
                         if (reader.GetAttribute("STATUS") == "Failed")

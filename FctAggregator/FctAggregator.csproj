@@ -35,9 +35,10 @@
     <!-- v3.20.0：算法优化规格02 预测准确率自反馈 —— DbMigrator v10 predict_accuracy_log + PredictAccuracyReconciler 对账 + /api/predict/accuracy -->
     <!-- v3.21.0：算法优化规格03 季节性分解 —— YieldDecomposer（hourly/daily/weekly）+ /api/yield/decompose(+config) + 季节性页 + predict_* 配置键补接线 -->
     <!-- v3.21.1：算法优化规格01 良率归因 —— YieldAttributor + /api/yield/attribution + 归因页；DbMigrator v11 慢查询索引；ConfigWatcher 配置热更新校验；upgrade 升级向导子命令 -->
-    <Version>3.21.1</Version>
-    <AssemblyVersion>3.21.1.0</AssemblyVersion>
-    <FileVersion>3.21.1.0</FileVersion>
+    <!-- v3.22.0：算法优化规格04 设备健康综合分 —— DeviceHealthScorer + /api/devices/health + 健康分页；规格01 补全真 FIXTURE_ID（DbMigrator v12）；LRUCache 接线 MeshQueryService -->
+    <Version>3.22.0</Version>
+    <AssemblyVersion>3.22.0.0</AssemblyVersion>
+    <FileVersion>3.22.0.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

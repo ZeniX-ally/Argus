@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 
@@ -61,14 +60,10 @@ public sealed class MeshQueryService
     }
 
     // ===== 缓存 5 分钟 =====
-    private sealed class CacheEntry
-    {
-        public DateTime ExpiresAt;
-        public string Json = "";
-    }
-
-    private static readonly ConcurrentDictionary<string, CacheEntry> _cache = new();
-    private static readonly object _cacheLock = new();
+    // v3.22.0：LRUCache 接线（Infra/LRUCache.cs）——容量 + TTL 双淘汰替代手写 ConcurrentDictionary 兜底，
+    // 语义不变：键 = CacheKey 归一化串，值 = JSON 原文，TTL 300s，容量 256（超限挤掉最久未用）。
+    private static readonly LRUCache<string, string> _cache =
+        new(256, TimeSpan.FromSeconds(CacheTtlSec));
 
     public const int CacheTtlSec = 300; // 5 分钟
 
@@ -94,36 +89,9 @@ public sealed class MeshQueryService
         return s;
     }
 
-    public static bool TryGetCached(string key, out string json)
-    {
-        if (_cache.TryGetValue(key, out var e) && DateTime.UtcNow < e.ExpiresAt)
-        {
-            json = e.Json;
-            return true;
-        }
-        json = "";
-        // 过期清理（惰性）
-        if (e != null && DateTime.UtcNow >= e.ExpiresAt)
-            _cache.TryRemove(key, out _);
-        return false;
-    }
+    public static bool TryGetCached(string key, out string json) => _cache.TryGet(key, out json!);
 
-    public static void PutCached(string key, string json)
-    {
-        _cache[key] = new CacheEntry { ExpiresAt = DateTime.UtcNow.AddSeconds(CacheTtlSec), Json = json };
-        // 容量兜底：>256 项清最旧一半（避免查询风暴内存膨胀）
-        if (_cache.Count > 256)
-        {
-            lock (_cacheLock)
-            {
-                if (_cache.Count > 256)
-                {
-                    var toRemove = _cache.OrderBy(kv => kv.Value.ExpiresAt).Take(128).Select(kv => kv.Key).ToList();
-                    foreach (var k in toRemove) _cache.TryRemove(k, out _);
-                }
-            }
-        }
-    }
+    public static void PutCached(string key, string json) => _cache.Set(key, json);
 
     public static void ClearCache() => _cache.Clear();
 

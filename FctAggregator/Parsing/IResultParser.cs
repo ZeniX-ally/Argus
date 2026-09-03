@@ -53,6 +53,8 @@ public class ParseOutput
     public string? FailReason;
     public string? Tester;
     public string? PanelStatus;
+    /// <summary>治具/机台位 ID（v3.22.0：FACTORY@FIXTURE_ID / DUT@FIXTURE_ID，缺省 null）。</summary>
+    public string? FixtureId;
     public string? BatchTimestamp;  // 最终采用的"真实测试时间"源（PANEL→BATCH→文件名→目录）
     public bool HasFailItems;
     public List<FailedTest> FailedTests { get; set; } = new();

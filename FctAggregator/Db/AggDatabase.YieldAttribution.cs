@@ -86,28 +86,28 @@ public partial class AggDatabase
     }
     
     /// <summary>
-    /// 良率归因分解：按 fixture_id 维度统计。
-    /// 需要从 XML 解析中提取 FIXTURE_ID 字段（暂用 fail_reason 前缀替代）。
+    /// 良率归因分解：按治具维度统计（v3.22.0 升级：优先真 FIXTURE_ID，NULL/空回落 fail_reason 前缀 —— 老数据口径不变）。
     /// </summary>
     public List<YieldBreakdownItem> DecomposeByFixture(string machine, DateTime startDate, DateTime endDate, int maxRows = 20)
     {
         var result = new List<YieldBreakdownItem>();
-        
+
         try
         {
             using var conn = OpenReader();
-            
-            // SQL: 按 fail_reason 前缀分组（模拟 fixture_id）
+
+            // SQL: 优先 fixture_id 列（v12 迁移新增），NULL/空串回落 fail_reason 首词前缀（v3.21.1 旧口径）
             var sql = @"
-                SELECT 
-                    fail_reason_prefix as model,
+                SELECT
+                    fkey as model,
                     'fixture' as category,
                     COUNT(*) as total,
                     0 as pass,
                     COUNT(*) as fail,
                     0 as interrupted
                 FROM (
-                    SELECT substr(fail_reason, 1, instr(fail_reason || ' ', ' ') - 1) as fail_reason_prefix
+                    SELECT COALESCE(NULLIF(TRIM(fixture_id), ''),
+                            substr(fail_reason, 1, instr(fail_reason || ' ', ' ') - 1)) as fkey
                     FROM agg_records
                     WHERE machine = @machine
                       AND test_date >= @startDate
@@ -115,7 +115,7 @@ public partial class AggDatabase
                       AND fail_reason IS NOT NULL
                       AND fail_reason != ''
                 )
-                GROUP BY fail_reason_prefix
+                GROUP BY fkey
                 ORDER BY fail DESC
                 LIMIT @maxRows";
             

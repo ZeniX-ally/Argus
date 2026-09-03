@@ -24,6 +24,7 @@
     xml:         { module: "page-xml",         title: "鍦ㄧ嚎 XML 鏌ョ湅" },
     maintenance: { module: "page-maintenance", title: "缁翠慨" },
     devices:     { module: "page-devices",     title: "璁惧" },
+    health:      { module: "page-device-health", title: "健康分" },
     fetch:       { module: "page-fetch",       title: "鏁版嵁鎷夊彇" },
     report:      { module: "page-report",      title: "鎶ュ憡涓績" },
     proc:        { module: "page-proc",        title: "绋嬪簭鏃ュ織" },

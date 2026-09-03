@@ -29,6 +29,7 @@ public sealed class ParserRuleSet
         AttrBatchTs = "TIMESTAMP",
         AttrFactoryUser = "USER",
         AttrTester = "TESTER",
+        AttrFixtureId = "FIXTURE_ID",   // v3.22.0 规格01 fixture 归因（BATCH XML 常见位置：FACTORY@FIXTURE_ID）
         AttrPanelStatus = "STATUS",
         AttrDutId = "ID",
         AttrTestName = "NAME",
@@ -57,6 +58,8 @@ public sealed class ParserRuleSet
     public string AttrBatchTs { get; set; } = "TIMESTAMP";
     public string AttrFactoryUser { get; set; } = "USER";
     public string AttrTester { get; set; } = "TESTER";
+    /// <summary>治具/机台位 ID 属性名（v3.22.0 规格01 fixture 归因用；XML 无该属性时保持 null = 前缀回退）。</summary>
+    public string AttrFixtureId { get; set; } = "FIXTURE_ID";
     public string AttrPanelStatus { get; set; } = "STATUS";
 public string AttrDutId { get; set; } = "ID";
     public string AttrTestName { get; set; } = "NAME";

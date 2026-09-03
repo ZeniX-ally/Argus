@@ -125,6 +125,21 @@ public class AppConfig
     public int YieldSeasonalityTrendWindow { get; set; } = 7;
     /// <summary>残差 σ 小于此值视作平稳，回退 v3.19.0 老逻辑（默认 0.5）。config.json: yield_seasonality_min_sigma。</summary>
     public double YieldSeasonalityMinSigma { get; set; } = 0.5;
+    // ===== 设备健康综合分（v3.22.0 规格 04，默认开：HighlightEngine 改读健康分，关则回退单指标）=====
+    /// <summary>健康分总开关（默认 true；false = HighlightEngine 回退 v3.19.0 单指标阈值）。config.json: health_score_enabled。</summary>
+    public bool HealthScoreEnabled { get; set; } = true;
+    /// <summary>health &lt; 该值升 warn（默认 80）。config.json: health_warn_threshold。</summary>
+    public double HealthWarnThreshold { get; set; } = 80;
+    /// <summary>health &lt; 该值升 critical（默认 50）。config.json: health_critical_threshold。</summary>
+    public double HealthCriticalThreshold { get; set; } = 50;
+    /// <summary>cpu 子项权重（默认 0.30）。config.json: health_weight_cpu。</summary>
+    public double HealthWeightCpu { get; set; } = 0.30;
+    /// <summary>disk 子项权重（默认 0.30）。config.json: health_weight_disk。</summary>
+    public double HealthWeightDisk { get; set; } = 0.30;
+    /// <summary>memory 子项权重（默认 0.15）。config.json: health_weight_memory。</summary>
+    public double HealthWeightMemory { get; set; } = 0.15;
+    /// <summary>offline 子项权重（默认 0.25）。config.json: health_weight_offline。</summary>
+    public double HealthWeightOffline { get; set; } = 0.25;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -267,6 +282,26 @@ public class AppConfig
                 if (root.TryGetProperty("yield_seasonality_min_sigma", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var ysms) && ysms >= 0)
                     cfg.YieldSeasonalityMinSigma = ysms;
+                // v3.22.0 规格 04 设备健康综合分
+                if (root.TryGetProperty("health_score_enabled", out v)) cfg.HealthScoreEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("health_warn_threshold", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwt) && hwt >= 0 && hwt <= 100)
+                    cfg.HealthWarnThreshold = hwt;
+                if (root.TryGetProperty("health_critical_threshold", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hct) && hct >= 0 && hct <= 100)
+                    cfg.HealthCriticalThreshold = hct;
+                if (root.TryGetProperty("health_weight_cpu", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwc) && hwc >= 0 && hwc <= 1)
+                    cfg.HealthWeightCpu = hwc;
+                if (root.TryGetProperty("health_weight_disk", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwd) && hwd >= 0 && hwd <= 1)
+                    cfg.HealthWeightDisk = hwd;
+                if (root.TryGetProperty("health_weight_memory", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwm) && hwm >= 0 && hwm <= 1)
+                    cfg.HealthWeightMemory = hwm;
+                if (root.TryGetProperty("health_weight_offline", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwo) && hwo >= 0 && hwo <= 1)
+                    cfg.HealthWeightOffline = hwo;
                 // 若未配置token，生成随机token并警告（防空token全网开放）
                 if (string.IsNullOrEmpty(cfg.AggToken))
                 {
@@ -330,6 +365,8 @@ public class AppConfig
                     "predict_tune_enabled", "predict_tune_min_samples", "predict_accuracy_retain_days",
                     "yield_seasonality_enabled", "yield_seasonality_mode", "yield_seasonality_epsilon",
                     "yield_seasonality_days", "yield_seasonality_trend_window", "yield_seasonality_min_sigma",
+                    "health_score_enabled", "health_warn_threshold", "health_critical_threshold",
+                    "health_weight_cpu", "health_weight_disk", "health_weight_memory", "health_weight_offline",
                 };
                 // 先写磁盘上的未知字段（保留原样），本类管理的字段随后覆盖
                 foreach (var prop in doc.RootElement.EnumerateObject())
@@ -392,6 +429,13 @@ public class AppConfig
                 writer.WriteNumber("yield_seasonality_days", YieldSeasonalityDays);
                 writer.WriteNumber("yield_seasonality_trend_window", YieldSeasonalityTrendWindow);
                 writer.WriteNumber("yield_seasonality_min_sigma", YieldSeasonalityMinSigma);
+                writer.WriteBoolean("health_score_enabled", HealthScoreEnabled);
+                writer.WriteNumber("health_warn_threshold", HealthWarnThreshold);
+                writer.WriteNumber("health_critical_threshold", HealthCriticalThreshold);
+                writer.WriteNumber("health_weight_cpu", HealthWeightCpu);
+                writer.WriteNumber("health_weight_disk", HealthWeightDisk);
+                writer.WriteNumber("health_weight_memory", HealthWeightMemory);
+                writer.WriteNumber("health_weight_offline", HealthWeightOffline);
                 writer.WriteEndObject();
             }
             var tmp = path + ".tmp";

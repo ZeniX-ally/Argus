@@ -53,7 +53,7 @@ public sealed class DefaultResultParser : IResultParser
         bool isPass = _rules.PrefixResults.TryGetValue(info.Prefix, out var mapped) && mapped == "PASS";
 
         string result;
-        string? user = null, tester = null, panelStatus = null, batchTs = null, failReason = null;
+        string? user = null, tester = null, panelStatus = null, batchTs = null, failReason = null, fixtureId = null;
         bool hasFail = false;
         var failedTests = new List<FailedTest>();
 
@@ -93,6 +93,7 @@ public sealed class DefaultResultParser : IResultParser
             failReason = pr.FailReason;
             hasFail = pr.HasFailItems;
             failedTests = pr.FailedTests;
+            fixtureId = pr.FixtureId;
             if (string.IsNullOrEmpty(snFromName)) snFromName = pr.Sn;
         }
 
@@ -126,6 +127,7 @@ public sealed class DefaultResultParser : IResultParser
             FailReason = failReason,
             Tester = tester,
             PanelStatus = panelStatus,
+            FixtureId = fixtureId,
             BatchTimestamp = batchTs,
             HasFailItems = hasFail,
             FailedTests = failedTests,
@@ -140,6 +142,7 @@ public sealed class DefaultResultParser : IResultParser
         public bool Error;
         public string? FactoryUser;
         public string? Tester;
+        public string? FixtureId;
         public string? PanelStatus;
         public string? Sn;
         public string? FailReason;
@@ -170,8 +173,12 @@ public sealed class DefaultResultParser : IResultParser
                     case "FACTORY":
                         r.FactoryUser = reader.GetAttribute(_rules.AttrFactoryUser);
                         r.Tester = reader.GetAttribute(_rules.AttrTester);
+                        // v3.22.0 规格01 fixture 归因：FACTORY@FIXTURE_ID（缺省保持 null）
+                        r.FixtureId ??= reader.GetAttribute(_rules.AttrFixtureId);
                         break;
                     case "PANEL":
+                        // PANEL 也可能携带治具号（部分产线格式）：FACTORY 未命中时兜底
+                        r.FixtureId ??= reader.GetAttribute(_rules.AttrFixtureId);
                         r.PanelStatus = reader.GetAttribute(_rules.AttrPanelStatus);
                         break;
                     case "DUT":
@@ -180,6 +187,7 @@ public sealed class DefaultResultParser : IResultParser
                             r.Sn = reader.GetAttribute(_rules.AttrDutId);
                             snSet = true;
                         }
+                        r.FixtureId ??= reader.GetAttribute(_rules.AttrFixtureId);
                         break;
                     case "TEST":
                         if (reader.GetAttribute(_rules.AttrTestStatus) == "Failed")
