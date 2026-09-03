@@ -54,18 +54,21 @@ public class MainForm : Form
     private Panel _dashboardPage = null!;
     private DeviceStatusPanel _devicePage = null!;
     private MaintenancePanel _maintPage = null!;
+    // v3.22.1：FAIL 记录页回归 —— v3.18.5 结构合并时从主窗口 Tab 里被摘掉（FailListPanel 类一直在，
+    // 自检也一直在测），产线用户升级后找不到"扫描到的所有 FAIL"入口。恢复为主程序第 4 页。
+    private FailListPanel _failPage = null!;
     private DebugPanel _debugPage = null!;
     private System.Windows.Forms.Timer _timer = null!;
 
-    /// <summary>页索引 → 标题（顶栏显示）。0~3 主程序页，4~5 内嵌的工具页。</summary>
+    /// <summary>页索引 → 标题（顶栏显示）。0~4 主程序页，5~6 内嵌的工具页。</summary>
     private static readonly string[] PageTitles =
     {
-        "总览", "待办 / 维修记录", "设备状态", "调试工具",
+        "总览", "待办 / 维修记录", "设备状态", "FAIL 记录", "调试工具",
         "TDMS 波形", "聚合看板",
     };
 
     /// <summary>主程序自己的页面数（后面两个是内嵌工具页）。</summary>
-    private const int OwnPageCount = 4;
+    private const int OwnPageCount = 5;
 
     /// <summary>
     /// 工具（v2.9.4 起**内嵌**在主窗口里，不再弹独立窗口）。
@@ -96,8 +99,8 @@ public class MainForm : Form
     /// 默认 false（生产形态）——调试页有清空数据库/推送测试/自启开关，产线操作员不应能进。
     /// </summary>
 
-    /// <summary>「调试工具」在 <see cref="PageTitles"/> 里的页索引。</summary>
-    private const int DebugPageIndex = 3;
+    /// <summary>「调试工具」在 <see cref="PageTitles"/> 里的页索引（v3.22.1 FAIL 页回归后从 3 移到 4）。</summary>
+    private const int DebugPageIndex = 4;
 
     public MainForm(Engine engine, bool debugMode = false)
     {
@@ -254,10 +257,11 @@ public class MainForm : Form
         _dashboardPage = BuildDashboardPage();
         _devicePage = new DeviceStatusPanel(_cfg) { Dock = DockStyle.Fill };
         _maintPage = new MaintenancePanel(_engine) { Dock = DockStyle.Fill };
+        _failPage = new FailListPanel(_engine) { Dock = DockStyle.Fill };
         _debugPage = new DebugPanel(_engine) { Dock = DockStyle.Fill };
 
-        // 4 个主程序页 + 2 个工具页 = 6 个 TabPage
-        Control[] pages = { _dashboardPage, _maintPage, _devicePage, _debugPage };
+        // 5 个主程序页 + 2 个工具页 = 7 个 TabPage
+        Control[] pages = { _dashboardPage, _maintPage, _devicePage, _failPage, _debugPage };
         for (int i = 0; i < pages.Length; i++)
         {
             var tp = new TabPage(PageTitles[i]) { Dock = DockStyle.Fill, BackColor = Theme.Bg };
@@ -411,10 +415,11 @@ public class MainForm : Form
         {
             switch (_page)
             {
+                case 0: Tick(); break;
                 case 1: _maintPage.Refresh2(); break;
                 case 2: _devicePage.Refresh2(); break;
-                case 0: Tick(); break;
-                default: break;               // 4~5 = 内嵌工具页
+                case 3: _failPage.Refresh2(); break;      // v3.22.1 FAIL 记录页回归
+                default: break;                           // 4 = 调试(自刷新) / 5~6 = 内嵌工具页
             }
         }
         catch (Exception ex) { Logger.Warning($"页面刷新失败: {ex.Message}"); }
@@ -426,7 +431,7 @@ public class MainForm : Form
         int idx = e.KeyCode switch
         {
             Keys.D1 => 0, Keys.D2 => 1, Keys.D3 => 2,
-            Keys.D4 => DebugPageIndex,
+            Keys.D4 => 3, Keys.D5 => DebugPageIndex,   // v3.22.1：Ctrl+D4 = FAIL 记录，Ctrl+D5 = 调试工具
             _ => -1,
         };
         if (idx >= 0) { ShowPage(idx); e.Handled = true; return; }

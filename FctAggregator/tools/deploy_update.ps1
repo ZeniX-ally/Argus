@@ -531,7 +531,11 @@ foreach ($f in $pkgFiles) {
 if (Test-Path (Join-Path $stage 'runtimes')) {
     Copy-Item (Join-Path $stage 'runtimes') $dest -Recurse -Force
 }
-Ok "已覆盖 $copied 个程序文件 + runtimes 运行时树（config.json 另行合并处理）"
+# v3.22.1：public\ 前端静态资源树（Web 看板全部页面）——此前漏部署导致升级后前端停留旧版
+if (Test-Path (Join-Path $stage 'public')) {
+    Copy-Item (Join-Path $stage 'public') $dest -Recurse -Force
+}
+Ok "已覆盖 $copied 个程序文件 + runtimes/public 运行时资源树（config.json 另行合并处理）"
 
 # 4.4 config.json 合并部署：包内模板为基准，保留现场 station_id/results_root/webhook_url/agg_token 与现场自定义字段
 # （避免 station_id 丢失 -> 库名由 {sid}.db 退回 fct.db -> 现场看起来“历史数据消失”；

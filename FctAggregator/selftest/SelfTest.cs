@@ -1771,8 +1771,8 @@ class SelfTest
                       "已无自绘 TitleBar 控件（回归系统标题栏）");
                 Check(tabs != null && tabs.Dock == DockStyle.Fill,
                       "顶部 TabControl 存在（Dock=Fill，替代侧栏导航）");
-                Check(tabs != null && tabs.TabPages.Count == 6,
-                      $"TabControl 有 {tabs?.TabPages.Count} 个页签（4 个主页面 + 2 个内嵌工具页）");
+                Check(tabs != null && tabs.TabPages.Count == 7,
+                      $"TabControl 有 {tabs?.TabPages.Count} 个页签（5 个主页面 + 2 个内嵌工具页，v3.22.1 FAIL 记录页回归）");
 
                 Check(title != null && title.Text.Length > 0 && chips != null && chips.Dock == DockStyle.Fill,
                       $"顶栏已显示页标题「{title?.Text}」，右侧状态胶囊区填充");
@@ -1812,10 +1812,10 @@ class SelfTest
 
                 var showPage = typeof(MainForm).GetMethod("ShowPage",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-                var pageFields = new[] { "_dashboardPage", "_maintPage", "_devicePage", "_debugPage" };
+                var pageFields = new[] { "_dashboardPage", "_maintPage", "_devicePage", "_failPage", "_debugPage" };
                 bool switchOk = true;
                 var titles = new List<string>();
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < pageFields.Length; i++)
                 {
                     showPage.Invoke(form, new object?[] { i });
                     Application.DoEvents();
@@ -1823,7 +1823,10 @@ class SelfTest
                     if (tabs!.SelectedIndex != i) switchOk = false;
                 }
                 Check(switchOk, "切页时 TabControl 选中对应页签");
-                Check(titles.Distinct().Count() == 4, $"4 个页标题各不相同：{string.Join(" / ", titles)}");
+                Check(titles.Distinct().Count() == 5, $"5 个页标题各不相同：{string.Join(" / ", titles)}");
+                Check(typeof(MainForm).GetField("_failPage",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(form) is FailListPanel,
+                    "v3.22.1: FAIL 记录页回归主窗口（第 4 页，v3.18.5 起被摘除）");
 
                 // ---------- 工具真内嵌（v2.9.1）----------
                 // 要验的就是“一体化”：工具不再是独立窗口，而是 TopLevel=false 挂在内容区的子控件。
@@ -1837,7 +1840,7 @@ class SelfTest
                 var toolTitles = new List<string>();
                 for (int i = 0; i < toolPages.Length; i++)
                 {
-                    var page = 4 + i;
+                    var page = 5 + i;   // v3.22.1: OwnPageCount 4→5（FAIL 记录页回归），工具页从索引 5 起
                     showPage.Invoke(form, new object?[] { page });
                     Application.DoEvents();
                     var host = toolPages[i];
@@ -1894,14 +1897,15 @@ class SelfTest
                 var tabs2 = (TabControl)typeof(MainForm).GetField("_tabs",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
                     .GetValue(f2)!;
-                Check(tabs2.TabPages.Count == 6, $"生产模式 TabControl {tabs2.TabPages.Count} 项（调试默认显示：4 页 + 2 工具）");
-                Check(tabs2.TabPages[3].Text.Contains("调试"), "生产模式有「调试工具」Tab（v3.4.1 默认显示）");
+                Check(tabs2.TabPages.Count == 7, $"生产模式 TabControl {tabs2.TabPages.Count} 项（调试默认显示：5 页 + 2 工具，v3.22.1）");
+                Check(tabs2.TabPages[3].Text.Contains("FAIL"), "生产模式有「FAIL 记录」Tab（v3.22.1 回归）");
+                Check(tabs2.TabPages[4].Text.Contains("调试"), "生产模式有「调试工具」Tab（v3.4.1 默认显示）");
                 // 调试页正常可达：切过去 Tab 选中
                 var sp2 = typeof(MainForm).GetMethod("ShowPage",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-                sp2.Invoke(f2, new object?[] { 3 });
+                sp2.Invoke(f2, new object?[] { 4 });
                 Application.DoEvents();
-                Check(tabs2.SelectedIndex == 3, "生产模式调试页 Tab 被选中（入口可用）");
+                Check(tabs2.SelectedIndex == 4, "生产模式调试页 Tab 被选中（入口可用）");
                 Check(f2.Visible, "调试项显示后主窗口一切正常");
                 f2.Hide();
             }
