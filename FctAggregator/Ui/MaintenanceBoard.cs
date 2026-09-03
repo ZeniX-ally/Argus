@@ -438,7 +438,7 @@ public class MaintenanceBoard : Panel
             _more = new Label
             {
                 Dock = DockStyle.Bottom, Height = 20, Visible = false,
-                ForeColor = Color.FromArgb(150, 150, 150), Font = HintFont,
+                ForeColor = Theme.TextFaint, Font = HintFont,
                 TextAlign = ContentAlignment.MiddleCenter,
             };
 
@@ -729,9 +729,10 @@ public sealed class MaintenanceCard : BoardCardBase
 
         using (var path = MaintenanceDraw.Rounded(r, 5))
         {
-            using (var bg = new SolidBrush(Hover ? Color.FromArgb(228, 228, 228) : Theme.Surface))
+            // v3.23.0：底/边/文字全部走 Theme 令牌（暗黑模式自动适配；修复标题近白字白底看不清）
+            using (var bg = new SolidBrush(Hover ? Theme.RowHover : Theme.Surface))
                 g.FillPath(bg, path);
-            using (var pen = new Pen(Hover ? MaintenanceMeta.AccentOf(Record.Status) : Color.FromArgb(185, 185, 185)))
+            using (var pen = new Pen(Hover ? MaintenanceMeta.AccentOf(Record.Status) : Theme.CardBorder))
                 g.DrawPath(pen, path);
         }
 
@@ -742,20 +743,20 @@ public sealed class MaintenanceCard : BoardCardBase
         const int left = 12;
         int idW = 42;
 
-        // 第 1 行: 故障项目 + 右上角 #ID
+        // 第 1 行: 故障项目 + 右上角 #ID（v3.23.0：修复 235 近白字画在浅底上看不清 → 走令牌）
         TextRenderer.DrawText(g, Record.FailItem, TitleFont,
             new Rectangle(left, 7, Math.Max(20, Width - left - idW - 8), 18),
-            Color.FromArgb(235, 235, 235), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Theme.TextMain, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, $"#{Record.Id}", MetaFont,
             new Rectangle(Width - idW - 6, 7, idW, 18),
-            Color.FromArgb(150, 150, 150), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            Theme.TextSub, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
         // 第 2 行: 故障描述（v2.3.0 起不再显示设备 SN —— 维修记录不再关心 SN）
         var dev = !string.IsNullOrWhiteSpace(Record.FailReason) ? Record.FailReason
                 : !string.IsNullOrWhiteSpace(Record.Resolution) ? Record.Resolution : "—";
         TextRenderer.DrawText(g, dev, BodyFont,
             new Rectangle(left, 29, Math.Max(20, Width - left - 8), 16),
-            Color.FromArgb(150, 150, 150), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Theme.TextSub, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
         // 第 3 行: 严重度 · 维修人 · 最后更新
         var sevZh = MaintenanceMeta.SeverityZhOf(Record.Severity);
@@ -763,10 +764,10 @@ public sealed class MaintenanceCard : BoardCardBase
         var when = ShortTime(string.IsNullOrEmpty(Record.UpdatedAt) ? Record.CreatedAt : Record.UpdatedAt);
         TextRenderer.DrawText(g, $"{sevZh} · {who}", MetaFont,
             new Rectangle(left, 50, Math.Max(20, Width - left - 96), 16),
-            Color.FromArgb(150, 150, 150), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Theme.TextSub, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, when, MetaFont,
             new Rectangle(Width - 92, 50, 86, 16),
-            Color.FromArgb(150, 150, 150), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            Theme.TextSub, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
         // 第 4 行(仅合并过的记录): 合并了哪些原始 fail 项
         if (SourceItems.Count > 1)
@@ -775,7 +776,7 @@ public sealed class MaintenanceCard : BoardCardBase
                        (SourceItems.Count > 1 ? $"  +{SourceItems.Count - 1}" : "");
             TextRenderer.DrawText(g, text, MetaFont,
                 new Rectangle(left, 70, Math.Max(20, Width - left - 8), 16),
-                Color.FromArgb(140, 140, 140), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                Theme.TextFaint, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         }
     }
 

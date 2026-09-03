@@ -6792,6 +6792,59 @@ Argus 统一发布包  v{newer}
             }
         }
 
+        // ==================== v3.23.0 暗黑模式 + 待办页对比度修复 ====================
+        {
+            // 令牌双值切换 + 对比度硬指标（浅字深底 / 深字浅底，任一模式文字与背景差 ≥ 120 亮度）
+            int Lum(Color c) => (c.R + c.G + c.B) / 3;
+            var lightBg = Theme.Bg;
+            var lightText = Theme.TextMain;
+            Check(!Theme.DarkMode && lightBg == SystemColors.Control, "主题: 默认浅色模式（Bg=系统控件色）");
+            Check(Math.Abs(Lum(lightText) - Lum(lightBg)) >= 120, $"主题: 浅色模式文字/背景对比度 ≥120（实得 {Math.Abs(Lum(lightText) - Lum(lightBg))}）");
+
+            Theme.SetDark(true);
+            Check(Theme.DarkMode && Lum(Theme.Bg) < 60, $"主题: 暗黑模式 Bg 深色（亮度 {Lum(Theme.Bg)} < 60）");
+            Check(Lum(Theme.TextMain) > 200, $"主题: 暗黑模式文字高亮（亮度 {Lum(Theme.TextMain)} > 200）");
+            Check(Math.Abs(Lum(Theme.TextMain) - Lum(Theme.Bg)) >= 120, "主题: 暗黑模式文字/背景对比度 ≥120（要求 4：深底配高亮字）");
+            Check(Theme.Bg != Theme.Surface && Theme.Surface != Theme.TextMain, "主题: Bg/Surface/TextMain 三色互不相同（无撞色）");
+            Check(Lum(Theme.Surface) < 80, "主题: 暗黑 Surface 也是深色调（卡片底不刺眼）");
+            Check(Lum(Theme.Danger) > 120 && Lum(Theme.Warning) > 120, "主题: 暗黑状态色提亮（红/琥珀在深底上可读）");
+
+            // 来回切换：令牌恢复浅色值（IsDefaultish 认双模式值，Apply 重刷两轮都生效）
+            Theme.SetDark(false);
+            Check(Theme.Bg == lightBg && Theme.TextMain == lightText, "主题: 切回浅色模式令牌还原");
+
+            // Apply 双模式重刷：暗色刷两轮，标准控件颜色保持暗色令牌（防"只刷一次"退化）
+            using (var f = new Form { BackColor = Theme.Bg })
+            {
+                var lbl = new Label { Text = "x" };
+                var dg = new DataGridView();
+                var pnl = new Panel();
+                f.Controls.Add(lbl); f.Controls.Add(dg); f.Controls.Add(pnl);
+                Theme.SetDark(true);
+                Theme.Apply(f, isPageRoot: true);
+                var bg1 = f.BackColor; var lbl1 = lbl.ForeColor; var dgCell1 = dg.DefaultCellStyle.BackColor;
+                Theme.Apply(f, isPageRoot: true);   // 第二轮（模拟再切一次主题后的重刷）
+                Check(f.BackColor == bg1 && f.BackColor == Theme.Bg, "主题: 暗色 Apply 两轮颜色稳定（Bg=暗令牌）");
+                Check(lbl.ForeColor == lbl1 && lbl.ForeColor == Theme.TextMain, "主题: Label 两轮均刷成暗色亮字");
+                Check(dg.DefaultCellStyle.BackColor == dgCell1 && dgCell1 == Theme.Surface, "主题: DataGridView 单元格底=暗 Surface");
+                Check(dg.BackgroundColor == Theme.Bg, "主题: DataGridView 背景=暗 Bg（StyleGrid 走令牌）");
+                // 按钮暗色外观：Flat + 深底浅字
+                var btn = Theme.MakeButton("测试", 60);
+                Check(btn.FlatStyle == FlatStyle.Flat && btn.ForeColor == Theme.TextMain, "主题: 暗黑按钮 Flat 深底浅字（系统按钮是亮的会刺眼）");
+                Theme.SetDark(false);
+            }
+
+            // 撞色修复回归：待办看板卡片/预览标题不再用近白硬编码字（主题文字一律走令牌）
+            Theme.SetDark(true);
+            Check(Theme.TextMain.ToArgb() != Theme.Surface.ToArgb() &&
+                  Theme.TextSub.ToArgb() != Theme.Surface.ToArgb(),
+                  "主题: 撞色修复——文字令牌与面板底色不同值（白字白底类回归防线）");
+            Theme.SetDark(false);
+
+            // 配置缺省：ui_theme 默认 light（缺省可运行）；非法值回退 light
+            Check(new AppConfig().UiTheme == "light", "主题: config ui_theme 缺省 light");
+        }
+
         // ==================== v3.22.0 GET /api/devices/health（viewer 可读 + 鉴权）====================
         {
             var webRoot = Path.Combine(work, "web_health_" + Guid.NewGuid().ToString("N")[..6]);

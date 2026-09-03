@@ -140,6 +140,9 @@ public class AppConfig
     public double HealthWeightMemory { get; set; } = 0.15;
     /// <summary>offline 子项权重（默认 0.25）。config.json: health_weight_offline。</summary>
     public double HealthWeightOffline { get; set; } = 0.25;
+    // ===== UI 主题（v3.23.0 暗黑模式）=====
+    /// <summary>界面主题："light"（默认，系统原生浅色）/ "dark"（深底浅字）。config.json: ui_theme。</summary>
+    public string UiTheme { get; set; } = "light";
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -302,6 +305,9 @@ public class AppConfig
                 if (root.TryGetProperty("health_weight_offline", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwo) && hwo >= 0 && hwo <= 1)
                     cfg.HealthWeightOffline = hwo;
+                // v3.23.0 UI 主题
+                if (root.TryGetProperty("ui_theme", out v) && v.ValueKind == JsonValueKind.String)
+                    cfg.UiTheme = (v.GetString() ?? "light").Trim().ToLowerInvariant() == "dark" ? "dark" : "light";
                 // 若未配置token，生成随机token并警告（防空token全网开放）
                 if (string.IsNullOrEmpty(cfg.AggToken))
                 {
@@ -367,6 +373,7 @@ public class AppConfig
                     "yield_seasonality_days", "yield_seasonality_trend_window", "yield_seasonality_min_sigma",
                     "health_score_enabled", "health_warn_threshold", "health_critical_threshold",
                     "health_weight_cpu", "health_weight_disk", "health_weight_memory", "health_weight_offline",
+                    "ui_theme",
                 };
                 // 先写磁盘上的未知字段（保留原样），本类管理的字段随后覆盖
                 foreach (var prop in doc.RootElement.EnumerateObject())
@@ -436,6 +443,7 @@ public class AppConfig
                 writer.WriteNumber("health_weight_disk", HealthWeightDisk);
                 writer.WriteNumber("health_weight_memory", HealthWeightMemory);
                 writer.WriteNumber("health_weight_offline", HealthWeightOffline);
+                writer.WriteString("ui_theme", UiTheme);
                 writer.WriteEndObject();
             }
             var tmp = path + ".tmp";

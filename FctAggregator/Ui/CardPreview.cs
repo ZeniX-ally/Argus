@@ -123,7 +123,8 @@ public class CardPreviewForm : Form
                 Dock = DockStyle.Top, Height = 24, Padding = new Padding(12, 2, 12, 0),
                 Text = merged.Count > 1 ? $"合并的 fail 项（{merged.Count} 项）" : "来源 fail 项",
                 Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
-                ForeColor = Color.FromArgb(242, 242, 242),
+                // v3.23.0 修复：原 FromArgb(242,242,242) 近白字落在白底 Surface 上——白字白底看不清（暗黑同样适配）
+                ForeColor = Theme.TextSub,
             };
             var list = new ListView
             {

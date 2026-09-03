@@ -74,8 +74,8 @@ public sealed class TodoCard : BoardCardBase
 
         using (var path = MaintenanceDraw.Rounded(r, 5))
         {
-            // 黑白红：中性浅灰底 + 主红虚线框（待办 = 需要行动的卡片）
-            using (var bg = new SolidBrush(Hover ? Color.FromArgb(240, 240, 240) : Color.FromArgb(247, 247, 247)))
+            // 黑白红：中性浅灰底 + 主红虚线框（待办 = 需要行动的卡片）；v3.23.0 走令牌（暗黑适配）
+            using (var bg = new SolidBrush(Hover ? Theme.RowHover : Theme.ToolAltRow))
                 g.FillPath(bg, path);
             using var pen = new Pen(Hover ? Accent : Theme.Danger, Hover ? 1.4f : 1f)
             { DashStyle = Hover ? DashStyle.Solid : DashStyle.Dash };

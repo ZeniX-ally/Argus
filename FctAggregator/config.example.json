@@ -41,6 +41,7 @@
     "health_weight_disk": 0.30,
     "health_weight_memory": 0.15,
     "health_weight_offline": 0.25,
+    "ui_theme": "light",
     "peers": [
         "http://10.0.0.2:8081/",
         "http://10.0.0.3:8081/"

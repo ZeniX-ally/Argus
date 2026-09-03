@@ -54,6 +54,7 @@ public class MainForm : Form
     private Panel _dashboardPage = null!;
     private DeviceStatusPanel _devicePage = null!;
     private MaintenancePanel _maintPage = null!;
+    private Button _btnTheme = null!;   // v3.23.0 顶栏「暗色/亮色」切换
     // v3.22.1：FAIL 记录页回归 —— v3.18.5 结构合并时从主窗口 Tab 里被摘掉（FailListPanel 类一直在，
     // 自检也一直在测），产线用户升级后找不到"扫描到的所有 FAIL"入口。恢复为主程序第 4 页。
     private FailListPanel _failPage = null!;
@@ -106,6 +107,8 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
+        // v3.23.0 暗黑模式：建 UI 前先按 config 切令牌（自绘控件构造时读的就是暗色令牌）
+        if (_cfg.UiTheme == "dark") Theme.SetDark(true);
         Text = "Argus";
         // 内嵌工具自带最小尺寸，窗口得能装下；装不下时由 ToolHost 的 AutoScroll 兜底。
         // v3.0.0：数据分发（1040×790，原来最大的那个）移出后，剩下最大是 TDMS 波形 1000×640，
@@ -240,9 +243,20 @@ public class MainForm : Form
             Dock = DockStyle.Right, Width = 94, BackColor = Theme.Surface, Padding = new Padding(9, 2, 9, 2),
         };
         refreshHost.Controls.Add(btnRefresh);
+        // v3.23.0 暗黑模式切换（顶栏右侧）：切令牌 + 全树重刷 + 持久化 config.ui_theme
+        _btnTheme = Theme.MakeButton(Theme.DarkMode ? "亮色" : "暗色", 74);
+        _btnTheme.Dock = DockStyle.Fill;
+        _btnTheme.Margin = new Padding(0);
+        _btnTheme.Click += (_, _) => ToggleTheme();
+        var themeHost = new Panel
+        {
+            Dock = DockStyle.Right, Width = 94, BackColor = Theme.Surface, Padding = new Padding(9, 2, 3, 2),
+        };
+        themeHost.Controls.Add(_btnTheme);
         // 同理：Fill 先 Add，两侧后 Add
         topBar.Controls.Add(_chips);
         topBar.Controls.Add(refreshHost);
+        topBar.Controls.Add(themeHost);
         topBar.Controls.Add(_pageTitle);
 
         Controls.Add(topBar);
@@ -423,6 +437,42 @@ public class MainForm : Form
             }
         }
         catch (Exception ex) { Logger.Warning($"页面刷新失败: {ex.Message}"); }
+    }
+
+    // ==================== 主题切换（v3.23.0 暗黑模式）====================
+
+    /// <summary>亮↔暗切换：翻令牌 → 全树重刷 → 自绘控件 Invalidate → 持久化 config.ui_theme。</summary>
+    private void ToggleTheme()
+    {
+        Theme.SetDark(!Theme.DarkMode);
+        _btnTheme.Text = Theme.DarkMode ? "亮色" : "暗色";
+        ApplyThemeToAll();
+        _cfg.UiTheme = Theme.DarkMode ? "dark" : "light";
+        try { _cfg.Save(); } catch { }
+        Logger.Info($"[主题] 已切换为 {(Theme.DarkMode ? "暗黑" : "浅色")}模式（config.ui_theme 已持久化）");
+    }
+
+    /// <summary>
+    /// 主题令牌翻转后把整棵控件树重刷一遍：
+    /// 标准控件由 Theme.Apply 递归换色（IsDefaultish 认得两种模式的令牌值，来回切都生效）；
+    /// 自绘控件（KpiCard/SectionPanel/看板卡片/ChipBar 等）读令牌重画，只需 Invalidate；
+    /// 内嵌工具（TDMS/聚合看板）已构造的窗体也重刷一遍；未构造的下次构造自然用新令牌。
+    /// </summary>
+    private void ApplyThemeToAll()
+    {
+        try
+        {
+            Theme.Apply(this, isPageRoot: true);   // 顶栏/状态栏/Tabs/全部页面（跳过自绘）
+            foreach (var host in _toolPages)
+            {
+                var emb = host.Embedded;
+                if (emb != null) Theme.Apply(emb, isPageRoot: true);
+                else host.BackColor = Theme.Surface;
+            }
+            _pageTitle.ForeColor = Theme.TextMain;
+            Invalidate(true);
+        }
+        catch (Exception ex) { Logger.Warning($"[主题] 重刷失败: {ex.Message}"); }
     }
 
     private void OnShortcut(object? sender, KeyEventArgs e)

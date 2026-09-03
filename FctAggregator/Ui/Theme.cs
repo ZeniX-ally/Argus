@@ -3,80 +3,104 @@ using System.Drawing.Drawing2D;
 namespace FctAggregator;
 
 /// <summary>
-/// 全局视觉规范（v2.8.0 GUI 重构；v3.6.0 回归纯系统原生）。
+/// 全局视觉规范（v2.8.0 GUI 重构；v3.6.0 回归纯系统原生；v3.23.0 暗黑模式）。
 ///
-/// 之前是「Gallery Noir」黑红监控风：墨黑侧栏 / 自绘标题栏 / 大数字 KPI / 圆角发光。
-/// v3.6.0 起按产线要求回归 <b>Windows 原版风格</b>：
-/// 所有颜色映射回 <see cref="SystemColors"/>，标题栏用系统标准，控件用系统默认外观。
+/// v3.6.0 起按产线要求回归 <b>Windows 原版风格</b>（浅色）；v3.23.0 增加暗黑模式：
+/// 所有颜色令牌从 readonly 字段改为**属性**，按 <see cref="DarkMode"/> 双值切换——
+/// 暗黑=深底浅字（Bg 深灰、文字高亮白/浅灰），亮色=原系统原生色。
 ///
 /// 本类型是「设计令牌」单点：颜色 / 字体 / 尺寸 + 几个绘制小工具，所有面板都从这里取。
 /// ⚠ 字段名与方法签名保持 v2.8.0 以来不变 —— 各面板上百处引用不用逐个改，只改这里。
-/// 语义映射保留：正常/在线=系统高亮蓝、失败/告急=系统红、注意=中性灰、提示=系统灰文本。
+/// ⚠ 自绘控件（KpiCard/SectionPanel/BoardCard 等）在构造/绘制时读令牌，切主题后 Invalidate 即换肤；
+///   标准控件由 <see cref="Apply"/> 递归刷色（<see cref="IsDefaultish"/> 同时认浅色默认值与暗黑令牌值，
+///   保证亮↔暗来回切换重刷生效）。
 /// </summary>
 public static class Theme
 {
-    // ==================== 颜色（纯系统原生：全部来自 SystemColors） ====================
-    /// <summary>工作区底色（系统 3D 面板灰）。</summary>
-    public static readonly Color Bg = SystemColors.Control;
-    /// <summary>卡片/面板底色（系统窗口白）。</summary>
-    public static readonly Color Surface = SystemColors.Window;
-    /// <summary>更暗一档（悬停/强调区）。</summary>
-    public static readonly Color SurfaceHi = SystemColors.ControlLight;
-    /// <summary>导航/标题底色 —— 原生风格用系统控件底色，不做深色块。</summary>
-    public static readonly Color NavBg = SystemColors.Control;
-    public static readonly Color NavHover = SystemColors.ControlLight;
-    public static readonly Color NavActive = SystemColors.ControlLight;
-    public static readonly Color NavText = SystemColors.ControlText;
-    public static readonly Color NavTextActive = SystemColors.HighlightText;
+    // ==================== 主题模式（v3.23.0）====================
 
-    public static readonly Color Border = SystemColors.ControlDark;
-    public static readonly Color BorderHi = SystemColors.ControlDarkDark;
-    /// <summary>深色表面上的分隔线 —— 原生浅色场景基本不用，保留为系统描边色。</summary>
-    public static readonly Color BorderDark = SystemColors.ControlDark;
-    public static readonly Color TextMain = SystemColors.ControlText;
-    public static readonly Color TextSub = SystemColors.GrayText;
-    public static readonly Color TextFaint = SystemColors.GrayText;
+    /// <summary>当前是否暗黑模式。只经 <see cref="SetDark"/> 改（保证令牌读取一致）。</summary>
+    public static bool DarkMode { get; private set; }
 
-    // 状态色：主操作/激活 = 系统高亮蓝，失败/告急 = 系统红，正常/在线 = 系统绿系。
-    // 原生风格下不强作“唯一彩色”，但保持语义分明。
-    public static readonly Color Primary = SystemColors.Highlight;        // 主操作 → 系统蓝
-    public static readonly Color PrimaryDim = SystemColors.Highlight;     // 主按钮底
-    public static readonly Color Success = Color.FromArgb(16, 137, 62);   // 正常/在线 → 系统绿
-    public static readonly Color Warning = Color.FromArgb(151, 108, 0);   // 注意 → 琥珀
-    public static readonly Color Danger = Color.FromArgb(198, 40, 40);    // 失败/告急 → 系统红
-    public static readonly Color Info = SystemColors.GrayText;            // 提示 → 灰文本
-    public static readonly Color Neutral = SystemColors.GrayText;
+    /// <summary>切换主题模式。只翻转令牌——控件重刷由调用方（MainForm.ApplyThemeToAll）负责。</summary>
+    public static void SetDark(bool on) => DarkMode = on;
 
-    // ==================== 遗留工具兼容色（硬编码集中管理） ====================
-    public static readonly Color ToolDarkBg      = Color.FromArgb(38, 38, 38);      // 深色表头底色
-    public static readonly Color ToolDarkFg      = SystemColors.Window;             // 深色表头白字
-    public static readonly Color ToolSummary      = Color.FromArgb(200, 16, 46);     // 摘要强调红
-    public static readonly Color ToolHighlight     = Color.FromArgb(250, 235, 238);  // 浅红高亮行
-    public static readonly Color ToolFixed         = Color.FromArgb(26, 26, 26);     // 固定深灰文字
-    public static readonly Color ToolDim           = Color.FromArgb(140, 140, 140);  // 禁用/次要文字
-    public static readonly Color ToolLine          = Color.FromArgb(170, 170, 170);  // 分隔线灰
-    public static readonly Color ToolNodeDir       = Color.FromArgb(200, 16, 46);    // 目录树目录节点
-    public static readonly Color ToolNodeFile      = Color.FromArgb(60, 60, 60);     // 目录树文件节点
-    public static readonly Color ToolGray          = Color.Gray;                     // 非数值通道/跳过
-    public static readonly Color ToolAltRow        = Color.FromArgb(247, 247, 247); // 交替行底色
-    public static readonly Color ToolLogBg         = Color.FromArgb(20, 20, 20);     // 日志背景深色
-    public static readonly Color ToolLogFg         = Color.FromArgb(230, 230, 230);  // 日志浅灰文字
+    // ==================== 颜色令牌（属性：亮/暗双值）====================
+
+    /// <summary>工作区底色。亮=系统 3D 面板灰；暗=#1E1E1E。</summary>
+    public static Color Bg => DarkMode ? Color.FromArgb(30, 30, 30) : SystemColors.Control;
+    /// <summary>卡片/面板底色。亮=系统窗口白；暗=#252526。</summary>
+    public static Color Surface => DarkMode ? Color.FromArgb(37, 37, 38) : SystemColors.Window;
+    /// <summary>更亮/更暗一档（悬停/强调区）。亮=ControlLight；暗=#2D2D30。</summary>
+    public static Color SurfaceHi => DarkMode ? Color.FromArgb(45, 45, 48) : SystemColors.ControlLight;
+    /// <summary>导航/标题底色 —— 亮色用系统控件底色，暗色与工作区同源。</summary>
+    public static Color NavBg => DarkMode ? Color.FromArgb(30, 30, 30) : SystemColors.Control;
+    public static Color NavHover => DarkMode ? Color.FromArgb(45, 45, 48) : SystemColors.ControlLight;
+    public static Color NavActive => DarkMode ? Color.FromArgb(63, 63, 70) : SystemColors.ControlLight;
+    public static Color NavText => DarkMode ? Color.FromArgb(230, 230, 230) : SystemColors.ControlText;
+    public static Color NavTextActive => DarkMode ? Color.White : SystemColors.HighlightText;
+
+    public static Color Border => DarkMode ? Color.FromArgb(60, 60, 64) : SystemColors.ControlDark;
+    public static Color BorderHi => DarkMode ? Color.FromArgb(82, 82, 88) : SystemColors.ControlDarkDark;
+    /// <summary>深色表面上的分隔线 —— 保留语义，暗色下更亮一档。</summary>
+    public static Color BorderDark => DarkMode ? Color.FromArgb(90, 90, 94) : SystemColors.ControlDark;
+    /// <summary>正文文字。亮=系统控件黑；暗=高亮白 #F0F0F0（要求 4：文字高亮度）。</summary>
+    public static Color TextMain => DarkMode ? Color.FromArgb(240, 240, 240) : SystemColors.ControlText;
+    /// <summary>次要文字。亮=系统灰文本；暗=浅灰 #9E9E9E。</summary>
+    public static Color TextSub => DarkMode ? Color.FromArgb(158, 158, 158) : SystemColors.GrayText;
+    public static Color TextFaint => DarkMode ? Color.FromArgb(128, 128, 128) : SystemColors.GrayText;
+
+    // 状态色：主操作/激活 = 蓝，失败/告急 = 红，正常/在线 = 绿，注意 = 琥珀（暗色下提亮保证可读）。
+    public static Color Primary => DarkMode ? Color.FromArgb(47, 128, 237) : SystemColors.Highlight;
+    public static Color PrimaryDim => DarkMode ? Color.FromArgb(47, 128, 237) : SystemColors.Highlight;
+    public static Color Success => DarkMode ? Color.FromArgb(61, 214, 140) : Color.FromArgb(16, 137, 62);
+    public static Color Warning => DarkMode ? Color.FromArgb(255, 190, 92) : Color.FromArgb(151, 108, 0);
+    public static Color Danger => DarkMode ? Color.FromArgb(255, 92, 92) : Color.FromArgb(198, 40, 40);
+    public static Color Info => TextSub;
+    public static Color Neutral => TextSub;
+
+    // ==================== 表格/列表辅助令牌（v3.23.0 收编散落硬编码，暗黑自动适配）====================
+
+    /// <summary>交替行 A（亮=#FAFAFA；暗=#2B2B2F）。</summary>
+    public static Color AltRowA => DarkMode ? Color.FromArgb(43, 43, 47) : Color.FromArgb(250, 250, 250);
+    /// <summary>交替行 B（亮=#F5F5F5；暗=#26262A）。</summary>
+    public static Color AltRowB => DarkMode ? Color.FromArgb(38, 38, 42) : Color.FromArgb(245, 245, 245);
+    /// <summary>行悬停底色（亮=#F0F0F0；暗=#323237）。</summary>
+    public static Color RowHover => DarkMode ? Color.FromArgb(50, 50, 55) : Color.FromArgb(240, 240, 240);
+    /// <summary>表格行头底色（亮=#F0F0F0；暗=#2D2D30）。</summary>
+    public static Color GridHeaderBg => DarkMode ? Color.FromArgb(45, 45, 48) : Color.FromArgb(240, 240, 240);
+    /// <summary>卡片边框（亮=#B9B9B9；暗=#4A4A4F）。</summary>
+    public static Color CardBorder => DarkMode ? Color.FromArgb(74, 74, 79) : Color.FromArgb(185, 185, 185);
+
+    // ==================== 遗留工具兼容色（硬编码集中管理；暗色下反转必要项） ====================
+    public static Color ToolDarkBg      => Color.FromArgb(38, 38, 38);                    // 深色表头底色（两模式同色）
+    public static Color ToolDarkFg      => SystemColors.Window;                           // 深色表头白字
+    public static Color ToolSummary     => DarkMode ? Color.FromArgb(255, 92, 92) : Color.FromArgb(200, 16, 46);   // 摘要强调红
+    public static Color ToolHighlight   => DarkMode ? Color.FromArgb(58, 26, 32) : Color.FromArgb(250, 235, 238); // 浅红高亮行
+    public static Color ToolFixed      => DarkMode ? Color.FromArgb(216, 216, 216) : Color.FromArgb(26, 26, 26); // 固定强调文字
+    public static Color ToolDim         => Color.FromArgb(140, 140, 140);                 // 禁用/次要文字（两模式可读）
+    public static Color ToolLine        => DarkMode ? Color.FromArgb(84, 84, 90) : Color.FromArgb(170, 170, 170); // 分隔线灰
+    public static Color ToolNodeDir     => DarkMode ? Color.FromArgb(255, 92, 92) : Color.FromArgb(200, 16, 46);   // 目录树目录节点
+    public static Color ToolNodeFile    => DarkMode ? Color.FromArgb(204, 204, 204) : Color.FromArgb(60, 60, 60); // 目录树文件节点
+    public static Color ToolGray        => Color.Gray;                                    // 非数值通道/跳过
+    public static Color ToolAltRow      => DarkMode ? Color.FromArgb(42, 42, 46) : Color.FromArgb(247, 247, 247); // 交替行底色
+    public static Color ToolLogBg       => Color.FromArgb(20, 20, 20);                    // 日志背景深色（两模式同色）
+    public static Color ToolLogFg       => Color.FromArgb(230, 230, 230);                // 日志浅灰文字
 
     // ==================== 布局常量（间距 / 控件尺寸） ====================
     public const int InputLabelWidth = 96;       // 输入区标签宽度
     public const int InputFieldWidth = 800;      // 输入框宽度
     public const int BrowseWidth    = 40;        // 浏览按钮宽
-    public const int BrowseHeight   = 24;        // 浏览按钮高
+    public const int BrowseHeight  = 24;         // 浏览按钮高
     public const int SmallBtnWidth  = 100;       // 小按钮宽
     public const int MediumBtnWidth = 128;       // 中按钮宽
-    public const int ActionBtnHeight= 32;        // 操作按钮高
+    public const int ActionBtnHeight= 32;         // 操作按钮高
     public const int InputHeight    = 24;        // 标准输入框高
     public const int InputGap       = 32;        // 输入行垂直间距
     public const int ControlLeft    = 112;        // 第一列控件左偏移
     public const int LabelTopOffset = 3;         // 标签相对输入框的垂直微调
 
     // ==================== 字体（保留原命名，全部基于系统 UI 字体） ====================
-    // Windows 原生一般用 Segoe UI / Microsoft YaHei UI；保持原有字族避免字号排版跳动。
     private const string Family = "Microsoft YaHei UI";
     public static readonly Font PageTitle = new(Family, 13F, FontStyle.Bold);
     public static readonly Font SectionTitle = new(Family, 10F, FontStyle.Bold);
@@ -100,13 +124,13 @@ public static class Theme
     public const int Radius = 0;              // 原生：无圆角
     public const int Gap = 10;
 
-    // ==================== 绘制小工具（保留签名，原生观感） ====================
+    // ==================== 绘制小工具（保留签名） ====================
 
     /// <summary>原生风格无圆角路径：直接返回矩形路径（Radius 恒为 0，兼容旧调用）。</summary>
     public static GraphicsPath Rounded(Rectangle r, int radius = Radius) => MaintenanceDraw.Rounded(r, radius);
 
     /// <summary>
-    /// 原生风格卡片：系统窗口底色 + 系统描边（无圆角、无强调色条）。
+    /// 原生风格卡片：面板底色 + 描边（无圆角、无强调色条）；暗黑下用深色面板 + 深色描边。
     /// accent / hover 参数保留以便旧调用不变，但不渲染装饰性亮条。
     /// </summary>
     public static void DrawCard(Graphics g, Rectangle r, Color? accent = null, bool hover = false)
@@ -120,7 +144,7 @@ public static class Theme
     }
 
     /// <summary>
-    /// 原生风格状态胶囊（顶栏用）：系统窗口底色 + 彩色文字 + 彩色圆点，无半透明发光。
+    /// 原生风格状态胶囊（顶栏用）：面板底色 + 彩色文字 + 彩色圆点，无半透明发光。
     /// 返回占用宽度。
     /// </summary>
     public static int DrawChip(Graphics g, Point at, string text, Color color, Font? font = null)
@@ -137,7 +161,8 @@ public static class Theme
     }
 
     /// <summary>
-    /// 原生风格按钮：使用系统默认按钮外观（不强制 Flat），主按钮用系统高亮色。
+    /// 按钮：亮色用系统默认外观（FlatStyle.System）；暗黑下系统按钮是亮色会刺眼，
+    /// 改 Flat + 深色底浅字（主按钮用品牌蓝底白字）。
     /// </summary>
     public static Button MakeButton(string text, int width = 88, bool primary = false)
     {
@@ -145,10 +170,23 @@ public static class Theme
         {
             Text = text, Width = width, Height = 30,
             Font = Body, Cursor = Cursors.Hand, Margin = new Padding(0, 3, 6, 3),
-            BackColor = primary ? PrimaryDim : Surface,
-            ForeColor = primary ? Color.White : TextMain,
-            FlatStyle = FlatStyle.System,       // ← 原生：系统绘制按钮
         };
+        if (DarkMode)
+        {
+            b.FlatStyle = FlatStyle.Flat;
+            b.FlatAppearance.BorderSize = 1;
+            b.BackColor = primary ? PrimaryDim : Surface;
+            b.ForeColor = primary ? Color.White : TextMain;
+            b.FlatAppearance.BorderColor = Border;
+            b.FlatAppearance.MouseOverBackColor = SurfaceHi;
+            b.FlatAppearance.MouseDownBackColor = NavActive;
+        }
+        else
+        {
+            b.FlatStyle = FlatStyle.System;   // 亮色：系统绘制按钮
+            b.BackColor = primary ? PrimaryDim : Surface;
+            b.ForeColor = primary ? Color.White : TextMain;
+        }
         return b;
     }
 
@@ -158,11 +196,11 @@ public static class Theme
     public const string SkipTag = "no-theme";
 
     /// <summary>
-    /// 把一棵控件树刷成统一原生风格（颜色 / 字体 / 按钮 / 输入框 / 表格）。
+    /// 把一棵控件树刷成统一风格（颜色 / 字体 / 按钮 / 输入框 / 表格）。
     ///
     /// ⚠ 铁律不变：**绝不碰布局** —— 不改 Bounds / Dock / Anchor / Padding / Margin。
-    /// 原生风格下大部分控件用系统默认即可，这里只纠正少数偏离系统的配色，并让内嵌工具页面观感一致。
     /// 自检里有一条断言会比对刷前刷后所有控件的 Bounds（布局不被破坏）。
+    /// 暗黑切换时重复调用本方法即可换肤（<see cref="IsDefaultish"/> 认得暗黑令牌值）。
     /// </summary>
     public static void Apply(Control root, bool isPageRoot = true)
     {
@@ -188,7 +226,7 @@ public static class Theme
                 tb.ForeColor = TextMain;
                 break;
             case ComboBox cb:
-                cb.FlatStyle = FlatStyle.System;
+                cb.FlatStyle = DarkMode ? FlatStyle.Flat : FlatStyle.System;
                 cb.BackColor = Surface;
                 cb.ForeColor = TextMain;
                 break;
@@ -222,8 +260,21 @@ public static class Theme
 
     private static void StyleButton(Button b)
     {
-        // 原生：默认系统按钮外观；主按钮（已涂色）保留其底色
-        b.FlatStyle = FlatStyle.System;
+        if (DarkMode)
+        {
+            // 暗黑：系统按钮是亮的，强制 Flat 深色外观；已被 MakeButton 涂色的（主按钮）保留底色字色
+            b.FlatStyle = FlatStyle.Flat;
+            b.FlatAppearance.BorderSize = 1;
+            if (IsDefaultish(b.BackColor)) { b.BackColor = Surface; b.ForeColor = TextMain; }
+            else if (b.ForeColor == SystemColors.ControlText) b.ForeColor = Color.White;   // 深底默认黑字 → 白字
+            b.FlatAppearance.BorderColor = Border;
+            b.FlatAppearance.MouseOverBackColor = SurfaceHi;
+            b.FlatAppearance.MouseDownBackColor = NavActive;
+        }
+        else
+        {
+            b.FlatStyle = FlatStyle.System;   // 亮色：系统绘制按钮
+        }
         b.Cursor = Cursors.Hand;
     }
 
@@ -240,10 +291,10 @@ public static class Theme
         dg.ColumnHeadersDefaultCellStyle.SelectionForeColor = TextSub;
         dg.DefaultCellStyle.BackColor = Surface;
         dg.DefaultCellStyle.ForeColor = TextMain;
-        dg.DefaultCellStyle.SelectionBackColor = SystemColors.Highlight;
+        dg.DefaultCellStyle.SelectionBackColor = DarkMode ? NavActive : SystemColors.Highlight;
         dg.DefaultCellStyle.SelectionForeColor = Color.White;
-        dg.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(250, 250, 250);
-        dg.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(240, 240, 240);
+        dg.AlternatingRowsDefaultCellStyle.BackColor = AltRowA;
+        dg.RowHeadersDefaultCellStyle.BackColor = GridHeaderBg;
         dg.RowHeadersDefaultCellStyle.ForeColor = TextFaint;
     }
 
@@ -256,11 +307,17 @@ public static class Theme
         || c is ProgressBar
         || c.GetType().Name == "WaveformPanel";
 
-    /// <summary>是不是“没人改过”的系统默认色（只有这种才能被覆盖）。</summary>
+    /// <summary>
+    /// 是不是“没人改过/由本类管理”的颜色（只有这种才能被覆盖）。
+    /// v3.23.0：除系统默认色外，**当前主题令牌值也算**——保证亮↔暗来回切换时
+    /// 上一轮涂过的颜色仍能被新一轮覆盖（否则暗色刷一次后 Apply 就再也改不动了）。
+    /// </summary>
     private static bool IsDefaultish(Color c) =>
         c == SystemColors.Control || c == SystemColors.ControlText ||
         c == SystemColors.Window || c == SystemColors.WindowText ||
         c == Color.Empty || c == Color.Transparent ||
         c == Color.Black || c == Color.White ||
-        c.ToArgb() == Color.FromArgb(240, 240, 240).ToArgb();
+        // 上一轮（任一模式）令牌涂过的值：
+        c == Bg || c == Surface || c == SurfaceHi || c == NavHover ||
+        c == AltRowA || c == AltRowB || c == RowHover || c == GridHeaderBg;
 }

@@ -568,7 +568,7 @@ public class MaintenancePanel : Panel
         {
             Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
             ScrollBars = ScrollBars.Vertical, Margin = m,
-            BackColor = Color.FromArgb(247, 247, 247),
+            BackColor = Theme.ToolAltRow,
         };
         _reason = new TextBox { Dock = DockStyle.Fill, Margin = m };
         _severity = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, Margin = m };
