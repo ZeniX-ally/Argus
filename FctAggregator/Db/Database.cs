@@ -618,6 +618,35 @@ public sealed partial class Database
         return s;
     }
 
+    /// <summary>当月统计（主页工业大屏「当月综合良率」口径）：test_date 生产为 yyyyMMdd 8 位，6 位前缀即当月。</summary>
+    public StatsData FetchMonthlyStats(string stationId, string dateYm)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE substr(test_date, 1, 6) = @m";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
+        cmd.CommandText = $@"
+            SELECT
+                COUNT(CASE WHEN result='PASS' THEN 1 END),
+                COUNT(CASE WHEN result='FAIL' THEN 1 END),
+                COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
+                COUNT(DISTINCT sn)
+            FROM test_records {where}";
+        cmd.Parameters.AddWithValue("@m", dateYm);
+        if (!string.IsNullOrEmpty(stationId))
+            cmd.Parameters.AddWithValue("@s", stationId);
+        using var r = cmd.ExecuteReader();
+        var s = new StatsData();
+        if (r.Read())
+        {
+            s.Pass = r.GetInt32(0);
+            s.Fail = r.GetInt32(1);
+            s.Interrupted = r.GetInt32(2);
+            s.TodayProductCount = r.GetInt32(3);
+        }
+        return s;
+    }
+
     // ==================== 工业大屏看板接口 ====================
 
     /// <summary>

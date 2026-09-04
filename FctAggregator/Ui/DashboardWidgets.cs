@@ -261,13 +261,12 @@ public sealed class HourlyTrendChart : Control
 }
 
 /// <summary>
-/// 工业大屏看板：当日产能与良率双环科技感仪表盘。
+/// 工业大屏看板：当月综合良率质量指标仪表盘。
 /// </summary>
 public sealed class TodayGaugePanel : Control
 {
     private int _pass;
     private int _fail;
-    private int _target = 1000;
     private int _interrupted;
 
     public TodayGaugePanel()
@@ -277,11 +276,10 @@ public sealed class TodayGaugePanel : Control
         BackColor = Theme.Surface;
     }
 
-    public void SetData(int pass, int fail, int target = 1000, int interrupted = 0)
+    public void SetData(int pass, int fail, int interrupted = 0)
     {
         _pass = pass;
         _fail = fail;
-        _target = Math.Max(1, target);
         _interrupted = interrupted;
         Invalidate();
     }
@@ -295,76 +293,68 @@ public sealed class TodayGaugePanel : Control
         Theme.DrawCard(g, ClientRectangle, null);
 
         // 标题
-        TextRenderer.DrawText(g, "当日排产达成与质量指标", Theme.BodyBold,
+        TextRenderer.DrawText(g, "当月综合良率", Theme.BodyBold,
             new Rectangle(16, 12, 240, 24), Theme.TextMain,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
         int total = _pass + _fail;
-        double targetRate = Math.Min(100.0, (double)total / _target * 100.0);
         double yieldRate = total > 0 ? (double)_pass / total * 100.0 : 0.0;
 
-        int gaugeY = 48;
-        int gaugeH = Height - gaugeY - 60;
-        int gaugeW = Width / 2;
+        int gaugeY = 44;
+        int gaugeH = Height - gaugeY - 54;
 
-        // 左仪表环：今日排产目标达成率
-        DrawRingMeter(g, new Rectangle(0, gaugeY, gaugeW, gaugeH),
-            "排产达成率", targetRate, $"{targetRate:F1}%",
-            $"{total} / {_target} pcs",
-            Color.FromArgb(0, 180, 255));
-
-        // 右仪表环：今日综合良率
+        // 仪表环：当月综合良率
         Color yieldColor = total == 0 ? Theme.TextFaint : (yieldRate >= 98.0 ? Theme.Success : (yieldRate >= 95.0 ? Color.FromArgb(241, 196, 15) : Theme.Danger));
-        DrawRingMeter(g, new Rectangle(gaugeW, gaugeY, gaugeW, gaugeH),
-            "综合良率", yieldRate, total > 0 ? $"{yieldRate:F1}%" : "—",
+        DrawRingMeter(g, new Rectangle(0, gaugeY, Width, gaugeH),
+            yieldRate, total > 0 ? $"{yieldRate:F1}%" : "—",
             yieldRate >= 98.0 ? "质量状态: 达标 (≥98%)" : "质量状态: 需关注",
             yieldColor);
 
-        // 底部指标横条 (中断数、已测数、基准)
+        // 底部指标横条 (当月已测数、中断数)
         int botY = Height - 48;
         using var divPen = new Pen(Color.FromArgb(30, Theme.TextFaint), 1f);
         g.DrawLine(divPen, 16, botY, Width - 16, botY);
 
-        int colW = (Width - 32) / 3;
-        DrawMetricItem(g, 16, botY + 6, colW, "今日总测试", $"{total} pcs");
-        DrawMetricItem(g, 16 + colW, botY + 6, colW, "今日测试中断", $"{_interrupted} 次");
-        DrawMetricItem(g, 16 + colW * 2, botY + 6, colW, "默认日排产基准", $"{_target} pcs");
+        int colW = (Width - 32) / 2;
+        DrawMetricItem(g, 16, botY + 6, colW, "当月总测试", $"{total} pcs");
+        DrawMetricItem(g, 16 + colW, botY + 6, colW, "当月测试中断", $"{_interrupted} 次");
     }
 
-    private static void DrawRingMeter(Graphics g, Rectangle r, string title, double percent, string centerText, string subText, Color arcColor)
+    private static void DrawRingMeter(Graphics g, Rectangle r, double percent, string centerText, string subText, Color arcColor)
     {
-        int size = Math.Min(r.Width - 20, r.Height - 35);
+        const float penW = 8f;
+        const int subH = 16;
+        const int gap = 4;
+
+        // 可用高度 = 总高 - 副文字 - 上下留白，圆环尺寸同时受宽度限制
+        int availH = r.Height - subH - gap * 2;
+        int size = Math.Min(r.Width - 24, availH);
         if (size < 40) return;
 
         int cx = r.X + (r.Width / 2);
-        int cy = r.Y + (r.Height / 2) - 8;
+        int cy = r.Y + gap + (availH / 2);
         var ringRect = new Rectangle(cx - size / 2, cy - size / 2, size, size);
 
-        // 绘制标题
-        TextRenderer.DrawText(g, title, Theme.BodyBold,
-            new Rectangle(r.X, r.Y, r.Width, 20), Theme.TextSub,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-
         // 背景灰色圆环
-        using var bgPen = new Pen(Color.FromArgb(35, Theme.TextFaint), 8f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var bgPen = new Pen(Color.FromArgb(35, Theme.TextFaint), penW) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         g.DrawArc(bgPen, ringRect, 135, 270);
 
         // 前景圆环 (扫过的角度)
         float sweep = (float)(Math.Clamp(percent, 0.0, 100.0) / 100.0 * 270.0);
         if (sweep > 1)
         {
-            using var arcPen = new Pen(arcColor, 8f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            using var arcPen = new Pen(arcColor, penW) { StartCap = LineCap.Round, EndCap = LineCap.Round };
             g.DrawArc(arcPen, ringRect, 135, sweep);
         }
 
-        // 中心大字
+        // 中心大字：与圆环共用同一条中轴线（水平/垂直均对齐圆心）
         TextRenderer.DrawText(g, centerText, Theme.NumberMid,
-            new Rectangle(ringRect.X, ringRect.Y + (size / 4) - 4, size, 32), Theme.TextMain,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            new Rectangle(cx - size / 2, cy - 20, size, 40), Theme.TextMain,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 
-        // 底部补充说明
+        // 底部补充说明 (位于圆环下方，不与弧线重叠)
         TextRenderer.DrawText(g, subText, Theme.Tiny,
-            new Rectangle(r.X + 4, ringRect.Bottom - 8, r.Width - 8, 18), Theme.TextFaint,
+            new Rectangle(r.X + 4, r.Bottom - subH - gap, r.Width - 8, subH), Theme.TextFaint,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 

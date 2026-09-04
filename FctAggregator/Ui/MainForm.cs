@@ -626,8 +626,8 @@ public class MainForm : Form
         SetKpi("today_yield", $"{s.TodayYield:F1}%");
         SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
 
-        // 工业大屏组件：当日排产与良率仪表盘
-        _todayGauge?.SetData(s.TodayPass, s.TodayFail, 1000, s.TodayInterrupted);
+        // 工业大屏组件：当月综合良率仪表盘
+        _todayGauge?.SetData(s.MonthPass, s.MonthFail, s.MonthInterrupted);
     }
 
     /// <summary>主页工业大屏组件数据更新（小时趋势、Top5 不良、实时异常流水）。</summary>

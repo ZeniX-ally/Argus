@@ -20,6 +20,8 @@ public static class AppState
     public static int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount, XmlCount;
     // 今日统计（v3.1.0.3：主页改为今日为主、累计为辅）
     public static int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
+    // 当月统计（v3.24.1：主页工业大屏「当月综合良率」）
+    public static int MonthPass, MonthFail, MonthInterrupted, MonthProductCount;
 
     public static void SetStatus(string s) { lock (_lock) Status = s; }
 
@@ -46,6 +48,7 @@ public static class AppState
         var g = db.FetchGlobalStats(stationId);
         var today = DateTime.Now.ToString("yyyyMMdd");   // 目录日期格式
         var d = db.FetchDailyStats(stationId, today);
+        var month = db.FetchMonthlyStats(stationId, DateTime.Now.ToString("yyyyMM"));
         var xmlOnDisk = CountDiskXml(resultsRoot);
         lock (_lock)
         {
@@ -54,6 +57,8 @@ public static class AppState
             XmlCount = xmlOnDisk;
             TodayPass = d.Pass; TodayFail = d.Fail; TodayInterrupted = d.Interrupted;
             TodayProductCount = d.TodayProductCount;
+            MonthPass = month.Pass; MonthFail = month.Fail; MonthInterrupted = month.Interrupted;
+            MonthProductCount = month.TodayProductCount;
         }
     }
 
@@ -80,6 +85,8 @@ public static class AppState
                 ParseError = ParseError, ProductCount = ProductCount, XmlCount = XmlCount,
                 TodayPass = TodayPass, TodayFail = TodayFail, TodayInterrupted = TodayInterrupted,
                 TodayProductCount = TodayProductCount,
+                MonthPass = MonthPass, MonthFail = MonthFail, MonthInterrupted = MonthInterrupted,
+                MonthProductCount = MonthProductCount,
             };
         }
     }
@@ -92,6 +99,9 @@ public class StatsSnapshot
     public bool WebhookConfigured, HistoricalScanComplete;
     public int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount, XmlCount;
     public int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
+    public int MonthPass, MonthFail, MonthInterrupted, MonthProductCount;
     public double YieldRate => Pass + Fail > 0 ? Pass * 100.0 / (Pass + Fail) : 0.0;
     public double TodayYield => TodayPass + TodayFail > 0 ? TodayPass * 100.0 / (TodayPass + TodayFail) : 0.0;
+    /// <summary>当月综合良率（主页工业大屏口径，中断不计分母）。</summary>
+    public double MonthYield => MonthPass + MonthFail > 0 ? MonthPass * 100.0 / (MonthPass + MonthFail) : 0.0;
 }

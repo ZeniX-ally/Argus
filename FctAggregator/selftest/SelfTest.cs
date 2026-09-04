@@ -7025,7 +7025,35 @@ Argus 统一发布包  v{newer}
                 gauge.SetData(250, 10, 500);
                 using var bmp = new Bitmap(300, 300);
                 gauge.DrawToBitmap(bmp, new Rectangle(0, 0, 300, 300));
-                Check(bmp.GetPixel(150, 150).A > 0, "TodayGaugePanel 双环仪表盘正常自绘渲染无异常");
+                Check(bmp.GetPixel(150, 150).A > 0, "TodayGaugePanel 综合良率仪表盘正常自绘渲染无异常");
+            }
+
+            // --- 断言 5: FetchMonthlyStats 当月统计（v3.24.1 当月综合良率口径） ---
+            {
+                var monthDbPath = Path.Combine(Path.GetTempPath(), "argus_monthly_" + DateTime.Now.Ticks + ".db");
+                try
+                {
+                    var mdb = new Database(monthDbPath);
+                    var ym = DateTime.Now.ToString("yyyyMM");
+                    var ymPrev = DateTime.Now.AddMonths(-1).ToString("yyyyMM");
+                    mdb.BatchInsert(new[]
+                    {
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "01", Result = "PASS", Sn = "M1", XmlPath = "x1.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "02", Result = "FAIL", Sn = "M2", XmlPath = "x2.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "03", Result = "INTERRUPTED", Sn = "M3", XmlPath = "x3.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = ymPrev + "28", Result = "FAIL", Sn = "M4", XmlPath = "x4.xml" },
+                        new TestRecord { StationId = "FCT2", TestDate = ym + "04", Result = "FAIL", Sn = "M5", XmlPath = "x5.xml" },
+                    });
+                    var mAll = mdb.FetchMonthlyStats("", ym);
+                    Check(mAll.Pass == 1 && mAll.Fail == 2 && mAll.Interrupted == 1,
+                        $"FetchMonthlyStats: 跨机台当月合计正确 (实得 P={mAll.Pass},F={mAll.Fail},I={mAll.Interrupted})");
+                    var mF1 = mdb.FetchMonthlyStats("FCT1", ym);
+                    Check(mF1.Pass == 1 && mF1.Fail == 1 && mF1.Interrupted == 1,
+                        "FetchMonthlyStats: 按机台过滤正确（他台不计）");
+                    Check(mdb.FetchMonthlyStats("", ymPrev).Fail == 1,
+                        "FetchMonthlyStats: 上月数据不混入当月（前缀隔离）");
+                }
+                finally { try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(monthDbPath); } catch { } }
             }
 
             using (var topPanel = new TopFailRankPanel())
