@@ -58,12 +58,12 @@ public class MainForm : Form
     private Panel _dashboardPage = null!;
     private DeviceStatusPanel _devicePage = null!;
     private MaintenancePanel _maintPage = null!;
-    private Button _btnTheme = null!;   // v3.23.0 顶栏「暗色/亮色」切换
     // v3.22.1：FAIL 记录页回归 —— v3.18.5 结构合并时从主窗口 Tab 里被摘掉（FailListPanel 类一直在，
     // 自检也一直在测），产线用户升级后找不到"扫描到的所有 FAIL"入口。恢复为主程序第 4 页。
     private FailListPanel _failPage = null!;
     private DebugPanel _debugPage = null!;
     private System.Windows.Forms.Timer _timer = null!;
+    private System.Windows.Forms.Timer? _autoUpdateTimer;   // v3.26.0 无感热升级 5 分钟周期检测
 
     /// <summary>页索引 → 标题（顶栏显示）。0~4 主程序页，5~6 内嵌的工具页。</summary>
     private static readonly string[] PageTitles =
@@ -111,8 +111,6 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        // v3.23.0 暗黑模式：建 UI 前先按 config 切令牌（自绘控件构造时读的就是暗色令牌）
-        if (_cfg.UiTheme == "dark") Theme.SetDark(true);
         Text = "Argus";
         // 内嵌工具自带最小尺寸，窗口得能装下；装不下时由 ToolHost 的 AutoScroll 兜底。
         // v3.0.0：数据分发（1040×790，原来最大的那个）移出后，剩下最大是 TDMS 波形 1000×640，
@@ -247,20 +245,9 @@ public class MainForm : Form
             Dock = DockStyle.Right, Width = 94, BackColor = Theme.Surface, Padding = new Padding(9, 2, 9, 2),
         };
         refreshHost.Controls.Add(btnRefresh);
-        // v3.23.0 暗黑模式切换（顶栏右侧）：切令牌 + 全树重刷 + 持久化 config.ui_theme
-        _btnTheme = Theme.MakeButton(Theme.DarkMode ? "亮色" : "暗色", 74);
-        _btnTheme.Dock = DockStyle.Fill;
-        _btnTheme.Margin = new Padding(0);
-        _btnTheme.Click += (_, _) => ToggleTheme();
-        var themeHost = new Panel
-        {
-            Dock = DockStyle.Right, Width = 94, BackColor = Theme.Surface, Padding = new Padding(9, 2, 3, 2),
-        };
-        themeHost.Controls.Add(_btnTheme);
         // 同理：Fill 先 Add，两侧后 Add
         topBar.Controls.Add(_chips);
         topBar.Controls.Add(refreshHost);
-        topBar.Controls.Add(themeHost);
         topBar.Controls.Add(_pageTitle);
 
         Controls.Add(topBar);
@@ -431,42 +418,6 @@ public class MainForm : Form
             }
         }
         catch (Exception ex) { Logger.Warning($"页面刷新失败: {ex.Message}"); }
-    }
-
-    // ==================== 主题切换（v3.23.0 暗黑模式）====================
-
-    /// <summary>亮↔暗切换：翻令牌 → 全树重刷 → 自绘控件 Invalidate → 持久化 config.ui_theme。</summary>
-    private void ToggleTheme()
-    {
-        Theme.SetDark(!Theme.DarkMode);
-        _btnTheme.Text = Theme.DarkMode ? "亮色" : "暗色";
-        ApplyThemeToAll();
-        _cfg.UiTheme = Theme.DarkMode ? "dark" : "light";
-        try { _cfg.Save(); } catch { }
-        Logger.Info($"[主题] 已切换为 {(Theme.DarkMode ? "暗黑" : "浅色")}模式（config.ui_theme 已持久化）");
-    }
-
-    /// <summary>
-    /// 主题令牌翻转后把整棵控件树重刷一遍：
-    /// 标准控件由 Theme.Apply 递归换色（IsDefaultish 认得两种模式的令牌值，来回切都生效）；
-    /// 自绘控件（KpiCard/SectionPanel/看板卡片/ChipBar 等）读令牌重画，只需 Invalidate；
-    /// 内嵌工具（TDMS/聚合看板）已构造的窗体也重刷一遍；未构造的下次构造自然用新令牌。
-    /// </summary>
-    private void ApplyThemeToAll()
-    {
-        try
-        {
-            Theme.Apply(this, isPageRoot: true);   // 顶栏/状态栏/Tabs/全部页面（跳过自绘）
-            foreach (var host in _toolPages)
-            {
-                var emb = host.Embedded;
-                if (emb != null) Theme.Apply(emb, isPageRoot: true);
-                else host.BackColor = Theme.Surface;
-            }
-            _pageTitle.ForeColor = Theme.TextMain;
-            Invalidate(true);
-        }
-        catch (Exception ex) { Logger.Warning($"[主题] 重刷失败: {ex.Message}"); }
     }
 
     private void OnShortcut(object? sender, KeyEventArgs e)
@@ -715,19 +666,50 @@ public class MainForm : Form
         //   合成（点击后拖动窗口严重延迟）。过渡改为纯逻辑：splash 圆点 → 主窗口直接显示
         //   （splash 在主窗口显示 450ms 后被隐藏，视觉上仍连贯）。
 
-        // v3.6.0 更新器：延迟到主窗口稳定显示后再弹，避免阻塞首屏。
-        // BeginInvoke 排队到消息循环空闲时执行；弹窗是模态的，但此时 splash 已隐藏、用户能看见。
+        // v3.6.0 更新器：延迟到主窗口稳定显示后再检测，避免阻塞首屏。
+        // v3.26.0 无感热升级（auto_update=true，默认）：检测到新包自动「暂存 → 托盘气泡告知 →
+        //   排定分离进程重启 → CommitPendingUpdate 完成升级」，全程零弹窗零人工。
+        // auto_update=false 时保持旧行为：弹窗让用户选「立即更新/稍后提醒」。
+        // 另挂 5 分钟周期检测（运行中放入新包也能被无感升级）。
         BeginInvoke(() =>
         {
             try
             {
-                UpdatePromptForm.ShowIfAvailable(_engine.Db);
+                if (_cfg.AutoUpdate) AutoUpdateCheck();
+                else UpdatePromptForm.ShowIfAvailable(_engine.Db);
             }
             catch (Exception ex)
             {
                 Logger.Warning($"[更新器] 检测提示失败: {ex.Message}");
             }
+            if (_cfg.AutoUpdate)
+            {
+                _autoUpdateTimer = new System.Windows.Forms.Timer { Interval = 5 * 60 * 1000 };
+                _autoUpdateTimer.Tick += (_, _) => { try { AutoUpdateCheck(); } catch (Exception ex) { Logger.Warning($"[更新器] 周期检测失败: {ex.Message}"); } };
+                _autoUpdateTimer.Start();
+            }
         });
+    }
+
+    /// <summary>
+    /// 无感热升级检测（v3.26.0，auto_update=true 时走这条路径）：
+    /// 扫到更高版本的更新包 → 自动暂存+备份 → 托盘气泡告知 → 排定分离进程 3s 后拉起新版
+    /// （--post-update）→ 关闭本窗体优雅退出（引擎停机 → 进程退出 → 新实例完成文件替换）。
+    /// 暂存失败（包损坏/被占用）只记日志，下个周期重试；不标记已提示，避免漏掉有效更新。
+    /// </summary>
+    private void AutoUpdateCheck()
+    {
+        var info = UpdateChecker.Scan(db: _engine.Db);
+        if (info == null) return;
+        Logger.Info($"[更新器] 无感热升级：发现新包 v{info.Version}（{Path.GetFileName(info.ZipPath)}），自动暂存中…");
+        UpdateChecker.StageUpdate(info, _engine.Db);
+        UpdateChecker.MarkPrompted(info.Version, _engine.Db);
+        DesktopNotifier.NotifyRaw($"发现新版本 v{info.Version}：Argus 将在几秒后自动重启完成升级，数据与配置不受影响。");
+        UpdateChecker.ScheduleRestart(delaySeconds: 3);
+        // 给托盘气泡/日志一点落盘时间，再优雅退出（Application.Run 返回 → engine.Stop → 进程退出）
+        var t = new System.Windows.Forms.Timer { Interval = 1500 };
+        t.Tick += (_, _) => { t.Stop(); t.Dispose(); Close(); };
+        t.Start();
     }
 
     /// <summary>

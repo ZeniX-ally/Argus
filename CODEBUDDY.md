@@ -10,15 +10,15 @@
 
 | 项 | 值 |
 |---|---|
-| 主程序 | FctAggregator **v3.25.0**（WinForms + Web 看板，.NET 8 `net8.0-windows`，单 exe） |
+| 主程序 | FctAggregator **v3.26.0**（WinForms + Web 看板，.NET 8 `net8.0-windows`，单 exe） |
 | 分发器 | FctDistributor **v1.9.2**（**2026-09-02 起独立仓库** `e:/FctDistributor`，与本仓库彻底分离：各自 git、各自发版、代码持副本） |
 | 数据层 | SQLite 单写者 + WAL 短租读；DbMigrator schema 当前 **v13**（device_samples_local 本机自采样表） |
 | 互联 | P2P Mesh（无中心聚合端），mesh_port 默认 8081，(machine,seq) 幂等，Gossiper 自适应 10/60s |
-| 自检 | **1358 项断言**（v3.25.0 基线，随功能递增），全绿是任何提交的硬门槛 |
-| 智能化 | 算法优化 5 规格全部落地（01 良率归因 + 02 预测自反馈 + 03 季节性分解 + 04 设备健康综合分 + **05 机台端自学习**）+ 暗黑模式 + 升级向导/部署覆盖兜底 + FAIL 记录精准时间与 SN 合并 + 客户端主页工业大屏看板 + 飞书卡片 JSON 2.0（抬头图）+ 主页当月综合良率仪表盘 |
+| 自检 | **1350 项断言**（v3.26.0 基线，随功能递增），全绿是任何提交的硬门槛 |
+| 智能化 | 算法优化 5 规格全部落地（01 良率归因 + 02 预测自反馈 + 03 季节性分解 + 04 设备健康综合分 + **05 机台端自学习**）+ 无感热升级（auto_update 默认开，暗黑模式 v3.26.0 已移除回归纯浅色）+ 升级向导/部署覆盖兜底 + FAIL 记录精准时间与 SN 合并 + 客户端主页工业大屏看板 + 飞书卡片 JSON 2.0（抬头图）+ 主页当月综合良率仪表盘 |
 | 算法路线 | 5 规格已全部全量落地交付（见 docs/算法优化/）；规格 05 全部 learn_* 开关默认关（行为兼容），G49 产品字典驱动 |
 | 远程 | Gitea `http://192.168.1.16:3000/zenix/Argus.git`，分支 `main`；分发器独立远程 `zenix/FCT-Distributor.git` |
-| 近期结构变更 | 2026-09-04：v3.25.0 待办合并 spec 原理级（G49TodoRules 章节信号族+电源轨别名归并，todo_spec_merge 默认开）；2026-09-04：v3.24.3 UUT Status Err 全链路排除（纯 UUT F_ 降级 INTERRUPTED 不计 Fail/不推送，XmlParser 口径对齐）；2026-09-04：v3.24.2 飞书 webhook 写死兜底（Config.FallbackWebhookUrl，config 未配时机台端告警回落内置群）；2026-09-04：v3.24.1 飞书卡片抬头图（config feishu_banner_img_key，img 负 margin 贴 header，全告警卡统一）+ 主页大屏今日→当月综合良率（FetchMonthlyStats yyyymm 前缀）；2026-09-04：v3.24.0 规格 05 机台端自学习（G49ProductDictionary/FailReasonMerger/SelfBaseline/LearningEngine/DeviceSampleRecorder + v13 迁移 + learn_* 十键）+ 飞书卡片 2.0（FeishuCardV2）；2026-09-03：v3.23.3 客户端主页工业大屏看板升级；2026-09-03：v3.23.2 FAIL 记录文件名时间高精度识别 + 相同 SN 合并问题与树形分组折叠；2026-09-03：v3.23.1 部署脚本覆盖兜底与防关窗；2026-09-03：v3.23.0 暗黑模式双令牌；2026-09-02：FctDistributor 拆分独立仓库 |
+| 近期结构变更 | 2026-09-04：v3.26.0 移除暗黑模式（Theme 固定浅色，ui_theme 废弃）+ 无感热升级（auto_update 默认开：自动暂存+托盘告知+分离进程重启提交，UpdateChecker.ScheduleRestart）；2026-09-04：v3.25.0 待办合并 spec 原理级（G49TodoRules 章节信号族+电源轨别名归并，todo_spec_merge 默认开）；2026-09-04：v3.24.3 UUT Status Err 全链路排除（纯 UUT F_ 降级 INTERRUPTED 不计 Fail/不推送，XmlParser 口径对齐）；2026-09-04：v3.24.2 飞书 webhook 写死兜底（Config.FallbackWebhookUrl，config 未配时机台端告警回落内置群）；2026-09-04：v3.24.1 飞书卡片抬头图（config feishu_banner_img_key，img 负 margin 贴 header，全告警卡统一）+ 主页大屏今日→当月综合良率（FetchMonthlyStats yyyymm 前缀）；2026-09-04：v3.24.0 规格 05 机台端自学习（G49ProductDictionary/FailReasonMerger/SelfBaseline/LearningEngine/DeviceSampleRecorder + v13 迁移 + learn_* 十键）+ 飞书卡片 2.0（FeishuCardV2）；2026-09-03：v3.23.3 客户端主页工业大屏看板升级；2026-09-03：v3.23.2 FAIL 记录文件名时间高精度识别 + 相同 SN 合并问题与树形分组折叠；2026-09-03：v3.23.1 部署脚本覆盖兜底与防关窗；2026-09-03：v3.23.0 暗黑模式双令牌；2026-09-02：FctDistributor 拆分独立仓库 |
 
 ## 1. 全局结构（重组后）
 

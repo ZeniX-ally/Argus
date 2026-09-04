@@ -4,13 +4,17 @@ using System.Text;
 namespace FctAggregator;
 
 /// <summary>
-/// 本地更新器（v3.6.0）。
+/// 本地更新器（v3.6.0；v3.26.0 无感热升级）。
 ///
 /// 机制（管理员把新包放进 data/updates 即可被检测）：
 ///   · 检测：扫描 <see cref="AppConfig.UpdateDir"/> 下的 <c>Argus-v{ver}-update.zip</c>，
 ///     只认版本号比当前程序集更新的包，且「已提示过」的不再弹（去重靠 app_meta）。
-///   · 弹窗：<see cref="UpdatePromptForm"/> 展示版本号 + RELEASE.txt 对应版本段特点，
-///     提供「立即更新」/「稍后提醒」。
+///   · 无感热升级（v3.26.0，config.auto_update 默认 true）：
+///       Scan 发现新包 → StageUpdate 暂存+备份 → 托盘气泡告知 →
+///       <see cref="ScheduleRestart"/> 派生分离进程等本进程退出后以 --post-update 拉起新版 →
+///       启动时 <see cref="CommitPendingUpdate"/> 完成文件替换。全程零弹窗零人工。
+///   · 弹窗模式（auto_update=false）：<see cref="UpdatePromptForm"/> 展示版本号 +
+///     RELEASE.txt 版本特点，用户选「立即更新」/「稍后提醒」。
 ///   · 自包含两阶段更新（程序运行中 exe 被占用，不能就地覆盖）：
 ///       阶段1  StageUpdate：把 zip 解压到 data/updates/staging/&lt;ver&gt;/，
 ///               备份 data\ 与 config.json 到 data/updates/backup/&lt;ver&gt;+ts/，
@@ -239,6 +243,29 @@ public static class UpdateChecker
     {
         try { return !string.IsNullOrEmpty((db ?? EngineDb()).GetMeta(PendingKey)); }
         catch { return false; }
+    }
+
+    /// <summary>
+    /// 无感热升级（v3.26.0）：派生一个**分离的** cmd 中转进程——先等本进程退出
+    /// （释放单实例互斥体与 exe 文件锁），再以 --post-update 拉起新实例
+    /// （新实例启动时最先执行 <see cref="CommitPendingUpdate"/> 完成文件替换）。
+    /// 必须用分离进程：本进程退出后自身线程随之消亡，无法再启动新版。
+    /// </summary>
+    public static void ScheduleRestart(int delaySeconds = 3)
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe)) throw new InvalidOperationException("无法定位当前程序路径");
+        // ping -n k ≈ 等 (k-1) 秒（比 timeout 更适合无窗口场景，无键盘交互副作用）
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/c ping -n {delaySeconds + 1} 127.0.0.1 > nul & start \"\" \"{exe}\" --post-update",
+            WorkingDirectory = AppConfig.BaseDir,
+            CreateNoWindow = true,
+            UseShellExecute = false,
+        };
+        System.Diagnostics.Process.Start(psi);
+        Logger.Info($"[更新器] 已排定 {delaySeconds}s 后自动重启并完成升级提交");
     }
 
     // ==================== 阶段 2：启动时提交（Program 最先调用）====================

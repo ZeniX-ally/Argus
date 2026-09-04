@@ -151,9 +151,13 @@ public class AppConfig
     public double HealthWeightMemory { get; set; } = 0.15;
     /// <summary>offline 子项权重（默认 0.25）。config.json: health_weight_offline。</summary>
     public double HealthWeightOffline { get; set; } = 0.25;
-    // ===== UI 主题（v3.23.0 暗黑模式）=====
-    /// <summary>界面主题："light"（默认，系统原生浅色）/ "dark"（深底浅字）。config.json: ui_theme。</summary>
-    public string UiTheme { get; set; } = "light";
+    // ===== 无感热升级（v3.26.0）=====
+    /// <summary>
+    /// 无感热升级总开关（默认 true）：检测到 data/updates 下有更高版本的更新包时，
+    /// 自动暂存 + 自动重启完成升级（全程无弹窗，托盘气泡告知）。false 时退回弹窗确认模式。
+    /// config.json: auto_update。
+    /// </summary>
+    public bool AutoUpdate { get; set; } = true;
 
     // ===== 机台端针对性自学习（v3.24.0 规格 05，默认全关）=====
     /// <summary>良率/产能自基线总开关。config.json: learn_baseline_enabled。</summary>
@@ -348,9 +352,8 @@ public class AppConfig
                 if (root.TryGetProperty("health_weight_offline", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwo) && hwo >= 0 && hwo <= 1)
                     cfg.HealthWeightOffline = hwo;
-                // v3.23.0 UI 主题
-                if (root.TryGetProperty("ui_theme", out v) && v.ValueKind == JsonValueKind.String)
-                    cfg.UiTheme = (v.GetString() ?? "light").Trim().ToLowerInvariant() == "dark" ? "dark" : "light";
+                // v3.26.0 无感热升级
+                if (root.TryGetProperty("auto_update", out v)) cfg.AutoUpdate = v.ValueKind != JsonValueKind.False;
                 // v3.24.0 机台端针对性自学习 (默认全关)
                 if (root.TryGetProperty("learn_baseline_enabled", out v)) cfg.LearnBaselineEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_resource_sampling_enabled", out v)) cfg.LearnResourceSamplingEnabled = v.ValueKind == JsonValueKind.True;
@@ -432,7 +435,7 @@ public class AppConfig
                     "yield_seasonality_days", "yield_seasonality_trend_window", "yield_seasonality_min_sigma",
                     "health_score_enabled", "health_warn_threshold", "health_critical_threshold",
                     "health_weight_cpu", "health_weight_disk", "health_weight_memory", "health_weight_offline",
-                    "ui_theme",
+                    "auto_update",
                     "learn_baseline_enabled", "learn_resource_sampling_enabled", "learn_priority_enabled",
                     "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
                     "learn_baseline_sigma", "learn_baseline_min_samples", "learn_group_alert_min",
@@ -508,7 +511,7 @@ public class AppConfig
                 writer.WriteNumber("health_weight_disk", HealthWeightDisk);
                 writer.WriteNumber("health_weight_memory", HealthWeightMemory);
                 writer.WriteNumber("health_weight_offline", HealthWeightOffline);
-                writer.WriteString("ui_theme", UiTheme);
+                writer.WriteBoolean("auto_update", AutoUpdate);
                 writer.WriteBoolean("learn_baseline_enabled", LearnBaselineEnabled);
                 writer.WriteBoolean("learn_resource_sampling_enabled", LearnResourceSamplingEnabled);
                 writer.WriteBoolean("learn_priority_enabled", LearnPriorityEnabled);
