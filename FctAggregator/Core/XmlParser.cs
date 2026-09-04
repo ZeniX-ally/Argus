@@ -9,7 +9,8 @@ namespace FctAggregator;
 /// </summary>
 public static class XmlParser
 {
-    private const string IgnoredFailStep = "Get Unit Information";
+    /// <summary>排除项（非产品真实不良）：Get Unit Information / UUT Status Err（v3.24.3 起采集口径对齐）。</summary>
+    private static readonly string[] IgnoredFailSteps = { "Get Unit Information", "UUT Status Err" };
 
     public class ParseResult
     {
@@ -84,7 +85,7 @@ public static class XmlParser
                         if (reader.GetAttribute("STATUS") == "Failed")
                         {
                             var name = reader.GetAttribute("NAME") ?? "";
-                            if (name.Contains(IgnoredFailStep)) break; // 排除, 不计入不良
+                            if (Array.Exists(IgnoredFailSteps, ig => name.Contains(ig))) break; // 排除, 不计入不良
                             r.HasFailItems = true;
                             r.FailReason ??= name;
                             r.FailedTests.Add(new FailedTest

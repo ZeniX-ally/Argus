@@ -94,6 +94,10 @@ public sealed class DefaultResultParser : IResultParser
             hasFail = pr.HasFailItems;
             failedTests = pr.FailedTests;
             fixtureId = pr.FixtureId;
+            // v3.24.3 UUT Status Err 排除：剔除后无任何真实失败项的 F_ 文件降级 INTERRUPTED
+            // （不计 Fail 统计、不触发 FAIL 推送/待办；仅当确有排除项发生时才降级，规则不匹配的零失败文件维持原判）
+            if (result == "FAIL" && !hasFail && pr.SawIgnoredFail)
+                result = "INTERRUPTED";
             if (string.IsNullOrEmpty(snFromName)) snFromName = pr.Sn;
         }
 
@@ -147,6 +151,8 @@ public sealed class DefaultResultParser : IResultParser
         public string? Sn;
         public string? FailReason;
         public bool HasFailItems;
+        /// <summary>出现过被 IgnoredFailSteps 排除的失败项（如 UUT Status Err）——纯 UUT 文件降级判定依据。</summary>
+        public bool SawIgnoredFail;
         public List<FailedTest> FailedTests = new();
     }
 
@@ -193,7 +199,7 @@ public sealed class DefaultResultParser : IResultParser
                         if (reader.GetAttribute(_rules.AttrTestStatus) == "Failed")
                         {
                             var name = reader.GetAttribute(_rules.AttrTestName) ?? "";
-                            if (_rules.IgnoredFailSteps.Any(ig => name.Contains(ig))) break; // 排除非真实不良
+                            if (_rules.IgnoredFailSteps.Any(ig => name.Contains(ig))) { r.SawIgnoredFail = true; break; } // 排除非真实不良
                             r.HasFailItems = true;
                             r.FailReason ??= name;
                             r.FailedTests.Add(new FailedTest

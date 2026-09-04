@@ -6641,6 +6641,32 @@ Argus 统一发布包  v{newer}
                 var parsed2 = FctAggregator.Parsing.ParserRegistry.Instance.Resolve(xmlPath2, File.ReadAllText(xmlPath2));
                 Check(parsed2 != null && string.IsNullOrEmpty(parsed2.FixtureId), "fixture: XML 无 FIXTURE_ID → null（老格式不受影响）");
 
+                // ---------- ①b UUT Status Err 排除（v3.24.3）：纯 UUT 降级 INTERRUPTED / 混含真实失败保持 FAIL ----------
+                var xmlPathU = Path.Combine(xmlDir, "F_SN3_20260903120002_125.xml");
+                File.WriteAllText(xmlPathU,
+                    "<FACTORY USER=\"op1\" TESTER=\"FCT6_T1\"><PANEL STATUS=\"Passed\"/>"
+                    + "<DUT ID=\"SN-7\"><TEST NAME=\"UUT Status Err\" STATUS=\"Failed\"/></DUT></FACTORY>");
+                var parsedU = FctAggregator.Parsing.ParserRegistry.Instance.Resolve(xmlPathU, File.ReadAllText(xmlPathU));
+                Check(parsedU != null && parsedU.Result == "INTERRUPTED",
+                    $"UUT 排除: 纯 UUT Status Err 的 F_ 文件降级 INTERRUPTED 不计 Fail（实得 {parsedU?.Result ?? "<null>"}）");
+                Check(parsedU != null && parsedU.FailedTests.Count == 0 && string.IsNullOrEmpty(parsedU.FailReason),
+                    "UUT 排除: UUT 项不进 FailedTests/FailReason（无推送内容）");
+                var xmlPathM = Path.Combine(xmlDir, "F_SN4_20260903120003_126.xml");
+                File.WriteAllText(xmlPathM,
+                    "<FACTORY USER=\"op1\" TESTER=\"FCT6_T1\"><PANEL STATUS=\"Passed\"/>"
+                    + "<DUT ID=\"SN-6\"><TEST NAME=\"UUT Status Err\" STATUS=\"Failed\"/>"
+                    + "<TEST NAME=\"Volt Check\" STATUS=\"Failed\"/></DUT></FACTORY>");
+                var parsedM = FctAggregator.Parsing.ParserRegistry.Instance.Resolve(xmlPathM, File.ReadAllText(xmlPathM));
+                Check(parsedM != null && parsedM.Result == "FAIL" && parsedM.FailedTests.Count == 1
+                      && parsedM.FailedTests[0].Name == "Volt Check",
+                    "UUT 排除: 混含真实失败仍 FAIL 且仅保留真实项");
+                var xmlPathN = Path.Combine(xmlDir, "F_SN5_20260903120004_127.xml");
+                File.WriteAllText(xmlPathN,
+                    "<FACTORY USER=\"op1\" TESTER=\"FCT6_T1\"><PANEL STATUS=\"Passed\"/><DUT ID=\"SN-5\"/></FACTORY>");
+                var parsedN = FctAggregator.Parsing.ParserRegistry.Instance.Resolve(xmlPathN, File.ReadAllText(xmlPathN));
+                Check(parsedN != null && parsedN.Result == "FAIL",
+                    "UUT 排除: 无失败项也无 UUT 的 F_ 文件维持 FAIL（回归防线不误伤）");
+
                 // ---------- ② fixture：InsertBatch 入库 + QueryFails 回读 + 真治具归因分组 ----------
                 var agg = new AggDatabase(Path.Combine(tmpV, "agg.db"));
                 agg.Open();

@@ -44,9 +44,10 @@
     <!-- v3.24.0：规格 05 机台端自学习 —— G49 信号族字典+故障归并/章节群挂+根因指向、良率×时段段滚动基线+中断热区、本机资源自采样(v13 device_samples_local)、维修优先级权重自学习；全部 config learn_* 开关默认关 -->
     <!-- v3.24.1：飞书卡片抬头图 —— config feishu_banner_img_key 可配 img_key，全部告警卡 body 最顶端插入通栏 img；缺省空=旧版式兼容 -->
     <!-- v3.24.2：飞书 webhook 写死兜底 —— config webhook_url 未配置时机台端告警回落 Config.FallbackWebhookUrl 内置群机器人 -->
-    <Version>3.24.2</Version>
-  <AssemblyVersion>3.24.2.0</AssemblyVersion>
-  <FileVersion>3.24.2.0</FileVersion>
+    <!-- v3.24.3：UUT Status Err 全链路排除 —— 纯 UUT 的 F_ 文件降级 INTERRUPTED（不计 Fail/不推送），混含真实失败仅剔除该项；XmlParser 采集口径对齐 -->
+    <Version>3.24.3</Version>
+  <AssemblyVersion>3.24.3.0</AssemblyVersion>
+  <FileVersion>3.24.3.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
