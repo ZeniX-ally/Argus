@@ -48,7 +48,11 @@ public class MainForm : Form
     // ===== 主页 =====
     private readonly Dictionary<string, KpiCard> _kpi = new();
     private readonly Dictionary<string, Label> _statValues = new();
-    private SectionPanel _detailPanel = null!;   // 累计数据卡片（今日为主、累计为辅）
+    private SectionPanel _detailPanel = null!;
+    private HourlyTrendChart _hourlyChart = null!;
+    private TodayGaugePanel _todayGauge = null!;
+    private TopFailRankPanel _topFailRank = null!;
+    private LiveAlertPanel _liveAlert = null!;
 
     // ===== 页面 =====
     private Panel _dashboardPage = null!;
@@ -346,53 +350,40 @@ public class MainForm : Form
         // 最后一张不要右边距
         _kpi["today_interrupted"].Margin = new Padding(0);
 
-        // ---- 累计（次）：3×2 大数字格，总数据放次要位置 ----
+        // ---- 工业大屏核心区域（2×2 紧凑充满式栅格） ----
         var lower = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(0, Theme.Gap, 0, Theme.Gap) };
 
-        var detail = new SectionPanel("累计数据") { Dock = DockStyle.Fill, Margin = new Padding(0) };
-        _detailPanel = detail;
-        var grid = new TableLayoutPanel
+        var mainGrid = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, BackColor = Theme.Surface,
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 2,
+            BackColor = Theme.Bg,
         };
-        for (int i = 0; i < 3; i++) grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
-        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        var stats = new (string label, string key)[]
-        {
-            ("产品总数（SN 去重）", "product"),
-            ("PASS 累计", "pass"),
-            ("FAIL 累计", "fail"),
-            ("良率累计", "yield"),
-            ("中断累计", "interrupted"),
-            ("待办（未确认不良）", "todo"),
-        };
-        int cell = 0;
-        foreach (var (label, key) in stats)
-        {
-            var box = new Panel
-            {
-                Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(22, 8, 22, 8),
-            };
-            var title = new Label
-            {
-                Text = label, Dock = DockStyle.Top, Height = 22, ForeColor = Theme.TextSub,
-                Font = Theme.Small, TextAlign = ContentAlignment.MiddleLeft,
-            };
-            var value = new Label
-            {
-                Text = "—", Dock = DockStyle.Fill, ForeColor = Theme.TextMain,
-                Font = Theme.NumberMid, TextAlign = ContentAlignment.MiddleLeft,
-            };
-            box.Controls.Add(value);
-            box.Controls.Add(title);
-            _statValues[key] = value;
-            grid.Controls.Add(box, cell % 3, cell / 3);
-            cell++;
-        }
-        detail.Content.Controls.Add(grid);
+        mainGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
+        mainGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
+        mainGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 52f));
+        mainGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 48f));
 
-        lower.Controls.Add(detail);
+        _hourlyChart = new HourlyTrendChart { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, Theme.Gap) };
+        _todayGauge = new TodayGaugePanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, Theme.Gap) };
+        _topFailRank = new TopFailRankPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, 0) };
+        _liveAlert = new LiveAlertPanel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+
+        _liveAlert.AlertClicked += alert =>
+        {
+            // 点击实时异常流水，自动切到 FAIL 记录页进行定位
+            ShowPage(3);
+        };
+
+        mainGrid.Controls.Add(_hourlyChart, 0, 0);
+        mainGrid.Controls.Add(_todayGauge, 1, 0);
+        mainGrid.Controls.Add(_topFailRank, 0, 1);
+        mainGrid.Controls.Add(_liveAlert, 1, 1);
+
+        _detailPanel = new SectionPanel("生产大屏监控") { Dock = DockStyle.Fill };
+        _detailPanel.Content.Controls.Add(mainGrid);
+        lower.Controls.Add(_detailPanel);
 
         page.Controls.Add(lower);
         page.Controls.Add(kpiRow);
@@ -429,7 +420,10 @@ public class MainForm : Form
         {
             switch (_page)
             {
-                case 0: Tick(); break;
+                case 0:
+                    Tick();
+                    UpdateDashboardWidgets();
+                    break;
                 case 1: _maintPage.Refresh2(); break;
                 case 2: _devicePage.Refresh2(); break;
                 case 3: _failPage.Refresh2(); break;      // v3.22.1 FAIL 记录页回归
@@ -529,6 +523,7 @@ public class MainForm : Form
         UpdateChips();
         UpdateProgress();
         UpdateKpi();
+        if (_page == 0 && (_tickCount % 3 == 1)) UpdateDashboardWidgets(); // 主页大屏图表 3 秒查库轻量刷新
         if (_tickCount % 10 == 1) UpdateTodoBadge();    // 查库的活儿 10 秒一次就够（拖动时减少撞库卡顿）
         UpdateStatusBar();
         if (_tickCount % 5 == 1) UpdateAggLinkUi();     // 积压数等低频刷新
@@ -623,10 +618,6 @@ public class MainForm : Form
         {
             if (_kpi.TryGetValue(k, out var c)) c.Set(v, sub);
         }
-        void SetVal(string k, string v)
-        {
-            if (_statValues.TryGetValue(k, out var l) && l.Text != v) l.Text = v;
-        }
 
         // 今日（主）—— 今日产品卡副标题带累计，串起两个层次
         SetKpi("today_product", s.TodayProductCount.ToString("N0"), $"累计 {s.ProductCount:N0}");
@@ -635,13 +626,30 @@ public class MainForm : Form
         SetKpi("today_yield", $"{s.TodayYield:F1}%");
         SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
 
-        // 累计（次）
-        SetVal("product", s.ProductCount.ToString("N0"));
-        SetVal("pass", s.Pass.ToString("N0"));
-        SetVal("fail", s.Fail.ToString("N0"));
-        SetVal("yield", $"{s.YieldRate:F1}%");
-        SetVal("interrupted", s.Interrupted.ToString("N0"));
-        SetVal("todo", _pendingTodo.ToString("N0"));
+        // 工业大屏组件：当日排产与良率仪表盘
+        _todayGauge?.SetData(s.TodayPass, s.TodayFail, 1000, s.TodayInterrupted);
+    }
+
+    /// <summary>主页工业大屏组件数据更新（小时趋势、Top5 不良、实时异常流水）。</summary>
+    private void UpdateDashboardWidgets()
+    {
+        try
+        {
+            if (_engine?.Db == null) return;
+            string todayYmd = DateTime.Now.ToString("yyyyMMdd");
+            var hourly = _engine.Db.FetchDailyHourlyStats(string.Empty, todayYmd);
+            _hourlyChart?.SetData(hourly);
+
+            var topFails = _engine.Db.FetchDailyTopFails(string.Empty, todayYmd, 5);
+            _topFailRank?.SetData(topFails);
+
+            var alerts = _engine.Db.FetchRecentFailAlerts(string.Empty, 10);
+            _liveAlert?.SetData(alerts);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"主页大屏组件更新失败: {ex.Message}");
+        }
     }
 
     /// <summary>待办角标 / 未完成维修数 / 次数最高的待办（查库，低频）。</summary>

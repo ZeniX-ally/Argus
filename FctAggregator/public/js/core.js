@@ -69,10 +69,10 @@
     return fetch(u, { credentials: "same-origin", headers: { "Accept": "application/json" } })
       .then(function (r) {
         if (r.status === 401 || r.status === 403) {
-          App.toast("鎺ュ彛鏈巿鏉冿紙HTTP " + r.status + "锛夛細璇风敤 ?token=<鑱氬悎token> 閲嶆柊鎵撳紑鏈〉", "err");
-          throw new Error(u + " 鈫?HTTP " + r.status + "锛堟湭鎺堟潈锛岄渶甯?token 璁块棶锛?);
+          App.toast("接口未授权（HTTP " + r.status + "）：请用 ?token=<聚合token> 重新打开本页", "err");
+          throw new Error(u + " -> HTTP " + r.status + "（未授权，需带 token 访问）");
         }
-        if (!r.ok) throw new Error(u + " 鈫?HTTP " + r.status);
+        if (!r.ok) throw new Error(u + " -> HTTP " + r.status);
         return r.json();
       });
   };
@@ -89,7 +89,7 @@
     if (App.token) u = App.withToken(u);
     return fetch(u, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(body || {}) })
       .then(function (r) {
-        if (r.status === 401 || r.status === 403) { App.toast("鏉冮檺涓嶈冻锛? + r.status + "锛?, "err"); throw new Error("HTTP " + r.status); }
+        if (r.status === 401 || r.status === 403) { App.toast("权限不足（" + r.status + "）", "err"); throw new Error("HTTP " + r.status); }
         if (!r.ok) return r.text().then(function (t) { throw new Error(t || ("HTTP " + r.status)); });
         var ct = r.headers.get("content-type") || "";
         if (ct.indexOf("application/json") >= 0) return r.json();
@@ -101,7 +101,7 @@
     if (App.token) u = App.withToken(u);
     return fetch(u, { method: "PATCH", credentials: "same-origin", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(body) })
       .then(function (r) {
-        if (r.status === 401 || r.status === 403) { App.toast("鏉冮檺涓嶈冻锛? + r.status + "锛?, "err"); throw new Error("HTTP " + r.status); }
+        if (r.status === 401 || r.status === 403) { App.toast("权限不足（" + r.status + "）", "err"); throw new Error("HTTP " + r.status); }
         if (!r.ok) return r.text().then(function (t) { throw new Error(t || ("HTTP " + r.status)); });
         var ct = r.headers.get("content-type") || "";
         if (ct.indexOf("application/json") >= 0) return r.json();
@@ -153,7 +153,7 @@
   /* 寰界珷锛欶AIL -> 绾紝PASS 绫?-> 缁匡紝鍏朵綑鐏?*/
   App.badge = function (text, kind) {
     var cls = kind === "fail" ? " badge fail" : kind === "pass" ? " badge pass" : "";
-    return '<span class="badge' + cls + '">' + App.esc(text || "鈥?) + '</span>';
+    return '<span class="badge' + cls + '">' + App.esc(text || "--") + '</span>';
   };
 
   /* 琛ㄦ牸锛歵hs 鏁扮粍 / rows 浜岀淮鏁扮粍 / rowCls 鍙€夎绫诲嚱鏁?*/
@@ -175,7 +175,7 @@
   /* 鏈哄彴灏忓崱锛堟€昏 / 璁惧鍏辩敤褰㈡€侊紱link 鍙€夌偣鍑诲洖璋冿紝compact 绱у噾瀵嗗害锛?*/
   App.machineCard = function (x, opts) {
     opts = opts || {};
-    var name = App.pick(x, "machine") || "鈥?;
+    var name = App.pick(x, "machine") || "-";
     var fc = App.pick(x, "failCount") || 0;
     var on = !!App.pick(x, "online");
     var cur = opts.sel && opts.sel === name;
@@ -220,13 +220,13 @@
     b.classList.add("role-" + App.auth.role);
     var rb = document.getElementById("roleBadge");
     if (rb) {
-      var zh = App.auth.role === "admin" ? "绠＄悊鍛? : App.auth.role === "engineer" ? "宸ョ▼甯? : "璁垮";
-      rb.textContent = zh + (App.auth.who ? " 路 " + App.auth.who : "");
+      var zh = App.auth.role === "admin" ? "管理员" : App.auth.role === "engineer" ? "工程师" : "访客";
+      rb.textContent = zh + (App.auth.who ? " · " + App.auth.who : "");
       rb.className = "badge role-badge " + App.auth.role;
       rb.style.display = "";
     }
     var hb = document.getElementById("htext");
-    if (hb && App.auth.who) hb.textContent = App.auth.who + "锛? + App.auth.role + "锛?;
+    if (hb && App.auth.who) hb.textContent = App.auth.who + " (" + App.auth.role + ")";
   }
   App.applyRoleVisibility = function (root) {
     root = root || document;
@@ -297,7 +297,8 @@
     }
   };
 
-  // 鍏ㄥ眬鎼滅储锛堢┖鏍煎垎璇嶏紝鑱氬悎 FAIL/缁翠慨/璁惧/鑹巼锛岃烦杞?hash 鑱斿姩涓嬮捇锛?  App.search = {
+  // 全局搜索（空格分词，聚合 FAIL/维修/设备/良率，跳转 hash 联动下钻）
+  App.search = {
     query: function (q, limit) {
       if (!q || !q.trim()) return Promise.resolve({ ok: true, q: "", tokens: [], total: 0, results: {}, flat: [] });
       return App.fetchJSON("/api/search?q=" + encodeURIComponent(q) + "&limit=" + (limit || 8));
@@ -384,7 +385,7 @@
         }
       }).catch(function (e) {
         setHealth(false);
-        App.showError("鏁版嵁鍔犺浇澶辫触锛? + e.message + "锛堣纭鑱氬悎鏈嶅姟宸插惎鍔級");
+        App.showError("数据加载失败：" + e.message + "（请确认聚合服务已启动）");
       }).then(function () {
         var u = document.getElementById("uptime");
         if (u) u.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -428,7 +429,7 @@
     var g = cv.getContext("2d");
     g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
     var rows = (data || []).map(function (x) {
-      return { name: App.pick(x, "machine") || "鈥?, v: App.pick(x, "failCount") || 0 };
+      return { name: App.pick(x, "machine") || "-", v: App.pick(x, "failCount") || 0 };
     }).sort(function (a, b) { return b.v - a.v; }).slice(0, 12);
     if (!rows.length) {
       g.fillStyle = "#5E6874"; g.font = "12px sans-serif";
@@ -446,7 +447,7 @@
       g.fillStyle = "#9AA5B1"; g.font = "10px sans-serif";
       g.fillText(String(d.v), x + 2, y - 2);
       g.save(); g.translate(x + bw / 2, h - 4); g.rotate(-Math.PI / 5);
-      g.fillText(d.name.length > 8 ? d.name.slice(0, 7) + "鈥? : d.name, 0, 0);
+      g.fillText(d.name.length > 8 ? d.name.slice(0, 7) + "..." : d.name, 0, 0);
       g.restore();
     });
   };
@@ -479,7 +480,7 @@
         html += '<div class="search-group"><h4><span>' + g.icon + " " + g.label + '</span><span class="badge">' + list.length + '</span></h4>';
         for (var i = 0; i < list.length; i++) {
           var it = list[i];
-          var title = App.esc(it.title || it.Title || "鈥?);
+          var title = App.esc(it.title || it.Title || "-");
           var sub = App.esc(it.subtitle || it.Subtitle || "");
           var badge = it.type || g.key;
           html += '<div class="search-item" data-link="' + App.esc(it.link || it.Link || "") + '"><span class="badge">' + App.esc(badge) + '</span><span class="t">' + title + '</span><span class="s">' + sub + '</span></div>';
@@ -515,7 +516,7 @@
     }
     function doSearch(q) {
       if (!q || !q.trim()) { hide(); return; }
-      App.search.query(q).then(function (data) { renderGroups(data); }).catch(function () { panel.innerHTML = '<div class="empty">鎼滅储澶辫触</div>'; panel.hidden = false; });
+      App.search.query(q).then(function (data) { renderGroups(data); }).catch(function () { panel.innerHTML = '<div class="empty">搜索失败</div>'; panel.hidden = false; });
     }
     inp.addEventListener("input", function () {
       var v = inp.value;

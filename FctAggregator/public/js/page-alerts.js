@@ -114,7 +114,7 @@
   // batch set all rule toggles
   function batchSet(enabled) {
     if (!canEdit()) return;
-    refs.rulesBox.querySelectorAll("input[data-f='enabled']").forEach(function(cb) { cb.checked = enabled; cb.dispatchEvent(new Event("change"); });
+    refs.rulesBox.querySelectorAll("input[data-f='enabled']").forEach(function(cb) { cb.checked = enabled; cb.dispatchEvent(new Event("change")); });
   }
 
   // 收集 UI 上的四规则改动 → PATCH body（只提交存在的字段，未动的规则服务端按「无变化」跳过）

@@ -6907,6 +6907,148 @@ Argus 统一发布包  v{newer}
                 Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             }
         }
+
+        // ==================== v3.23.3 客户端主页工业大屏看板与 Database 统计 ====================
+        Console.WriteLine("\n【v3.23.3 客户端主页工业看板】Database 统计方法 + 4大工业看板自绘控件");
+        {
+            var dbDir = Path.Combine(work, "selftest_v3233_db");
+            if (Directory.Exists(dbDir)) Directory.Delete(dbDir, true);
+            Directory.CreateDirectory(dbDir);
+            var dbFile = Path.Combine(dbDir, "local_test.db");
+
+            var db = new Database(dbFile);
+            var todayStr = DateTime.Now.ToString("yyyy-MM-dd");
+            
+            // 1. 插入模拟记录：涵盖 PASS、FAIL、不同小时、多测项失败
+            var records = new List<TestRecord>
+            {
+                new TestRecord
+                {
+                    StationId = "FCT01",
+                    Sn = "SN_2026_001",
+                    Model = "MODEL_A",
+                    Result = "PASS",
+                    FailReason = "",
+                    TestDate = todayStr,
+                    BatchTimestamp = $"{todayStr}T08:15:30",
+                    XmlPath = $"C:\\logs\\PASS_SN001_{DateTime.Now:yyyyMMdd}081530.xml"
+                },
+                new TestRecord
+                {
+                    StationId = "FCT01",
+                    Sn = "SN_2026_002",
+                    Model = "MODEL_A",
+                    Result = "PASS",
+                    FailReason = "",
+                    TestDate = todayStr,
+                    BatchTimestamp = $"{todayStr}T08:45:00",
+                    XmlPath = $"C:\\logs\\PASS_SN002_{DateTime.Now:yyyyMMdd}084500.xml"
+                },
+                new TestRecord
+                {
+                    StationId = "FCT02",
+                    Sn = "SN_2026_003",
+                    Model = "MODEL_B",
+                    Result = "FAIL",
+                    FailReason = "VoltageCheck;CurrentLimit",
+                    Tester = "PEU_G49_FCT2",
+                    TestDate = todayStr,
+                    BatchTimestamp = $"{todayStr}T08:50:00",
+                    XmlPath = $"C:\\logs\\FAIL_SN003_{DateTime.Now:yyyyMMdd}085000.xml"
+                },
+                new TestRecord
+                {
+                    StationId = "FCT01",
+                    Sn = "SN_2026_004",
+                    Model = "MODEL_A",
+                    Result = "FAIL",
+                    FailReason = "VoltageCheck",
+                    Tester = "PEU_G49_FCT1",
+                    TestDate = todayStr,
+                    BatchTimestamp = $"{todayStr}T09:10:00",
+                    XmlPath = $"C:\\logs\\FAIL_SN004_{DateTime.Now:yyyyMMdd}091000.xml"
+                },
+                new TestRecord
+                {
+                    StationId = "FCT01",
+                    Sn = "SN_2026_005",
+                    Model = "MODEL_A",
+                    Result = "PASS",
+                    FailReason = "",
+                    TestDate = todayStr,
+                    BatchTimestamp = $"{todayStr}T09:20:00",
+                    XmlPath = $"C:\\logs\\PASS_SN005_{DateTime.Now:yyyyMMdd}092000.xml"
+                }
+            };
+            db.BatchInsert(records);
+
+            // --- 断言 1: FetchDailyHourlyStats 统计 ---
+            var hourlyStats = db.FetchDailyHourlyStats("", todayStr);
+            Check(hourlyStats.Count == 24, "FetchDailyHourlyStats: 返回完整 24 小时槽位（0..23）");
+            var h8 = hourlyStats[8];
+            Check(h8.Pass == 2 && h8.Fail == 1 && h8.Total == 3, $"8时统计正确: Pass=2, Fail=1, Total=3 (实得 Pass={h8.Pass}, Fail={h8.Fail})");
+            Check(Math.Abs(h8.YieldRate - 66.666) < 0.1, $"8时良率计算准确: ~66.7% (实得 {h8.YieldRate:F1}%)");
+            var h9 = hourlyStats[9];
+            Check(h9.Pass == 1 && h9.Fail == 1 && h9.Total == 2, $"9时统计正确: Pass=1, Fail=1 (实得 Pass={h9.Pass}, Fail={h9.Fail})");
+            var h0 = hourlyStats[0];
+            Check(h0.Total == 0 && h0.YieldRate == 0.0, "无数据时段产量为 0且良率显示 0.0%");
+
+            // --- 断言 2: FetchDailyTopFails 统计 ---
+            var topFails = db.FetchDailyTopFails("", todayStr, 5);
+            Check(topFails.Count >= 2, $"FetchDailyTopFails: 返回不良项清单（{topFails.Count}项）");
+            var top1 = topFails[0];
+            Check(top1.FailItem == "VoltageCheck" && top1.Count == 2, $"Top1 故障项正确: VoltageCheck 频次 2 (实得 {top1.FailItem}:{top1.Count})");
+            Check(top1.Ratio > 60.0, $"Top1 故障占比正确计算 (>60%，实得 {top1.Ratio:F1}%)");
+            var top2 = topFails[1];
+            Check(top2.FailItem == "CurrentLimit" && top2.Count == 1, $"Top2 故障项正确: CurrentLimit 频次 1 (实得 {top2.FailItem}:{top2.Count})");
+
+            // --- 断言 3: FetchRecentFailAlerts 统计 ---
+            var recentAlerts = db.FetchRecentFailAlerts("", 10);
+            Check(recentAlerts.Count == 2, $"FetchRecentFailAlerts: 返回最近 2 条 FAIL 记录（实得 {recentAlerts.Count}）");
+            Check(recentAlerts[0].Sn == "SN_2026_004", $"流水逆序排列: 最新一条为 SN_2026_004 (实得 {recentAlerts[0].Sn})");
+            Check(recentAlerts[0].FailReason == "VoltageCheck", "流水包含完整失败原因字段");
+            Check(!string.IsNullOrEmpty(recentAlerts[0].TimeText), $"流水包含格式化时间: {recentAlerts[0].TimeText}");
+
+            // --- 断言 4: 4 大工业看板控件自绘与状态验证 ---
+            using (var chart = new HourlyTrendChart())
+            {
+                chart.Size = new Size(600, 300);
+                chart.SetData(hourlyStats);
+                using var bmp = new Bitmap(600, 300);
+                chart.DrawToBitmap(bmp, new Rectangle(0, 0, 600, 300));
+                Check(bmp.GetPixel(10, 10).A > 0, "HourlyTrendChart 正常自绘渲染无异常");
+            }
+
+            using (var gauge = new TodayGaugePanel())
+            {
+                gauge.Size = new Size(300, 300);
+                gauge.SetData(250, 10, 500);
+                using var bmp = new Bitmap(300, 300);
+                gauge.DrawToBitmap(bmp, new Rectangle(0, 0, 300, 300));
+                Check(bmp.GetPixel(150, 150).A > 0, "TodayGaugePanel 双环仪表盘正常自绘渲染无异常");
+            }
+
+            using (var topPanel = new TopFailRankPanel())
+            {
+                topPanel.Size = new Size(400, 300);
+                topPanel.SetData(topFails);
+                using var bmp = new Bitmap(400, 300);
+                topPanel.DrawToBitmap(bmp, new Rectangle(0, 0, 400, 300));
+                Check(bmp.GetPixel(20, 20).A > 0, "TopFailRankPanel 故障排行榜正常自绘渲染无异常");
+            }
+
+            using (var alertPanel = new LiveAlertPanel())
+            {
+                alertPanel.Size = new Size(400, 300);
+                alertPanel.SetData(recentAlerts);
+                using var bmp = new Bitmap(400, 300);
+                alertPanel.DrawToBitmap(bmp, new Rectangle(0, 0, 400, 300));
+                Check(bmp.GetPixel(20, 20).A > 0, "LiveAlertPanel 实时播报流正常自绘渲染无异常");
+            }
+
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dbDir, true); } catch { }
+        }
     }
 
     static HttpResponseMessage HttpPostWithToken(string url, string token, string json){

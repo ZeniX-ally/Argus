@@ -29,7 +29,7 @@
     report:      { module: "page-report",      title: "鎶ュ憡涓績" },
     proc:        { module: "page-proc",        title: "绋嬪簭鏃ュ織" },
     alerts:      { module: "page-alerts",      title: "鍛婅" },
-    compare:     { module: "page-compare",     title: "澶氭満鍙板姣? },
+    compare:     { module: "page-compare",     title: "多机台对比" },
     settings:    { module: "page-settings",    title: "璁剧疆" }
   };
 

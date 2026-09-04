@@ -600,6 +600,204 @@ public sealed partial class Database
         return s;
     }
 
+    // ==================== 工业大屏看板接口 ====================
+
+    /// <summary>
+    /// 今日 24 小时逐小时产出与良率统计（0..23 时）。
+    /// </summary>
+    public List<HourlyStatItem> FetchDailyHourlyStats(string stationId, string dateYmd)
+    {
+        var items = new List<HourlyStatItem>();
+        for (int h = 0; h < 24; h++)
+        {
+            items.Add(new HourlyStatItem { Hour = h });
+        }
+
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE test_date = @d";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
+        cmd.CommandText = $@"
+            SELECT result, COALESCE(batch_timestamp,''), COALESCE(created_at,''), COALESCE(xml_path,'')
+            FROM test_records {where}";
+        cmd.Parameters.AddWithValue("@d", dateYmd);
+        if (!string.IsNullOrEmpty(stationId))
+            cmd.Parameters.AddWithValue("@s", stationId);
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var res = r.GetString(0);
+            var batchTs = r.GetString(1);
+            var created = r.GetString(2);
+            var xml = r.GetString(3);
+
+            int h = ExtractHourFromRecord(xml, batchTs, created);
+            if (h >= 0 && h < 24)
+            {
+                if (string.Equals(res, "PASS", StringComparison.OrdinalIgnoreCase))
+                    items[h].Pass++;
+                else if (string.Equals(res, "FAIL", StringComparison.OrdinalIgnoreCase))
+                    items[h].Fail++;
+            }
+        }
+        return items;
+    }
+
+    /// <summary>
+    /// 今日 Top N 故障项排行榜（测项名称、频次、占比、高发机台）。
+    /// </summary>
+    public List<TopFailItem> FetchDailyTopFails(string stationId, string dateYmd, int limit = 5)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE test_date = @d AND result = 'FAIL'";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
+        cmd.CommandText = $@"
+            SELECT COALESCE(fail_reason,''), COALESCE(station_id,'')
+            FROM test_records {where}";
+        cmd.Parameters.AddWithValue("@d", dateYmd);
+        if (!string.IsNullOrEmpty(stationId))
+            cmd.Parameters.AddWithValue("@s", stationId);
+
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var stationDist = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        int totalFailCount = 0;
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var rawReason = r.GetString(0).Trim();
+            var st = r.GetString(1).Trim();
+            if (string.IsNullOrEmpty(rawReason)) rawReason = "未知测项错误";
+
+            // 一条记录可能包含换行或逗号分隔的多项失败
+            var split = rawReason.Split(new[] { '\r', '\n', ';', '；' }, StringSplitOptions.RemoveEmptyEntries);
+            if (split.Length == 0) split = new[] { rawReason };
+
+            foreach (var item in split)
+            {
+                var cleaned = item.Trim();
+                if (string.IsNullOrEmpty(cleaned)) continue;
+                totalFailCount++;
+                counts[cleaned] = counts.GetValueOrDefault(cleaned) + 1;
+
+                if (!stationDist.TryGetValue(cleaned, out var mDict))
+                {
+                    mDict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    stationDist[cleaned] = mDict;
+                }
+                if (!string.IsNullOrEmpty(st))
+                {
+                    mDict[st] = mDict.GetValueOrDefault(st) + 1;
+                }
+            }
+        }
+
+        var list = new List<TopFailItem>();
+        var topPairs = counts.OrderByDescending(kv => kv.Value).Take(limit);
+        foreach (var p in topPairs)
+        {
+            string topStation = "";
+            if (stationDist.TryGetValue(p.Key, out var mDict) && mDict.Count > 0)
+            {
+                topStation = mDict.OrderByDescending(kv => kv.Value).First().Key;
+            }
+            list.Add(new TopFailItem
+            {
+                FailItem = p.Key,
+                Count = p.Value,
+                Ratio = totalFailCount > 0 ? (double)p.Value / totalFailCount * 100.0 : 0.0,
+                MainStation = topStation
+            });
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 获取最近发生的 FAIL 实时警报流水。
+    /// </summary>
+    public List<LiveFailAlert> FetchRecentFailAlerts(string stationId, int limit = 10)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE result = 'FAIL'";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
+        cmd.CommandText = $@"
+            SELECT id, COALESCE(sn,''), COALESCE(station_id,''), COALESCE(model,''),
+                   COALESCE(fail_reason,''), COALESCE(tester,''),
+                   COALESCE(batch_timestamp,''), COALESCE(created_at,''), COALESCE(xml_path,'')
+            FROM test_records {where}
+            ORDER BY id DESC LIMIT @lim";
+        if (!string.IsNullOrEmpty(stationId))
+            cmd.Parameters.AddWithValue("@s", stationId);
+        cmd.Parameters.AddWithValue("@lim", limit);
+
+        var list = new List<LiveFailAlert>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var alert = new LiveFailAlert
+            {
+                Id = r.GetInt64(0),
+                Sn = r.GetString(1),
+                StationId = r.GetString(2),
+                Model = r.GetString(3),
+                FailReason = r.GetString(4),
+                Tester = r.GetString(5),
+                TimeText = FormatLogTime(r.GetString(8), r.GetString(6), r.GetString(7)),
+                XmlPath = r.GetString(8)
+            };
+            list.Add(alert);
+        }
+        return list;
+    }
+
+    private static int ExtractHourFromRecord(string xmlPath, string batchTs, string createdAt)
+    {
+        if (!string.IsNullOrEmpty(xmlPath))
+        {
+            var fileName = System.IO.Path.GetFileNameWithoutExtension(xmlPath);
+            var m = System.Text.RegularExpressions.Regex.Match(fileName, @"_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})");
+            if (m.Success && int.TryParse(m.Groups[4].Value, out var h) && h >= 0 && h <= 23)
+                return h;
+        }
+        if (!string.IsNullOrEmpty(batchTs))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(batchTs, @"[T\s](\d{2}):(\d{2})");
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var h) && h >= 0 && h <= 23)
+                return h;
+        }
+        if (!string.IsNullOrEmpty(createdAt))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(createdAt, @"[T\s](\d{2}):(\d{2})");
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var h) && h >= 0 && h <= 23)
+                return h;
+        }
+        return -1;
+    }
+
+    public static string FormatLogTime(string xmlPath, string batchTs, string createdAt)
+    {
+        if (!string.IsNullOrEmpty(xmlPath))
+        {
+            var fileName = System.IO.Path.GetFileNameWithoutExtension(xmlPath);
+            var m = System.Text.RegularExpressions.Regex.Match(fileName, @"_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})");
+            if (m.Success)
+            {
+                return $"{m.Groups[1].Value}-{m.Groups[2].Value}-{m.Groups[3].Value} {m.Groups[4].Value}:{m.Groups[5].Value}:{m.Groups[6].Value}";
+            }
+        }
+        if (!string.IsNullOrEmpty(batchTs))
+        {
+            if (DateTime.TryParse(batchTs.Replace('T', ' '), out var dt))
+                return dt.ToString("yyyy-MM-dd HH:mm:ss");
+            return batchTs;
+        }
+        if (!string.IsNullOrEmpty(createdAt)) return createdAt;
+        return DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+    }
+
     // ==================== 维修记录 ====================
     public int CreateMaintenance(MaintenanceRecord m)
     {
@@ -1985,3 +2183,33 @@ public sealed partial class Database
         return list;
     }
 }
+
+public class HourlyStatItem
+{
+    public int Hour { get; set; }
+    public int Pass { get; set; }
+    public int Fail { get; set; }
+    public int Total => Pass + Fail;
+    public double YieldRate => Total > 0 ? (double)Pass / Total * 100.0 : 0.0;
+}
+
+public class TopFailItem
+{
+    public string FailItem { get; set; } = "";
+    public int Count { get; set; }
+    public double Ratio { get; set; }
+    public string MainStation { get; set; } = "";
+}
+
+public class LiveFailAlert
+{
+    public long Id { get; set; }
+    public string Sn { get; set; } = "";
+    public string StationId { get; set; } = "";
+    public string Model { get; set; } = "";
+    public string FailReason { get; set; } = "";
+    public string Tester { get; set; } = "";
+    public string TimeText { get; set; } = "";
+    public string XmlPath { get; set; } = "";
+}
+
