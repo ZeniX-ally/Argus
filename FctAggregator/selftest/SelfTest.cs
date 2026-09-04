@@ -7424,6 +7424,10 @@ Argus 统一发布包  v{newer}
             Check(FeishuCardV2.BannerImg(null) == null && FeishuCardV2.BannerImg("") == null && FeishuCardV2.BannerImg("   ") == null,
                 "飞书卡片2.0: banner 空白/null key 安全返回 null");
             Check(FeishuCardV2.BannerImg(" img_v2_x ") is not null, "飞书卡片2.0: banner 合法 key 返回元素");
+
+            // webhook 写死兜底（v3.24.2）：内置常量必须是合法 https 群机器人地址
+            Check(AppConfig.FallbackWebhookUrl.StartsWith("https://open.feishu.cn/open-apis/bot/v2/hook/", StringComparison.Ordinal),
+                "飞书推送: FallbackWebhookUrl 为合法 https 群机器人地址（写死兜底防线）");
         }
     }
 

@@ -43,9 +43,10 @@
     <!-- v3.23.3：客户端主页工业大屏看板升级 —— 24H 小时产量与良率走势图、当日产能与质量双环仪表盘（去除班次，以当日为准）、当日 Top 5 故障不良项排行、实时异常告警与动态播报流 -->
     <!-- v3.24.0：规格 05 机台端自学习 —— G49 信号族字典+故障归并/章节群挂+根因指向、良率×时段段滚动基线+中断热区、本机资源自采样(v13 device_samples_local)、维修优先级权重自学习；全部 config learn_* 开关默认关 -->
     <!-- v3.24.1：飞书卡片抬头图 —— config feishu_banner_img_key 可配 img_key，全部告警卡 body 最顶端插入通栏 img；缺省空=旧版式兼容 -->
-    <Version>3.24.1</Version>
-  <AssemblyVersion>3.24.1.0</AssemblyVersion>
-  <FileVersion>3.24.1.0</FileVersion>
+    <!-- v3.24.2：飞书 webhook 写死兜底 —— config webhook_url 未配置时机台端告警回落 Config.FallbackWebhookUrl 内置群机器人 -->
+    <Version>3.24.2</Version>
+  <AssemblyVersion>3.24.2.0</AssemblyVersion>
+  <FileVersion>3.24.2.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

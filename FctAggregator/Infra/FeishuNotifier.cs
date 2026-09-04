@@ -52,6 +52,9 @@ public static class FeishuNotifier
     /// <summary>卡片 POST + 重试（两种推送共用）。tag 仅用于最终失败日志定位。</summary>
     private static async Task PostCard(string webhookUrl, object card, string tag)
     {
+        // v3.24.2：config 未配 webhook_url 时回落到内置群机器人（Config.FallbackWebhookUrl）
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+            webhookUrl = AppConfig.FallbackWebhookUrl;
         // 飞书机器人只支持 https；若误配成 http:// 会明文泄露 webhook token（含密钥的完整 URL）
         if (!webhookUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {

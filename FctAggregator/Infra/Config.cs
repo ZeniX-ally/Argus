@@ -173,6 +173,12 @@ public class AppConfig
     public int LearnResourceRetentionDays { get; set; } = 14;
 
     private static AppConfig? _instance;
+    /// <summary>
+    /// 飞书 webhook 写死兜底（v3.24.2）：config webhook_url 未配置时，机台端告警回落到此内置群机器人。
+    /// webhook 即凭据（拿到 URL 就能往群发消息），改动此常量 = 换绑定群，须重新发版。
+    /// </summary>
+    public const string FallbackWebhookUrl = "https://open.feishu.cn/open-apis/bot/v2/hook/84dc90ea-8bfd-4833-845f-9bfb2d016f49";
+
     public static AppConfig Instance => _instance ??= Load();
 
     public static string GenerateRandomToken() => Guid.NewGuid().ToString("N");
