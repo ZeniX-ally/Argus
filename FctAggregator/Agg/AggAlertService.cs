@@ -177,7 +177,7 @@ public class AggAlertService : IDisposable
             FeishuCardV2.Hr(),
             FeishuCardV2.Note($"Argus 聚合告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(FeishuCardV2.Root($"机台离线 · {machine}", "red", elements));
+        await PostCard(FeishuCardV2.Root($"机台离线 · {machine}", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
     // ==================== 恢复上线通知（v3.4.11 连通性加固） ====================
@@ -204,7 +204,7 @@ public class AggAlertService : IDisposable
             FeishuCardV2.Hr(),
             FeishuCardV2.Note($"Argus 聚合告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(FeishuCardV2.Root($"机台恢复上线 · {machine}", "green", elements));
+        await PostCard(FeishuCardV2.Root($"机台恢复上线 · {machine}", "green", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
     // ==================== 定时汇总 ====================
@@ -269,7 +269,7 @@ public class AggAlertService : IDisposable
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note($"Argus 聚合服务 · 每 {_summaryMinutes} 分钟自动推送"));
 
-        await PostCard(FeishuCardV2.Root($"Argus 聚合汇总 · {DateTime.Now:MM-dd HH:mm}", "blue", elements));
+        await PostCard(FeishuCardV2.Root($"Argus 聚合汇总 · {DateTime.Now:MM-dd HH:mm}", "blue", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
     // ==================== P6 设备告警（磁盘/CPU/离线，进飞书，复用同 webhook） ====================
@@ -429,7 +429,7 @@ public class AggAlertService : IDisposable
             FeishuCardV2.Hr(),
             FeishuCardV2.Note($"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(FeishuCardV2.Root($"设备磁盘告警 · {dev.Machine}", "red", elements));
+        await PostCard(FeishuCardV2.Root($"设备磁盘告警 · {dev.Machine}", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
     private async Task SendDeviceCpuAlertAsync(DeviceInfoRow dev, int thr)
@@ -442,7 +442,7 @@ public class AggAlertService : IDisposable
             FeishuCardV2.Hr(),
             FeishuCardV2.Note($"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(FeishuCardV2.Root($"设备 CPU 告警 · {dev.Machine}", "red", elements));
+        await PostCard(FeishuCardV2.Root($"设备 CPU 告警 · {dev.Machine}", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
     private async Task SendDeviceOfflineAlertAsync(DeviceInfoRow dev, double offMin)
@@ -455,7 +455,7 @@ public class AggAlertService : IDisposable
             FeishuCardV2.Hr(),
             FeishuCardV2.Note($"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(FeishuCardV2.Root($"设备离线 · {dev.Machine}", "red", elements));
+        await PostCard(FeishuCardV2.Root($"设备离线 · {dev.Machine}", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
     private async Task SendYieldAlertAsync(string machine, double y, double thr, int pass, int total)
@@ -468,7 +468,7 @@ public class AggAlertService : IDisposable
             FeishuCardV2.Hr(),
             FeishuCardV2.Note($"Argus 良率告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(FeishuCardV2.Root($"良率跌破 · {machine}", "red", elements));
+        await PostCard(FeishuCardV2.Root($"良率跌破 · {machine}", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
     // ==================== 飞书卡片发送（复用机台端卡片样式约定） ====================

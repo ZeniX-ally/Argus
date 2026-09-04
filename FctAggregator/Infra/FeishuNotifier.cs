@@ -45,7 +45,7 @@ public static class FeishuNotifier
             FeishuCardV2.Hr(),
             FeishuCardV2.Note($"Argus 链路告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        var card = FeishuCardV2.Root(title, template, elements);
+        var card = FeishuCardV2.Root(title, template, elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
         await PostCard(webhookUrl, card, $"link-{kind}-{machine}");
     }
 
@@ -113,7 +113,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note($"文件 {Path.GetFileName(r.XmlPath)}"));
 
-        return FeishuCardV2.Root($"{station} · {model} · FAIL 告警", "red", elements);
+        return FeishuCardV2.Root($"{station} · {model} · FAIL 告警", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
     }
 
     /// <summary>
@@ -153,7 +153,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note($"记录 #{r.Id} · 更新时间 {FmtTime(r.UpdatedAt)}"));
 
-        return FeishuCardV2.Root($"{station} · {model} · 待办状态变更", "blue", elements);
+        return FeishuCardV2.Root($"{station} · {model} · 待办状态变更", "blue", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
     }
 
     /// <summary>失败项每行统一格式：▸ 名称 = 实测值（规格 下限 ~ 上限）。标题「**失败项 ×N**」由调用方作为 heading 单独输出。</summary>

@@ -11,8 +11,13 @@ namespace FctAggregator;
 /// </summary>
 public static class FeishuCardV2
 {
-    /// <summary>卡片根：schema 2.0 + 填满聊天窗宽度 + body 纵向布局。</summary>
-    public static object Root(string headerTitle, string template, List<object> elements, string? subtitle = null)
+    /// <summary>
+    /// 卡片根：schema 2.0 + 填满聊天窗宽度 + body 纵向布局。
+    /// bannerImgKey 非空时在最顶端（body 第一个元素）插入抬头图。
+    /// img_key 无法由程序自动获取（纯 webhook 机器人无上传通道），须用户一次性在飞书搭建工具
+    /// 上传图片后复制 img_v2_xxx key 填入 config feishu_banner_img_key。
+    /// </summary>
+    public static object Root(string headerTitle, string template, List<object> elements, string? subtitle = null, string? bannerImgKey = null)
     {
         var header = new Dictionary<string, object>
         {
@@ -21,6 +26,14 @@ public static class FeishuCardV2
         };
         if (!string.IsNullOrEmpty(subtitle))
             header["subtitle"] = new { tag = "plain_text", content = subtitle };
+
+        var bodyEls = elements;
+        var banner = BannerImg(bannerImgKey);
+        if (banner != null)
+        {
+            bodyEls = new List<object>(elements.Count + 1) { banner };
+            bodyEls.AddRange(elements);
+        }
 
         return new
         {
@@ -32,8 +45,25 @@ public static class FeishuCardV2
                 direction = "vertical",
                 padding = "12px 16px",
                 vertical_spacing = "small",
-                elements,
+                elements = bodyEls,
             },
+        };
+    }
+
+    /// <summary>
+    /// 抬头图元素：img_key 必填（飞书卡片 img 不接受外部 URL），alt 必填可空。
+    /// 用负 margin 抵消 body 左右 padding 实现通栏效果（JSON 2.0 文档推荐做法）。
+    /// key 空/空白 → 返回 null（卡片不带图，保持旧版式）。
+    /// </summary>
+    public static object? BannerImg(string? imgKey)
+    {
+        if (string.IsNullOrWhiteSpace(imgKey)) return null;
+        return new
+        {
+            tag = "img",
+            img_key = imgKey.Trim(),
+            alt = new { tag = "plain_text", content = "" },
+            margin = "0 -16px",
         };
     }
 

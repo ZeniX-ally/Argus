@@ -7380,6 +7380,21 @@ Argus 统一发布包  v{newer}
             var esc = FeishuCardV2.Escape("a*b[c]`d|e");
             Check(esc == @"a\*b\[c\]\`d\|e", $"飞书卡片2.0: markdown 转义生效（实得 {esc}）");
             Check(FeishuCardV2.Escape(null) == "", "飞书卡片2.0: null 输入安全返回空串");
+
+            // 抬头图：配了 img_key 时 body 首元素为 img 通栏图；未配/空白时无 img（兼容旧版式）
+            var items = new List<object> { FeishuCardV2.FieldRow(("机台", "FCT1"), ("型号", "E3")), FeishuCardV2.Note("n") };
+            var withBanner = System.Text.Json.JsonSerializer.Serialize(
+                FeishuCardV2.Root("t", "red", items, bannerImgKey: "img_v2_banner_1"));
+            Check(withBanner.Contains("\"tag\":\"img\"") && withBanner.Contains("\"img_key\":\"img_v2_banner_1\""),
+                "飞书卡片2.0: banner img_key 渲染为 img 元素");
+            Check(withBanner.Contains("\"margin\":\"0 -16px\""), "飞书卡片2.0: banner 负 margin 通栏");
+            Check(withBanner.IndexOf("\"img_key\"") < withBanner.IndexOf("\"column_set\""),
+                "飞书卡片2.0: banner 位于 body 最顶端（先于正文字段）");
+            var noBanner = System.Text.Json.JsonSerializer.Serialize(FeishuCardV2.Root("t", "red", items));
+            Check(!noBanner.Contains("img_key"), "飞书卡片2.0: 未配 img_key 卡片无图（兼容旧版式）");
+            Check(FeishuCardV2.BannerImg(null) == null && FeishuCardV2.BannerImg("") == null && FeishuCardV2.BannerImg("   ") == null,
+                "飞书卡片2.0: banner 空白/null key 安全返回 null");
+            Check(FeishuCardV2.BannerImg(" img_v2_x ") is not null, "飞书卡片2.0: banner 合法 key 返回元素");
         }
     }
 

@@ -42,6 +42,12 @@ public class AppConfig
     public string AggToken { get; set; } = "";
     /// <summary>聚合端飞书群机器人 webhook（Phase 3 汇总/离线告警用）。config.json: agg_webhook_url。</summary>
     public string AggWebhookUrl { get; set; } = "";
+    /// <summary>
+    /// 飞书卡片抬头图 img_key（img_v2_xxx）：卡片最顶端通栏图片。
+    /// 纯 webhook 机器人无图片上传通道，img_key 需一次性在飞书「卡片搭建工具」上传图片后获取。
+    /// 空串=不带抬头图，卡片保持无图版式。config.json: feishu_banner_img_key。
+    /// </summary>
+    public string FeishuBannerImgKey { get; set; } = "";
     /// <summary>聚合汇总推送间隔（分钟，Phase 3）。config.json: agg_summary_minutes。</summary>
     public int AggSummaryMinutes { get; set; } = 60;
     /// <summary>
@@ -219,6 +225,7 @@ public class AppConfig
                 if (root.TryGetProperty("agg_token", out v)) cfg.AggToken = v.GetString() ?? "";
                 cfg.AggToken = (cfg.AggToken ?? "").Trim();
                 if (root.TryGetProperty("agg_webhook_url", out v)) cfg.AggWebhookUrl = v.GetString() ?? "";
+                if (root.TryGetProperty("feishu_banner_img_key", out v)) cfg.FeishuBannerImgKey = (v.GetString() ?? "").Trim();
                 if (root.TryGetProperty("agg_summary_minutes", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var m) && m >= 1)
                     cfg.AggSummaryMinutes = m;
@@ -398,7 +405,7 @@ public class AppConfig
                     "station_id", "results_root", "fct_ini_path", "webhook_url", "skip_historical_scan",
                     "log_level", "desktop_notify", "notify_min_interval_sec", "todo_scan_days",
                     "agg_enabled", "agg_share_root", "agg_transport", "agg_http_url", "agg_http_port",
-                    "agg_token",                     "agg_webhook_url", "agg_summary_minutes", "agg_fail_alert_minutes", "parsers_path",
+                    "agg_token",                     "agg_webhook_url", "feishu_banner_img_key", "agg_summary_minutes", "agg_fail_alert_minutes", "parsers_path",
                     "mesh_port", "peers", "db_maintenance_hour", "db_vacuum_threshold_mb",
                     "card_show_heartbeat", "card_show_lastfail", "card_show_queue", "card_sort", "card_compact",
                     "device_info_enabled", "device_info_interval_sec", "device_samples_retain_days",
@@ -443,6 +450,7 @@ public class AppConfig
                 }
                 writer.WriteString("agg_token", AggToken);
                 writer.WriteString("agg_webhook_url", AggWebhookUrl);
+                writer.WriteString("feishu_banner_img_key", FeishuBannerImgKey);
                 writer.WriteNumber("agg_summary_minutes", AggSummaryMinutes);
                 writer.WriteNumber("agg_fail_alert_minutes", AggFailAlertMinutes);
                 writer.WriteString("parsers_path", ParsersPath);
