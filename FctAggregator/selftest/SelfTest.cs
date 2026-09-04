@@ -1564,6 +1564,29 @@ class SelfTest
             // 优先级阈值
             Check(TodoGrouping.PriorityZhOf(50) == "高" && TodoGrouping.PriorityZhOf(8) == "中" &&
                   TodoGrouping.PriorityZhOf(1) == "低", "优先级按 fail 次数分高/中/低");
+
+            // ---------- G49 spec 原理级合并（v3.25.0，todo_spec_merge 默认开） ----------
+            string M(string s) => TodoGrouping.MergeKeyOf(s);
+            Check(M("8.18.2.2 SiC_G_HU High Level") == M("SiC_G_LW Low Level") && M("SiC_G_HU High Level").EndsWith("GateDrive"),
+                  "G49 规则: 栅极驱动六相(PWM 高/低电平)同原理同卡");
+            Check(M("RES_v_ResAng (45°)") == M("8.11.6.1 RES_v_ResAng(315°)") && M("BSW_v_PosSen_SinN").EndsWith("Resolver"),
+                  "G49 规则: 旋变四角/解码/励磁同一仿真器链一张卡");
+            Check(M("BSW_v_Kl30_HS") == M("SBC_KL30_FILT_1") && M("SBC_KL30_FILT_1") == M("6.1 KL30_FILT_1"),
+                  "G49 规则: 同一电源轨 DMM/接口名/XCP 三种写法别名归并");
+            Check(M("BSW_v_Kl30_HS") != M("BSW_v_Kl30_LS") && M("P12V_FB_HS") != M("P15V_LVD_LS"),
+                  "G49 规则: 不同电源轨不互并（保住诊断信息）");
+            Check(M("IGBTTM_v_IgbtTU") == M("IGBTTM_v_IgbtTW") && M("CURMV_v_CurL1V") == M("TC_AI_Cur_3"),
+                  "G49 规则: 三相温度/三相电流采样链按家族合并");
+            Check(M("Check_5V_Rail") != M("Check_12V_Rail") && M("Check_5V_Rail") == M("check 5v rail"),
+                  "G49 未命中回落名称归并（非 G49 项行为不变）");
+            bool oldSpecMerge = AppConfig.Instance.TodoSpecMerge;
+            try
+            {
+                AppConfig.Instance.TodoSpecMerge = false;
+                Check(TodoGrouping.MergeKeyOf("SiC_G_HU High Level") == TodoGrouping.KeyOf("SiC_G_HU High Level"),
+                      "todo_spec_merge=false 回退纯名称归并（旧行为兼容）");
+            }
+            finally { AppConfig.Instance.TodoSpecMerge = oldSpecMerge; }
         }
 
         // ---------- 待办登记表：扫描窗口 / 永久保留 / 优先级 / 区间 ----------

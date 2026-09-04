@@ -45,9 +45,10 @@
     <!-- v3.24.1：飞书卡片抬头图 —— config feishu_banner_img_key 可配 img_key，全部告警卡 body 最顶端插入通栏 img；缺省空=旧版式兼容 -->
     <!-- v3.24.2：飞书 webhook 写死兜底 —— config webhook_url 未配置时机台端告警回落 Config.FallbackWebhookUrl 内置群机器人 -->
     <!-- v3.24.3：UUT Status Err 全链路排除 —— 纯 UUT 的 F_ 文件降级 INTERRUPTED（不计 Fail/不推送），混含真实失败仅剔除该项；XmlParser 采集口径对齐 -->
-    <Version>3.24.3</Version>
-  <AssemblyVersion>3.24.3.0</AssemblyVersion>
-  <FileVersion>3.24.3.0</FileVersion>
+    <!-- v3.25.0：待办合并升级 spec 原理级 —— G49TodoRules 章节/信号族/别名归并（DMM 名/接口名/XCP 名同轨一卡，相序通道剥离），未命中回落名称归并；config todo_spec_merge 默认开 -->
+    <Version>3.25.0</Version>
+  <AssemblyVersion>3.25.0.0</AssemblyVersion>
+  <FileVersion>3.25.0.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

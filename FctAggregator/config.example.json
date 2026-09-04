@@ -17,6 +17,7 @@
     "agg_summary_minutes": 60,
     "agg_fail_alert_minutes": 5,
     "parsers_path": "parsers.json",
+    "todo_spec_merge": true,
     "mesh_port": 8081,
     "device_alert_disk_free_gb": 10,
     "device_alert_cpu_pct": 90,

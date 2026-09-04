@@ -55,6 +55,11 @@ public class AppConfig
     /// 「聚合端不可达」告警（防网络抖动误报）；恢复时自动推「链路已恢复」。config.json: agg_fail_alert_minutes。
     /// </summary>
     public int AggFailAlertMinutes { get; set; } = 5;
+    /// <summary>
+    /// 待办合并走 G49 spec 原理级规则（章节/信号族/别名归并，G49TodoRules），未命中回落名称归一化。
+    /// false = 纯名称 token 归并（v3.24.x 旧行为）。config.json: todo_spec_merge。
+    /// </summary>
+    public bool TodoSpecMerge { get; set; } = true;
     /// <summary>智能解析规则文件路径（v3.5.0）。空串=仅用内置默认解析器。config.json: parsers_path。</summary>
     public string ParsersPath { get; set; } = "parsers.json";
     /// <summary>P2P 本机监听端口（v3.5.0 去中心化）。config.json: mesh_port。</summary>
@@ -240,6 +245,9 @@ public class AppConfig
                     cfg.AggFailAlertMinutes = fam;
                 if (root.TryGetProperty("parsers_path", out v) && v.ValueKind == JsonValueKind.String)
                     cfg.ParsersPath = v.GetString() ?? "parsers.json";
+                if (root.TryGetProperty("todo_spec_merge", out v) &&
+                    (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False))
+                    cfg.TodoSpecMerge = v.GetBoolean();
                 if (root.TryGetProperty("mesh_port", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var mp) && mp >= 1 && mp <= 65535)
                     cfg.MeshPort = mp;
@@ -412,6 +420,7 @@ public class AppConfig
                     "log_level", "desktop_notify", "notify_min_interval_sec", "todo_scan_days",
                     "agg_enabled", "agg_share_root", "agg_transport", "agg_http_url", "agg_http_port",
                     "agg_token",                     "agg_webhook_url", "feishu_banner_img_key", "agg_summary_minutes", "agg_fail_alert_minutes", "parsers_path",
+                    "todo_spec_merge",
                     "mesh_port", "peers", "db_maintenance_hour", "db_vacuum_threshold_mb",
                     "card_show_heartbeat", "card_show_lastfail", "card_show_queue", "card_sort", "card_compact",
                     "device_info_enabled", "device_info_interval_sec", "device_samples_retain_days",
@@ -460,6 +469,7 @@ public class AppConfig
                 writer.WriteNumber("agg_summary_minutes", AggSummaryMinutes);
                 writer.WriteNumber("agg_fail_alert_minutes", AggFailAlertMinutes);
                 writer.WriteString("parsers_path", ParsersPath);
+                writer.WriteBoolean("todo_spec_merge", TodoSpecMerge);
                 writer.WriteNumber("mesh_port", MeshPort);
                 writer.WriteStartArray("peers");
                 foreach (var p in Peers) writer.WriteStringValue(p);

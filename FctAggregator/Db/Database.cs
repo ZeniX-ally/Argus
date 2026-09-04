@@ -1194,7 +1194,7 @@ public sealed partial class Database
                 var item = r.IsDBNull(0) ? "" : r.GetString(0);
                 // 单条隔离：某一条异常格式的 fail_reason 不能拖垮整批待办登记（v3.3.0）
                 string key;
-                try { key = TodoGrouping.KeyOf(item); }
+                try { key = TodoGrouping.MergeKeyOf(item); }
                 catch (Exception ex) { Logger.Warning($"[待办] 合并键计算失败，跳过该项: {ex.Message} | {item}"); continue; }
                 if (key.Length == 0) continue;
                 var station = r.IsDBNull(1) ? "" : r.GetString(1);

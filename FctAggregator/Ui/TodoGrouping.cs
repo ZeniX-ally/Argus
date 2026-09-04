@@ -21,6 +21,25 @@ namespace FctAggregator;
 /// </summary>
 public static class TodoGrouping
 {
+    /// <summary>
+    /// 待办合并统一入口（v3.25.0）：config todo_spec_merge 开（默认）时先走 G49 spec 原理级规则
+    /// （<see cref="G49TodoRules.Resolve"/>，章节/信号族/别名归并），未命中回落 token 归一化 <see cref="KeyOf"/>。
+    /// 关闭 = 纯 KeyOf（v3.24.x 旧行为）。
+    /// </summary>
+    public static string MergeKeyOf(string? failItem)
+    {
+        if (AppConfig.Instance.TodoSpecMerge)
+        {
+            try
+            {
+                var spec = G49TodoRules.Resolve(failItem);
+                if (!string.IsNullOrEmpty(spec)) return spec;
+            }
+            catch { /* 规则引擎异常回落 token 归并，不阻断待办登记 */ }
+        }
+        return KeyOf(failItem);
+    }
+
     /// <summary>合并键。空输入返回空串（调用方应跳过）。</summary>
     public static string KeyOf(string? failItem)
     {
