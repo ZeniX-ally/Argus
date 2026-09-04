@@ -33,6 +33,8 @@ public static class FeishuCardV2
         {
             bodyEls = new List<object>(elements.Count + 1) { banner };
             bodyEls.AddRange(elements);
+            // 抬头图无缝贴 header：header 底 padding 归零（图负 margin 上移抵掉 body 顶 padding）
+            header["padding"] = "12px 16px 0 16px";
         }
 
         return new
@@ -63,7 +65,7 @@ public static class FeishuCardV2
             tag = "img",
             img_key = imgKey.Trim(),
             alt = new { tag = "plain_text", content = "" },
-            margin = "0 -16px",
+            margin = "-12px -16px 0 -16px",
         };
     }
 

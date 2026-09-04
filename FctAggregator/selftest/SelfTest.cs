@@ -7387,7 +7387,8 @@ Argus 统一发布包  v{newer}
                 FeishuCardV2.Root("t", "red", items, bannerImgKey: "img_v2_banner_1"));
             Check(withBanner.Contains("\"tag\":\"img\"") && withBanner.Contains("\"img_key\":\"img_v2_banner_1\""),
                 "飞书卡片2.0: banner img_key 渲染为 img 元素");
-            Check(withBanner.Contains("\"margin\":\"0 -16px\""), "飞书卡片2.0: banner 负 margin 通栏");
+            Check(withBanner.Contains("\"margin\":\"-12px -16px 0 -16px\""), "飞书卡片2.0: banner 负 margin 通栏且贴 header");
+            Check(withBanner.Contains("\"padding\":\"12px 16px 0 16px\""), "飞书卡片2.0: 带 banner 时 header 底 padding 归零");
             Check(withBanner.IndexOf("\"img_key\"") < withBanner.IndexOf("\"column_set\""),
                 "飞书卡片2.0: banner 位于 body 最顶端（先于正文字段）");
             var noBanner = System.Text.Json.JsonSerializer.Serialize(FeishuCardV2.Root("t", "red", items));
