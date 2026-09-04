@@ -170,34 +170,14 @@ public class AggAlertService : IDisposable
 
     private async Task SendOfflineAlertAsync(string machine, DateTime lastSeen)
     {
-        var header = new
-        {
-            title = new { tag = "plain_text", content = $"机台离线 · {machine}" },
-            template = "red",
-        };
         var elements = new List<object>
         {
-            new
-            {
-                tag = "div",
-                fields = new object[]
-                {
-                    Field("机台", machine),
-                    Field("最后确认", lastSeen == DateTime.MinValue ? "—" : lastSeen.ToString("yyyy-MM-dd HH:mm:ss")),
-                },
-            },
-            new
-            {
-                tag = "markdown",
-                content = $"**机台 {Escape(machine)} 已离线**，请到产线检查（网络断连 / 程序退出 / 机器断电）。",
-            },
-            new
-            {
-                tag = "note",
-                elements = new object[] { new { tag = "plain_text", content = $"Argus 聚合告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}" } },
-            },
+            FeishuCardV2.FieldRow(("机台", machine), ("最后确认", lastSeen == DateTime.MinValue ? "—" : lastSeen.ToString("yyyy-MM-dd HH:mm:ss"))),
+            FeishuCardV2.Md($"**机台 {FeishuCardV2.Escape(machine)} 已离线**，请到产线检查（网络断连 / 程序退出 / 机器断电）。"),
+            FeishuCardV2.Hr(),
+            FeishuCardV2.Note($"Argus 聚合告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(new { header, elements });
+        await PostCard(FeishuCardV2.Root($"机台离线 · {machine}", "red", elements));
     }
 
     // ==================== 恢复上线通知（v3.4.11 连通性加固） ====================
@@ -217,34 +197,14 @@ public class AggAlertService : IDisposable
 
     private async Task SendOnlineAlertAsync(string machine, DateTime lastSeen)
     {
-        var header = new
-        {
-            title = new { tag = "plain_text", content = $"机台恢复上线 · {machine}" },
-            template = "green",
-        };
         var elements = new List<object>
         {
-            new
-            {
-                tag = "div",
-                fields = new object[]
-                {
-                    Field("机台", machine),
-                    Field("确认时间", lastSeen == DateTime.MinValue ? "—" : lastSeen.ToString("yyyy-MM-dd HH:mm:ss")),
-                },
-            },
-            new
-            {
-                tag = "markdown",
-                content = $"**机台 {Escape(machine)} 已恢复上线**，聚合链路已重新打通，数据推送恢复正常。",
-            },
-            new
-            {
-                tag = "note",
-                elements = new object[] { new { tag = "plain_text", content = $"Argus 聚合告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}" } },
-            },
+            FeishuCardV2.FieldRow(("机台", machine), ("确认时间", lastSeen == DateTime.MinValue ? "—" : lastSeen.ToString("yyyy-MM-dd HH:mm:ss"))),
+            FeishuCardV2.Md($"**机台 {FeishuCardV2.Escape(machine)} 已恢复上线**，聚合链路已重新打通，数据推送恢复正常。"),
+            FeishuCardV2.Hr(),
+            FeishuCardV2.Note($"Argus 聚合告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(new { header, elements });
+        await PostCard(FeishuCardV2.Root($"机台恢复上线 · {machine}", "green", elements));
     }
 
     // ==================== 定时汇总 ====================
@@ -284,46 +244,32 @@ public class AggAlertService : IDisposable
         }
 
         int online = machines.Count(m => m.Online);
-        var header = new
-        {
-            title = new { tag = "plain_text", content = $"Argus 聚合汇总 · {DateTime.Now:MM-dd HH:mm}" },
-            template = "blue",
-        };
 
         var elements = new List<object>
         {
-            new
-            {
-                tag = "div",
-                fields = new object[]
-                {
-                    Field("机台总数", machines.Count.ToString()),
-                    Field("在线", $"{online} / {machines.Count}"),
-                    Field("累计 FAIL", totalFails < 0 ? "—" : totalFails.ToString()),
-                    Field("离线", (machines.Count - online).ToString()),
-                },
-            },
+            // 四个统计字段，2×2 等宽布局（column_set 每行两列）
+            FeishuCardV2.FieldRow(("机台总数", machines.Count.ToString()), ("在线", $"{online} / {machines.Count}")),
+            FeishuCardV2.FieldRow(("累计 FAIL", totalFails < 0 ? "—" : totalFails.ToString()), ("离线", (machines.Count - online).ToString())),
         };
 
         if (machines.Count > 0)
         {
-            var sb = new StringBuilder("**各机台明细**\n");
+            var sb = new StringBuilder();
             foreach (var m in machines)
             {
                 var dot = m.Online ? "●" : "○";
                 var hb = string.IsNullOrEmpty(m.LastHeartbeat) ? "无心跳" : m.LastHeartbeat;
-                sb.AppendLine($"{dot} {Escape(m.Machine)} · FAIL {m.FailCount} · 心跳 {hb}");
+                sb.AppendLine($"{dot} {FeishuCardV2.Escape(m.Machine)} · FAIL {m.FailCount} · 心跳 {hb}");
             }
-            elements.Add(new { tag = "markdown", content = sb.ToString().TrimEnd() });
+            elements.Add(FeishuCardV2.Hr());
+            elements.Add(FeishuCardV2.Md("**各机台明细**", heading: true));
+            elements.Add(FeishuCardV2.Md(sb.ToString().TrimEnd()));
         }
 
-        elements.Add(new
-        {
-            tag = "note",
-            elements = new object[] { new { tag = "plain_text", content = $"Argus 聚合服务 · 每 {_summaryMinutes} 分钟自动推送" } },
-        });
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Note($"Argus 聚合服务 · 每 {_summaryMinutes} 分钟自动推送"));
 
-        await PostCard(new { header, elements });
+        await PostCard(FeishuCardV2.Root($"Argus 聚合汇总 · {DateTime.Now:MM-dd HH:mm}", "blue", elements));
     }
 
     // ==================== P6 设备告警（磁盘/CPU/离线，进飞书，复用同 webhook） ====================
@@ -475,61 +421,59 @@ public class AggAlertService : IDisposable
 
     private async Task SendDeviceDiskAlertAsync(DeviceInfoRow dev, double thr)
     {
-        var header = new { title = new { tag = "plain_text", content = $"设备磁盘告警 · {dev.Machine}" }, template = "red" };
         var elements = new List<object>
         {
-            new { tag = "div", fields = new object[] { Field("机台", dev.Machine), Field("剩余磁盘", $"{dev.DiskFreeGb:F1} GB"), Field("阈值", $"< {thr} GB"), Field("主机", dev.Hostname) } },
-            new { tag = "markdown", content = $"**机台 {Escape(dev.Machine)} 磁盘空间不足**（剩余 {dev.DiskFreeGb:F1}GB < {thr}GB），请及时清理。" },
-            new { tag = "note", elements = new object[] { new { tag = "plain_text", content = $"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}" } } },
+            FeishuCardV2.FieldRow(("机台", dev.Machine), ("剩余磁盘", $"{dev.DiskFreeGb:F1} GB")),
+            FeishuCardV2.FieldRow(("阈值", $"< {thr} GB"), ("主机", dev.Hostname)),
+            FeishuCardV2.Md($"**机台 {FeishuCardV2.Escape(dev.Machine)} 磁盘空间不足**（剩余 {dev.DiskFreeGb:F1}GB < {thr}GB），请及时清理。"),
+            FeishuCardV2.Hr(),
+            FeishuCardV2.Note($"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(new { header, elements });
+        await PostCard(FeishuCardV2.Root($"设备磁盘告警 · {dev.Machine}", "red", elements));
     }
 
     private async Task SendDeviceCpuAlertAsync(DeviceInfoRow dev, int thr)
     {
-        var header = new { title = new { tag = "plain_text", content = $"设备 CPU 告警 · {dev.Machine}" }, template = "red" };
         var elements = new List<object>
         {
-            new { tag = "div", fields = new object[] { Field("机台", dev.Machine), Field("CPU", $"{dev.CpuUsage:F1}%"), Field("阈值", $">= {thr}%"), Field("主机", dev.Hostname) } },
-            new { tag = "markdown", content = $"**机台 {Escape(dev.Machine)} CPU 持续高位**（{dev.CpuUsage:F1}% >= {thr}%）。" },
-            new { tag = "note", elements = new object[] { new { tag = "plain_text", content = $"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}" } } },
+            FeishuCardV2.FieldRow(("机台", dev.Machine), ("CPU", $"{dev.CpuUsage:F1}%")),
+            FeishuCardV2.FieldRow(("阈值", $">= {thr}%"), ("主机", dev.Hostname)),
+            FeishuCardV2.Md($"**机台 {FeishuCardV2.Escape(dev.Machine)} CPU 持续高位**（{dev.CpuUsage:F1}% >= {thr}%）。"),
+            FeishuCardV2.Hr(),
+            FeishuCardV2.Note($"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(new { header, elements });
+        await PostCard(FeishuCardV2.Root($"设备 CPU 告警 · {dev.Machine}", "red", elements));
     }
 
     private async Task SendDeviceOfflineAlertAsync(DeviceInfoRow dev, double offMin)
     {
-        var header = new { title = new { tag = "plain_text", content = $"设备离线 · {dev.Machine}" }, template = "red" };
         var elements = new List<object>
         {
-            new { tag = "div", fields = new object[] { Field("机台", dev.Machine), Field("离线时长", $"{offMin:F0} 分钟"), Field("最后上报", dev.LastSeen ?? "—"), Field("IP", dev.Ip ?? "—") } },
-            new { tag = "markdown", content = $"**设备 {Escape(dev.Machine)} 已离线 {offMin:F0} 分钟**，请检查网络/程序/供电。" },
-            new { tag = "note", elements = new object[] { new { tag = "plain_text", content = $"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}" } } },
+            FeishuCardV2.FieldRow(("机台", dev.Machine), ("离线时长", $"{offMin:F0} 分钟")),
+            FeishuCardV2.FieldRow(("最后上报", dev.LastSeen ?? "—"), ("IP", dev.Ip ?? "—")),
+            FeishuCardV2.Md($"**设备 {FeishuCardV2.Escape(dev.Machine)} 已离线 {offMin:F0} 分钟**，请检查网络/程序/供电。"),
+            FeishuCardV2.Hr(),
+            FeishuCardV2.Note($"Argus 设备告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(new { header, elements });
+        await PostCard(FeishuCardV2.Root($"设备离线 · {dev.Machine}", "red", elements));
     }
 
     private async Task SendYieldAlertAsync(string machine, double y, double thr, int pass, int total)
     {
-        var header = new { title = new { tag = "plain_text", content = $"良率跌破 · {machine}" }, template = "red" };
         var elements = new List<object>
         {
-            new { tag = "div", fields = new object[] { Field("机台", machine), Field("良率", $"{y:F2}%"), Field("阈值", $"< {thr}%"), Field("样本", $"{pass}/{total}") } },
-            new { tag = "markdown", content = $"**机台 {Escape(machine)} 良率跌破**（{y:F2}% < {thr}%），请关注制程异常。" },
-            new { tag = "note", elements = new object[] { new { tag = "plain_text", content = $"Argus 良率告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}" } } },
+            FeishuCardV2.FieldRow(("机台", machine), ("良率", $"{y:F2}%")),
+            FeishuCardV2.FieldRow(("阈值", $"< {thr}%"), ("样本", $"{pass}/{total}")),
+            FeishuCardV2.Md($"**机台 {FeishuCardV2.Escape(machine)} 良率跌破**（{y:F2}% < {thr}%），请关注制程异常。"),
+            FeishuCardV2.Hr(),
+            FeishuCardV2.Note($"Argus 良率告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
         };
-        await PostCard(new { header, elements });
+        await PostCard(FeishuCardV2.Root($"良率跌破 · {machine}", "red", elements));
     }
 
     // ==================== 飞书卡片发送（复用机台端卡片样式约定） ====================
 
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
-
-    private static object Field(string label, string value) => new
-    {
-        is_short = true,
-        text = new { tag = "lark_md", content = $"**{label}**\n{Escape(value)}" },
-    };
 
     /// <summary>卡片 POST（无重试——告警是尽力而为，失败下轮汇总还会带状态；返回是否成功）。</summary>
     private async Task<bool> PostCard(object card)
@@ -554,13 +498,5 @@ public class AggAlertService : IDisposable
             Logger.Warning($"[聚合告警] 飞书推送异常: {ex.Message}");
             return false;
         }
-    }
-
-    /// <summary>飞书 lark_md 转义（与机台端 FeishuNotifier.Escape 同约定：粗体/竖线/链接/反引号）。</summary>
-    private static string Escape(string? s)
-    {
-        s ??= "";
-        return s.Replace("*", "\\*").Replace("|", "\\|")
-                .Replace("[", "\\[").Replace("]", "\\]").Replace("`", "\\`");
     }
 }

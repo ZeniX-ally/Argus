@@ -1,4 +1,4 @@
-﻿using FctAggregator;
+using FctAggregator;
 using Microsoft.Data.Sqlite;
 using System.Net;
 using System.Net.Http;
@@ -7048,6 +7048,338 @@ Argus 统一发布包  v{newer}
 
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             try { Directory.Delete(dbDir, true); } catch { }
+        }
+
+        // ==================== v3.24.0 S1: G49ProductDictionary & FailReasonMerger & Config ====================
+        Console.WriteLine("\n【v3.24.0 S1】G49ProductDictionary & FailReasonMerger 真实脏样本解析与三级归并断言");
+        {
+            // 1. G49ProductDictionary 核心字典与语义分类验证
+            Check(G49ProductDictionary.FindKnownSignal("SiC_G_HV_Low_Level") != null, "字典包含 SiC_G_HV_Low_Level");
+            Check(G49ProductDictionary.FindKnownSignal("RES_v_ResAng(45°)") != null, "字典包含旋变 45°");
+            Check(G49ProductDictionary.FindKnownSignal("TC_AI_Cur_1")?.FamilyName == "TC_AI_Cur", "TC_AI_Cur_1 属于三相电流族");
+            Check(G49ProductDictionary.FindKnownSignal("P5V_CAN")?.SemanticType == FailSemanticType.Measurement, "P5V_CAN 为 Measurement 语义");
+
+            // 2. 注入测试语义识别
+            Check(G49ProductDictionary.IsInjectionSection("8.19.1"), "8.19.1 识别为 Injection 注入型章节");
+            Check(G49ProductDictionary.IsInjectionSection("8.20.2"), "8.20.2 识别为 Injection 注入型章节");
+
+            // 3. FailReasonMerger 基础与开关关闭场景
+            var rawRes = "8.11.6.1 RES_v_ResAng(45°)(XCP)";
+            var keyOff = FailReasonMerger.GetMergedKey(rawRes, false, "signal");
+            Check(keyOff == rawRes, "开关关闭时 GetMergedKey 回退原串");
+
+            var parsedSignal = FailReasonMerger.Parse(rawRes);
+            var keySignal = FailReasonMerger.GetMergedKey(rawRes, true, "signal");
+            Check(keySignal.Contains("RES_v_ResAng") && keySignal.Contains("(XCP)"), "signal 粒度下旋变 45° 归并为 RES_v_ResAng(XCP)");
+            Check(parsedSignal.RootCauseHint.Contains("旋变"), "旋变故障匹配治具根因 (工装/模拟器)");
+
+            // 4. Section 粒度归并
+            var keySec = FailReasonMerger.GetMergedKey(rawRes, true, "section");
+            Check(keySec == "§8.11", "section 粒度下归并为章号 §8.11");
+
+            // 5. 真实脏样本鲁棒性断言
+            // ① 无空格: 8.18.2.2SiC_G_HV...
+            var dirtyNoSpace = FailReasonMerger.Parse("8.18.2.2SiC_G_HV_Low_Level_HU(OSC)");
+            var keyNoSpace = FailReasonMerger.GetMergedKey("8.18.2.2SiC_G_HV_Low_Level_HU(OSC)", true, "signal");
+            Check(dirtyNoSpace.Section == "8.18.2.2", "无空格章节号成功剥离: 8.18.2.2");
+            Check(keyNoSpace.Contains("SiC_G_HV_Low_Level") && keyNoSpace.Contains("(OSC)"), "六相栅极 _HU 归并为 SiC_G_HV_Low_Level(OSC)");
+
+            // ② 双空格: 7.1.3  IOH_CAN(DMM)
+            var dirtyDoubleSpace = FailReasonMerger.Parse("7.1.3  IOH_CAN(DMM)");
+            Check(dirtyDoubleSpace.Section == "7.1.3", "双空格章节号成功提取");
+            Check(dirtyDoubleSpace.SignalBase == "IOH_CAN", "信号基名正确: IOH_CAN");
+
+            // ③ Volt for 前缀
+            var dirtyVoltFor = FailReasonMerger.Parse("8.9.2.1 Volt for TC_AI_Cur_1 (DMM)");
+            var keyVoltFor = FailReasonMerger.GetMergedKey("8.9.2.1 Volt for TC_AI_Cur_1 (DMM)", true, "signal");
+            Check(keyVoltFor.Contains("TC_AI_Cur") && keyVoltFor.Contains("(DMM)"), "Volt for 前缀剥离且三相电流 _1 归并");
+
+            // ④ 尾随值规格详情
+            var dirtyValSpec = FailReasonMerger.Parse("8.1.3.2 KL30_1(Power)(值=33.85, 规格=5~, mA)");
+            var keyValSpec = FailReasonMerger.GetMergedKey("8.1.3.2 KL30_1(Power)(值=33.85, 规格=5~, mA)", true, "signal");
+            Check(dirtyValSpec.SignalBase == "KL30_1", "值与规格详情剥离且信号为 KL30_1");
+            Check(keyValSpec.Contains("KL30_1") && !keyValSpec.Contains("值="), "值与规格被清理，归并名规范");
+
+            // ⑤ 未知字符串安全回退原样
+            var unk = FailReasonMerger.GetMergedKey("UnknownCustomDeviceFailure", true, "signal");
+            Check(unk == "UnknownCustomDeviceFailure", "未知格式安全回退原字符串");
+
+            // ⑥ 章节群挂检测验证
+            var groupSample = new List<string>
+            {
+                "6.1.1.1 P5V_CAN(DMM)",
+                "6.1.1.2 P1.25V(DMM)",
+                "6.1.1.3 VREF(DMM)"
+            };
+            var alerts = FailReasonMerger.CheckSectionGroupAlert(groupSample, 3);
+            Check(alerts.Count == 1, "6.1 电源轨 3 个不同信号成功触发章节群挂告警");
+            Check(alerts[0].RootCauseHint.Contains("供电") || alerts[0].RootCauseHint.Contains("电源"), "章节群挂提示供电/电源系统性问题");
+        }
+
+        // ==========================================
+        // 规格 05 S2: 本地资源自采样与 DbMigrator v13 迁移验证
+        // ==========================================
+        {
+            var dbDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_learning_s2_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dbDir);
+            var dbFile = Path.Combine(dbDir, "local_test.db");
+
+            // ① 初始化数据库，验证 v13 表已正确创建
+            var db = new Database(dbFile);
+            Check(db != null, "Database 初始化成功");
+
+            // ② 插入并查询本地样本
+            var now = DateTime.Now;
+            db!.InsertLocalDeviceSample(15.5, 45.2, 120.0, now.ToString("yyyy-MM-dd HH:mm:ss"));
+            var samples = db.GetLocalDeviceSamples(1);
+            Check(samples.Count == 1, "查询本地样本数量为 1");
+            Check(Math.Abs(samples[0].Cpu - 15.5) < 0.001, "本地样本 CPU 读出一致");
+            Check(Math.Abs(samples[0].Mem - 45.2) < 0.001, "本地样本 Memory 读出一致");
+            Check(Math.Abs(samples[0].DiskFree - 120.0) < 0.001, "本地样本 DiskGb 读出一致");
+
+            // ③ 验证滚动清理
+            db.InsertLocalDeviceSample(20.0, 50.0, 100.0, now.AddDays(-20).ToString("yyyy-MM-dd HH:mm:ss"));
+            var purged = db.PurgeOldLocalDeviceSamples(14);
+            Check(purged >= 1, "PurgeOldLocalDeviceSamples 成功清理 14 天前旧数据");
+
+            // ④ 验证 DeviceSampleRecorder P/Invoke 单次快照采集
+            var snap = DeviceSampleRecorder.Instance.RecordOnce();
+            Check(snap.HasValue, "DeviceSampleRecorder 单次采样成功");
+            Check(snap!.Value.Cpu >= 0 && snap.Value.Cpu <= 100, "DeviceSampleRecorder CPU 采集合法");
+            Check(snap.Value.MemPct >= 0 && snap.Value.MemPct <= 100, "DeviceSampleRecorder 内存采集合法");
+            Check(snap.Value.DiskFreeGb >= 0, "DeviceSampleRecorder 磁盘余量合法");
+
+            // ⑤ 验证 DbMigrator v13 向前兼容迁移逻辑
+            var migratorVer = DbMigrator.LatestVersion;
+            Check(migratorVer == 13, "DbMigrator 最新版本为 13");
+
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dbDir, true); } catch { }
+        }
+
+        // ==========================================
+        // 规格 05 S3/S4: 滚动基线 / 章节群挂落盘 / 优先级权重校准 / Top 归并
+        // ==========================================
+        {
+            var fixedNow = new DateTime(2026, 9, 4, 20, 0, 0);   // 确定性“今天”
+            var today = fixedNow.Date;
+            string D(DateTime d) => d.ToString("yyyyMMdd");
+            var recs = new List<BaselineSourceRecord>();
+            long id = 0;
+            void Add(DateTime d, int hour, string model, string sn, string result)
+                => recs.Add(new BaselineSourceRecord(++id, D(d), hour, model, sn, result));
+
+            // 基线 6 天：M1 早段(08时) 每天 10 件全 PASS（60 件窗口样本）
+            for (int day = 1; day <= 6; day++)
+                for (int i = 0; i < 10; i++)
+                    Add(today.AddDays(-day), 8, "M1", $"M1-{day}-{i}", "PASS");
+            // 今天 M1 早段 6 PASS / 4 FAIL（良率 60%，远低于基线 100%）
+            for (int i = 0; i < 6; i++) Add(today, 8, "M1", $"T1-{i}", "PASS");
+            for (int i = 0; i < 4; i++) Add(today, 8, "M1", $"T1-F{i}", "FAIL");
+            // 今天 M1 午段(14时) 10 PASS 正常
+            for (int i = 0; i < 10; i++) Add(today, 14, "M1", $"T2-{i}", "PASS");
+            // M2 冷启动：窗口总样本仅 10 件（< 30）
+            for (int i = 0; i < 5; i++) Add(today.AddDays(-1), 9, "M2", $"M2-{i}", "PASS");
+            for (int i = 0; i < 5; i++) Add(today, 9, "M2", $"M2T-{i}", "PASS");
+            // 中断热区：晚段(20时) 基线 3 天 ×10 全 PASS；今天 7 PASS + 3 INTERRUPTED
+            for (int day = 1; day <= 3; day++)
+                for (int i = 0; i < 10; i++) Add(today.AddDays(-day), 20, "M1", $"N-{day}-{i}", "PASS");
+            for (int i = 0; i < 7; i++) Add(today, 20, "M1", $"NT-{i}", "PASS");
+            for (int i = 0; i < 3; i++) Add(today, 20, "M1", $"NT-I{i}", "INTERRUPTED");
+
+            var cfg = new AppConfig
+            {
+                LearnBaselineEnabled = true,
+                LearnBaselineWindowDays = 7,
+                LearnBaselineSigma = 3.0,
+                LearnBaselineMinSamples = 30,
+            };
+            var state = SelfBaseline.Compute(recs, cfg, fixedNow);
+
+            // ① 良率跌破：仅 M1 早段触发
+            var yd = state.Alerts.Where(a => a.Kind == "yield_drop").ToList();
+            Check(yd.Count == 1, $"S3: 仅 M1 早段触发 1 条良率跌破预警（实得 {yd.Count}）");
+            Check(yd[0].Model == "M1" && yd[0].Slot == 1, "S3: 预警定位 M1 早(06-12) 段");
+            Check(Math.Abs(yd[0].Mean - 100.0) < 0.01, "S3: 基线均值 100%（窗口全 PASS）");
+            Check(yd[0].ExpectedLow >= 97.0, $"S3: 零σ下限生效，期望下界 ≥ 97（实得 {yd[0].ExpectedLow}）");
+            Check(yd[0].Message.Contains("M1"), "S3: 预警文案含型号与期望区间（只标记不强动作）");
+
+            // ② 冷启动/隔离
+            Check(!state.Alerts.Any(a => a.Model == "M2"), "S3: 冷启动桶（M2 窗口 <30 件）不产出预警");
+            Check(state.Alerts.Count(a => a.Kind == "yield_drop") == 1, "S3: 型号×时段隔离——正常桶（午段）不误报");
+
+            // ③ 中断热区
+            var hz = state.Alerts.Where(a => a.Kind == "interrupt_hotzone").ToList();
+            Check(hz.Count == 1 && hz[0].Slot == 3, $"S3: 晚段中断热区触发 1 条（实得 {hz.Count}）");
+            Check(Math.Abs(hz[0].Actual - 30.0) < 0.01, "S3: 今日晚段中断率 30%");
+            Check(hz[0].Message.Contains("治具") || hz[0].Message.Contains("治具/通信"), "S3: 中断预警带根因指向（治具/通信/操作）");
+
+            // ④ 桶统计与 SN 去重
+            var m1s1 = state.Buckets.First(b => b.Model == "M1" && b.Slot == 1);
+            Check(m1s1.SampleCount == 60 && m1s1.DayCount == 6, $"S3: M1 早段桶 60 件/6 天（实得 {m1s1.SampleCount}/{m1s1.DayCount}）");
+            var dupList = new List<BaselineSourceRecord>
+            {
+                new(1, D(today), 8, "M1", "DUP", "FAIL"),
+                new(2, D(today), 8, "M1", "DUP", "PASS"),   // 复测：最新 PASS 生效
+            };
+            Check(SelfBaseline.DedupBySn(dupList).Count == 1, "S3: 同 SN 复测去重只保留最新一条");
+
+            // ⑤ σ 边界（开区间侧，v3.22.0 教训）：恰在期望下界不报警
+            var bRecs = new List<BaselineSourceRecord>();
+            long bid = 0;
+            for (int day = 1; day <= 3; day++)
+                for (int i = 0; i < 10; i++)
+                    bRecs.Add(new BaselineSourceRecord(++bid, D(today.AddDays(-day)), 8, "M1", $"B{day}-{i}", "PASS"));
+            for (int i = 0; i < 97; i++) bRecs.Add(new BaselineSourceRecord(++bid, D(today), 8, "M1", $"T{i}", "PASS"));
+            for (int i = 0; i < 3; i++) bRecs.Add(new BaselineSourceRecord(++bid, D(today), 8, "M1", $"TF{i}", "FAIL"));
+            var stB = SelfBaseline.Compute(bRecs, new AppConfig { LearnBaselineWindowDays = 7, LearnBaselineSigma = 3.0, LearnBaselineMinSamples = 3 }, fixedNow);
+            Check(stB.Alerts.Count == 0, $"S3: 今日良率恰等于期望下界 97%（开区间）不报警（实得 {stB.Alerts.Count} 条）");
+            var stB2 = SelfBaseline.Compute(bRecs, new AppConfig { LearnBaselineWindowDays = 7, LearnBaselineSigma = 2.9, LearnBaselineMinSamples = 3 }, fixedNow);
+            Check(stB2.Alerts.Count == 1, "S3: σ 收紧到 2.9 后同数据触发预警（边界外）");
+
+            // ⑥ JSON 往返
+            var round = BaselineState.FromJson(state.ToJson());
+            Check(round != null && round!.Buckets.Count == state.Buckets.Count && round.Alerts.Count == state.Alerts.Count,
+                  "S3: BaselineState JSON 序列化往返一致");
+
+            // ---- S3/S4 集成：LearningEngine.RunOnce 落盘 app_meta（生产 yyyyMMdd 格式）----
+            var dbDir3 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_learning_s3_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dbDir3);
+            var db3 = new Database(Path.Combine(dbDir3, "local.db"));
+            int seq3 = 0;
+            TestRecord TR(DateTime d, int hour, string sn, string result, string reason = "")
+            {
+                seq3++;
+                return new TestRecord
+                {
+                    StationId = "FCT1", Sn = sn, Model = "E3002781", Result = result, FailReason = reason,
+                    TestDate = d.ToString("yyyyMMdd"),
+                    BatchTimestamp = $"{d:yyyy-MM-dd} {hour:00}:30:00",
+                    XmlPath = $@"C:\t\s3_{seq3}.xml",
+                };
+            }
+            var trs = new List<TestRecord>();
+            for (int i = 0; i < 10; i++) trs.Add(TR(fixedNow.AddDays(-1), 8, $"B-{i}", "PASS"));
+            for (int i = 0; i < 10; i++) trs.Add(TR(fixedNow, 8, $"G-P{i}", "PASS"));
+            trs.Add(TR(fixedNow, 8, "G1", "FAIL", "6.1.1.2.7 P5V_CAN(DMM)"));
+            trs.Add(TR(fixedNow, 8, "G2", "FAIL", "6.1.1.2.3 P1.25V_LVD_Core(DMM)"));
+            trs.Add(TR(fixedNow, 8, "G3", "FAIL", "6.1.1.3.1 VREF_HU to SiC_S_HU(DMM)"));
+            trs.Add(TR(fixedNow, 8, "R1", "FAIL", "8.11.6.1 RES_v_ResAng(45°)(XCP)"));
+            trs.Add(TR(fixedNow, 8, "R2", "FAIL", "8.11.6.2 RES_v_ResAng(135°)(XCP)"));
+            trs.Add(TR(fixedNow, 8, "R3", "FAIL", "8.11.6.3 RES_v_ResAng(225°)(XCP)"));
+            db3.BatchInsert(trs);
+
+            // 全关 → no-op
+            LearningEngine.RunOnce(db3, new AppConfig(), fixedNow);
+            Check(db3.GetMeta(LearningEngine.MetaBaseline) == null
+                  && db3.GetMeta(LearningEngine.MetaGroupAlerts) == null
+                  && db3.GetMeta(LearningEngine.MetaPriorityFactors) == null,
+                  "S3/S4: 全开关关闭时 RunOnce 为 no-op（不写任何 meta，行为兼容）");
+
+            var cfgOn = new AppConfig
+            {
+                LearnBaselineEnabled = true,
+                LearnFailMergeEnabled = true,
+                LearnPriorityEnabled = true,
+                LearnBaselineWindowDays = 7,
+                LearnBaselineMinSamples = 5,
+                LearnGroupAlertMin = 3,
+            };
+            LearningEngine.RunOnce(db3, cfgOn, fixedNow);
+
+            var bState = LearningEngine.GetBaselineState(db3);
+            Check(bState != null, "S3: RunOnce 后 app_meta 落盘 learn_baseline_state");
+            Check(bState!.Buckets.Any(b => b.Model == "E3002781" && b.Slot == 1), "S3: 基线含 E3002781 早段桶（yyyyMMdd 日期格式兼容）");
+
+            var gState = LearningEngine.GetGroupAlerts(db3);
+            Check(gState != null && gState!.Alerts.Count == 1 && gState.Alerts[0].Section == "6.1",
+                  $"S4: 章节群挂落盘——6.1 三信号族触发 1 条（RES 四角同族不计，实得 {gState?.Alerts.Count ?? 0}）");
+            Check(gState!.Alerts[0].Hint.Contains("供电") || gState.Alerts[0].Hint.Contains("电源"),
+                  "S4: 群挂预警根因指向供电系统性问题");
+
+            var injAlerts = FailReasonMerger.CheckSectionGroupAlert(
+                new[] { "8.19.5 FLTM_DESAT_A(XCP)", "8.20.2 ASC_B(XCP)", "8.21.1 SBC_C(XCP)" }, 3);
+            Check(injAlerts.Count == 0, "S4: 注入型章节（8.19/8.20/8.21）不计群挂");
+
+            // ---- S4 权重校准 ----
+            Check(Math.Abs(LearningEngine.CalibrateFactor(0, 0) - 1.0) < 0.001, "S4: 无维修无删除 → 因子 1.0");
+            Check(Math.Abs(LearningEngine.CalibrateFactor(10, 0) - 1.5) < 0.001, "S4: 完成维修 10 次 → 因子封顶 1.5");
+            Check(Math.Abs(LearningEngine.CalibrateFactor(0, 10) - 0.5) < 0.001, "S4: 显式删除 10 次 → 因子下探 0.5");
+            Check(Math.Abs(LearningEngine.CalibrateFactor(10, 10) - 0.75) < 0.001, "S4: 乘性合成 1.5×0.5=0.75");
+
+            db3.CreateMaintenance(new MaintenanceRecord
+            { StationId = "FCT1", FailItem = "P5V_CAN", Severity = "major", Status = "resolved" });
+            LearningEngine.RunOnce(db3, cfgOn, fixedNow);
+            LearningEngine.LoadPriorityFactors(db3);
+            Check(LearningEngine.FactorOf("P5V_CAN") > 1.0, "S4: 已完成维修项因子 > 1.0（优先级上调）");
+            Check(LearningEngine.FactorOf("NoSuchItem") == 1.0, "S4: 未学习项因子 = 1.0 原权重");
+
+            var baseScore = PriorityScorer.Score(8, 2, 3);
+            var boosted = PriorityScorer.Score(8, 2, 3, 1.5);
+            Check(boosted.Score > baseScore.Score, "S4: 校准因子 >1 提升评分");
+            Check(baseScore.Level == "medium" && boosted.Level == "high", "S4: 校准使 medium 升 high（仅档位/排序，不改状态机）");
+            Check(PriorityScorer.Score(8, 2, 3, 99).Score == PriorityScorer.Score(8, 2, 3, 2.0).Score,
+                  "S4: 因子越界在 Score 内二次钳制 [0.5,2.0]");
+
+            // ---- S4 Top 排行归并（展示层）----
+            var todayKey = today.ToString("yyyyMMdd");
+            var mergedTop = db3.FetchDailyTopFails("", todayKey, 5, mergeOverride: true);
+            var resTop = mergedTop.FirstOrDefault(t => t.FailItem.Contains("RES_v_ResAng"));
+            Check(resTop != null && resTop.Count == 3,
+                  $"S4: Top 排行归并——旋变四角同族合并计数 3（实得 {(resTop?.Count ?? 0)}）");
+            Check(resTop != null && resTop.RootCauseHint.Contains("旋变"), "S4: 归并 Top 条目带治具根因指向文案");
+            var rawTop = db3.FetchDailyTopFails("", todayKey, 10, mergeOverride: false);
+            Check(rawTop.Count(t => t.FailItem.Contains("RES_v_ResAng")) == 3,
+                  "S4: 归并关闭时 Top 排行保持原串（行为 100% 兼容）");
+
+            // ---- S4 TodoSuggester 校准排序 ----
+            var tmpAgg = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_learning_s4agg_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tmpAgg);
+            using (var agg = new AggDatabase(Path.Combine(tmpAgg, "agg.db")))
+            {
+                agg.Open();
+                agg.InsertBatch(new[]
+                {
+                    new AggFailRow{ Machine="FCTA", StationId="FCTA", Seq=1, TestDate=DateTime.Today.ToString("yyyyMMdd"), Result="FAIL", FailReason="ItemA", Model="M1", Sn="SA1"},
+                    new AggFailRow{ Machine="FCTB", StationId="FCTB", Seq=1, TestDate=DateTime.Today.ToString("yyyyMMdd"), Result="FAIL", FailReason="ItemB", Model="M1", Sn="SB1"},
+                });
+                agg.SyncTodoItems(30);
+                var suggestions = TodoSuggester.Suggest(agg, 30, key => key.Contains("ItemA") ? 2.0 : 0.5);
+                Check(suggestions.Count >= 2 && suggestions[0].GroupKey == TodoGrouping.KeyOf("ItemA"),
+                      "S4: TodoSuggester 校准因子注入后 ItemA 排到首位");
+                var plain = TodoSuggester.Suggest(agg);
+                Check(plain.All(x => x.CalibratedScore == PriorityScorer.Score(x.FailCount, x.MachineCount, x.DurationDays).Score),
+                      "S4: 未注入 factorOf 时 CalibratedScore = 原始分（行为兼容）");
+            }
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dbDir3, true); } catch { }
+            try { Directory.Delete(tmpAgg, true); } catch { }
+        }
+
+        // ==========================================
+        // v3.24.0 飞书交互卡片 JSON 2.0 构建原语断言
+        // ==========================================
+        {
+            var card = FeishuCardV2.Root("FCT1 · E3002781 · FAIL 告警", "red", new List<object>
+            {
+                FeishuCardV2.FieldRow(("机台", "FCT1"), ("型号", "E3002781")),
+                FeishuCardV2.Md("**失败项**\nKL30_1"),
+                FeishuCardV2.Hr(),
+                FeishuCardV2.Note("Argus · 2026-09-04"),
+            }, subtitle: "产线告警");
+            var json = System.Text.Json.JsonSerializer.Serialize(card);
+
+            Check(json.Contains("\"schema\":\"2.0\""), "飞书卡片2.0: 根声明 schema=2.0");
+            Check(json.Contains("\"body\":{") && json.Contains("\"elements\":["), "飞书卡片2.0: elements 位于 body 层级（非 1.0 顶层）");
+            Check(json.Contains("\"column_set\"") && !json.Contains("\"fields\":"), "飞书卡片2.0: 多列用 column_set（无 1.0 div.fields）");
+            Check(json.Contains("\"tag\":\"hr\"") && json.Contains("\"tag\":\"markdown\""), "飞书卡片2.0: hr/markdown 新 tag");
+            Check(json.Contains("\"template\":\"red\""), "飞书卡片2.0: header.template 合法枚举色");
+            Check(json.Contains("width_mode") && json.Contains("plain_text"), "飞书卡片2.0: fill 宽度模式 + 标题 plain_text");
+
+            // 转义防线：恶意测试项名不得渲染成粗体/链接/代码（每个特殊字符前置反斜杠）
+            var esc = FeishuCardV2.Escape("a*b[c]`d|e");
+            Check(esc == @"a\*b\[c\]\`d\|e", $"飞书卡片2.0: markdown 转义生效（实得 {esc}）");
+            Check(FeishuCardV2.Escape(null) == "", "飞书卡片2.0: null 输入安全返回空串");
         }
     }
 

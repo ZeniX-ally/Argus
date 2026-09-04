@@ -42,6 +42,16 @@
     "health_weight_memory": 0.15,
     "health_weight_offline": 0.25,
     "ui_theme": "light",
+    "learn_baseline_enabled": false,
+    "learn_resource_sampling_enabled": false,
+    "learn_priority_enabled": false,
+    "learn_fail_merge_enabled": false,
+    "learn_fail_merge_level": "signal",
+    "learn_baseline_window_days": 7,
+    "learn_baseline_sigma": 3.0,
+    "learn_baseline_min_samples": 30,
+    "learn_group_alert_min": 3,
+    "learn_resource_retention_days": 14,
     "peers": [
         "http://10.0.0.2:8081/",
         "http://10.0.0.3:8081/"

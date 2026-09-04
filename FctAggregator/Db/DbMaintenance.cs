@@ -117,5 +117,31 @@ public sealed class DbMaintenance
         {
             Logger.Warning($"[库维护] 预测对账清理失败: {ex.Message}");
         }
+        // v3.24.0 规格 05：机台端本地设备自采样滚动清理 (默认 14 天)
+        try
+        {
+            var localDb = Database.Current;
+            if (localDb != null)
+            {
+                var retain = AppConfig.Instance.LearnResourceRetentionDays;
+                var purged = localDb.PurgeOldLocalDeviceSamples(retain);
+                if (purged > 0) Logger.Info($"[库维护] 本机设备采样清理: 删除 {purged} 条（保留 {retain} 天）");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] 本机设备采样清理失败: {ex.Message}");
+        }
+        // v3.24.0 规格 05 S3/S4：机台自学习每日窗口（基线评估/章节群挂/权重校准）。
+        // 全部开关关闭时为 no-op；逐段内部独立 try/catch，这里只兜总异常。
+        try
+        {
+            var localDb = Database.Current;
+            if (localDb != null) LearningEngine.RunOnce(localDb, AppConfig.Instance);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] 自学习引擎执行失败（不影响运行）: {ex.Message}");
+        }
     }
 }

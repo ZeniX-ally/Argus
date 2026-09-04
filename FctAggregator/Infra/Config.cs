@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Text.Json;
 
 namespace FctAggregator;
@@ -143,6 +143,28 @@ public class AppConfig
     // ===== UI 主题（v3.23.0 暗黑模式）=====
     /// <summary>界面主题："light"（默认，系统原生浅色）/ "dark"（深底浅字）。config.json: ui_theme。</summary>
     public string UiTheme { get; set; } = "light";
+
+    // ===== 机台端针对性自学习（v3.24.0 规格 05，默认全关）=====
+    /// <summary>良率/产能自基线总开关。config.json: learn_baseline_enabled。</summary>
+    public bool LearnBaselineEnabled { get; set; } = false;
+    /// <summary>本机资源自采样+基线。config.json: learn_resource_sampling_enabled。</summary>
+    public bool LearnResourceSamplingEnabled { get; set; } = false;
+    /// <summary>维修/待办权重自学习。config.json: learn_priority_enabled。</summary>
+    public bool LearnPriorityEnabled { get; set; } = false;
+    /// <summary>故障归并总开关。config.json: learn_fail_merge_enabled。</summary>
+    public bool LearnFailMergeEnabled { get; set; } = false;
+    /// <summary>故障归并粒度: "off" / "signal" / "section"。config.json: learn_fail_merge_level。</summary>
+    public string LearnFailMergeLevel { get; set; } = "signal";
+    /// <summary>滚动窗口天数（默认 7）。config.json: learn_baseline_window_days。</summary>
+    public int LearnBaselineWindowDays { get; set; } = 7;
+    /// <summary>预警 σ 倍数（默认 3.0）。config.json: learn_baseline_sigma。</summary>
+    public double LearnBaselineSigma { get; set; } = 3.0;
+    /// <summary>冷启动最少样本数（默认 30）。config.json: learn_baseline_min_samples。</summary>
+    public int LearnBaselineMinSamples { get; set; } = 30;
+    /// <summary>章节群挂预警阈值（当日同章节不同信号基名数，默认 3）。config.json: learn_group_alert_min。</summary>
+    public int LearnGroupAlertMin { get; set; } = 3;
+    /// <summary>本地采样保留天数（默认 14）。config.json: learn_resource_retention_days。</summary>
+    public int LearnResourceRetentionDays { get; set; } = 14;
 
     private static AppConfig? _instance;
     public static AppConfig Instance => _instance ??= Load();
@@ -308,6 +330,21 @@ public class AppConfig
                 // v3.23.0 UI 主题
                 if (root.TryGetProperty("ui_theme", out v) && v.ValueKind == JsonValueKind.String)
                     cfg.UiTheme = (v.GetString() ?? "light").Trim().ToLowerInvariant() == "dark" ? "dark" : "light";
+                // v3.24.0 机台端针对性自学习 (默认全关)
+                if (root.TryGetProperty("learn_baseline_enabled", out v)) cfg.LearnBaselineEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("learn_resource_sampling_enabled", out v)) cfg.LearnResourceSamplingEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("learn_priority_enabled", out v)) cfg.LearnPriorityEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("learn_fail_merge_enabled", out v)) cfg.LearnFailMergeEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("learn_fail_merge_level", out v) && v.ValueKind == JsonValueKind.String)
+                {
+                    var lvl = (v.GetString() ?? "signal").Trim().ToLowerInvariant();
+                    if (lvl == "off" || lvl == "signal" || lvl == "section") cfg.LearnFailMergeLevel = lvl;
+                }
+                if (root.TryGetProperty("learn_baseline_window_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lbw) && lbw >= 1) cfg.LearnBaselineWindowDays = lbw;
+                if (root.TryGetProperty("learn_baseline_sigma", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var lbs) && lbs > 0) cfg.LearnBaselineSigma = lbs;
+                if (root.TryGetProperty("learn_baseline_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lbm) && lbm >= 1) cfg.LearnBaselineMinSamples = lbm;
+                if (root.TryGetProperty("learn_group_alert_min", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lga) && lga >= 1) cfg.LearnGroupAlertMin = lga;
+                if (root.TryGetProperty("learn_resource_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lrr) && lrr >= 1) cfg.LearnResourceRetentionDays = lrr;
                 // 若未配置token，生成随机token并警告（防空token全网开放）
                 if (string.IsNullOrEmpty(cfg.AggToken))
                 {
@@ -374,6 +411,10 @@ public class AppConfig
                     "health_score_enabled", "health_warn_threshold", "health_critical_threshold",
                     "health_weight_cpu", "health_weight_disk", "health_weight_memory", "health_weight_offline",
                     "ui_theme",
+                    "learn_baseline_enabled", "learn_resource_sampling_enabled", "learn_priority_enabled",
+                    "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
+                    "learn_baseline_sigma", "learn_baseline_min_samples", "learn_group_alert_min",
+                    "learn_resource_retention_days",
                 };
                 // 先写磁盘上的未知字段（保留原样），本类管理的字段随后覆盖
                 foreach (var prop in doc.RootElement.EnumerateObject())
@@ -444,6 +485,16 @@ public class AppConfig
                 writer.WriteNumber("health_weight_memory", HealthWeightMemory);
                 writer.WriteNumber("health_weight_offline", HealthWeightOffline);
                 writer.WriteString("ui_theme", UiTheme);
+                writer.WriteBoolean("learn_baseline_enabled", LearnBaselineEnabled);
+                writer.WriteBoolean("learn_resource_sampling_enabled", LearnResourceSamplingEnabled);
+                writer.WriteBoolean("learn_priority_enabled", LearnPriorityEnabled);
+                writer.WriteBoolean("learn_fail_merge_enabled", LearnFailMergeEnabled);
+                writer.WriteString("learn_fail_merge_level", LearnFailMergeLevel);
+                writer.WriteNumber("learn_baseline_window_days", LearnBaselineWindowDays);
+                writer.WriteNumber("learn_baseline_sigma", LearnBaselineSigma);
+                writer.WriteNumber("learn_baseline_min_samples", LearnBaselineMinSamples);
+                writer.WriteNumber("learn_group_alert_min", LearnGroupAlertMin);
+                writer.WriteNumber("learn_resource_retention_days", LearnResourceRetentionDays);
                 writer.WriteEndObject();
             }
             var tmp = path + ".tmp";

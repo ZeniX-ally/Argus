@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.Sqlite;
+using Microsoft.Data.Sqlite;
 
 namespace FctAggregator;
 
@@ -29,6 +29,9 @@ public sealed partial class Database
         catch (Exception ex) { Logger.Warning($"插入事件回调异常: {ex.Message}"); }
     }
 
+    /// <summary>当前活跃的本地数据库单例/主实例引用（供 Engine/DeviceSampleRecorder/DbMaintenance 访问，可选）。</summary>
+    public static Database? Current { get; private set; }
+
     public Database(string dbPath)
     {
         _dbPath = dbPath;
@@ -38,6 +41,7 @@ public sealed partial class Database
             Mode = SqliteOpenMode.ReadWriteCreate,
         }.ToString();
         Init();
+        Current = this;
     }
 
     private SqliteConnection Open()
@@ -218,6 +222,20 @@ public sealed partial class Database
                 );
             ";
             cmd6.ExecuteNonQuery();
+
+            // v3.24.0 (规格05 机台端自学习): device_samples_local 本机设备自采样表
+            using var cmd7 = conn.CreateCommand();
+            cmd7.CommandText = @"
+                CREATE TABLE IF NOT EXISTS device_samples_local (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    cpu_usage REAL NOT NULL,
+                    mem_used_pct REAL NOT NULL,
+                    disk_free_gb REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_device_samples_local_ts ON device_samples_local(ts);
+            ";
+            cmd7.ExecuteNonQuery();
         }
         MigrateClosedStatus();
     }
@@ -646,9 +664,15 @@ public sealed partial class Database
 
     /// <summary>
     /// 今日 Top N 故障项排行榜（测项名称、频次、占比、高发机台）。
+    /// 规格 05 S4：learn_fail_merge_enabled 开启时按 G49 字典/正则归并 key 聚合（仅展示层，数据层不动）。
     /// </summary>
-    public List<TopFailItem> FetchDailyTopFails(string stationId, string dateYmd, int limit = 5)
+    public List<TopFailItem> FetchDailyTopFails(string stationId, string dateYmd, int limit = 5,
+        bool? mergeOverride = null, string? mergeLevel = null)
     {
+        var cfg = AppConfig.Instance;
+        bool merge = mergeOverride ?? cfg.LearnFailMergeEnabled;
+        var level = mergeLevel ?? cfg.LearnFailMergeLevel;
+
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         var where = "WHERE test_date = @d AND result = 'FAIL'";
@@ -662,6 +686,7 @@ public sealed partial class Database
 
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var stationDist = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        var hints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int totalFailCount = 0;
 
         using var r = cmd.ExecuteReader();
@@ -679,13 +704,23 @@ public sealed partial class Database
             {
                 var cleaned = item.Trim();
                 if (string.IsNullOrEmpty(cleaned)) continue;
+                var key = cleaned;
+                if (merge)
+                {
+                    key = FailReasonMerger.GetMergedKey(cleaned, true, level);
+                    if (!hints.ContainsKey(key))
+                    {
+                        var pr = FailReasonMerger.Parse(cleaned);
+                        if (!string.IsNullOrEmpty(pr.RootCauseHint)) hints[key] = pr.RootCauseHint;
+                    }
+                }
                 totalFailCount++;
-                counts[cleaned] = counts.GetValueOrDefault(cleaned) + 1;
+                counts[key] = counts.GetValueOrDefault(key) + 1;
 
-                if (!stationDist.TryGetValue(cleaned, out var mDict))
+                if (!stationDist.TryGetValue(key, out var mDict))
                 {
                     mDict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                    stationDist[cleaned] = mDict;
+                    stationDist[key] = mDict;
                 }
                 if (!string.IsNullOrEmpty(st))
                 {
@@ -708,7 +743,8 @@ public sealed partial class Database
                 FailItem = p.Key,
                 Count = p.Value,
                 Ratio = totalFailCount > 0 ? (double)p.Value / totalFailCount * 100.0 : 0.0,
-                MainStation = topStation
+                MainStation = topStation,
+                RootCauseHint = hints.GetValueOrDefault(p.Key, "")
             });
         }
         return list;
@@ -1605,6 +1641,138 @@ public sealed partial class Database
         return GetTodoItem(Convert.ToInt32(v));
     }
 
+    // ==================== 机台自学习：本地设备采样 (device_samples_local) ====================
+
+    /// <summary>写入单条本机设备自采样记录。</summary>
+    public void InsertLocalDeviceSample(double cpuUsage, double memUsedPct, double diskFreeGb, string? ts = null)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO device_samples_local (ts, cpu_usage, mem_used_pct, disk_free_gb)
+            VALUES (@ts, @cpu, @mem, @disk);";
+        cmd.Parameters.AddWithValue("@ts", string.IsNullOrEmpty(ts) ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : ts);
+        cmd.Parameters.AddWithValue("@cpu", Math.Round(cpuUsage, 2));
+        cmd.Parameters.AddWithValue("@mem", Math.Round(memUsedPct, 2));
+        cmd.Parameters.AddWithValue("@disk", Math.Round(diskFreeGb, 2));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>查询指定窗口内的本机设备自采样记录。</summary>
+    public List<(string Ts, double Cpu, double Mem, double DiskFree)> GetLocalDeviceSamples(int days = 7)
+    {
+        var list = new List<(string, double, double, double)>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT ts, cpu_usage, mem_used_pct, disk_free_gb
+            FROM device_samples_local
+            WHERE ts >= datetime('now', 'localtime', @daysModifier)
+            ORDER BY ts ASC;";
+        cmd.Parameters.AddWithValue("@daysModifier", $"-{Math.Max(1, days)} days");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add((
+                r.GetString(0),
+                r.GetDouble(1),
+                r.GetDouble(2),
+                r.GetDouble(3)
+            ));
+        }
+        return list;
+    }
+
+    /// <summary>清理超过保留天数的历史本机设备采样。</summary>
+    public int PurgeOldLocalDeviceSamples(int retentionDays = 14)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            DELETE FROM device_samples_local
+            WHERE ts < datetime('now', 'localtime', @cutoff);";
+        cmd.Parameters.AddWithValue("@cutoff", $"-{Math.Max(1, retentionDays)} days");
+        return cmd.ExecuteNonQuery();
+    }
+
+    // ==================== 机台自学习：良率/产能基线源数据（规格 05 S3） ====================
+
+    /// <summary>
+    /// 取基线学习窗口内的 test_records 投影（id/日期/小时/型号/SN/结果）。
+    /// 小时提取与工业看板同源（文件名时间 → batch_timestamp → created_at）。
+    /// test_date 兼容两种落库格式：生产 yyyyMMdd（Processor 目录日期）与 yyyy-MM-dd。
+    /// </summary>
+    public List<BaselineSourceRecord> FetchBaselineSourceRecords(int windowDays, DateTime? now = null)
+    {
+        var list = new List<BaselineSourceRecord>();
+        var today = (now ?? DateTime.Now).Date;
+        var from = today.AddDays(-(Math.Max(1, windowDays) - 1));
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT id, COALESCE(test_date,''), COALESCE(model,''), COALESCE(sn,''), COALESCE(result,''),
+                   COALESCE(batch_timestamp,''), COALESCE(created_at,''), COALESCE(xml_path,'')
+            FROM test_records
+            WHERE (test_date >= @from8 AND test_date <= @to8)
+               OR (test_date >= @fromDash AND test_date <= @toDash)";
+        cmd.Parameters.AddWithValue("@from8", from.ToString("yyyyMMdd"));
+        cmd.Parameters.AddWithValue("@to8", today.ToString("yyyyMMdd"));
+        cmd.Parameters.AddWithValue("@fromDash", from.ToString("yyyy-MM-dd"));
+        cmd.Parameters.AddWithValue("@toDash", today.ToString("yyyy-MM-dd"));
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var hour = ExtractHourFromRecord(r.GetString(7), r.GetString(5), r.GetString(6));
+            list.Add(new BaselineSourceRecord(
+                r.GetInt64(0), r.GetString(1), hour, r.GetString(2), r.GetString(3), r.GetString(4)));
+        }
+        return list;
+    }
+
+    /// <summary>当日全部 FAIL 的 fail_reason 明细（规格 05 S4 章节群挂源数据）。</summary>
+    public List<string> FetchDayFailReasons(string dateYmd, DateTime? now = null)
+    {
+        var list = new List<string>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COALESCE(fail_reason,'')
+            FROM test_records
+            WHERE result='FAIL' AND (test_date = @d8 OR test_date = @dDash)";
+        var d = (now ?? DateTime.Now).Date;
+        var target = dateYmd.Length > 0 ? dateYmd : d.ToString("yyyy-MM-dd");
+        // 两种格式都试：按入参原样 + 互转格式
+        var alt = target;
+        if (DateTime.TryParseExact(target, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt1)) alt = dt1.ToString("yyyyMMdd");
+        else if (DateTime.TryParseExact(target, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt2)) alt = dt2.ToString("yyyy-MM-dd");
+        cmd.Parameters.AddWithValue("@d8", target.Length == 8 ? target : alt);
+        cmd.Parameters.AddWithValue("@dDash", target.Length == 8 ? alt : target);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var s = r.GetString(0);
+            if (!string.IsNullOrWhiteSpace(s)) list.Add(s);
+        }
+        return list;
+    }
+
+    /// <summary>按原始大项统计 dismissed_todos 显式删除记录数（规格 05 S4 权重校准源数据）。</summary>
+    public Dictionary<string, int> CountDismissedByItem()
+    {
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COALESCE(fail_item,''), COUNT(*) FROM dismissed_todos GROUP BY fail_item";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var item = r.GetString(0);
+            if (item.Length == 0) continue;
+            map[item] = r.GetInt32(1);
+        }
+        return map;
+    }
+
     /// <summary>
     /// 某故障项在 test_records 里还有多少条真实 FAIL。
     /// 用于删维修记录时提醒用户：删了它这个故障项会重新回到「待办」列。
@@ -2199,7 +2367,12 @@ public class TopFailItem
     public int Count { get; set; }
     public double Ratio { get; set; }
     public string MainStation { get; set; } = "";
+    /// <summary>根因指向文案（规格 05 S4：learn_fail_merge_enabled 开启时按 G49 字典回填，未命中为空）。</summary>
+    public string RootCauseHint { get; set; } = "";
 }
+
+/// <summary>基线学习源记录（规格 05 S3）：test_records 窗口投影，SN 去重在 SelfBaseline 内完成。</summary>
+public sealed record BaselineSourceRecord(long Id, string TestDate, int Hour, string Model, string Sn, string Result);
 
 public class LiveFailAlert
 {

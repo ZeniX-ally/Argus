@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 
 namespace FctAggregator;
 
@@ -60,6 +60,9 @@ public class Engine
         _todoSync = _mesh.TodoSync;   // 待办池由 MeshNode 统一管理（避免重复订阅）
 
         _mesh.Start();
+
+        // 规格 05 S2: 机台端本地资源定时自采样 (由 learn_resource_sampling_enabled 控制)
+        try { DeviceSampleRecorder.Instance.Start(); } catch { }
 
         AppState.StationId = sid;
         AppState.WebhookConfigured = !string.IsNullOrEmpty(cfg.WebhookUrl);
@@ -138,6 +141,7 @@ public class Engine
 
     public void Stop()
     {
+        try { DeviceSampleRecorder.Instance.Stop(); } catch { }
         _todoSync.Stop();
         _mesh.Stop();
         _cts.Cancel();

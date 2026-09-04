@@ -11,7 +11,7 @@ namespace FctAggregator;
 public static class DbMigrator
 {
     /// <summary>当前期望的 schema 版本（= 迁移数组最后一项的版本号）；库已达该值即视为最新。</summary>
-    public const int LatestVersion = 12;
+    public const int LatestVersion = 13;
 
     /// <summary>
     /// 有序迁移列表：Version 严格升序、与库的 user_version 一一对应；
@@ -325,6 +325,23 @@ public static class DbMigrator
             new string[]
             {
                 @"ALTER TABLE agg_records ADD COLUMN fixture_id TEXT;",
+            }
+        ),
+        // v13 device_samples_local 表（v3.24.0 规格05 机台端自学习）：记录本机 CPU/内存/磁盘 5min 自采样。
+        // 支持纯本地历史留存、滚动基线学习与定时清理。
+        (
+            13,
+            "device_samples_local 本机设备自采样历史表（规格05 机台自学习）",
+            new string[]
+            {
+                @"CREATE TABLE IF NOT EXISTS device_samples_local (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    cpu_usage REAL NOT NULL,
+                    mem_used_pct REAL NOT NULL,
+                    disk_free_gb REAL NOT NULL
+                );",
+                @"CREATE INDEX IF NOT EXISTS idx_device_samples_local_ts ON device_samples_local(ts);",
             }
         ),
     };

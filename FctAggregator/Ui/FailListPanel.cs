@@ -207,11 +207,15 @@ public sealed class FailListPanel : Panel
     }
 
     /// <summary>按失败项聚合：组内时间倒序，组按次数倒序。
-    /// ⚠ 排序必须用统一格式后的时间：TestDate 是 8 位数字、Timestamp 是 ISO，原始字符串比较会错乱。</summary>
+    /// ⚠ 排序必须用统一格式后的时间：TestDate 是 8 位数字、Timestamp 是 ISO，原始字符串比较会错乱。
+    /// 规格 05 S4：learn_fail_merge_enabled 开启时按 G49 字典/正则归并 key 聚合（仅展示层分组，记录数据不动）。</summary>
     private void ComputeGroups()
     {
+        var cfg = AppConfig.Instance;
+        bool merge = cfg.LearnFailMergeEnabled;
+        var level = cfg.LearnFailMergeLevel;
         _groups = _all
-            .GroupBy(f => f.FailItem)
+            .GroupBy(f => merge ? FailReasonMerger.GetMergedKey(f.FailItem, true, level) : f.FailItem)
             .Select(g => new GroupData
             {
                 FailItem = g.Key,
