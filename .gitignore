@@ -1,0 +1,68 @@
+# ===== Build =====
+**/bin/
+**/obj/
+**/out/
+**/dist/
+dist-agg/
+*.zip
+
+# ===== Selftest run logs =====
+selftest_result*.txt
+%SELFTEST_LOG%
+
+# ===== Runtime data / logs =====
+**/data/
+**/logs/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+data/agg_xml/
+data/mesh_*.json
+data/agg_*.json
+data/*.log
+
+# ===== Snapshots / releases =====
+.snap/
+.wt-xlsxcmp/
+Releases/
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ===== IDE / OS =====
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Agent / editor toolchain =====
+.opencode/
+.workbuddy/
+.mimosa/
+.commandcode/
+.pi/
+
+# ===== Screenshots / temp =====
+ArgusScreenshots/
+
+# ===== Secrets / local config =====
+# config.json 含现场 token/路径，提交请用 config.example.json
+# 若需忽略本地现场配置，取消下行注释：
+# config.json
+
+# ===== IDE / agent tooling (never public) =====
+.workbuddy/
+.mimosa/
+.commandcode/
+.opencode/
+.trae/
+.trae-html-share-packages/

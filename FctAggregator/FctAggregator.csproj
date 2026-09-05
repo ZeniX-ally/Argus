@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Argus</AssemblyName>
+    <RootNamespace>FctAggregator</RootNamespace>
+    <StartupObject>FctAggregator.Program</StartupObject>
+    <Version>3.26.3</Version>
+  <AssemblyVersion>3.26.3.0</AssemblyVersion>
+  <FileVersion>3.26.3.0</FileVersion>
+    <Company>Argus</Company>
+    <Product>FCT 工具套件</Product>
+    <ApplicationIcon>app_icon.ico</ApplicationIcon>
+    <SelfContained>false</SelfContained>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="selftest\**" />
+    <None Remove="selftest\**" />
+    <EmbeddedResource Remove="selftest\**" />
+    <Compile Remove="tools\**" />
+    <None Remove="tools\**" />
+    <EmbeddedResource Remove="tools\**" />
+
+    <EmbeddedResource Include="app_icon.ico" />
+    <EmbeddedResource Include="assets\splash\argus_splash.png" />
+    <Content Include="public\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="TDMSReader" Version="3.1.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,27 @@
+{
+  "parsers": [
+    {
+      "id": "default",
+      "priority": 1000,
+      "path_pattern": "[\\\\/](?<category>Online|Offline)[\\\\/](?<model>[^\\\\/]+)[\\\\/](?<date>\\d{8})[\\\\/](?<file>[^\\\\/]+)$",
+      "sn_segment": 6,
+      "prefix_results": { "P_": "PASS", "F_": "FAIL", "O_": "AUTO" },
+      "ignored_fail_steps": ["Get Unit Information", "UUT Status Err"],
+      "attr_batch_ts": "TIMESTAMP",
+      "attr_factory_user": "USER",
+      "attr_tester": "TESTER",
+      "attr_panel_status": "STATUS",
+      "attr_panel_ts": "TIMESTAMP",
+      "attr_dut_id": "ID",
+      "attr_test_name": "NAME",
+      "attr_test_status": "STATUS",
+      "attr_test_value": "VALUE",
+      "attr_test_hilim": "HILIM",
+      "attr_test_lolim": "LOLIM",
+      "attr_test_unit": "UNIT",
+      "attr_test_rule": "RULE",
+      "debug_users": ["debug"],
+      "time_priority": ["panel", "batch", "filename", "directory"]
+    }
+  ]
+}

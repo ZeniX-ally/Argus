@@ -1,0 +1,18 @@
+{
+    "station_id": "",
+    "results_root": "D:/Results",
+    "fct_ini_path": "C:\\FTS\\Apps\\PEU\\Cfg\\FCT.ini",
+    "webhook_url": "",
+    "feishu_banner_img_key": "img_v3_02157_4feb362c-1bd6-482f-9e7a-df9d033758dg",
+    "auto_start": false,
+    "skip_historical_scan": false,
+    "log_level": "INFO",
+    "desktop_notify": true,
+    "notify_min_interval_sec": 15,
+    "todo_scan_days": 30,
+    "agg_token": "fd1565081d7e4f129c9d771f3d79076f",
+    "fts": {
+        "hookspool_path": "C:\\FTS\\HookSpool",
+        "results_path": "D:/Results"
+    }
+}

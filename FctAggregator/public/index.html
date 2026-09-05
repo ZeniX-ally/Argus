@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Argus 测试工程师工作台</title>
+<!-- 模块化前端瘦骨架：仅引入主题样式与加载器，其余 js 由 loader 按需懒加载 -->
+<link rel="stylesheet" href="css/theme.css?v=20260831v1">
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== 左侧导航栏 ===== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><div class="logo">A</div><div class="bt">ARGUS</div></div>
+    <nav id="nav">
+      <button class="nav-btn active" data-page="overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+        <span class="lbl">总览</span>
+      </button>
+      <button class="nav-btn" data-page="fails">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L1.8 20.5h20.4z"/><line x1="12" y1="9.5" x2="12" y2="14.5"/><line x1="12" y1="17.2" x2="12" y2="17.5"/></svg>
+        <span class="lbl">FAIL 明细</span>
+      </button>
+      <button class="nav-btn" data-page="yield">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 20 9 12.5 13 15.5 20 6"/><line x1="4" y1="20.5" x2="20" y2="20.5"/></svg>
+        <span class="lbl">良率</span>
+      </button>
+      <button class="nav-btn" data-page="seasonality">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c3-6 5-6 8 0s5 6 10 0"/><path d="M3 21h18"/><circle cx="12" cy="8" r="2.2"/></svg>
+        <span class="lbl">季节性</span>
+      </button>
+      <button class="nav-btn" data-page="xml">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 6 2 12 8 18"/><polyline points="16 6 22 12 16 18"/><line x1="13.5" y1="4" x2="10.5" y2="20"/></svg>
+        <span class="lbl">XML 报告</span>
+      </button>
+      <button class="nav-btn" data-page="maintenance">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14.5 12 12 9.5z"/></svg>
+        <span class="lbl">维修</span>
+      </button>
+      <button class="nav-btn" data-page="devices">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="13" rx="2"/><line x1="9" y1="20.5" x2="15" y2="20.5"/><line x1="12" y1="17" x2="12" y2="20.5"/></svg>
+        <span class="lbl">设备</span>
+      </button>
+      <button class="nav-btn" data-page="health">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></svg>
+        <span class="lbl">健康分</span>
+      </button>
+      <button class="nav-btn" data-page="fetch">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13"/><polyline points="8 12 12 16 16 12"/><rect x="4" y="18" width="16" height="2" rx="1"/></svg>
+        <span class="lbl">数据拉取</span>
+      </button>
+      <button class="nav-btn" data-page="report">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+        <span class="lbl">报告中心</span>
+      </button>
+      <button class="nav-btn" data-page="proc">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3"/><path d="M12 11v7"/><polyline points="8 15 12 19 16 15"/><line x1="5" y1="19" x2="19" y2="19"/></svg>
+        <span class="lbl">程序日志</span>
+      </button>
+      <button class="nav-btn" data-page="alerts">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 4-2.7 7.2-7 8-4.3-.8-7-4-7-8V7z"/><line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="16" r="1"/></svg>
+        <span class="lbl">告警</span>
+      </button>
+      <button class="nav-btn" data-page="compare">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span class="lbl">对比</span>
+      </button>
+      <button class="nav-btn" data-page="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/></svg>
+        <span class="lbl">设置</span>
+      </button>
+    </nav>
+    <div class="side-foot">
+      <button class="toggle-btn" id="toggleSidebar" title="展开/收起侧边栏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 5 8 12 15 19"/></svg>
+        <span class="lbl">收起侧边栏</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ===== 主区 ===== -->
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" title="展开侧边栏">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+      </button>
+      <h1 id="pageTitle">总览</h1><span class="tag">FCT 聚合</span>
+      <div class="spacer"></div>
+      <div class="search-wrap" id="searchWrap">
+        <input id="globalSearch" class="search-input" placeholder="全局搜索 FAIL / 维修 / 设备 / 良率（空格分词）" autocomplete="off" spellcheck="false">
+        <div id="searchPanel" class="search-panel" hidden></div>
+      </div>
+      <select id="machineSel" class="sel" title="选择查看范围：全部机台汇总，或指定机台"></select>
+      <div class="health" id="userBadge" title="当前登录身份"><span class="dot" id="hdot"></span><span class="hx" id="htext">连接中…</span></div>
+      <div class="health"><span id="roleBadge" class="badge" style="display:none"></span></div>
+      <div class="health">更新于 <span id="uptime">--</span></div>
+    </header>
+
+    <!-- 全局错误横幅（持久，不随页面切换销毁） -->
+    <div class="err-banner" id="errbanner"></div>
+
+    <!-- 视图容器：hash 路由 + 懒加载模块在此渲染 -->
+    <main id="view" class="view"></main>
+  </div>
+</div>
+
+<script src="js/core.js?v=20260829v3"></script>
+<script src="js/page-overview.js?v=20260829v3"></script>
+<script src="js/page-fails.js?v=20260829v3"></script>
+<script src="js/page-yield.js?v=20260829v3"></script>
+<script src="js/page-yield-seasonality.js?v=20260902v1"></script>
+<script src="js/page-xml.js?v=20260829v3"></script>
+<script src="js/page-maintenance.js?v=20260829v3"></script>
+<script src="js/page-devices.js?v=20260829v3"></script>
+<script src="js/page-device-health.js?v=20260903v1"></script>
+<script src="js/page-fetch.js?v=20260829v3"></script>
+<script src="js/page-report.js?v=20260829v3"></script>
+<script src="js/page-proc.js?v=20260829v3"></script>
+<script src="js/page-alerts.js?v=20260831v1"></script>
+<script src="js/page-compare.js?v=20260831v1"></script>
+<script src="js/page-settings.js?v=20260831v1"></script>
+<script src="js/loader.js?v=20260829v3"></script>
+</body>
+</html>
