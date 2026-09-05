@@ -3,9 +3,6 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 应用配置。从 exe 同级目录的 config.json 读取。
-/// </summary>
 public class AppConfig
 {
     public string StationId { get; set; } = "";
@@ -14,186 +11,79 @@ public class AppConfig
     public string WebhookUrl { get; set; } = "";
     public bool SkipHistoricalScan { get; set; } = false;
     public string LogLevel { get; set; } = "INFO";
-    /// <summary>Windows 原生桌面提示(不良报警)。config.json: desktop_notify。</summary>
     public bool DesktopNotify { get; set; } = true;
-    /// <summary>两次桌面提示的最小间隔秒数。config.json: notify_min_interval_sec。</summary>
     public int NotifyMinIntervalSec { get; set; } = 15;
-    /// <summary>
-    /// 待办扫描窗口（天）：只把近 N 天的不良并入待办登记表，默认 30。
-    /// 已登记的待办**永久保留**，不会因窗口滑动而消失。config.json: todo_scan_days。
-    /// </summary>
     public int TodoScanDays { get; set; } = 30;
-    /// <summary>机台聚合推送开关（Phase 1：FAIL 事件文件 + 心跳）。config.json: agg_enabled。</summary>
     public bool AggEnabled { get; set; } = false;
-    /// <summary>共享目录根（如 \\192.168.x.x\ArgusAgg）。config.json: agg_share_root。</summary>
     public string AggShareRoot { get; set; } = "";
-    /// <summary>聚合推送通道：smb=写共享目录（默认，兼容旧配置），http=POST 到聚合端。config.json: agg_transport。</summary>
     public string AggTransport { get; set; } = "smb";
-    /// <summary>http 模式聚合端地址（如 http://192.168.1.100:8080/）。config.json: agg_http_url。</summary>
     public string AggHttpUrl { get; set; } = "";
-    /// <summary>遗留中心模式 HTTP 接收端口（v3.5.0 前 HttpIngest/聚合看板 GUI 用；机台端不用管）。
-    /// ⚠ headless（agg --web）与 P2P 节点实际监听 <see cref="MeshPort"/>，别把这两个搞混。
-    /// config.json: agg_http_port。</summary>
     public int AggHttpPort { get; set; } = 8080;
-    /// <summary>
-    /// 聚合共享访问令牌（聚合端/机台端/看板三方共用，鉴权用）。config.json: agg_token。
-    /// 空串=不启用鉴权（兼容现有部署）；配置后机台推送 / Web 看板 / API 一律校验，不匹配 403。
-    /// </summary>
     public string AggToken { get; set; } = "";
-    /// <summary>聚合端飞书群机器人 webhook（Phase 3 汇总/离线告警用）。config.json: agg_webhook_url。</summary>
     public string AggWebhookUrl { get; set; } = "";
-    /// <summary>
-    /// 飞书卡片抬头图 img_key（img_v2_xxx）：卡片最顶端通栏图片。
-    /// 纯 webhook 机器人无图片上传通道，img_key 需一次性在飞书「卡片搭建工具」上传图片后获取。
-    /// 空串=不带抬头图，卡片保持无图版式。config.json: feishu_banner_img_key。
-    /// </summary>
     public string FeishuBannerImgKey { get; set; } = "";
-    /// <summary>聚合汇总推送间隔（分钟，Phase 3）。config.json: agg_summary_minutes。</summary>
     public int AggSummaryMinutes { get; set; } = 60;
-    /// <summary>
-    /// 机台端聚合链路断连告警阈值（分钟）：连续推送失败持续超过该时长才推飞书
-    /// 「聚合端不可达」告警（防网络抖动误报）；恢复时自动推「链路已恢复」。config.json: agg_fail_alert_minutes。
-    /// </summary>
     public int AggFailAlertMinutes { get; set; } = 5;
-    /// <summary>
-    /// 待办合并走 G49 spec 原理级规则（章节/信号族/别名归并，G49TodoRules），未命中回落名称归一化。
-    /// false = 纯名称 token 归并（v3.24.x 旧行为）。config.json: todo_spec_merge。
-    /// </summary>
     public bool TodoSpecMerge { get; set; } = true;
-    /// <summary>智能解析规则文件路径（v3.5.0）。空串=仅用内置默认解析器。config.json: parsers_path。</summary>
     public string ParsersPath { get; set; } = "parsers.json";
-    /// <summary>P2P 本机监听端口（v3.5.0 去中心化）。config.json: mesh_port。</summary>
     public int MeshPort { get; set; } = 8081;
-    /// <summary>邻居机台地址列表（v3.5.0 去中心化，静态发现）。config.json: peers（字符串数组）。</summary>
     public List<string> Peers { get; set; } = new();
-    /// <summary>
-    /// 副本库每日维护时刻（小时 0-23）：到点执行 wal_checkpoint(TRUNCATE)，库超阈值再 VACUUM。
-    /// 默认凌晨 3 点低峰执行。config.json: db_maintenance_hour。
-    /// </summary>
     public int DbMaintenanceHour { get; set; } = 3;
-    /// <summary>
-    /// 副本库 VACUUM 触发阈值（MB）：维护时库体积超过该值才 VACUUM（整理碎片/回收空间）。
-    /// 0 = 从不 VACUUM（只 checkpoint）。config.json: db_vacuum_threshold_mb。
-    /// </summary>
     public int DbVacuumThresholdMb { get; set; } = 512;
-    /// <summary>聚合看板机台卡：显示心跳行。config.json: card_show_heartbeat。</summary>
     public bool CardShowHeartbeat { get; set; } = true;
-    /// <summary>聚合看板机台卡：显示最近 FAIL 行。config.json: card_show_lastfail。</summary>
     public bool CardShowLastFail { get; set; } = true;
-    /// <summary>聚合看板机台卡：显示待推队列行。config.json: card_show_queue。</summary>
     public bool CardShowQueue { get; set; } = true;
-    /// <summary>聚合看板机台卡排序：name=名称 / fail=FAIL数降序 / online=在线优先。config.json: card_sort。</summary>
     public string CardSort { get; set; } = "name";
-    /// <summary>聚合看板机台卡紧凑模式（隐藏副行、降低卡片高度）。config.json: card_compact。</summary>
     public bool CardCompact { get; set; } = false;
-    /// <summary>
-    /// 更新包检测目录（更新器用）：管理员把新的 Argus-v{ver}-update.zip 放进来，
-    /// 程序启动时会检测并弹出更新提示。config.json: update_dir。
-    /// 默认 data/updates（相对程序目录）；支持绝对路径。
-    /// </summary>
     public string UpdateDir { get; set; } = "data/updates";
-    // ===== P6 设备监控（总纲 Phase6，D1-D3，Agent C）=====
-    /// <summary>机台端是否采集上报设备信息（默认 true）。config.json: device_info_enabled。</summary>
     public bool DeviceInfoEnabled { get; set; } = true;
-    /// <summary>L1 详情上报周期秒（默认 300s=5 分钟）。config.json: device_info_interval_sec。</summary>
     public int DeviceInfoIntervalSec { get; set; } = 300;
-    /// <summary>聚合端 device_samples 保留天数（默认 7 天，DbMaintenance 每日清理）。config.json: device_samples_retain_days。</summary>
     public int DeviceSamplesRetainDays { get; set; } = 7;
-    /// <summary>磁盘剩余告警阈值 GB（0=关闭，默认 10）。config.json: device_alert_disk_free_gb。</summary>
     public double DeviceAlertDiskFreeGb { get; set; } = 10;
-    /// <summary>CPU 持续超阈值告警百分比（0=关闭，默认 90）。config.json: device_alert_cpu_pct。</summary>
     public int DeviceAlertCpuPct { get; set; } = 90;
-    /// <summary>离线告警阈值分钟（0=关闭，默认 5）。config.json: device_alert_offline_minutes。</summary>
     public int DeviceAlertOfflineMinutes { get; set; } = 5;
-    // ===== P8 告警规则中心（yield 跌破统一规则，延续 device_alert_* 命名，新增 yield_alert_*）=====
-    /// <summary>良率跌破告警阈值 %（0=关闭，默认 90）。config.json: yield_alert_yield_pct。</summary>
     public double YieldAlertYieldPct { get; set; } = 90;
-    /// <summary>良率告警是否启用（默认 true，阈值 0 时仍关闭）。config.json: yield_alert_enabled。</summary>
     public bool YieldAlertEnabled { get; set; } = true;
-    // ===== 预测准确率自反馈（v3.20.0 规格 02）=====
-    /// <summary>预测对账总开关（默认 true）。关后既不对账也不推荐阈值。config.json: predict_reconcile_enabled。</summary>
     public bool PredictReconcileEnabled { get; set; } = true;
-    /// <summary>对账时间窗：14 天前的预测必查（天）。config.json: predict_reconcile_horizon_days。</summary>
     public int PredictReconcileHorizonDays { get; set; } = 14;
-    /// <summary>每日对账触发时刻（小时 0-23，默认 4 凌晨）。config.json: predict_reconcile_cron_hour。</summary>
     public int PredictReconcileCronHour { get; set; } = 4;
-    /// <summary>阈值自动推荐开关（默认 true）。仅写推荐，不自动应用。config.json: predict_tune_enabled。</summary>
     public bool PredictTuneEnabled { get; set; } = true;
-    /// <summary>推荐阈值最低样本量：< N 不推荐（避免冷启动抖）。config.json: predict_tune_min_samples。</summary>
     public int PredictTuneMinSamples { get; set; } = 30;
-    /// <summary>预测准确率对账保留天数（默认 180）。config.json: predict_accuracy_retain_days。</summary>
     public int PredictAccuracyRetainDays { get; set; } = 180;
-    // ===== 季节性/班次分解（v3.21.0 规格 03，默认全关保持 v3.19.0 行为）=====
-    /// <summary>季节性分解总开关（默认 false：行为 = v3.19.0 老逻辑，现场主动开才启用）。config.json: yield_seasonality_enabled。</summary>
     public bool YieldSeasonalityEnabled { get; set; } = false;
-    /// <summary>分解模式：hourly（日内 24 时段）/ daily（日内 24 时段+7 日趋势）/ weekly（星期几 7 时段）。非法值回退 hourly。config.json: yield_seasonality_mode。</summary>
     public string YieldSeasonalityMode { get; set; } = "hourly";
-    /// <summary>残差告警 σ 倍数（1.5 ≈ 87% 置信度）。config.json: yield_seasonality_epsilon。</summary>
     public double YieldSeasonalityEpsilon { get; set; } = 1.5;
-    /// <summary>基线窗口（天，默认 28）。config.json: yield_seasonality_days。</summary>
     public int YieldSeasonalityDays { get; set; } = 28;
-    /// <summary>趋势平滑窗口（天，默认 7，daily 模式用）。config.json: yield_seasonality_trend_window。</summary>
     public int YieldSeasonalityTrendWindow { get; set; } = 7;
-    /// <summary>残差 σ 小于此值视作平稳，回退 v3.19.0 老逻辑（默认 0.5）。config.json: yield_seasonality_min_sigma。</summary>
     public double YieldSeasonalityMinSigma { get; set; } = 0.5;
-    // ===== 设备健康综合分（v3.22.0 规格 04，默认开：HighlightEngine 改读健康分，关则回退单指标）=====
-    /// <summary>健康分总开关（默认 true；false = HighlightEngine 回退 v3.19.0 单指标阈值）。config.json: health_score_enabled。</summary>
     public bool HealthScoreEnabled { get; set; } = true;
-    /// <summary>health &lt; 该值升 warn（默认 80）。config.json: health_warn_threshold。</summary>
     public double HealthWarnThreshold { get; set; } = 80;
-    /// <summary>health &lt; 该值升 critical（默认 50）。config.json: health_critical_threshold。</summary>
     public double HealthCriticalThreshold { get; set; } = 50;
-    /// <summary>cpu 子项权重（默认 0.30）。config.json: health_weight_cpu。</summary>
     public double HealthWeightCpu { get; set; } = 0.30;
-    /// <summary>disk 子项权重（默认 0.30）。config.json: health_weight_disk。</summary>
     public double HealthWeightDisk { get; set; } = 0.30;
-    /// <summary>memory 子项权重（默认 0.15）。config.json: health_weight_memory。</summary>
     public double HealthWeightMemory { get; set; } = 0.15;
-    /// <summary>offline 子项权重（默认 0.25）。config.json: health_weight_offline。</summary>
     public double HealthWeightOffline { get; set; } = 0.25;
-    // ===== 无感热升级（v3.26.0）=====
-    /// <summary>
-    /// 无感热升级总开关（默认 true）：检测到 data/updates 下有更高版本的更新包时，
-    /// 自动暂存 + 自动重启完成升级（全程无弹窗，托盘气泡告知）。false 时退回弹窗确认模式。
-    /// config.json: auto_update。
-    /// </summary>
     public bool AutoUpdate { get; set; } = true;
 
-    // ===== 机台端针对性自学习（v3.24.0 规格 05，默认全关）=====
-    /// <summary>良率/产能自基线总开关。config.json: learn_baseline_enabled。</summary>
     public bool LearnBaselineEnabled { get; set; } = false;
-    /// <summary>本机资源自采样+基线。config.json: learn_resource_sampling_enabled。</summary>
     public bool LearnResourceSamplingEnabled { get; set; } = false;
-    /// <summary>维修/待办权重自学习。config.json: learn_priority_enabled。</summary>
     public bool LearnPriorityEnabled { get; set; } = false;
-    /// <summary>故障归并总开关。config.json: learn_fail_merge_enabled。</summary>
     public bool LearnFailMergeEnabled { get; set; } = false;
-    /// <summary>故障归并粒度: "off" / "signal" / "section"。config.json: learn_fail_merge_level。</summary>
     public string LearnFailMergeLevel { get; set; } = "signal";
-    /// <summary>滚动窗口天数（默认 7）。config.json: learn_baseline_window_days。</summary>
     public int LearnBaselineWindowDays { get; set; } = 7;
-    /// <summary>预警 σ 倍数（默认 3.0）。config.json: learn_baseline_sigma。</summary>
     public double LearnBaselineSigma { get; set; } = 3.0;
-    /// <summary>冷启动最少样本数（默认 30）。config.json: learn_baseline_min_samples。</summary>
     public int LearnBaselineMinSamples { get; set; } = 30;
-    /// <summary>章节群挂预警阈值（当日同章节不同信号基名数，默认 3）。config.json: learn_group_alert_min。</summary>
     public int LearnGroupAlertMin { get; set; } = 3;
-    /// <summary>本地采样保留天数（默认 14）。config.json: learn_resource_retention_days。</summary>
     public int LearnResourceRetentionDays { get; set; } = 14;
 
     private static AppConfig? _instance;
-    /// <summary>
-    /// 飞书 webhook 写死兜底（v3.24.2）：config webhook_url 未配置时，机台端告警回落到此内置群机器人。
-    /// webhook 即凭据（拿到 URL 就能往群发消息），改动此常量 = 换绑定群，须重新发版。
-    /// </summary>
-    public const string FallbackWebhookUrl = "https://open.feishu.cn/open-apis/bot/v2/hook/84dc90ea-8bfd-4833-845f-9bfb2d016f49";
+    public const string FallbackWebhookUrl = "";
 
     public static AppConfig Instance => _instance ??= Load();
 
     public static string GenerateRandomToken() => Guid.NewGuid().ToString("N");
 
     public static string BaseDir =>
-        // 优先用程序集(DLL)所在目录; 避免用 dotnet.exe 路径(用 dotnet xxx.dll 启动时 ProcessPath 是 dotnet.exe)
         AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
 
     public static AppConfig Load()
@@ -213,7 +103,6 @@ public class AppConfig
                 if (root.TryGetProperty("webhook_url", out v)) cfg.WebhookUrl = v.GetString() ?? "";
                 if (root.TryGetProperty("skip_historical_scan", out v)) cfg.SkipHistoricalScan = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("log_level", out v)) cfg.LogLevel = v.GetString() ?? "INFO";
-                // 桌面提示：缺省开，只有显式写 false 才关
                 if (root.TryGetProperty("desktop_notify", out v)) cfg.DesktopNotify = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("notify_min_interval_sec", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var sec) && sec >= 0)
@@ -221,10 +110,8 @@ public class AppConfig
                 if (root.TryGetProperty("todo_scan_days", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var days) && days >= 1)
                     cfg.TodoScanDays = days;
-                // 机台聚合推送：缺省关，只有显式写 true 才开
                 if (root.TryGetProperty("agg_enabled", out v)) cfg.AggEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("agg_share_root", out v)) cfg.AggShareRoot = v.GetString() ?? "";
-                // 聚合推送通道：空/未知一律回落 smb（兼容旧配置）；http 才切直推
                 if (root.TryGetProperty("agg_transport", out v))
                 {
                     var t = (v.GetString() ?? "").Trim().ToLowerInvariant();
@@ -274,14 +161,12 @@ public class AppConfig
                     }
                     cfg.Peers = peers;
                 }
-                // v3.5.3 数据库日常维护：时刻 0-23，VACUUM 阈值 MB（负数当 0）
                 if (root.TryGetProperty("db_maintenance_hour", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var mh) && mh >= 0 && mh <= 23)
                     cfg.DbMaintenanceHour = mh;
                 if (root.TryGetProperty("db_vacuum_threshold_mb", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var vm) && vm >= 0)
                     cfg.DbVacuumThresholdMb = vm;
-                // v3.8.0 聚合看板机台卡自定义
                 if (root.TryGetProperty("card_show_heartbeat", out v)) cfg.CardShowHeartbeat = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("card_show_lastfail", out v)) cfg.CardShowLastFail = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("card_show_queue", out v)) cfg.CardShowQueue = v.ValueKind != JsonValueKind.False;
@@ -291,17 +176,14 @@ public class AppConfig
                     if (s == "fail" || s == "online" || s == "name") cfg.CardSort = s;
                 }
                 if (root.TryGetProperty("card_compact", out v)) cfg.CardCompact = v.ValueKind == JsonValueKind.True;
-                // v3.14.0 P6 设备监控（D1-D3）
                 if (root.TryGetProperty("device_info_enabled", out v)) cfg.DeviceInfoEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("device_info_interval_sec", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var di) && di >= 30) cfg.DeviceInfoIntervalSec = di;
                 if (root.TryGetProperty("device_samples_retain_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var dr) && dr >= 1) cfg.DeviceSamplesRetainDays = dr;
                 if (root.TryGetProperty("device_alert_disk_free_gb", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var dg)) cfg.DeviceAlertDiskFreeGb = dg;
                 if (root.TryGetProperty("device_alert_cpu_pct", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var dc) && dc >= 0) cfg.DeviceAlertCpuPct = dc;
                 if (root.TryGetProperty("device_alert_offline_minutes", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var om) && om >= 0) cfg.DeviceAlertOfflineMinutes = om;
-                // v3.17.0 P8 告警规则中心：良率跌破阈值（延续 device_alert_* 命名）
                 if (root.TryGetProperty("yield_alert_yield_pct", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var yp)) cfg.YieldAlertYieldPct = yp;
                 if (root.TryGetProperty("yield_alert_enabled", out v)) cfg.YieldAlertEnabled = v.ValueKind != JsonValueKind.False;
-                // v3.20.0 预测准确率自反馈（规格 02）—— v3.21.0 补三处接线（原版只加了属性漏了 Load/Save/known，config.json 写了不生效）
                 if (root.TryGetProperty("predict_reconcile_enabled", out v)) cfg.PredictReconcileEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("predict_reconcile_horizon_days", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var prh) && prh >= 1)
@@ -316,7 +198,6 @@ public class AppConfig
                 if (root.TryGetProperty("predict_accuracy_retain_days", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var par) && par >= 1)
                     cfg.PredictAccuracyRetainDays = par;
-                // v3.21.0 规格 03 季节性分解
                 if (root.TryGetProperty("yield_seasonality_enabled", out v)) cfg.YieldSeasonalityEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("yield_seasonality_mode", out v) && v.ValueKind == JsonValueKind.String)
                     cfg.YieldSeasonalityMode = v.GetString() ?? "hourly";
@@ -332,7 +213,6 @@ public class AppConfig
                 if (root.TryGetProperty("yield_seasonality_min_sigma", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var ysms) && ysms >= 0)
                     cfg.YieldSeasonalityMinSigma = ysms;
-                // v3.22.0 规格 04 设备健康综合分
                 if (root.TryGetProperty("health_score_enabled", out v)) cfg.HealthScoreEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("health_warn_threshold", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwt) && hwt >= 0 && hwt <= 100)
@@ -352,9 +232,7 @@ public class AppConfig
                 if (root.TryGetProperty("health_weight_offline", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var hwo) && hwo >= 0 && hwo <= 1)
                     cfg.HealthWeightOffline = hwo;
-                // v3.26.0 无感热升级
                 if (root.TryGetProperty("auto_update", out v)) cfg.AutoUpdate = v.ValueKind != JsonValueKind.False;
-                // v3.24.0 机台端针对性自学习 (默认全关)
                 if (root.TryGetProperty("learn_baseline_enabled", out v)) cfg.LearnBaselineEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_resource_sampling_enabled", out v)) cfg.LearnResourceSamplingEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_priority_enabled", out v)) cfg.LearnPriorityEnabled = v.ValueKind == JsonValueKind.True;
@@ -369,10 +247,8 @@ public class AppConfig
                 if (root.TryGetProperty("learn_baseline_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lbm) && lbm >= 1) cfg.LearnBaselineMinSamples = lbm;
                 if (root.TryGetProperty("learn_group_alert_min", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lga) && lga >= 1) cfg.LearnGroupAlertMin = lga;
                 if (root.TryGetProperty("learn_resource_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lrr) && lrr >= 1) cfg.LearnResourceRetentionDays = lrr;
-                // 若未配置token，生成随机token并警告（防空token全网开放）
                 if (string.IsNullOrEmpty(cfg.AggToken))
                 {
-                    // 仅在非测试环境生成随机token提醒，实际不自动写回，由Save时处理
                     Logger.Warning("[安全] agg_token 未配置，当前为未鉴权模式，建议在config.json配置随机token");
                 }
                 return cfg;
@@ -389,14 +265,9 @@ public class AppConfig
         return new AppConfig();
     }
 
-    /// <summary>
-    /// 把当前实例的聚合相关字段合并写回 config.json（保留磁盘上其他未知字段，不破坏手改的配置）。
-    /// 写临时文件再原子改名；失败记 ERROR 返回 false（调用方决定是否提示）。
-    /// </summary>
     public bool Save()
     {
         var path = Path.Combine(BaseDir, "config.json");
-        // 域3 配置智能化 — 保存前快照（v3.19.0）：保留最近 20 份
         try
         {
             if (File.Exists(path))
@@ -411,7 +282,6 @@ public class AppConfig
         } catch {}
         try
         {
-            // 读现有 JSON 保留未知字段；读不到/损坏则从空开始
             using var doc = JsonDocument.Parse(File.Exists(path) ? File.ReadAllText(path) : "{}");
             using var stream = new MemoryStream();
             using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
@@ -441,7 +311,6 @@ public class AppConfig
                     "learn_baseline_sigma", "learn_baseline_min_samples", "learn_group_alert_min",
                     "learn_resource_retention_days",
                 };
-                // 先写磁盘上的未知字段（保留原样），本类管理的字段随后覆盖
                 foreach (var prop in doc.RootElement.EnumerateObject())
                 {
                     if (!known.Contains(prop.Name))
@@ -536,12 +405,10 @@ public class AppConfig
         }
 
     }
-    // ===== 域3 配置智能化 — 校验/推荐/回滚（v3.19.0） =====
     public List<string> Validate() => ConfigValidator.Validate(this);
 
     public static List<string> ValidateCurrent() => ConfigValidator.Validate(Load());
 
-    /// <summary>列出最近快照（按时间倒序）。</summary>
     public static List<string> ListBackups(int take = 20)
     {
         try
@@ -552,7 +419,6 @@ public class AppConfig
         } catch { return new List<string>(); }
     }
 
-    /// <summary>一键回滚到指定快照（或最近一份）。返回是否成功。</summary>
     public static bool Rollback(string? backupPath = null)
     {
         try

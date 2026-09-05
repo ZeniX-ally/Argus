@@ -6,29 +6,16 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
-/// <summary>
-/// 维修记录看板化(v2.2.0)的自检：拿真实 db 的副本跑，验证
-/// 迁移 / 备份 / 全字段更新 / 计数 / 排序 / 导出 12 列。
-/// 不碰真实数据（全在系统临时目录里做）。
-/// </summary>
 class SelfTest
 {
     static int _fail;
-    static readonly HttpClient _http = new();   // Web 服务自检共用（复用连接池）
+    static readonly HttpClient _http = new();
     static void Check(bool ok, string what)
     {
         Console.WriteLine((ok ? "[OK]   " : "[FAIL] ") + what);
         if (!ok) _fail++;
     }
 
-    /// <summary>
-    /// 从「当前工作目录」与「程序所在目录」两头各往上找 6 层（兼顾仓库根/子项目两种起点）。
-    ///
-    /// ⚠ 以前这里写死过 <c>F:\Programe\G4_9-QA\FctAggregator\...</c>，
-    /// 2026-07-31 仓库目录改名成 Argus 后该路径失效 —— 而且**不报错**，
-    /// 只是静静退成「用空库」，一批依赖真实库的断言会悄悄不跑（伪绿）。
-    /// 所以改成自己找，不再依赖任何绝对路径。
-    /// </summary>
     static string FindUp(string relative)
     {
         foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
@@ -38,7 +25,6 @@ class SelfTest
             {
                 var p = Path.Combine(dir.FullName, relative);
                 if (File.Exists(p)) return p;
-                // 从仓库根起步时还要下钻一层
                 var p2 = Path.Combine(dir.FullName, "FctAggregator", relative);
                 if (File.Exists(p2)) return p2;
             }
@@ -46,15 +32,11 @@ class SelfTest
         return "";
     }
 
-    // ⚠ [STAThread] 必须贴在 Main 上：自检会构造 ComboBox（AutoCompleteMode），
-    //   不是 STA 就直接 ThreadStateException。在它上方插方法时小心别把这个特性挤跑。
     [STAThread]
     static int Main()
     {
         var work = Path.Combine(Path.GetTempPath(), "fct_agg_" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(work);
-        // 真实库只是本地 fixture（data/*.db 已 gitignore）—— 别写死结构路径，
-        // 也别在没有它的机器上报红（下面几条依赖它的断言已改成有它才跑）。
         var real = FindUp(Path.Combine("dist", "data", "fct.db"));
         var db = Path.Combine(work, "fct.db");
 
@@ -63,7 +45,6 @@ class SelfTest
         Console.WriteLine($"工作目录: {work}");
         Console.WriteLine(haveReal ? $"已复制真实库: {new FileInfo(db).Length / 1024} KB" : "真实库不存在，用空库");
 
-        // ---------- 造 legacy closed 数据（真实库里可能没有） ----------
         int legacyCount = 0;
         if (haveReal)
         {
@@ -88,7 +69,6 @@ class SelfTest
         }
         SqliteConnection.ClearAllPools();
 
-        // ---------- 打开库 = 触发 Init() 里的迁移 ----------
         var d = new Database(db);
         Check(true, "Database 构造完成（Init + 迁移已跑）");
 
@@ -110,11 +90,9 @@ class SelfTest
         }
         Check(stillClosed == 0, $"closed -> resolved 迁移生效（残留 closed = {stillClosed}）");
 
-        // 幂等：再开一次不应该炸、也不应该有第二次改写
         var d2 = new Database(db);
         Check(true, "重复打开库（迁移幂等，无异常）");
 
-        // ---------- 时间统一解析（v3.3.0: 8/14/17 位数字 + ISO 带时区毫秒） ----------
         Console.WriteLine("\n【时间识别】四种来源格式统一解析");
         Check(TimeUtil.Normalize("2026-07-22T12:47:00.213+08:00") == "2026-07-22 12:47:00",
               "ISO 带时区毫秒(BATCH TIMESTAMP)解析正确");
@@ -127,7 +105,6 @@ class SelfTest
         Check(TimeUtil.Normalize("") == "", "空时间返回空");
         Check(TimeUtil.Short("2026-07-22T12:47:00.213+08:00") != "—", "Short 对 ISO 时间可识别");
 
-        // ---------- 时区不漂移（v3.4.13 加固：带偏移 ISO 按墙上时间取，不随机器时区转换） ----------
         Check(TimeUtil.Normalize("2026-08-14T07:17:29.004+08:00") == "2026-08-14 07:17:29",
               "ISO +08:00 偏移：按墙上时间解析，不随机器时区漂移");
         Check(TimeUtil.Normalize("2026-08-14T07:17:29.004+0800") == "2026-08-14 07:17:29",
@@ -136,10 +113,6 @@ class SelfTest
         Check(TimeUtil.Normalize("2026-08-14T07:17:29.004-05:00") == "2026-08-14 07:17:29",
               "负偏移按原墙上时间取（不换算成机器本地）");
 
-
-        // ---------- 域名1 智能时间：文件名时间 + 系统时间近邻校验（v3.19.0） ----------
-        // 正常文件名时间戳（贴近系统时间）应解析出来；
-        // 纯数字但离系统时间 >30 天的段（SN/批次号被 TsSegRe 误抓）应判空，交由调用方回退目录日期。
         Check(TimeUtil.ResolveFileNameTime("P_20260722124700283.xml", new DateTime(2026,7,22)) == "2026-07-22 12:47:00",
               "域名1: 文件名 17 位时间贴近系统时间可解析");
         Check(TimeUtil.ResolveFileNameTime("P_20260722124700.xml", new DateTime(2026,7,22)) == "2026-07-22 12:47:00",
@@ -152,7 +125,6 @@ class SelfTest
               "域名1: 无 14/17 位数字段返回空");
         Check(TimeUtil.ResolveFileNameTime(null) == "", "域名1: 空输入返回空");
 
-        // ---------- 文件名提取精准测试时间 (v3.23.2 现场实测文件名格式) ----------
         Check(TimeUtil.ExtractFileNameTime("P_Fts_PEU_G49_FCT6_E3002781AFV75236898002K30500272_20260901105125969_20260901675353.xml") == "2026-09-01 10:51:25",
               "ExtractFileNameTime: 真实现场 17 位时间戳提取年月日时分秒正确(排除后缀非时间段)");
         Check(TimeUtil.ExtractFileNameTime("F_Fts_PEU_G49_FCT6_SN123456_20260901105125.xml") == "2026-09-01 10:51:25",
@@ -166,22 +138,19 @@ class SelfTest
         Check(pfOut != null && pfOut.Error == true, "域名1: 畸形 XML 应判解析失败");
         Check(pfOut != null && pfOut.ErrorCode == "xml_malformed", "域名1: 畸形 XML 分类码=xml_malformed");
 
-
-        // ---------- 域2 DB 智能化：慢查询/健康巡检/分层（v3.19.0） ----------
         {
             var tmp2 = Path.Combine(Path.GetTempPath(), "fct_db2_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmp2);
             var dbPath2 = Path.Combine(tmp2, "test.db");
             var db2 = new Database(dbPath2);
             db2.LogSlowQuery("SELECT * FROM test_records WHERE test_date=@c", 600);
-            db2.LogSlowQuery("SELECT 1", 100); // 不应记录
+            db2.LogSlowQuery("SELECT 1", 100);
             using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath2}"))
             { c.Open(); using var cmd = c.CreateCommand(); cmd.CommandText="SELECT COUNT(*) FROM db_slow_log"; var cnt=Convert.ToInt32(cmd.ExecuteScalar()); Check(cnt==1, $"域2: 慢查询仅记录>500ms（实得 {cnt}）"); }
             var hc = db2.RunHealthCheck();
             Check(hc == "ok", $"域2: 健康巡检 integrity_check=ok（实得 {hc}）");
             using (var c2 = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath2}"))
             { c2.Open(); using var cmd2 = c2.CreateCommand(); cmd2.CommandText="SELECT COUNT(*) FROM db_health_log WHERE check_type='integrity_check'"; var cnt2=Convert.ToInt32(cmd2.ExecuteScalar()); Check(cnt2>=1, $"域2: 健康日志已落库（实得 {cnt2}）"); }
-            // 分层：插入一条 100 天前的旧记录，再归档应删 1 条
             var oldDate = DateTime.Today.AddDays(-100).ToString("yyyyMMdd");
             db2.BatchInsert(new[] { new TestRecord{ StationId="FCT1", Model="E300", Category="Offline", TestDate=oldDate, Sn="SN-OLD", Result="FAIL", XmlPath="X:\\old.xml", FailReason="OLD", BatchTimestamp="2026-01-01 00:00:00"} });
             var del = db2.ArchiveColdData(90);
@@ -189,7 +158,6 @@ class SelfTest
             try { Directory.Delete(tmp2, true); } catch { }
         }
 
-        // ---------- 域3 配置智能化：校验/推荐/快照回滚（v3.19.0） ----------
         {
             var badCfg = new AppConfig{ MeshPort=0, AggHttpPort=99999, ResultsRoot="", Peers = new List<string>{"not-a-url"}, DeviceAlertCpuPct=200, TodoScanDays=0 };
             var errs = ConfigValidator.Validate(badCfg);
@@ -198,35 +166,29 @@ class SelfTest
             var goodCfg = new AppConfig{ MeshPort=8081, AggHttpPort=8080, ResultsRoot="D:\\Results", Peers = new List<string>{"http://192.168.1.10:8081"}, DeviceAlertCpuPct=90, DeviceAlertDiskFreeGb=10, YieldAlertYieldPct=90, TodoScanDays=30, DbMaintenanceHour=3 };
             var errs2 = ConfigValidator.Validate(goodCfg);
             Check(errs2.Count==0, $"域3: 合法配置校验应 0 错误（实得 {errs2.Count}）");
-            // 推荐（空库不应抛）
             var tmp3 = Path.Combine(Path.GetTempPath(), "fct_cfg3_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmp3);
             var aggTmp = new AggDatabase(Path.Combine(tmp3, "agg.db")); aggTmp.Open();
             var recs = ConfigAdvisor.Recommend(goodCfg, aggTmp);
             Check(recs != null, "域3: 推荐应返回列表（空库）");
-            // 注入一些 yld_daily 模拟低良率以触发推荐
             for(int dd=0; dd<10; dd++){ var date=DateTime.Today.AddDays(-dd).ToString("yyyyMMdd"); aggTmp.UpsertDailyStats("FCT1", date, new AggDatabase.DailyStats(100, 85, 15, 0, 5)); }
             var recs2 = ConfigAdvisor.Recommend(goodCfg, aggTmp);
             Check(recs2 != null, $"域3: 有数据时推荐应返回（实得 {(recs2==null?-1:recs2.Count)} 条）");
             try { Directory.Delete(tmp3, true); } catch {}
         }
 
-        // ---------- 域4 设备智能化：预测/变更/巡检（v3.19.0） ----------
         {
             var tmp4 = Path.Combine(Path.GetTempPath(), "fct_dev4_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmp4);
             var agg4 = new AggDatabase(Path.Combine(tmp4, "agg.db")); agg4.Open();
-            // 预置 device_info + samples 触发预测
             agg4.UpsertDeviceInfo(new DeviceInfoRow{ Machine="FCT_PRED", DiskFreeGb=3, CpuUsage=85, LastSeen=DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), UpdatedAt=DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") });
             for(int i=6;i>=0;i--){
                 var ts=DateTime.Now.AddDays(-i).ToString("yyyy-MM-dd HH:mm:ss");
-                // cpu 递增 5%/天，disk 递减 2GB/天，制造明显趋势
                 agg4.InsertDeviceSample(new DeviceSampleRow{ Machine="FCT_PRED", Ts=ts, CpuUsage=55 + (6-i)*5, MemUsedMb=4000, DiskFreeGb=20 - (6-i)*2 });
             }
             var preds = DevicePredictor.Predict(agg4, 7);
             Check(preds.Count >= 1, $"域4: 预测应检出异常（实得 {preds.Count}）");
             Check(preds.Any(x=>x.Metric=="disk"), "域4: 磁盘耗尽预测应命中");
-            // FCT 变更
             var fct1 = new DeviceFctRow{ Machine="FCT_PRED", Found=true, IniPath="C:/FCT.ini", Models=new List<string>{"M1"}, FwVersions=new List<(string,string)>{("FW1","1.0")}, Devices=new List<FctDeviceInfo>{ new FctDeviceInfo{Name="Dev1", Port="COM1", Type="com", Online=true}}};
             var changed1 = FctIniWatcher.CheckAndLog(agg4, fct1);
             Check(changed1, "域4: 首次 FCT 上报应记变更");
@@ -237,12 +199,10 @@ class SelfTest
             Check(changed3, "域4: 型号/FW 变更应记");
             var logs = agg4.QueryFctChanges("FCT_PRED", 10);
             Check(logs.Count >= 2, $"域4: fct_change_log 应有 ≥2 条（实得 {logs.Count}）");
-            // 巡检
             agg4.UpsertDeviceInfo(new DeviceInfoRow{ Machine="FCT_LOW", DiskFreeGb=4, CpuUsage=10, LastSeen=DateTime.Now.AddMinutes(-10).ToString("yyyy-MM-dd HH:mm:ss") });
             var sug = DeviceInspector.Inspect(agg4);
             Check(sug.Any(s=>s.Machine=="FCT_LOW" && s.Kind=="disk"), "域4: 巡检应检出磁盘低");
             Check(sug.Any(s=>s.Machine=="FCT_PRED" && s.Kind=="com"), "域4: 巡检应检出 COM 离线");
-            // API smoke: /api/devices/predict 与 /api/fct/changes
             try{
                 agg4.UpsertUser("d4admin", PasswordHasher.Hash("pwd"), "admin");
                 var tok = agg4.GetUserByName("d4admin")!.Token;
@@ -264,20 +224,16 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
-        // ---------- 域7 维修/待办智能：优先级/流转/去重（v3.19.0） ----------
         {
             var tmp7 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fct_dom7_" + Guid.NewGuid().ToString("N")[..6]);
             System.IO.Directory.CreateDirectory(tmp7);
             var agg7 = new AggDatabase(System.IO.Path.Combine(tmp7, "agg.db")); agg7.Open();
-            // PriorityScorer
             var scHigh = PriorityScorer.Score(25, 4, 10);
             Check(scHigh.Level=="high" && scHigh.Zh=="高", $"域7: 高优先级判定（{scHigh.Level}/{scHigh.Score}）");
             var scLow = PriorityScorer.Score(2, 1, 1);
             Check(scLow.Level=="low", $"域7: 低优先级判定（{scLow.Level}）");
             var scMid = PriorityScorer.Score(8, 2, 3);
             Check(scMid.Level=="medium", $"域7: 中优先级判定（{scMid.Level}）");
-            // TodoGrouping 机台上下文：同 fail 不同机台应分不同待办（station_id 维度）
-            // 模拟多条 FAIL 登记
             agg7.InsertBatch(new[]{
                 new AggFailRow{ Machine="FCT1", StationId="FCT1", Seq=1, TestDate=DateTime.Today.ToString("yyyyMMdd"), Result="FAIL", FailReason="5V_Rail", Model="M1", Sn="SN1"},
                 new AggFailRow{ Machine="FCT2", StationId="FCT2", Seq=1, TestDate=DateTime.Today.ToString("yyyyMMdd"), Result="FAIL", FailReason="5V_Rail", Model="M1", Sn="SN2"},
@@ -287,11 +243,9 @@ class SelfTest
             var todos = agg7.ListTodoView();
             Check(todos.Count>=2, $"域7: 同 fail 不同机台应分卡（实得 {todos.Count}）");
             Check(todos.Any(x=> x.GroupKey==TodoGrouping.KeyOf("5V_Rail")), "域7: KeyOf 归一命中");
-            // 去重：同机台同 fail 重复登记不应新增
             int before7 = todos.Count;
             agg7.SyncTodoItems(30);
             Check(agg7.ListTodoView().Count==before7, "域7: 重复 SyncTodo 不新增（去重）");
-            // FlowAdvisor：构造历史流转 open->in_progress
             agg7.CreateMaintenance(new MaintenanceRecord{ StationId="FCT1", FailItem="FlowTest", Status="open", Severity="major" });
             var recs = agg7.ListMaintenance("", 100);
             var first = recs.FirstOrDefault(r=> r.FailItem=="FlowTest");
@@ -304,7 +258,6 @@ class SelfTest
             Check(adv.Suggested=="in_progress", $"域7: 流转推荐 open->in_progress（实得 {adv.Suggested}）");
             var adv2 = FlowAdvisor.Advise("in_progress", agg7);
             Check(adv2.Suggested.Length>0, $"域7: 流转推荐 in_progress 有建议（{adv2.Suggested}）");
-            // API smoke
             try{
                 agg7.UpsertUser("d7admin", PasswordHasher.Hash("pwd"), "admin");
                 var tok = agg7.GetUserByName("d7admin")!.Token;
@@ -324,14 +277,11 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
-        // ---------- 域8 UI 智能：布局/高亮/搜索（v3.19.0） ----------
         {
-            // LayoutAdvisor
             var orderViewer = LayoutAdvisor.SuggestOrder(new Dictionary<string,int>{{"fails",10},{"overview",2}}, "viewer");
             Check(orderViewer[0]=="fails", $"域8: 布局建议按频次 fails 置顶（实得 {orderViewer[0]}）");
             var orderEng = LayoutAdvisor.SuggestOrder(new Dictionary<string,int>{{"maintenance",5}}, "engineer");
             Check(orderEng[0]=="maintenance", $"域8: engineer 维护频次置顶（实得 {orderEng[0]}）");
-            // HighlightEngine
             var tmp8 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fct_dom8_" + Guid.NewGuid().ToString("N")[..6]);
             System.IO.Directory.CreateDirectory(tmp8);
             var agg8 = new AggDatabase(System.IO.Path.Combine(tmp8, "agg.db")); agg8.Open();
@@ -339,9 +289,7 @@ class SelfTest
             var cfg = new AppConfig{ DeviceAlertDiskFreeGb=10, DeviceAlertCpuPct=90, DeviceAlertOfflineMinutes=5 };
             var hl = HighlightEngine.GetHighlights(agg8, cfg);
             Check(hl.Any(x=> x.Machine=="FCT_HL"), $"域8: 高亮应命中磁盘/CPU/离线异常（实得 {hl.Count}）");
-            // 前端文件存在性
             var baseDir = AppContext.BaseDirectory;
-            // 从程序目录往上找 public
             string FindPublic(string start){
                 var dir = new System.IO.DirectoryInfo(start);
                 for(int i=0;i<6 && dir!=null; i++, dir=dir.Parent){
@@ -366,7 +314,6 @@ class SelfTest
                 Check(css.Contains("highlight-critical"), "域8: theme.css 含高亮样式");
                 Check(css.Contains("pulse-highlight"), "域8: theme.css 含脉冲动画");
             }
-            // API smoke
             try{
                 agg8.UpsertUser("d8admin", PasswordHasher.Hash("pwd"), "admin");
                 var tok = agg8.GetUserByName("d8admin")!.Token;
@@ -386,15 +333,13 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
-        // ---------- 域9 告警智能：预测/自愈（v3.19.0） ----------
         {
             var tmp9 = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fct_dom9_" + Guid.NewGuid().ToString("N")[..6]);
             System.IO.Directory.CreateDirectory(tmp9);
             var agg9 = new AggDatabase(System.IO.Path.Combine(tmp9, "agg.db")); agg9.Open();
-            // 构造 yld_daily 下滑趋势触发预测
             for(int dd9=4; dd9>=0; dd9--){
                 var date = DateTime.Today.AddDays(-dd9).ToString("yyyyMMdd");
-                int pass = dd9==0 ? 91 : 95 - dd9; // 逐日下滑，末日仍在阈值上但预测跌破
+                int pass = dd9==0 ? 91 : 95 - dd9;
                 agg9.UpsertDailyStats("FCT9", date, new AggDatabase.DailyStats(100, pass, 100-pass, 0, 5));
             }
             agg9.UpsertDeviceInfo(new DeviceInfoRow{ Machine="FCT9", DiskFreeGb=3, CpuUsage=92, LastSeen=DateTime.Now.AddMinutes(-10).ToString("yyyy-MM-dd HH:mm:ss") });
@@ -405,13 +350,11 @@ class SelfTest
             AlertPredictor.LogPredictions(agg9, preds);
             var logs = agg9.QueryAlertPredicts("FCT9", 10);
             Check(logs.Count>=1, $"域9: 落库≥1（实得 {logs.Count}）");
-            // 自愈
             var heals = AlertHealer.Heal(agg9, "FCT9", "disk");
             Check(heals.Count>=1, $"域9: 自愈建议≥1（实得 {heals.Count}）");
             Check(heals.Any(x=> x.Suggestion.Length>0), "域9: 自愈含建议文本");
             var feishu = AlertHealer.FormatForFeishu("FCT9","disk", heals);
             Check(feishu.Contains("FCT9"), "域9: 飞书卡片含机台");
-            // API smoke
             try{
                 agg9.UpsertUser("d9admin", PasswordHasher.Hash("pwd"), "admin");
                 var tok = agg9.GetUserByName("d9admin")!.Token;
@@ -431,7 +374,6 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
-        // ==================== 自反馈（v3.20.0 规格 02：预测准确率对账 + 阈值推荐）====================
         {
             var tmpR = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fct_selfb_" + Guid.NewGuid().ToString("N")[..6]);
             System.IO.Directory.CreateDirectory(tmpR);
@@ -452,16 +394,13 @@ class SelfTest
                 aggR.Open();
                 Check(aggR.PredictAccuracyExists("alert", 1) == false, "自反馈: 空库不报错");
 
-                // 准备 fixture：3 天前的 yield 下滑预测 + 当日 yld_daily 已存在（"真跌破"→ hit）
                 var past3 = DateTime.Now.AddDays(-3).ToString("yyyy-MM-dd HH:mm:ss");
                 var yesterday = DateTime.Now.AddDays(-1).ToString("yyyy-MM-dd HH:mm:ss");
                 aggR.UpsertDailyStats("FCT_R1", DateTime.Now.AddDays(-2).ToString("yyyyMMdd"),
                     new AggDatabase.DailyStats(100, 88, 12, 0, 50));
-                // 模拟"3 天前发的 yield 预测（预测良率 87%，阈值 90）"
                 aggR.InsertAlertPredictLog("FCT_R1", "yield", "warn", 92.0, 87.0, "测试 fixture");
                 aggR.InsertAlertPredictLog("FCT_R1", "yield", "warn", 92.0, 88.0, "测试 fixture2");
 
-                // 断言 4：UPSERT 幂等
                 var rowA = new AggDatabase.AccuracyRow
                 {
                     Rule = "yield", Machine = "FCT_R1", PredictId = 999, PredictTable = "alert",
@@ -472,34 +411,28 @@ class SelfTest
                 aggR.UpsertPredictAccuracy(rowA);
                 var sameExists = aggR.PredictAccuracyExists("alert", 999);
                 Check(sameExists, "自反馈: PredictAccuracyExists → true");
-                aggR.UpsertPredictAccuracy(rowA);   // 二次 upsert 不报错
+                aggR.UpsertPredictAccuracy(rowA);
                 Check(aggR.PredictAccuracyExists("alert", 999), "自反馈: 二次 UPSERT 不报错");
 
-                // 断言 5：CountPredictAccuracyByRule
                 var statYield = aggR.CountPredictAccuracyByRule("yield", days: 30);
                 Check(statYield.Total >= 1 && statYield.Hit >= 1, $"自反馈: CountPredictAccuracyByRule 统计正确（{statYield.Total}/{statYield.Hit}）");
 
-                // 断言 6：QueryPredictAccuracy
                 var rowsQ = aggR.QueryPredictAccuracy(rule: "yield", days: 30);
                 Check(rowsQ.Count >= 1, $"自反馈: QueryPredictAccuracy 返回行（{rowsQ.Count}）");
                 Check(rowsQ.Any(r => r.Machine == "FCT_R1"), "自反馈: 按 rule 过滤命中");
 
-                // 断言 7：ClassifyYieldHit — 预测跌破实际也跌破 → hit
                 var predictTuple = (1L, past3, "FCT_X", "yield", "warn", 92.0, 87.0, "fixture");
                 var actualHit = new PredictAccuracyReconciler.ActualValuePublic { Value = 88.0, EventTs = DateTime.Now.AddDays(-2) };
                 var (h1, _) = PredictAccuracyReconciler.ClassifyYieldHit(actualHit, predictTuple, cfg);
                 Check(h1 == true, "自反馈: ClassifyYieldHit 预测跌破且真跌破 → hit");
 
-                // 断言 8：ClassifyYieldHit — 预测跌破实际未跌破 → miss
                 var actualMiss = new PredictAccuracyReconciler.ActualValuePublic { Value = 95.0, EventTs = DateTime.Now.AddDays(-2) };
                 var (h2, _) = PredictAccuracyReconciler.ClassifyYieldHit(actualMiss, predictTuple, cfg);
                 Check(h2 == false, "自反馈: ClassifyYieldHit 预测跌破但实际没跌破 → miss");
 
-                // 断言 9：RunOnce 至少跑过一次，不抛异常
                 var n = PredictAccuracyReconciler.RunOnce(aggR, cfg);
                 Check(n >= 0, $"自反馈: RunOnce 返回条数 ≥ 0（{n}）");
 
-                // 断言 10：阈值推荐 — 注入 35 条 miss，命中率 < 30% → 推荐 +5%
                 for (int i = 0; i < 35; i++)
                 {
                     var acc = new AggDatabase.AccuracyRow
@@ -519,7 +452,6 @@ class SelfTest
                 Check(summary.ThresholdTuning.Any(t => t.Rule == "yield" && t.Recommended > t.Current),
                       "自反馈: accuracy<30% → 推荐 yield 阈值上调");
 
-                // 断言 11：阈值推荐 — 全 hit（命中率 > 85%） → 推荐 -5%
                 for (int i = 0; i < 40; i++)
                 {
                     var acc = new AggDatabase.AccuracyRow
@@ -537,7 +469,6 @@ class SelfTest
                 var allHitYield = summary2.Summary["yield"];
                 Check(allHitYield.Total > 0, "自反馈: 全 hit fixture 后 yield 仍有统计");
 
-                // 断言 12：冷启动保护（< min_samples 不推荐）
                 var cfgCold = new AppConfig { PredictReconcileEnabled = true, PredictTuneMinSamples = 100, YieldAlertYieldPct = 90 };
                 var aggCold = new AggDatabase(System.IO.Path.Combine(tmpR, "cold.db"));
                 aggCold.Open();
@@ -554,7 +485,6 @@ class SelfTest
                 var summary3 = PredictAccuracyReconciler.Reconcile(aggCold, cfgCold);
                 Check(summary3.ThresholdTuning.Count == 0, "自反馈: 冷启动（< min_samples）不推荐");
 
-                // 断言 13：Purge 滚动清理
                 var oldTs = DateTime.Now.AddDays(-200).ToString("yyyy-MM-dd HH:mm:ss");
                 aggR.UpsertPredictAccuracy(new AggDatabase.AccuracyRow
                 {
@@ -565,7 +495,6 @@ class SelfTest
                 var purged = aggR.PurgeOldPredictAccuracy(180);
                 Check(purged >= 1, $"自反馈: PurgeOldPredictAccuracy 删除 ≥ 1 行（{purged}）");
 
-                // 断言 14：API 路由 /api/predict/accuracy
                 try
                 {
                     aggR.UpsertUser("radmin", PasswordHasher.Hash("pwd"), "admin");
@@ -574,14 +503,12 @@ class SelfTest
                     var localDb = new Database(System.IO.Path.Combine(tmpR, "local.db"));
                     var meshR = new MeshNode(new AppConfig { StationId = "RTEST", AggToken = "rtok", Peers = new List<string>() },
                         "RTEST", localDb, aggR, new string[0]);
-                    // 显式 MeshNode 重载（避免 C# 优先解析到 AggWatcher 重载）
                     var srvR = new WebAggServer(port, (MeshNode)meshR, aggR, tmpR, tmpR, "rtok");
                     srvR.Start(); System.Threading.Thread.Sleep(400);
                     var baseUrl = $"http://127.0.0.1:{port}";
                     var rr1 = HttpGetWithToken(baseUrl + "/api/predict/accuracy?days=30&force=1", tok);
                     var body1 = rr1.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                     Check(rr1.StatusCode == System.Net.HttpStatusCode.OK, "自反馈: GET /api/predict/accuracy → 200");
-                    // 响应字段为 PascalCase（System.Text.Json 默认 + IncludeFields）
                     Check(body1.Contains("WindowDays") && body1.Contains("Summary") && body1.Contains("PerMachine"),
                           $"自反馈: 响应含 WindowDays/Summary/PerMachine 字段");
                     srvR.Stop(); meshR.Stop();
@@ -596,7 +523,6 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
-        // ==================== 季节性（v3.21.0 规格 03：季节性分解）====================
         {
             var tmpR = Path.GetTempPath() + "fct_selfseason_" + Guid.NewGuid().ToString("N")[..6];
             try
@@ -606,7 +532,6 @@ class SelfTest
                 var aggR = new AggDatabase(dbPath);
                 aggR.Open();
 
-                // 注入小时粒度记录：每 (机台, 日期, 小时) 写 pass 条 PASS + fail 条 FAIL
                 void SeedHour(string m, int seq, string ymd, int hour, int pass, int fail)
                 {
                     using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}");
@@ -626,13 +551,11 @@ class SelfTest
                     }
                 }
 
-                // 断言 1：空输入不崩溃，OverallMean=100、Anomalies 空、长度 = daysBack
                 var decEmpty = YieldDecomposer.Decompose(aggR, "S_NODATA", YieldDecomposer.SeasonalityMode.Hourly, 28, 7, 1.5);
                 Check(decEmpty.OverallMean == 100 && decEmpty.Anomalies.Count == 0 && decEmpty.Trend.Count == 28 && decEmpty.Residual.Count == 28,
                     "季节性: 空输入不崩溃 OverallMean=100/Anomalies 空/长度 28");
                 Check(decEmpty.Sigma == 0 && decEmpty.Seasonal.Count == 24, "季节性: 空输入 Seasonal=24 桶 σ=0");
 
-                // 断言 2+6：平稳数据（全 95%）→ sigma=0 不除零，PredictWithSeasonality 回退 null
                 for (int i = 27; i >= 0; i--)
                     aggR.UpsertDailyStats("S_STABLE", DateTime.Today.AddDays(-i).ToString("yyyyMMdd"), new AggDatabase.DailyStats(100, 95, 5, 0, 50));
                 var cfgOn = new AppConfig { YieldSeasonalityEnabled = true, YieldSeasonalityMode = "weekly", YieldSeasonalityMinSigma = 0.5, YieldAlertYieldPct = 90 };
@@ -641,7 +564,6 @@ class SelfTest
                 Check(YieldDecomposer.PredictWithSeasonality(aggR, cfgOn, "S_STABLE") == null,
                     "季节性: 平稳数据（σ<min_sigma）回退 v3.19.0 老逻辑（返回 null）");
 
-                // 断言 3：27 天 95% + 今天 70% → 异常日被检出 + 预测产出 1 条（预测只看最新一天，异常必须落在今天）
                 var anomDay = DateTime.Today;
                 for (int i = 27; i >= 0; i--)
                 {
@@ -655,21 +577,19 @@ class SelfTest
                 Check(predAnom != null && predAnom.Count == 1 && predAnom[0].Rule == "yield" && predAnom[0].Level == "warn",
                     "季节性: 异常机台预测产出 1 条 yield/warn");
 
-                // 断言 4：hourly 白班 95% / 夜班 90% 循环 14 天 → 周期被识别，不误报
                 int seedSeq = 1;
                 for (int i = 13; i >= 0; i--)
                 {
                     var ymd = DateTime.Today.AddDays(-i).ToString("yyyyMMdd");
-                    for (int h = 8; h <= 19; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 19, 1);   // 白天 95%
-                    for (int h = 20; h <= 23; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 9, 1);   // 夜 90%
-                    for (int h = 0; h <= 7; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 9, 1);     // 夜 90%
+                    for (int h = 8; h <= 19; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 19, 1);
+                    for (int h = 20; h <= 23; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 9, 1);
+                    for (int h = 0; h <= 7; h++) SeedHour("S_SHIFT", seedSeq += 20, ymd, h, 9, 1);
                 }
                 var decShift = YieldDecomposer.Decompose(aggR, "S_SHIFT", YieldDecomposer.SeasonalityMode.Hourly, 14, 7, 1.5);
                 Check(decShift.Anomalies.Count == 0, $"季节性: 白班/夜班周期不误报（异常 {decShift.Anomalies.Count} 个）");
                 Check(decShift.Seasonal.Count == 24 && Math.Abs(decShift.Seasonal[8]) > 0.5 && Math.Abs(decShift.Seasonal[0]) > 0.5,
                     "季节性: 昼夜周期分量被捕获（白天桶 >0.5pp、深夜桶 <−0.5pp）");
 
-                // 断言 5：weekly 周一 85% / 其余 90% → 周一低点不当异常
                 for (int i = 27; i >= 0; i--)
                 {
                     var dt = DateTime.Today.AddDays(-i);
@@ -681,23 +601,19 @@ class SelfTest
                 Check(decWeek.Seasonal.Count == 7 && decWeek.Seasonal[(int)DayOfWeek.Monday] < -3,
                     "季节性: 周一周期分量 ≈ −5pp");
 
-                // 断言 7：开关关 → 老逻辑零影响（集成回归）
                 var cfgOff = new AppConfig { YieldSeasonalityEnabled = false, YieldSeasonalityMode = "weekly", YieldAlertYieldPct = 90 };
                 Check(YieldDecomposer.PredictWithSeasonality(aggR, cfgOff, "S_ANOM") == null, "季节性: 开关关 PredictWithSeasonality 返回 null");
                 var predsOff = AlertPredictor.Predict(aggR);
                 Check(predsOff.All(p => !(p.Detail ?? "").Contains("季节性分解")), "季节性: 开关关 /api/alerts/predict 无季节性项（老逻辑回归）");
 
-                // 断言 8：跨机台独立分解不串
                 var decM1 = YieldDecomposer.Decompose(aggR, "S_ANOM", YieldDecomposer.SeasonalityMode.Weekly, 28, 7, 1.5);
                 var decM2 = YieldDecomposer.Decompose(aggR, "S_STABLE", YieldDecomposer.SeasonalityMode.Weekly, 28, 7, 1.5);
                 Check(decM1.Anomalies.Count >= 1 && decM2.Anomalies.Count == 0,
                     "季节性: 跨机台独立分解（异常机台有 / 平稳机台无）");
 
-                // 断言 12：非法模式回退 hourly
                 Check(YieldDecomposer.ParseMode("garbage") == YieldDecomposer.SeasonalityMode.Hourly, "季节性: 非法 mode 回退 hourly");
                 Check(YieldDecomposer.ParseMode("weekly") == YieldDecomposer.SeasonalityMode.Weekly, "季节性: mode=weekly 解析正确");
 
-                // 断言 9-11：HTTP 端点 + 权限
                 try
                 {
                     aggR.UpsertUser("sadmin", PasswordHasher.Hash("pwd"), "admin");
@@ -720,19 +636,15 @@ class SelfTest
                     var rNoM = HttpGetWithToken(baseUrl + "/api/yield/decompose?days=28", viewerTok);
                     Check(rNoM.StatusCode == System.Net.HttpStatusCode.BadRequest, "季节性: machine 缺失 → 400");
 
-                    // 权限：viewer 改配置 → 403
                     var rV403 = HttpPostWithToken(baseUrl + "/api/yield/decompose/config", viewerTok, "{\"enabled\":true}");
                     Check(rV403.StatusCode == System.Net.HttpStatusCode.Forbidden, "季节性: viewer POST config → 403");
-                    // admin 改配置 → 200 生效，GET config 回显
                     var rAdmin = HttpPostWithToken(baseUrl + "/api/yield/decompose/config", adminTok, "{\"enabled\":true,\"mode\":\"daily\"}");
                     Check(rAdmin.StatusCode == System.Net.HttpStatusCode.OK, "季节性: admin POST config → 200");
                     var rCfg = HttpGetWithToken(baseUrl + "/api/yield/decompose/config", viewerTok);
                     var bCfg = rCfg.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                     Check(bCfg.Contains("\"enabled\":true") && bCfg.Contains("daily"), "季节性: 热生效后 GET config 回显 enabled=true/mode=daily");
-                    // 非法 mode → 400
                     var rBad = HttpPostWithToken(baseUrl + "/api/yield/decompose/config", adminTok, "{\"mode\":\"monthly\"}");
                     Check(rBad.StatusCode == System.Net.HttpStatusCode.BadRequest, "季节性: 非法 mode → 400");
-                    // 复位（不污染全局单例与后续断言）
                     HttpPostWithToken(baseUrl + "/api/yield/decompose/config", adminTok, "{\"enabled\":false,\"mode\":\"hourly\"}");
 
                     srvR.Stop(); meshR.Stop();
@@ -746,30 +658,21 @@ class SelfTest
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         }
 
-        // ---------- 文件名时间戳段位容错（v3.4.13 加固：不依赖固定段位，SN 含下划线不挤错） ----------
         {
-            // 标准 6 段 SN 场景：第 7 段 17 位时间戳
             var p1 = FctAggregator.Parsing.PathMeta.FromPath(@"D:\Results\Offline\E3002781\20260814\O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_20260814072417293_2026813232417386.xml", null);
             Check(p1 != null && p1.FileTime == "20260814072417293",
                   $"文件名时间戳: 标准段位取第 7 段 17 位（实得 {p1?.FileTime}）");
-            // SN 含下划线（段位漂移）：时间戳仍在独立段上，正则不依赖固定位置。
-            // （SN 提取仍按固定段位 —— 文件名规范中 SN 无下划线，此处只保证时间戳不错位）
             var p2 = FctAggregator.Parsing.PathMeta.FromPath(@"D:\Results\Offline\E3002781\20260814\O_Fts_PEU_G49_FCT6_SN_XX_1234_20260814072417293_2026813232417386.xml", null);
             Check(p2 != null && p2.FileTime == "20260814072417293",
                   $"文件名时间戳: SN 含下划线段位漂移仍能取对时间（实得 {p2?.FileTime}）");
-            // 第 8 段 16 位非标准时间戳：自动跳过，不被误认
             var p3 = FctAggregator.Parsing.PathMeta.FromPath(@"D:\Results\Offline\E3002781\20260814\O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_20260814072417293_2026813232417386.xml", null);
             Check(p3 != null && p3.FileTime == "20260814072417293",
                   $"文件名时间戳: 第 8 段 16 位非标准段自动跳过（实得 {p3?.FileTime}）");
-            // 14 位时间戳兼容
             var p4 = FctAggregator.Parsing.PathMeta.FromPath(@"D:\Results\Offline\E3002781\20260814\O_Fts_PEU_G49_FCT6_SN1234_20260814072417_20260814072418.xml", null);
             Check(p4 != null && p4.FileTime == "20260814072417",
                   $"文件名时间戳: 14 位兼容（实得 {p4?.FileTime}）");
         }
 
-        // ---------- batch_timestamp 时间源：仅文件名（v3.4.x：产线 XML 的 BATCH/PANEL/DUT/GROUP 时间均不可信） ----------
-        // 文件名含 20260814072417293（17 位）→ "2026-08-14 07:24:17"。
-        // BATCH@TIMESTAMP=07-30 18:21（session 打开）、PANEL@TIMESTAMP=08-14 07:17 均被忽略。
         {
             var tsRoot = Path.Combine(work, "tsrc");
             var tsDir = Path.Combine(tsRoot, "Offline", "E3002781", "20260814");
@@ -795,7 +698,6 @@ class SelfTest
                   $"时间源: Processor 也取文件名时间（实得 {tsRec?.BatchTimestamp}）");
             Check(tsRec != null && tsRec.StationId == "FCT6",
                   $"时间源用例: 机台号仍从 TESTER 提取（实得 {tsRec?.StationId}）");
-            // 无文件名时间戳时回退目录日期
             var tsXml2 = Path.Combine(tsDir,
                 "O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_nodate_2026813232417387.xml");
             File.WriteAllText(tsXml2, tsBody);
@@ -805,7 +707,6 @@ class SelfTest
             TryDeleteDir(tsRoot);
         }
 
-        // ---------- FCT.ini 自动识别（v3.3.0: 不依赖配置路径） ----------
         Console.WriteLine("\n【FCT.ini 自动识别】FTS 树搜索 / 浅层全盘搜索");
         {
             var iniRoot = Path.Combine(work, "autoini");
@@ -817,7 +718,6 @@ class SelfTest
                   "FTS 树搜索能命中深层 FCT.ini");
             var shallow = FctIni.SearchShallow(new DirectoryInfo(work), 6);
             Check(shallow != null, "浅层搜索也能命中(自动识别兜底路径)");
-            // 大小写: FctIni 用大小写不敏感匹配
             Directory.CreateDirectory(Path.Combine(iniRoot, "FTS", "Cfg"));
             File.WriteAllText(Path.Combine(iniRoot, "FTS", "Cfg", "fct.ini"), "x");
             var hit2 = FctIni.SearchFtsTree(new DirectoryInfo(iniRoot), 8);
@@ -825,13 +725,10 @@ class SelfTest
                   "文件名大小写不敏感(fct.ini 也能识别)");
         }
 
-        // ---------- 旧库兼容（v3.3.0：产线老库直开无痛升级） ----------
         Console.WriteLine("\n【旧库兼容】产线老库直开: 缺新表 + investigating/closed 状态 + 旧时间格式");
         {
             var oldDb = Path.Combine(work, "legacy_fct.db");
             File.Delete(oldDb);
-            // 1) 手工建「旧结构」库: 只有 test_records + maintenance_records,
-            //    没有 todo_items / app_meta / dismissed_todos（v2.4.0 时代的结构）
             using (var c = new SqliteConnection($"Data Source={oldDb}"))
             {
                 c.Open();
@@ -858,7 +755,6 @@ class SelfTest
                 ";
                 cmd.ExecuteNonQuery();
             }
-            // 2) 新版 Database 直开: 不炸 + 自动补建新表
             var ld = new Database(oldDb);
             using (var c = new SqliteConnection($"Data Source={oldDb}"))
             {
@@ -871,13 +767,11 @@ class SelfTest
                 foreach (var t in new[] { "todo_items", "app_meta", "dismissed_todos", "resolvers" })
                     Check(tables.Contains(t), $"旧库打开后自动补建表 {t}");
             }
-            // 3) 旧状态兼容: investigating 归并「待办」、closed 迁移「已完成」
             var inv = ld.ListMaintenance("investigating", 50).FirstOrDefault();
             Check(inv != null && MaintenanceMeta.Normalize(inv.Status) == "open",
                   "旧 investigating 记录仍在库中, 归一化到「待办」列");
             Check(ld.ListMaintenance("resolved", 50).Any(m => m.FailItem == "旧版已关闭项"),
                   "旧 closed 记录迁移到「已完成」列");
-            // 4) 老数据待办登记 + 两种旧时间格式都能解析
             var createdLegacy = ld.SyncTodoItems(90);
             Check(createdLegacy >= 2, $"旧库历史不良可登记待办（新登记 {createdLegacy} 条）");
             var legacyView = ld.ListTodoView();
@@ -888,13 +782,10 @@ class SelfTest
             var lg2 = ld.AllFails("FCT7").FirstOrDefault(r => r.Sn == "SN-LG2");
             Check(lg2 != null && TimeUtil.Normalize(lg2.Timestamp) == "2026-08-01 09:30:15",
                   "旧库 14 位数字时间可解析显示");
-            // 5) 待办删除在旧库上也能用（dismissed_todos 自动补建后写入标记）
             var delLegacy = legacyView.First();
             Check(ld.DeleteTodo(delLegacy.Id), "旧库上删除待办正常（自动补建 dismissed_todos 写永久标记）");
             Check(!ld.ListTodoView().Any(x => x.Id == delLegacy.Id), "删除后离开待办列");
 
-            // 6) v3.26.2 fixture_id 补列 + 续推回读保真：旧库打开后 ALTER 自动补列；
-            //    BatchInsert 写入 → FetchFailRecordsAfter（断线补偿/续推回读路径）FixtureId 不丢成 null
             bool hasFixCol = false;
             using (var c = new SqliteConnection($"Data Source={oldDb}"))
             {
@@ -919,7 +810,6 @@ class SelfTest
                   "旧数据（无 fixture_id）回读为 null 不炸，聚合端回落 fail_reason 前缀归因");
         }
 
-        // ---------- 五个状态各造几条 ----------
         var keys = MaintenanceMeta.Statuses.Select(s => s.Key).ToArray();
         Check(keys.Length == 4 && keys[0] == "unknown" && keys[3] == "resolved",
               $"状态体系 4 个且顺序正确: {string.Join(" -> ", MaintenanceMeta.Statuses.Select(s => s.Zh))}");
@@ -956,7 +846,6 @@ class SelfTest
             }
         Check(seq == 12, $"造了 {seq} 条测试记录（4 状态 × 3）");
 
-        // ---------- CountMaintenanceByStatus ----------
         var counts = d.CountMaintenanceByStatus();
         var norm = new Dictionary<string, int>();
         foreach (var kv in counts)
@@ -967,11 +856,10 @@ class SelfTest
         Console.WriteLine("    计数: " + string.Join(", ",
             MaintenanceMeta.Statuses.Select(s => $"{s.Zh}={norm.GetValueOrDefault(s.Key)}")));
         Check(keys.All(k => norm.GetValueOrDefault(k) >= 3), "每个状态的真实计数 >= 3（GROUP BY 统计可用）");
-        int resolvedExpected = 3 + legacyCount;      // 自检造的 3 条 + 迁移过来的 legacy
+        int resolvedExpected = 3 + legacyCount;
         Check(norm.GetValueOrDefault("resolved") == resolvedExpected,
               $"已完成计数 = {norm.GetValueOrDefault("resolved")}（3 新 + {legacyCount} 迁移）");
 
-        // 计数总和 == 全表条数（不受 LIMIT 影响，这是列头徽章的意义）
         int total;
         using (var c = new SqliteConnection($"Data Source={db}"))
         {
@@ -982,7 +870,6 @@ class SelfTest
         }
         Check(counts.Values.Sum() == total, $"计数总和 {counts.Values.Sum()} == 全表 {total}（不受 LIMIT 截断）");
 
-        // ---------- ListMaintenance: 取到 UpdatedAt / 排序 / limit ----------
         var all = d.ListMaintenance("", 500);
         Check(all.Count == Math.Min(total, 500), $"ListMaintenance 全量取到 {all.Count} 条");
         Check(all.All(m => !string.IsNullOrEmpty(m.UpdatedAt)), "每条都取到了 updated_at（v2.1.0 里 SELECT 根本没取）");
@@ -994,10 +881,9 @@ class SelfTest
         Check(d.ListMaintenance("", 5).Count == 5, "limit 参数生效（看板每列限量用）");
         Check(d.ListMaintenance("in_progress", 500).All(m => m.Status == "in_progress"), "按状态筛选正确");
 
-        // ---------- UpdateMaintenance 全字段 ----------
         var target = d.ListMaintenance("unknown", 500).First();
         var oldUpdated = target.UpdatedAt;
-        Thread.Sleep(1100);                       // 让 updated_at 能看出变化（秒级精度）
+        Thread.Sleep(1100);
         var edited = target.Clone();
         edited.FailItem = "编辑后的故障项目";
         edited.EquipmentModel = "E3009999";
@@ -1020,24 +906,20 @@ class SelfTest
         Check(string.CompareOrdinal(after.UpdatedAt, oldUpdated) > 0,
               $"updated_at 已刷新（{oldUpdated} -> {after.UpdatedAt}）");
 
-        // 不存在的 id
         var ghost = after.Clone();
         ghost.Id = 999999;
         Check(!d.UpdateMaintenance(ghost), "更新不存在的记录返回 false（UI 会提示「可能已被删除」）");
 
-        // ---------- UpdateMaintenanceStatus（纯拖动路径） ----------
         var dragged = d.ListMaintenance("unknown", 500).First();
         Check(d.UpdateMaintenanceStatus(dragged.Id, "resolved"), "UpdateMaintenanceStatus 返回 true（拖动改状态）");
         var draggedAfter = d.ListMaintenance("", 500).First(m => m.Id == dragged.Id);
         Check(draggedAfter.Status == "resolved" && draggedAfter.FailItem == dragged.FailItem,
               "拖动只改状态，其它字段不动");
 
-        // ---------- 状态变更事件（v3.2.0 待办推送） ----------
         {
             var events = new List<(string from, string to)>();
             d.MaintenanceStatusChanged += (_, from, to) => events.Add((from, to));
 
-            // 状态真变 -> 触发一次，带旧/新状态
             var ev = d.ListMaintenance("unknown", 500).First();
             events.Clear();
             Check(d.UpdateMaintenanceStatus(ev.Id, "in_progress"), "更新另一条状态返回 true");
@@ -1045,12 +927,10 @@ class SelfTest
             Check(events[0].from == "unknown" && events[0].to == "in_progress",
                   $"事件带旧/新状态（{events[0].from} -> {events[0].to}）");
 
-            // 同状态再设一次 -> 不触发
             events.Clear();
             d.UpdateMaintenanceStatus(ev.Id, "in_progress");
             Check(events.Count == 0, "同状态重复设置不触发事件（去重）");
 
-            // 编辑表单改状态也触发
             var ed2 = d.ListMaintenance("in_progress", 500).First(m => m.Id == ev.Id);
             var done2 = ed2.Clone();
             done2.Status = "resolved";
@@ -1061,7 +941,6 @@ class SelfTest
             Check(events.Count == 1 && events[0].from == "in_progress" && events[0].to == "resolved",
                   $"全字段更新改状态也触发事件（{events.Count} 次: {events[0].from} -> {events[0].to}）");
 
-            // 只改内容不改状态 -> 不触发
             var ed3 = d.GetMaintenance(ev.Id)!;
             var noChange = ed3.Clone();
             noChange.Notes = "只改备注";
@@ -1070,7 +949,6 @@ class SelfTest
             Check(events.Count == 0, "只改内容不触发状态变更事件");
         }
 
-        // ---------- CreateMaintenance: 往期日期时 updated_at 不能是「现在」 ----------
         var oldRec = new MaintenanceRecord
         {
             StationId = "FCT1", FailItem = "往期记录", Severity = "minor",
@@ -1081,11 +959,9 @@ class SelfTest
         Check(oldBack.UpdatedAt.StartsWith("2026-01-15"),
               $"录入往期日期时 updated_at 跟随 created_at（{oldBack.UpdatedAt}）—— 否则老记录会被顶到看板最前");
 
-        // ---------- 删除 ----------
         Check(d.DeleteMaintenance(oldId), "DeleteMaintenance 返回 true");
         Check(!d.ListMaintenance("", 500).Any(m => m.Id == oldId), "删除后确实不在列表里");
 
-        // ---------- BUG 修复 1: 删除后新建的 id 要回收（空库场景） ----------
         var freshDir = Path.Combine(work, "fresh");
         Directory.CreateDirectory(freshDir);
         var fdb = Path.Combine(freshDir, "fresh.db");
@@ -1103,7 +979,6 @@ class SelfTest
         int a2 = fd.CreateMaintenance(NewRec("删完再建"));
         Check(a2 == 1, $"**删空后新建 id = {a2}（期望 1，旧版会给 2）**");
 
-        // 删最后一条 -> 接着用那个号
         int b2 = fd.CreateMaintenance(NewRec("第二条"));
         int b3 = fd.CreateMaintenance(NewRec("第三条"));
         Check(b2 == 2 && b3 == 3, $"连续新建 id = {b2}, {b3}");
@@ -1111,17 +986,14 @@ class SelfTest
         int b3b = fd.CreateMaintenance(NewRec("补上第三条"));
         Check(b3b == 3, $"删掉最后一条后新建 id = {b3b}（期望 3）");
 
-        // 删中间那条 -> 不回填空号（避开与已导出报表上的旧 #N 撞车）
         fd.DeleteMaintenance(2);
         int c4 = fd.CreateMaintenance(NewRec("删中间后新建"));
         Check(c4 == 4, $"删中间那条后新建 id = {c4}（期望 4，不回填空号 2）");
 
-        // 空表上删不存在的 id：不能抛、不能误改游标
         Check(!fd.DeleteMaintenance(99999), "删不存在的 id 返回 false 且不报错");
         int c5 = fd.CreateMaintenance(NewRec("无效删除后"));
         Check(c5 == 5, $"无效删除不影响游标（下一个 id = {c5}）");
 
-        // ---------- BUG 修复 2: 看板卡片右键要能弹菜单 ----------
         var cardRec = new MaintenanceRecord
         {
             Id = 7, StationId = "FCT1", FailItem = "右键测试", Severity = "critical",
@@ -1147,7 +1019,6 @@ class SelfTest
 
             var mid = typeof(MaintenanceCard).GetMethod("OnMouseMove",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-            // 右键按下后拖动不应进入拖拽分支（_pressed 已被右键清掉，不会抛）
             onDown.Invoke(card, new object?[] { new MouseEventArgs(MouseButtons.Right, 1, 12, 34, 0) });
             mid.Invoke(card, new object?[] { new MouseEventArgs(MouseButtons.Right, 1, 300, 300, 0) });
             Check(true, "右键按住拖动不会误走拖拽分支");
@@ -1155,7 +1026,6 @@ class SelfTest
         Check(typeof(MaintenanceBoard).GetEvent("ContextRequested") != null,
               "MaintenanceBoard 向外暴露了 ContextRequested（菜单由 MaintenancePanel 统一提供）");
 
-        // ---------- 新功能: 从 FAIL 选故障项（去重） ----------
         var srcs = new List<FailItemSource>
         {
             new() { FirstFailItem = "6.1.2.2.16 KL30_FILT_2(DMM)", Model = "E3002781", StationId = "FCT2", Timestamp = "2026-07-22 12:26:00" },
@@ -1182,7 +1052,6 @@ class SelfTest
         Check(realFails.All(f => f.GetType().GetField("Sn") == null),
               "FailItemSource 结构里根本没有 Sn 字段（从数据层就不带 SN）");
 
-        // 真实库上看一眼大项合并的效果（人工校对用，不做硬断言：每个现场的命名习惯不一样）
         {
             var byKey = realAgg.GroupBy(a => TodoGrouping.KeyOf(a.Item))
                                .OrderByDescending(g => g.Sum(x => x.Count)).ToList();
@@ -1195,14 +1064,12 @@ class SelfTest
                   "每个大项都能算出非空展示名");
         }
 
-        // ---------- 新功能: 维修人候选（不用每次手输） ----------
         var who = d.DistinctResolvers();
         Console.WriteLine("    历史维修人: " + (who.Count == 0 ? "(无)" : string.Join(", ", who)));
         Check(who.Contains("李四") && who.Contains("张三"), $"维修人候选取到历史值（{who.Count} 个）");
         Check(who.Distinct(StringComparer.OrdinalIgnoreCase).Count() == who.Count, "维修人候选已去重");
         Check(!who.Any(string.IsNullOrWhiteSpace), "维修人候选里没有空值");
 
-        // ---------- 新功能: 维修人员名单（【+ 人员】按钮背后的东西） ----------
         Check(d.AddResolver("王强"), "名单添加「王强」");
         Check(!d.AddResolver("  王强  "), "重复添加（带空格）被拒，不会出两条");
         Check(!d.AddResolver("王强".ToLowerInvariant()) || true, "（参考）名字大小写不敏感唯一");
@@ -1219,7 +1086,6 @@ class SelfTest
               $"候选 = 名单 ∪ 历史（共 {cands.Count} 个，含名单里的王强与历史里的张三）");
         Check(cands.Distinct(StringComparer.OrdinalIgnoreCase).Count() == cands.Count, "候选已去重（大小写不敏感）");
 
-        // 删人：只动名单，不动历史记录
         int usedByZhang = d.CountRecordsByResolver("张三");
         Check(usedByZhang > 0, $"「张三」在 {usedByZhang} 条历史记录里出现过（删人前会提示这个数）");
         d.AddResolver("张三");
@@ -1228,13 +1094,11 @@ class SelfTest
         Check(d.ListResolvers().Contains("张三"), "删后仍能在候选里看到（因为历史记录里还有）");
         Check(!d.DeleteResolver("不存在的人"), "删不存在的人返回 false");
 
-        // 改名：默认不同步历史
         d.AddResolver("张散");
         Check(d.RenameResolver("张散", "张三三", syncRecords: false) == 0, "改名（不同步）不动历史记录");
         Check(d.RosterResolvers().Contains("张三三") && !d.RosterResolvers().Contains("张散"),
               "名单里已改成「张三三」");
 
-        // 改名 + 同步历史（治错别字）
         var fixTarget = d.ListMaintenance("", 500).First(x => x.Resolver == "李四");
         int before = d.CountRecordsByResolver("李四");
         d.AddResolver("李四");
@@ -1244,11 +1108,9 @@ class SelfTest
               "历史记录里的名字确实改掉了");
         Check(d.CountRecordsByResolver("李四") == 0, "旧名字已不再出现在记录里");
 
-        // 名单表是幂等建的：重开库不丢名单
         var dRe = new Database(db);
         Check(dRe.RosterResolvers().Count == d.RosterResolvers().Count, "重新打开库后名单仍在（建表幂等）");
 
-        // ---------- 新功能: 维修人可**多选** ----------
         Check(ResolverUtil.Split("张三、李四").SequenceEqual(new[] { "张三", "李四" }), "拆分：顶号分隔");
         Check(ResolverUtil.Split("张三, 李四 ; 王五/赵六").Count == 4, "拆分：兼容 , ; / 等分隔符与空格");
         Check(ResolverUtil.Split("张三、张三、 张三 ").Count == 1, "拆分：重复人去重");
@@ -1260,7 +1122,6 @@ class SelfTest
         Check(ResolverUtil.Replace("张三、李四、王五", "李四", "李四四") == "张三、李四四、王五",
               "成员级改名：其余人与顺序不变");
 
-        // 多人记录落库 + 候选拆开统计
         var multi = new MaintenanceRecord
         {
             StationId = "FCT1", FailItem = "多人维修测试", Severity = "major",
@@ -1277,14 +1138,12 @@ class SelfTest
         Check(d.CountRecordsByResolver("孙七") == 1 && d.CountRecordsByResolver("周八") == 1,
               "按人计数对多人记录也准");
 
-        // 改名同步：多人字段里只换那个人
         d.AddResolver("孙七");
         int syncedMulti = d.RenameResolver("孙七", "孙七七", syncRecords: true);
         var afterMulti = d.ListMaintenance("", 500).First(x => x.Id == multiId);
         Check(syncedMulti == 1 && afterMulti.Resolver == "孙七七、周八",
               $"多人字段改名后 = {afterMulti.Resolver}（只换孙七，周八不动）");
 
-        // 多选框本身（不弹 UI）
         using (var pick = new ResolverPickerForm(d, "周八、王强"))
         {
             Check(pick.CheckedCount == 2, $"多选框预勾选了 {pick.CheckedCount} 人（传入两人）");
@@ -1296,7 +1155,6 @@ class SelfTest
             Check(joined.Contains("、"), "结果用顶号拼接");
         }
 
-        // 表单：手敲多人也能逐人登记进名单
         int rosterBefore = d.RosterResolvers().Count;
         using (var mf = new MaintenanceForm("FCT1", null, null, d.ListResolvers(), d))
         {
@@ -1320,8 +1178,7 @@ class SelfTest
             Check(!rosterAfter.Any(x => x.Contains("、") || x.Contains(",")), "名单里没有带分隔符的脏数据");
         }
 
-        // ---------- 新功能: 批量建单 ----------
-        var picked = new[] { "测试项A", "测试项B", "测试项A" };   // 故意重复一个
+        var picked = new[] { "测试项A", "测试项B", "测试项A" };
         using (var bf = new MaintenanceForm("FCT1", null, picked, who))
         {
             var list = bf.BatchResults();
@@ -1332,13 +1189,11 @@ class SelfTest
             Check(list.All(r => string.IsNullOrEmpty(r.EquipmentSn) && string.IsNullOrEmpty(r.EquipmentModel)),
                   "批量记录不带设备型号 / SN（表单已去掉这两项）");
 
-            // 真落库一下，确认能存
             int n0 = d.ListMaintenance("", 500).Count;
             foreach (var r in list) d.CreateMaintenance(r);
             Check(d.ListMaintenance("", 500).Count == n0 + 2, "批量记录已成功写入库");
         }
 
-        // 表单已不再有设备型号 / SN 输入控件
         var formFields = typeof(MaintenanceForm)
             .GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             .Select(f => f.Name).ToList();
@@ -1349,44 +1204,34 @@ class SelfTest
               System.Reflection.BindingFlags.Instance)!.FieldType == typeof(ComboBox),
               "维修人已改为 ComboBox（可选历史值，也可直接输入）");
 
-        // ---------- 归一化 / 大项合并（v2.6.0） ----------
         Console.WriteLine("\n【待办·大项合并】同类测试项归一化");
         {
             string K(string s) => TodoGrouping.KeyOf(s);
 
-            // 步骤号不同、本体相同 -> 合并
             Check(K("6.1.1.1 5V_Rail") == K("6.1.1.2 5V_Rail"), "步骤号不同的同一测试项合并为一项");
             Check(K("6.1.1.1 5V_Rail") == K("5V Rail"), "去掉步骤号后与裸名同键");
-            // 通道 / 位号不同 -> 合并
             Check(K("CAN_Bus_Test_CH1") == K("CAN_Bus_Test_CH2"), "通道号不同(CH1/CH2)合并");
             Check(K("Check LED pin3") == K("Check LED pin7"), "位号不同(pin3/pin7)合并");
             Check(K("U12_Voltage") == K("U7_Voltage"), "器件位号不同(U12/U7)合并");
-            // 数字+单位必须保留 -> 不能合并
             Check(K("Check_5V_Rail") != K("Check_12V_Rail"), "**5V 与 12V 不合并**（数字+单位有物理含义）");
             Check(K("Delay_100ms") != K("Delay_200ms"), "100ms 与 200ms 不合并");
             Check(K("3V3_Rail") != K("1V8_Rail"), "3V3 与 1V8 不合并");
-            // 大小写 / 分隔符 / 全角
             Check(K("check_5v_rail") == K("Check-5V-Rail"), "大小写与分隔符差异合并");
             Check(K("ＣＡＮ＿Ｂｕｓ") == K("CAN_Bus"), "全角写法与半角合并");
-            // 括号里的限定词（测量手段/条件）归为同一大项
             Check(K("BSW_v_Kl30UC(XCP)") == K("BSW_v_Kl30UC (KL30_LS_UC)(XCP)"),
                   "同一参数带不同括号限定词 -> 合并为一个大项");
             Check(K("Vref_3V3(DMM)") == K("Vref_3V3(XCP)"), "同一参数不同测量路径(DMM/XCP) -> 合并");
             Check(K("Check(Voltage)") != K("Check(Current)"),
                   "**括号里就是核心语义时不丢**（Check(Voltage) 不等于 Check(Current)）");
-            // 空与纯序号
             Check(K("") == "", "空故障项返回空键（调用方跳过）");
             Check(K("6.1.1.1") != "", "纯序号项不会退化成空键（否则会全挤成一张卡）");
 
-            // 展示名取最短、且已去步骤号
             var title = TodoGrouping.TitleOf(new[] { "6.1.1.2 5V_Rail_Check", "5V_Rail", "6.1.1.1 5V_Rail" });
             Check(title == "5V_Rail", $"合并后展示名取最短且去步骤号（得到「{title}」）");
 
-            // 优先级阈值
             Check(TodoGrouping.PriorityZhOf(50) == "高" && TodoGrouping.PriorityZhOf(8) == "中" &&
                   TodoGrouping.PriorityZhOf(1) == "低", "优先级按 fail 次数分高/中/低");
 
-            // ---------- G49 spec 原理级合并（v3.25.0，todo_spec_merge 默认开） ----------
             string M(string s) => TodoGrouping.MergeKeyOf(s);
             Check(M("8.18.2.2 SiC_G_HU High Level") == M("SiC_G_LW Low Level") && M("SiC_G_HU High Level").EndsWith("GateDrive"),
                   "G49 规则: 栅极驱动六相(PWM 高/低电平)同原理同卡");
@@ -1410,7 +1255,6 @@ class SelfTest
             finally { AppConfig.Instance.TodoSpecMerge = oldSpecMerge; }
         }
 
-        // ---------- 待办登记表：扫描窗口 / 永久保留 / 优先级 / 区间 ----------
         Console.WriteLine("\n【待办·登记表】只扫近一个月 · 永久保留 · 按次数排优先级");
         {
             var tdb = Path.Combine(work, "todo.db");
@@ -1430,9 +1274,8 @@ class SelfTest
 
             string Today = DateTime.Today.ToString("yyyyMMdd");
             string Yesterday = DateTime.Today.AddDays(-1).ToString("yyyyMMdd");
-            string LongAgo = DateTime.Today.AddDays(-200).ToString("yyyyMMdd");   // 远超扫描窗口
+            string LongAgo = DateTime.Today.AddDays(-200).ToString("yyyyMMdd");
 
-            // 同类项(步骤号不同) 3 条 + 另一项 1 条 + 一条很老的
             AddFail(t, St, "6.1.1.1 5V_Rail", "SN001", Yesterday);
             AddFail(t, St, "6.1.1.2 5V_Rail", "SN002", Yesterday);
             AddFail(t, St, "6.1.1.3 5V_Rail", "SN003", Today);
@@ -1442,43 +1285,36 @@ class SelfTest
             var created = t.SyncTodoItems(30);
             Check(created == 2, $"3 条同类 + 1 条异类 -> 新登记 {created} 条待办（期望 2，同类已合并）");
 
-            var view = t.ListTodoView();          // 不限区间
+            var view = t.ListTodoView();
             var rail = view.FirstOrDefault(x => x.Title == "5V_Rail");
             Check(rail != null, "合并后的大项展示名 = 5V_Rail");
             Check(rail != null && rail.TotalCount == 3, $"合并项累计次数 = 3（实得 {rail?.TotalCount}）");
             Check(rail != null && rail.VariantCount == 3, "记住了 3 个原始测试项（variants）");
             Check(!view.Any(x => x.Title == "Ancient_Item"), "**200 天前的不良不入待办**（只扫近一个月）");
 
-            // 优先级排序：次数多的在前
             Check(view.Count >= 2 && view[0].Title == "5V_Rail", "列表按 fail 次数倒序（3 次的排在 1 次前面）");
             Check(view[0].SortCount >= view[^1].SortCount, "SortCount 单调不增（优先处理次数多的）");
 
-            // 幂等：再同步一次不会重复累加
             var again = t.SyncTodoItems(30);
             var rail2 = t.ListTodoView().First(x => x.Title == "5V_Rail");
             Check(again == 0 && rail2.TotalCount == 3, $"重复同步不新增不重算（新增 {again}，次数仍 {rail2.TotalCount}）");
 
-            // 新不良增量累加
             AddFail(t, St, "6.1.1.4 5V_Rail", "SN006", Today);
             t.SyncTodoItems(30);
             var rail3 = t.ListTodoView().First(x => x.Title == "5V_Rail");
             Check(rail3.TotalCount == 4, $"新不良增量累加到同一张卡（{rail3.TotalCount} 次）");
             Check(rail3.VariantCount == 4, "新的同类变体并入 variants");
 
-            // 时间区间：只看今天 -> 昨天那两条不计入区间次数
             var todayOnly = t.ListTodoView(DateTime.Today, DateTime.Today);
             var railToday = todayOnly.FirstOrDefault(x => x.Title == "5V_Rail");
             Check(railToday != null && railToday.RangeCount == 2 && railToday.TotalCount == 4,
                   $"区间统计独立于累计（今日 {railToday?.RangeCount} 次 / 累计 {railToday?.TotalCount} 次）");
 
-            // 区间内没出现的项不显示，但**没有被删除**（换成不限区间又回来）
             var future = t.ListTodoView(DateTime.Today.AddDays(5), DateTime.Today.AddDays(6));
             Check(future.Count == 0, "选一个没有不良的区间 -> 待办列为空");
             Check(t.ListTodoView().Count >= 2, "**换回不限区间待办还在**（永久保留，不是被删了）");
             Check(t.CountPendingTodos() >= 2, "CountPendingTodos 与视图一致");
 
-            // v3.6.1 修复回归：角标(CountPendingTodos 全量)与默认看板(不限区间)必须一致。
-            // 历史登记的待办即使 FAIL 记录滑出近 N 天窗口，默认视图也要显示——只有自定义区间才过滤。
             var allPending = t.ListTodoView();
             var pendingCnt = t.CountPendingTodos();
             Check(allPending.Count == pendingCnt,
@@ -1486,7 +1322,6 @@ class SelfTest
             Check(allPending.Count >= 2 && allPending.All(x => x.RangeCount == x.TotalCount),
                   "不限区间视图 RangeCount 回落为累计次数（不显示误导性的区间次数）");
 
-            // 确认 -> 关联维修记录 -> 待办离开列表
             var events2 = new List<(string from, string to)>();
             t.MaintenanceStatusChanged += (_, from, to) => events2.Add((from, to));
             var railItem = t.ListTodoView().First(x => x.Title == "5V_Rail");
@@ -1500,13 +1335,11 @@ class SelfTest
             Check(rec != null && rec.Status == "in_progress", "可以确认时直接置为「持续跟踪」");
             Check(!t.ListTodoView().Any(x => x.Title == "5V_Rail"), "确认后该项离开待办列");
 
-            // 记录标为已完成 -> 仍不在待办
             t.UpdateMaintenanceStatus(mid, "resolved");
             t.SyncTodoItems(30);
             Check(!t.ListTodoView().Any(x => x.Title == "5V_Rail"), "记录已完成后待办仍不显示（问题已处理）");
 
-            // 复发：处理完之后又出新不良 -> 自动回到待办
-            System.Threading.Thread.Sleep(1100);      // 让 last_seen 明确晚于 resolved_at
+            System.Threading.Thread.Sleep(1100);
             t.InsertOne(new TestRecord
             {
                 StationId = St, Model = "E3002781", Category = "Offline", TestDate = Today,
@@ -1518,7 +1351,6 @@ class SelfTest
             Check(back != null, "**处理完后再复发 -> 自动回到待办**");
             Check(back != null && back.TotalCount == 5, $"复发时次数继续累加（{back?.TotalCount} 次，不清零）");
 
-            // 删维修记录 -> 待办回到未确认（待办删不掉）
             var canItem = t.ListTodoView().First(x => x.Title == "Check_CAN_Bus");
             var mid2 = t.AcknowledgeTodo(canItem.Id, "李四", "major");
             Check(!t.ListTodoView().Any(x => x.Title == "Check_CAN_Bus"), "确认后 CAN 项暂时离开待办");
@@ -1528,30 +1360,25 @@ class SelfTest
             Check(t.ListTodoView().Any(x => x.Title == "Check_CAN_Bus"),
                   "**删掉维修记录后待办自动回来**（待办删不掉）");
 
-            // v2.5.1: 即使旧库里写过忽略名单，待办也不再被隐藏
-#pragma warning disable CS0618 // 故意调已废弃接口，验证“写了也不生效”
+#pragma warning disable CS0618
             t.DismissTodo("Check_CAN_Bus", St, "E3002781");
 #pragma warning restore CS0618
             t.SyncTodoItems(30);
             Check(t.ListTodoView().Any(x => x.Title == "Check_CAN_Bus"),
                   "**写入 dismissed_todos 也不会让待办消失**（不读忽略名单）");
 
-            // 重开库：登记表与水位线都在（永久保留、不重复累加）
             var t2 = new Database(tdb);
             var cntBeforeReopen = t2.ListTodoView().First(x => x.Title == "5V_Rail").TotalCount;
             t2.SyncTodoItems(30);
             var cntAfterReopen = t2.ListTodoView().First(x => x.Title == "5V_Rail").TotalCount;
             Check(cntBeforeReopen == cntAfterReopen, $"重开库后同步不重复累加（{cntBeforeReopen} -> {cntAfterReopen}）");
 
-            // 机台隔离：不同机台各自一条待办
             AddFail(t, "FCT8", "6.1.1.1 5V_Rail", "SN900", Today);
             t.SyncTodoItems(30);
             var railBoth = t.ListTodoView();
             Check(railBoth.Count(x => x.Title == "5V_Rail") == 2, "同故障项在两个机台各自一条待办");
 
-            // ---------- v3.3.0: 待办删除 / 确认到「待办」列也推送 ----------
             {
-                // 确认落到默认「待办」列 -> 同样触发状态变更事件（“任何状态都推送”）
                 var can2 = t.ListTodoView().First(x => x.Title == "Check_CAN_Bus");
                 events2.Clear();
                 var mid3 = t.AcknowledgeTodo(can2.Id, "王五", "major", "open");
@@ -1560,7 +1387,6 @@ class SelfTest
                       $"确认到「待办」列也触发推送（{events2.Count} 次: '{events2[0].from}' -> {events2[0].to}）");
                 t.DeleteMaintenance(mid3);
 
-                // 删除待办：删后离开待办列，且不会因水位线后的新不良而复现
                 AddFail(t, St, "9.9.9_Delete_Me", "SN777", Today);
                 t.SyncTodoItems(30);
                 var delItem = t.ListTodoView().FirstOrDefault(x => x.Title == "Delete_Me");
@@ -1575,15 +1401,11 @@ class SelfTest
             }
         }
 
-        // ---------- 去重后的 xlsx 写出器（v2.9.3）----------
         Console.WriteLine("\n【去重】四份 xlsx 写出器合并为 FctShared.Xlsx，输出必须仍然合法");
         {
-            // 合并的是"打包外壳"，各工具的 styles.xml 原样保留 —— 所以这里验的是
-            // ① 生成的包结构完整、每个 XML 都能被严格解析；② 样式部件确实还是各家自己的。
             var dir = Path.Combine(work, "xlsx");
             Directory.CreateDirectory(dir);
 
-            // 直接用共享写出器造一份，含中文、特殊字符、数字、合并单元格、冻结行
             var sh = new FctShared.Xlsx.Sheet { Name = "测试<表>/x:1", FreezeRows = 1 };
             sh.ColWidths.AddRange(new[] { 20.0, 12.0, 12.0 });
             sh.Rows.Add(new List<FctShared.Xlsx.Cell>
@@ -1622,13 +1444,11 @@ class SelfTest
 
                 using var sr2 = new StreamReader(zip.GetEntry("xl/workbook.xml")!.Open());
                 var wb = sr2.ReadToEnd();
-                // Excel 真正禁止的是 \ / ? * [ ] : —— 这些换成下划线；< > 合法，只需 XML 转义
                 Check(wb.Contains("_x_1") && !wb.Contains("/x:1"),
                       "工作表名：非法字符（/ :）已换成下划线");
                 Check(!wb.Contains("<表>"), "工作表名里的尖括号已做 XML 转义（不会把 workbook.xml 搞坏）");
             }
 
-            // 维修记录导出（走的也是共享写出器）仍然可读
             var recs = d.ListMaintenance("", 50);
             var mx = Path.Combine(dir, "维修.xlsx");
             MaintenanceExporter.ExportXlsx(mx, recs);
@@ -1647,14 +1467,12 @@ class SelfTest
                       "维修导出冻结表头（v2.9.3 新增；v2.9.2 无冻结，是刻意保留的唯一长相变化）");
             }
 
-            // 两个工具的样式部件各不相同 = 报表长相没有被“统一”掉
             var st1 = FctFailRanker.XlsxExporter.Styles2();
             var st2 = FctFetcher.XlsxWriter.Styles2();
             Check(st1 != st2, "各工具的 styles.xml 仍是各自的调色板（只合并了外壳，没统一长相）");
             Check(st1.Contains("styleSheet") && st2.Contains("styleSheet"), "样式部件格式正常");
         }
 
-        // ---------- 导出 ----------
         var records = d.ListMaintenance("", 500);
         var xlsx = Path.Combine(work, "维修记录.xlsx");
         var csv = Path.Combine(work, "维修记录.csv");
@@ -1663,7 +1481,6 @@ class SelfTest
         Check(new FileInfo(xlsx).Length > 1500, $"xlsx 已生成（{new FileInfo(xlsx).Length} 字节）");
         Check(new FileInfo(csv).Length > 500, $"csv 已生成（{new FileInfo(csv).Length} 字节）");
 
-        // CWE-1236 CSV 公式注入防护（v3.2.1 安全审计）：= + - @ 开头的值必须被加单引号前缀
         var csvInjPath = Path.Combine(work, "注入.csv");
         MaintenanceExporter.ExportCsv(csvInjPath, new[]
         {
@@ -1723,9 +1540,6 @@ class SelfTest
             var cols = System.Text.RegularExpressions.Regex.Matches(body, "<col ").Count;
             Check(cols == 12, $"列宽定义 {cols} 个（应与 12 列一致）");
 
-            // 长相锁定（v2.9.3 xlsx 写出器去重的回归防线）：
-            // 去重只验了「结构合法」，配色/列宽靠人眼一次性确认。确认过的值就钉在这里，
-            // 以后谁改到列宽或表头色自检会直接抦下来。对比工具：tools\xlsx_check.ps1 -Compare
             var wantWidths = new[] { "6", "24", "14", "22", "30", "10", "10", "12", "30", "24", "20", "20" };
             var gotWidths = System.Text.RegularExpressions.Regex.Matches(body, "<col [^>]*width=\"([^\"]+)\"")
                 .Select(m => m.Groups[1].Value).ToArray();
@@ -1739,7 +1553,6 @@ class SelfTest
             Check(styles.Contains("微软雅黑"), "字体仍是微软雅黑");
         }
 
-        // CSV 结构(沿用 v2.1.0): 标题行 + 导出时间 + 空行 + 表头 + 数据
         var csvLines = File.ReadAllLines(csv, System.Text.Encoding.UTF8);
         Check(csvLines[0].StartsWith("\uFEFF") || csvLines[0].Contains("维修记录导出"),
               "csv 带 UTF-8 BOM 与标题行（Excel 直开不乱码）");
@@ -1748,11 +1561,10 @@ class SelfTest
         Check(header.Split(',').Length == 12, $"csv 表头 {header.Split(',').Length} 列（含「更新时间」）");
         Check(header.EndsWith("更新时间"), "csv 最后一列是「更新时间」");
 
-        // 用真正的 CSV 解析器逐行数字段（字段里有逗号/换行时会被引号包起来，不能按行数硬算）
         int dataRows = 0, badRow = 0;
         using (var rd = new StreamReader(csv, System.Text.Encoding.UTF8))
         {
-            for (int i = 0; i < 4; i++) rd.ReadLine();          // 跳过标题块 + 表头
+            for (int i = 0; i < 4; i++) rd.ReadLine();
             while (true)
             {
                 var fields = ReadCsvRecord(rd);
@@ -1767,7 +1579,6 @@ class SelfTest
         Check(!File.ReadAllText(csv).Contains(",unknown,") && !File.ReadAllText(csv).Contains(",investigating,"),
               "csv 里也没有漏译的英文状态");
 
-    /// <summary>极简 CSV 记录读取（支持引号内的逗号与换行）。读到文件尾返回 null。</summary>
     static List<string>? ReadCsvRecord(StreamReader rd)
     {
         if (rd.EndOfStream) return null;
@@ -1799,90 +1610,67 @@ class SelfTest
 
         Console.WriteLine($"\n产物留存（可用 Excel 打开人工确认）:\n  {xlsx}\n  {csv}");
 
-        // ==================== 机台聚合推送器（Phase 1） ====================
         Console.WriteLine("\n【机台聚合推送】FAIL 事件文件 / 心跳 / 断线补偿 / 续推");
         RunAggPusherTests(work);
 
-        // ==================== 聚合端监听（Phase 2） ====================
         Console.WriteLine("\n【聚合端监听】AggDatabase 幂等 / 初始扫描 / 增量事件 / 心跳离线");
         RunAggWatcherTests(work);
 
-        // ==================== B2 双通道：机台端 HTTP 直推 + 聚合端 HTTP 接收（Phase 2 增强） ====================
         Console.WriteLine("\n【HTTP 双通道】机台端直推 / 心跳 / 断线补偿 / 聚合端接收 / 全链路 / 路由");
         RunHttpChannelTests(work);
 
-        // ==================== 聚合链路连通性（v3.4.11） ====================
         Console.WriteLine("\n【聚合链路连通性】状态机 / 主备聚合端 / 断连恢复 / 队列溢出计数");
         RunLinkConnectivityTests(work);
 
-        // ==================== Web 聚合服务（Phase 3：纯 Web 模式） ====================
         Console.WriteLine("\n【Web 聚合服务】页面与 API / 推送入库 / XML 下载白名单 / CSV 导出 / 路由错误码");
         RunWebAggServerTests(work);
 
-        // ==================== agg_token 鉴权 + 分页搜索（v3.4.2） ====================
         Console.WriteLine("\n【聚合鉴权与分页】agg_token 403 / 分页 offset / 搜索 q / FAIL 总数 / XML 内容落盘");
         RunAggTokenPagingTests(work);
 
-        // ==================== Web 目录浏览（Phase 3：/api/list + 文件页签） ====================
         Console.WriteLine("\n【Web 目录浏览】/api/list 白名单与排序 / 下载回归 / 页面文件页签");
         RunWebFileBrowserTests(work);
 
-        // ==================== 聚合服务一键部署（v3.4.0：agg --install） ====================
-        // 只测可测部分：默认 config JSON 生成；netsh/快捷方式/进程启动属系统操作，不实跑（只编译）
         Console.WriteLine("\n【一键部署】默认聚合配置生成（JSON 内容与合法性）");
         RunAggInstallConfigTests();
 
-        // ==================== H-1 回归：mesh XML 本地读取白名单 ====================
         RunMeshXmlWhitelistTests(work);
 
-        // ==================== 更新器（v3.6.0：本地更新包检测 / RELEASE.txt / 已提示去重） ====================
         RunUpdateCheckerTests(work);
 
-        // ==================== P0 性能改造回归（v3.5.3：读写分离/批量/组提交/缓存/维护） ====================
         Console.WriteLine("\n【P0 性能】AggDatabase 读写分离并发 / InsertBatch / 接收端组提交 / 计数缓存 / 每日维护 / RETURNING");
         RunP0PerformanceTests(work);
 
-        // ==================== 在线 XML 查看（v3.8.0 MVP：解析口径 / 渲染等效） ====================
         Console.WriteLine("\n【在线 XML 查看】ParseReportText 口径 / KPI / 失败标红 / 排除项 / 时间优先级");
         RunXmlReportTests();
 
-        // ==================== 聚合库 schema 迁移（v3.8.0：老库升级兼容） ====================
         Console.WriteLine("\n【聚合库迁移】全新库建表 / v3.5.3 老库升级（表已存在）/ 幂等重入");
         RunDbMigratorTests(work);
 
-        // ==================== 良率日统计 yld_daily（v3.8.0 P1 D1：心跳携带） ====================
         Console.WriteLine("\n【良率日统计】upsert 幂等 / 查询过滤 / 心跳落库 / 变化检测 / 老格式兼容");
         RunYldDailyTests(work);
 
-        // ==================== 权限与审计（v3.8.0 P1 D3：users 三角色 / audit_log / /api/status） ====================
         Console.WriteLine("\n【权限与审计】PasswordHasher / users upsert / audit 落库 / 宽松模式 / token 模式角色分级");
         RunAuthAuditTests(work);
 
-        // ==================== 指标与可观测（v3.10.0 P1-1/P1-4：/api/metrics + 日志滚动） ====================
         Console.WriteLine("\n【指标与可观测】入库/接收/忽略计数 / /api/metrics 路由 / 日志滚动");
         RunMetricsTests(work);
 
-        // ==================== 备份与 XML 容灾（v3.10.0 P1-2/P1-3） ====================
         Console.WriteLine("\n【备份与容灾】副本库/机台库每日备份 / XML 容灾缓存命中");
         RunBackupXmlTests(work);
 
-        // ==================== P3+P4：FAIL 双视图/高频标色/自定义列/导出 + 源机检索缓存/并发/鉴权/白名单（2026-08-28 Agent A） ====================
         Console.WriteLine("\n【P3+P4】FAIL 双视图分组/高频标色/自定义列/导出 + 源机检索并发/缓存/零膨胀/在线 XML 联动");
         RunP3P4Tests(work);
 
-        // ==================== P5：维修/待办全功能服务端化（2026-08-28 Agent B） ====================
         Console.WriteLine("\n【P5】维修看板 4 列状态机 legacy + 待办合并优先级20/5 + 人员改名同步 + 12列导出CSV注入防护CWE-1236 + API鉴权三角色");
         RunP5Tests(work);
 
-        // ==================== P6+P2-A+P7：设备监控 + 无头服务化 + 数据拉取雏形（2026-08-28 Agent C） ====================
         Console.WriteLine("\n【P6+P7+P2-A】设备监控（心跳轻量+5min全量+L1维度+采样滚动7天+FCT.ini）+ 无头服务化 + 数据拉取趋势/分布雏形");
         RunP6DeviceHeadlessFetcherTests(work);
 
-        // ==================== Lite-Settings：剩余前端设置与体验层（2026-08-28 Agent Lite） ====================
         Console.WriteLine("\n【Lite-Settings】用户管理UI/角色分级/布局持久化双写/收藏/全局搜索空格分词聚合/自定义拖拽/权限显隐");
         RunLiteSettingsTests(work);
 
-        // ==================== Lite-Fetch：数据拉取完整 + 报告中心 + 程序日志（2026-08-28） ====================
         Console.WriteLine("\n【Lite-Fetch】数据拉取完整导出/热力/报告摘要归档对比/程序日志登记时间轴参数diff + 统一CSV注入BOM");
         RunLiteFetchTests(work);
 
@@ -1890,8 +1678,6 @@ class SelfTest
         return _fail == 0 ? 0 : 1;
     }
 
-    /// <summary>在线 XML 报告查看（v3.8.0 MVP）：XmlParser.ParseReportText 解析口径 +
-    /// XmlReportHtml.Render 渲染等效性断言（与本地 XmlViewerForm 口径一致）。</summary>
     static void RunXmlReportTests()
     {
         const string xml = """
@@ -1929,11 +1715,8 @@ class SelfTest
         Check(html2.Contains("color:#141414\">0</div>"), "PASS 报告失败计数为 0");
     }
 
-    /// <summary>聚合库 schema 版本化迁移（v3.8.0）：全新库建表 / v3.5.3 老库升级（表已存在且
-    /// user_version=0，历史真实 bug：精确 CREATE 报 already exists 导致 Open 崩）/ 幂等重入。</summary>
     static void RunDbMigratorTests(string work)
     {
-        // ---- 场景 A：全新库 → 建表 + user_version 升到 LatestVersion + 可插入 ----
         var pathA = Path.Combine(work, "mig_fresh_" + Guid.NewGuid().ToString("N")[..6] + ".db");
         using (var c = new SqliteConnection($"Data Source={pathA}"))
         {
@@ -1955,14 +1738,12 @@ class SelfTest
             Check(true, "全新库迁移后可插入（表结构可用）");
         }
 
-        // ---- 场景 B：v3.5.3 老库升级（agg_records 已存在、user_version=0）→ 不抛异常、数据保留 ----
         var pathB = Path.Combine(work, "mig_legacy_" + Guid.NewGuid().ToString("N")[..6] + ".db");
         using (var c = new SqliteConnection($"Data Source={pathB}"))
         {
             c.Open();
             using (var cmd = c.CreateCommand())
             {
-                // 与 v3.5.3 既有的 agg_records DDL 完全一致（不带 user_version）
                 cmd.CommandText = @"CREATE TABLE agg_records (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     machine TEXT NOT NULL, seq INTEGER NOT NULL, type TEXT NOT NULL DEFAULT 'fail',
@@ -1996,7 +1777,6 @@ class SelfTest
             Check(true, "老库升级后可继续插入新行");
         }
 
-        // ---- 场景 C：幂等重入（同库再次 Migrate 不再增长 user_version） ----
         using (var c = new SqliteConnection($"Data Source={pathB}"))
         {
             c.Open();
@@ -2010,15 +1790,12 @@ class SelfTest
         try { File.Delete(pathA); File.Delete(pathB); } catch { }
     }
 
-    /// <summary>良率日统计（v3.8.0 P1 D1）：yld_daily upsert 幂等 / 查询过滤 /
-    /// 心跳携带统计落库 + 变化检测 / 老格式心跳（无 today）兼容。</summary>
     static void RunYldDailyTests(string work)
     {
         var dbPath = Path.Combine(work, "yld_" + Guid.NewGuid().ToString("N")[..6] + ".db");
         using (var db = new AggDatabase(dbPath))
         {
             db.Open();
-            // v2 迁移：yld_daily 表存在
             using (var c = new SqliteConnection($"Data Source={dbPath}"))
             {
                 c.Open();
@@ -2027,9 +1804,8 @@ class SelfTest
                 Check(Convert.ToInt64(cmd.ExecuteScalar()) == 1, "迁移 v2 后 yld_daily 表存在");
             }
 
-            // upsert 幂等 + 同键覆盖更新
             db.UpsertDailyStats("FCT1", "20260827", new AggDatabase.DailyStats(100, 95, 4, 1, 50));
-            db.UpsertDailyStats("FCT1", "20260827", new AggDatabase.DailyStats(110, 104, 5, 1, 55)); // 同键更新
+            db.UpsertDailyStats("FCT1", "20260827", new AggDatabase.DailyStats(110, 104, 5, 1, 55));
             db.UpsertDailyStats("FCT2", "20260827", new AggDatabase.DailyStats(80, 78, 2, 0, 40));
             db.UpsertDailyStats("FCT1", "20260826", new AggDatabase.DailyStats(90, 88, 2, 0, 45));
             var all = db.QueryDailyStats();
@@ -2037,13 +1813,11 @@ class SelfTest
             var f1 = all.First(r => r.Machine == "FCT1" && r.TestDate == "20260827");
             Check(f1.Pass == 104 && f1.Total == 110 && f1.Fail == 5 && f1.Products == 55, "同键 upsert 更新为新值（幂等覆盖）");
 
-            // 查询过滤
             var f1Rows = db.QueryDailyStats(machine: "FCT1");
             Check(f1Rows.Count == 2, $"machine=FCT1 过滤 => {f1Rows.Count} 行");
             var win = db.QueryDailyStats(dateFromYmd: "20260827", dateToYmd: "20260827");
             Check(win.Count == 2 && win.All(r => r.TestDate == "20260827"), "from/to 日期窗口过滤正确");
 
-            // 心跳链路：MeshReceiver.HandleHeartbeat 携带统计 → yld_daily 落库
             var recv = new MeshReceiver(db, heartbeatTimeoutSec: 90);
             recv.HandleHeartbeat(HeartbeatJsonWithStats("FCT3", "20260827", 60, 58, 2, 0, 30));
             var f3 = db.QueryDailyStats(machine: "FCT3");
@@ -2054,7 +1828,6 @@ class SelfTest
             var f3c = db.QueryDailyStats(machine: "FCT3");
             Check(f3c.Count == 1 && f3c[0].Total == 61, "统计值变化 -> 更新同一行");
 
-            // 老格式心跳（无 today 字段）：不写库、不报错（向后兼容 v3.8.0 前机台）
             recv.HandleHeartbeat(HeartbeatJsonLegacy("FCT4"));
             Check(db.QueryDailyStats(machine: "FCT4").Count == 0, "老格式心跳（无 today）不写库且不报错");
             recv.HandleHeartbeat("{\"type\":\"heartbeat\",\"ts\":\"2026-08-27 10:00:00\"}");
@@ -2063,15 +1836,12 @@ class SelfTest
         try { File.Delete(dbPath); } catch { }
     }
 
-    /// <summary>带今日统计字段的心跳 JSON（v3.8.0 P1 D1 机台端同款）。</summary>
     static string HeartbeatJsonWithStats(string machine, string today, int total, int pass, int fail, int intr, int prod)
         => $"{{\"machine\":\"{machine}\",\"type\":\"heartbeat\",\"ts\":\"2026-08-27 10:00:00\",\"last_seq\":0,\"queued\":0,\"today\":\"{today}\",\"today_total\":{total},\"today_pass\":{pass},\"today_fail\":{fail},\"today_interrupted\":{intr},\"today_products\":{prod}}}";
 
-    /// <summary>v3.8.0 前老格式心跳（无 today 统计字段）。</summary>
     static string HeartbeatJsonLegacy(string machine)
         => $"{{\"machine\":\"{machine}\",\"type\":\"heartbeat\",\"ts\":\"2026-08-27 10:00:00\",\"last_seq\":0,\"queued\":0}}";
 
-    /// <summary>带 token 头 GET（鉴权断言辅助）。</summary>
     static HttpResponseMessage HttpGetWithToken(string url, string? token)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -2079,9 +1849,6 @@ class SelfTest
         return _http.SendAsync(req).GetAwaiter().GetResult();
     }
 
-    /// <summary>权限与审计（v3.8.0 P1 D3）：PasswordHasher / users upsert+token 保留 / audit 落库 /
-    /// HTTP 宽松模式（未配 agg_token=匿名全权，向后兼容）/ 配置 agg_token 后角色分级（agg_token=admin、
-    /// users 三角色、越权 403）、登录 401、导出/设置审计挂点。</summary>
     static void RunAuthAuditTests(string work)
     {
         var dbPath = Path.Combine(work, "auth_" + Guid.NewGuid().ToString("N")[..6] + ".db");
@@ -2096,14 +1863,12 @@ class SelfTest
                 Check(Convert.ToInt64(cmd.ExecuteScalar()) == 1, "迁移 v3 后 users 表存在");
             }
 
-            // PasswordHasher
             var h = PasswordHasher.Hash("secret123");
             Check(PasswordHasher.Verify("secret123", h), "PasswordHasher：正确密码校验通过");
             Check(!PasswordHasher.Verify("wrong", h), "PasswordHasher：错误密码校验失败");
             Check(!PasswordHasher.Verify("x", "not-a-valid-format"), "PasswordHasher：非法格式返回 false 不抛");
             Check(h.Split('.').Length == 3, "PasswordHasher：存储格式 iterations.salt.hash");
 
-            // users upsert + token 保留（更新密码/角色不换 token，已登录会话不失效）
             db.UpsertUser("alice", PasswordHasher.Hash("pw1"), "viewer");
             var a1 = db.GetUserByName("alice");
             Check(a1 != null && a1!.Role == "viewer" && a1.Token.Length == 32, "UpsertUser：新用户带 32hex token");
@@ -2117,14 +1882,12 @@ class SelfTest
             Check(db.ListUsers().Count == 2, "ListUsers 返回 2 人");
             Check(db.DeleteUser("bob") && db.GetUserByName("bob") == null, "DeleteUser 删除成功");
 
-            // audit 落库 + 查询倒序
             db.LogAudit("alice", "export.csv", "10 rows");
             db.LogAudit("agg_token", "settings.save", "agg_token");
             var aud = db.QueryAudit();
             Check(aud.Count == 2 && aud[0].Action == "settings.save", "QueryAudit 倒序返回 2 条");
         }
 
-        // ---- HTTP 宽松模式（未配 agg_token = 匿名全权，保持 v3.5.x 未鉴权向后兼容）----
         var webRoot = Path.Combine(work, "auth_http");
         Directory.CreateDirectory(webRoot);
         int port = GetFreePort();
@@ -2132,7 +1895,7 @@ class SelfTest
         using (var db = new AggDatabase(Path.Combine(webRoot, "agg.db")))
         using (var srv = new WebAggServer(port, (AggWatcher?)null, db, webRoot, webRoot, ""))
         {
-            db.Open();   // 必须先 Open（跑 DbMigrator 建 users 表），否则 ResolveRole 查表抛异常
+            db.Open();
             srv.Start();
             Check(WaitUntil(() => srv.Listening, 5000), "鉴权组：宽松模式服务进入监听");
 
@@ -2146,7 +1909,6 @@ class SelfTest
                 Check(d.RootElement.TryGetProperty("today_yield", out _), "status 含 today_yield 字段");
             }
 
-            // 宽松 admin 创建用户（POST /api/users）返回 token
             var rCreate = _http.PostAsync($"{baseUrl}/api/users", new StringContent(
                 "{\"name\":\"u1\",\"password\":\"pass1\",\"role\":\"viewer\"}", Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
             string? u1token = null;
@@ -2165,14 +1927,12 @@ class SelfTest
                 "{\"name\":\"u1\",\"password\":\"wrong\"}", Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
             Check(rLoginBad.StatusCode == HttpStatusCode.Unauthorized, "POST /api/login 错误密码 -> 401");
 
-            // 创建用户后系统进入鉴权态：匿名不再全权（403），users.token 通道可用
             var rAnonAudit = _http.GetAsync($"{baseUrl}/api/audit").GetAwaiter().GetResult();
             Check(rAnonAudit.StatusCode == HttpStatusCode.Forbidden, "创建用户后匿名访问 /api/audit -> 403（鉴权收紧）");
             var rViewerAudit = HttpGetWithToken($"{baseUrl}/api/audit", u1token);
             Check(rViewerAudit.StatusCode == HttpStatusCode.Forbidden, "viewer token 访问 /api/audit -> 403（角色不足）");
         }
 
-        // ---- HTTP 导出审计挂点（宽松模式，users 表为空时匿名全权）----
         int portB = GetFreePort();
         var baseUrlB = $"http://127.0.0.1:{portB}";
         using (var dbB = new AggDatabase(Path.Combine(webRoot, "aggb.db")))
@@ -2194,21 +1954,19 @@ class SelfTest
             else Check(false, "GET /api/audit -> 200");
         }
 
-        // ---- HTTP 配置 agg_token 后角色分级 ----
         int port2 = GetFreePort();
         var baseUrl2 = $"http://127.0.0.1:{port2}";
         const string aggTok = "aabbccddeeff00112233445566778899";
         using (var db2 = new AggDatabase(Path.Combine(webRoot, "agg2.db")))
         using (var srv2 = new WebAggServer(port2, (AggWatcher?)null, db2, webRoot, webRoot, aggTok))
         {
-            db2.Open();   // 同宽松模式：先迁移建表
+            db2.Open();
             srv2.Start();
             Check(WaitUntil(() => srv2.Listening, 5000), "鉴权组：token 模式服务进入监听");
 
             var rNoTok = _http.GetAsync($"{baseUrl2}/api/status").GetAwaiter().GetResult();
             Check(rNoTok.StatusCode == HttpStatusCode.Forbidden, "token 模式：无 token 访问 -> 403");
 
-            // agg_token 通道（admin）创建 engineer
             using (var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl2}/api/users"))
             {
                 req.Headers.Add("X-Agg-Token", aggTok);
@@ -2217,7 +1975,6 @@ class SelfTest
                 Check(rU2.StatusCode == HttpStatusCode.OK, "agg_token 通道创建 engineer -> 200");
             }
 
-            // u2 登录拿 token（/api/login 豁免 agg_token 校验，未登录可到达）
             string? u2token = null;
             var rL = _http.PostAsync($"{baseUrl2}/api/login", new StringContent(
                 "{\"name\":\"u2\",\"password\":\"pass2\"}", Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
@@ -2239,38 +1996,33 @@ class SelfTest
         try { File.Delete(dbPath); } catch { }
     }
 
-    /// <summary>指标与可观测（v3.10.0 P1-1/P1-4）：入库/接收/忽略计数正确性、
-    /// /api/metrics 路由返回结构、日志按大小滚动出 app.log.1。</summary>
     static void RunMetricsTests(string work)
     {
         var dbPath = Path.Combine(work, "metrics_" + Guid.NewGuid().ToString("N")[..6] + ".db");
         using (var db = new AggDatabase(dbPath))
         {
             db.Open();
-            // ---- AggDatabase.InsertCount：新插入计数、重复忽略不计 ----
             var r1 = new AggFailRow { Machine = "FCT1", Seq = 1, Type = "fail", Ts = "2026-08-28 09:00:00", TestDate = "20260828" };
             var r2 = new AggFailRow { Machine = "FCT1", Seq = 2, Type = "fail", Ts = "2026-08-28 09:01:00", TestDate = "20260828" };
             db.InsertFail(r1); db.InsertFail(r2);
-            db.InsertFail(new AggFailRow { Machine = "FCT1", Seq = 1, Type = "fail", Ts = "x", TestDate = "20260828" }); // 重复
+            db.InsertFail(new AggFailRow { Machine = "FCT1", Seq = 1, Type = "fail", Ts = "x", TestDate = "20260828" });
             Check(db.InsertCount == 2, $"InsertFail 计数：2 条新插入 + 1 条重复忽略 => InsertCount={db.InsertCount}（期望 2）");
             db.InsertBatch(new[]
             {
                 new AggFailRow { Machine = "FCT2", Seq = 1, Type = "fail", Ts = "2026-08-28 09:02:00", TestDate = "20260828" },
                 new AggFailRow { Machine = "FCT2", Seq = 2, Type = "fail", Ts = "2026-08-28 09:03:00", TestDate = "20260828" },
-                new AggFailRow { Machine = "FCT1", Seq = 2, Type = "fail", Ts = "x", TestDate = "20260828" },  // 重复
+                new AggFailRow { Machine = "FCT1", Seq = 2, Type = "fail", Ts = "x", TestDate = "20260828" },
             });
             Check(db.InsertCount == 4, $"InsertBatch 计数：+2 新插入（1 重复不计）=> InsertCount={db.InsertCount}（期望 4）");
 
-            // ---- MeshReceiver 接收/忽略计数 ----
             var rx = new MeshReceiver(db, heartbeatTimeoutSec: 90);
             rx.HandleFail(BuildFailJsonCustom(100, "RX1", "X:\\agg\\a.xml", "SN-RX-1", "接收计数"));
-            rx.HandleFail(BuildFailJsonCustom(100, "RX1", "X:\\agg\\a.xml", "SN-RX-1", "重复"));  // (machine,seq) 重复
+            rx.HandleFail(BuildFailJsonCustom(100, "RX1", "X:\\agg\\a.xml", "SN-RX-1", "重复"));
             Check(rx.ReceivedFails == 2 && rx.IgnoredFails == 1, $"HandleFail 计数：接收 2 / 忽略 1（实得 {rx.ReceivedFails}/{rx.IgnoredFails}）");
             Check(rx.CommittedRows == 2, $"组提交处理行数（含重复）= {rx.CommittedRows}（期望 2）");
             Check(db.InsertCount == 5, $"接收端入库计入 InsertCount（去重后 4+1=5）：{db.InsertCount}");
         }
 
-        // ---- /api/metrics 路由（宽松模式 server，无 mesh => receiver/pusher 为 null，web/db 有值）----
         var webRoot = Path.Combine(work, "metrics_http");
         Directory.CreateDirectory(webRoot);
         int port = GetFreePort();
@@ -2301,7 +2053,6 @@ class SelfTest
             else Check(false, "GET /api/metrics -> 200");
         }
 
-        // ---- 日志滚动（P1-4）：反射调小阈值 → 写日志触发滚动 → app.log.1 生成 ----
         var logDir = Path.Combine(AppConfig.BaseDir, "logs");
         var appLog = Path.Combine(logDir, "app.log");
         var fMax = typeof(Logger).GetField("MaxLogBytes", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
@@ -2310,15 +2061,15 @@ class SelfTest
         {
             if (Directory.Exists(logDir)) Directory.Delete(logDir, true);
             Directory.CreateDirectory(logDir);
-            fMax.SetValue(null, 512L);        // 阈值调小到 512B，几十条日志即可触发
-            fWritten.SetValue(null, 0L);      // 清空近似计数
+            fMax.SetValue(null, 512L);
+            fWritten.SetValue(null, 0L);
             for (int i = 0; i < 80; i++) Logger.Info($"指标自检滚动触发行 {i} 填充足够长度使单文件超过阈值");
             Check(File.Exists(Path.Combine(logDir, "app.log.1")), "日志超阈值后滚动出 app.log.1");
             Check(File.Exists(appLog), "滚动后新 app.log 继续写入");
         }
         finally
         {
-            fMax.SetValue(null, 20L * 1024 * 1024);   // 恢复 20MB
+            fMax.SetValue(null, 20L * 1024 * 1024);
             fWritten.SetValue(null, 0L);
             try { if (Directory.Exists(logDir)) Directory.Delete(logDir, true); } catch { }
         }
@@ -2326,11 +2077,8 @@ class SelfTest
         try { File.Delete(dbPath); } catch { }
     }
 
-    /// <summary>备份与 XML 容灾（v3.10.0 P1-2/P1-3）：副本库/机台库每日备份（生成/可打开行数一致/
-    /// 同日幂等/保留 7 份）、XML 拉取成功落盘缓存、源文件删除后缓存命中。</summary>
     static void RunBackupXmlTests(string work)
     {
-        // ---- 1) 副本库 AggDatabase.BackupDaily ----
         var aggPath = Path.Combine(work, "bakagg_" + Guid.NewGuid().ToString("N")[..6] + ".db");
         string? bakPath = null;
         using (var db = new AggDatabase(aggPath))
@@ -2347,10 +2095,9 @@ class SelfTest
                 cmd.CommandText = "SELECT COUNT(*) FROM agg_records;";
                 Check(Convert.ToInt64(cmd.ExecuteScalar()) == 2, "备份库可打开且行数一致（2 条）");
             }
-            SqliteConnection.ClearAllPools();   // 释放备份文件句柄，否则后续删除被占用
+            SqliteConnection.ClearAllPools();
             Check(db.BackupDaily() == null, "同日重复备份幂等跳过");
 
-            // 保留 7 份：伪造 8 个历史备份 + 当前日期备份删除后重新触发清理
             var dir = Path.GetDirectoryName(aggPath)!;
             var prefix = Path.GetFileName(aggPath) + ".bak-";
             for (int i = 0; i < 8; i++)
@@ -2367,7 +2114,6 @@ class SelfTest
         }
         try { File.Delete(aggPath); } catch { }
 
-        // ---- 2) 机台本地库 Database.BackupDaily ----
         var localPath = Path.Combine(work, "baklocal_" + Guid.NewGuid().ToString("N")[..6] + ".db");
         {
             var db = new Database(localPath);
@@ -2390,7 +2136,6 @@ class SelfTest
         }
         try { File.Delete(localPath); } catch { }
 
-        // ---- 3) XML 容灾缓存（P1-3）：拉取成功落盘 → 源文件删除后缓存命中 ----
         var xmlPath = Path.Combine(work, "xmlsrc_" + Guid.NewGuid().ToString("N")[..6] + ".xml");
         File.WriteAllText(xmlPath, "<BATCH TIMESTAMP=\"2026-08-28T09:00:00\"><TEST NAME=\"T1\" STATUS=\"Failed\"/></BATCH>", new UTF8Encoding(false));
         var xdbPath = Path.Combine(work, "xmlagg_" + Guid.NewGuid().ToString("N")[..6] + ".db");
@@ -2406,7 +2151,7 @@ class SelfTest
             Check(c1 != null && c1.Contains("<BATCH"), "首次拉取（本机路径）成功");
             var cachePath = Path.Combine(MeshReceiver.XmlCacheRoot, "XMC", "20260828", $"{row.Id}.xml");
             Check(File.Exists(cachePath), "拉取成功后容灾缓存落盘（machine/date 分目录）");
-            File.Delete(xmlPath);   // 模拟源机离线/源文件消失
+            File.Delete(xmlPath);
             var c2 = rx.FetchXmlForFail(row.Id);
             Check(c2 != null && c2 == c1, "源文件删除后命中容灾缓存，仍可读取");
         }
@@ -2418,10 +2163,8 @@ class SelfTest
         }
     }
 
-    /// <summary>P3+P4 回归（2026-08-28 Agent A）：FAIL 双视图分组/高频标色/自定义列/导出防护 + 源机检索并发/缓存/零膨胀/在线 XML 联动</summary>
     static void RunP3P4Tests(string work)
     {
-        // ---------- 1) Database.QueryTestRecords 过滤（全量含 PASS） ----------
         {
             var dbPath = Path.Combine(work, "p3q_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             var db = new Database(dbPath);
@@ -2458,7 +2201,6 @@ class SelfTest
 
     static void RunLiteSettingsTests(string work)
     {
-        // ---------- 1) AggDatabase.Settings：layout / favorites 双写 ----------
         {
             var dbPath = Path.Combine(work, "lite_set_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             using var db = new AggDatabase(dbPath);
@@ -2473,7 +2215,6 @@ class SelfTest
             Check(db.SetUserFavorites("lite_admin", favJson), "SetUserFavorites 成功");
             Check(db.GetUserFavorites("lite_admin") == favJson, "GetUserFavorites 回读一致");
             Check(!db.SetUserLayout("no_such", "{}"), "不存在用户 SetUserLayout 返回 false");
-            // NOCASE
             Check(db.GetUserLayout("LITE_ADMIN") == layJson, "GetUserLayout 大小写不敏感");
             Check(db.SetUserLayout("LITE_ADMIN", "{}") && db.GetUserLayout("lite_admin") == "{}", "SetUserLayout 大小写不敏感覆盖");
             try { File.Delete(dbPath); } catch { }
@@ -2483,7 +2224,6 @@ class SelfTest
 
     static void RunLiteFetchTests(string work)
     {
-        // ---------- DbMigrator v6 ----------
         {
             var p = Path.Combine(work, "litefetch_mig_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             using (var c = new SqliteConnection($"Data Source={p}"))
@@ -2496,7 +2236,6 @@ class SelfTest
             }
             try { File.Delete(p); } catch { }
         }
-        // ---------- 报告归档 ----------
         {
             var dbPath = Path.Combine(work, "reportarc_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             var db = new AggDatabase(dbPath);
@@ -2525,7 +2264,6 @@ class SelfTest
         return p;
     }
 
-    /// <summary>更新器回归：版本解析 / 扫描 / RELEASE.txt 提取 / 已提示去重（v3.6.0）。</summary>
     static void RunUpdateCheckerTests(string work)
     {
         Console.WriteLine("\n【更新器】本地更新包检测 / 版本对比 / RELEASE.txt 特点 / 已提示去重");
@@ -2533,7 +2271,6 @@ class SelfTest
         var updDir = Path.Combine(root, "updates");
         Directory.CreateDirectory(updDir);
 
-        // ---------- 版本解析 ----------
         Check(UpdateChecker.ParseZipVersion("Argus-v9.9.9-update.zip") == new Version(9, 9, 9),
               "解析更新包名 Argus-v9.9.9-update.zip -> 9.9.9");
         Check(UpdateChecker.ParseZipVersion("Argus-v3.5.3.zip") == new Version(3, 5, 3),
@@ -2542,12 +2279,10 @@ class SelfTest
               "两位版本号 Argus-v1.2.zip -> 1.2");
         Check(UpdateChecker.ParseZipVersion("readme.txt") == null, "非 zip 文件名 -> null");
 
-        // ---------- 用临时 db 隔离 app_meta（不碰真实机台库） ----------
         var db = new Database(Path.Combine(root, "meta.db"));
         var cur = UpdateChecker.CurrentVersion;
         var newer = new Version(cur.Major + 1, 0, 0);
 
-        // 造一个「更新的假包」：只写空 zip（Scan 只看文件名+版本，不解压）
         var zipPath = Path.Combine(updDir, $"Argus-v{newer}-update.zip");
         using (var fs = File.Create(zipPath)) { fs.Write(new byte[] { 0x50, 0x4B, 0x05, 0x06 }, 0, 4); }
 
@@ -2555,13 +2290,11 @@ class SelfTest
         Check(info != null && info.Version == newer, $"扫描到新包 v{newer}（当前 v{cur}）");
         Check(info != null && Path.GetFileName(info.ZipPath) == Path.GetFileName(zipPath), "返回的 zip 路径正确");
 
-        // ---------- 已提示去重 ----------
         Check(!UpdateChecker.PromptedVersions(db).Contains(newer), "新版本初始未提示过");
         UpdateChecker.MarkPrompted(newer, db);
         Check(UpdateChecker.PromptedVersions(db).Contains(newer), "MarkPrompted 后已记录");
         Check(UpdateChecker.Scan(updDir, db) == null, "已提示过的版本不再弹出（去重生效）");
 
-        // ---------- RELEASE.txt 版本特点提取 ----------
         var relPath = Path.Combine(updDir, "RELEASE.txt");
         File.WriteAllText(relPath, $@"
 Argus 统一发布包  v{newer}
@@ -2581,21 +2314,13 @@ Argus 统一发布包  v{newer}
         Check(notes.Contains("GUI 回归 Windows 原版风格"), "版本特点含 GUI 原生回归说明");
         Check(!notes.Contains("纯净性声明"), "特点段不越界到下一节（到分隔线/标题为止）");
 
-        // ---------- 当前版本包不应触发 ----------
         var curZip = Path.Combine(updDir, $"Argus-v{cur}-update.zip");
         using (var fs = File.Create(curZip)) { fs.Write(new byte[] { 0x50, 0x4B, 0x05, 0x06 }, 0, 4); }
         Check(UpdateChecker.Scan(updDir, db) == null, "与当前版本相同的包不触发（已提示的仍被过滤）");
 
-        // ---------- 清理 ----------
         try { Directory.Delete(root, true); } catch { }
     }
 
-    /// <summary>
-    /// H-1 安全修复回归：MeshReceiver.FetchXmlForFail 的**本地读取**必须过白名单校验器。
-    /// 攻击链原样复现：推送方伪造 data.xml_path 指向任意文件 → /api/mesh/xml 读出全文。
-    /// 修复后：LocalReadValidator（= WebAggServer.ResolveFile）拒绝时返回 null（404），不落盘不外泄；
-    /// 白名单内路径照常可读；校验器为 null 时保持旧行为（独立使用 MeshReceiver 的场景）。
-    /// </summary>
     static void RunMeshXmlWhitelistTests(string work)
     {
         Console.WriteLine("\n【H-1 回归】/api/mesh/xml 本地读取过白名单（伪造 xml_path 拒绝读取）");
@@ -2620,12 +2345,10 @@ Argus 统一发布包  v{newer}
             var inRow = rows.First(r => r.Sn == "SN-H1");
             var outRow = rows.First(r => r.Sn == "SN-H2");
 
-            // 无校验器 = 旧行为（兼容独立使用）
             var oldRead = rx.FetchXmlForFail(inRow.Id);
             Check(oldRead != null && oldRead.Contains("inside"),
                   "未设校验器时保持旧行为（白名单内可读）");
 
-            // 设白名单（与 WebAggServer 构造时注入的语义一致）：白名单内放行、白名单外拒绝
             rx.LocalReadValidator = p =>
                 p.StartsWith(Path.GetFullPath(resultsRoot) + Path.DirectorySeparatorChar,
                              StringComparison.OrdinalIgnoreCase);
@@ -2637,24 +2360,12 @@ Argus 统一发布包  v{newer}
             Check(blocked == null,
                   "设校验器后：伪造的白名单外 xml_path 拒绝读取（返回 404，不再泄文件）");
 
-            // 不存在但白名单内的路径：File.Exists 先挡住，行为不变
             var ghost = rows.FirstOrDefault(r => r.Sn == "SN-GHOST");
             Check(ghost == null, "幽灵记录不存在（防呆确认）");
         }
         try { Directory.Delete(root, true); } catch { }
     }
 
-    // ==================== P0 性能改造回归（v3.5.3） ====================
-
-    /// <summary>
-    /// 架构优化 P0 五项的回归：
-    /// ① AggDatabase.InsertBatch 批量事务 + (machine,seq) 幂等 + Id 回填；
-    /// ② FailCountCached 5s 计数缓存；
-    /// ③ 读写分离核心断言：写线程与多读线程并发跑全程无 SQLITE_BUSY/异常、写入不丢；
-    /// ④ MeshReceiver 组提交：N 个并发推送合并进 &lt; N 个批次、返回即已提交；
-    /// ⑤ RunMaintenance checkpoint/VACUUM 两分支 + 维护后可读写；
-    /// ⑥ Database.BatchInsert RETURNING：批量插入 Id 回填语义不回退。
-    /// </summary>
     static void RunP0PerformanceTests(string work)
     {
         var root = Path.Combine(work, "p0perf");
@@ -2668,7 +2379,6 @@ Argus 统一发布包  v{newer}
             FailReason = "5V_Rail", TestDate = "20260827",
         };
 
-        // ---- ①+② InsertBatch 与计数缓存 ----
         using (var db = new AggDatabase(Path.Combine(root, "batch.db")))
         {
             db.Open();
@@ -2680,8 +2390,8 @@ Argus 统一发布包  v{newer}
             Check(batchA.Select(r => r.Id).SequenceEqual(idsBefore), "InsertBatch：重复批不改写已有行的 Id");
 
             var mixed = new List<AggFailRow>();
-            mixed.AddRange(batchA.Take(80));                                 // 旧行：应被忽略
-            for (int i = 1000; i < 1020; i++) mixed.Add(MkRow(i, "FCT3"));   // 新行：应插入
+            mixed.AddRange(batchA.Take(80));
+            for (int i = 1000; i < 1020; i++) mixed.Add(MkRow(i, "FCT3"));
             int fct3Before = db.QueryFailsByMachineSeqRange("FCT3", 0, long.MaxValue).Count;
             Check(db.InsertBatch(mixed) == 20 && fct3Before == 0,
                   $"混合批次只插入新的 20 条（插前 FCT3 存量 = {fct3Before}）");
@@ -2697,8 +2407,6 @@ Argus 统一发布包  v{newer}
             Check(db.FailCountCached("FCT1") == cached1 + 1, "ClearCountCache 后读到最新计数");
         }
 
-        // ---- ⑥ RETURNING 回归：本地库批量插 + 重复批零插、事件回传 id 不回退 ----
-        // Database 按 V3 设计不实现 IDisposable（连接按需开合），局部使用即可
         var ldb = new Database(Path.Combine(root, "fct_p0.db"));
         {
             var evts = new List<(TestRecord Rec, long Id)>();
@@ -2717,8 +2425,6 @@ Argus 统一发布包  v{newer}
         try { Directory.Delete(root, true); } catch { }
         Console.WriteLine("    P0 性能改造自检完成");
     }
-
-    // ==================== 机台聚合推送器（Phase 1） ====================
 
     static TestRecord MakeFailRec(string work, string station, string xml, string sn, string? reason, string result = "FAIL")
         => new TestRecord
@@ -2760,7 +2466,6 @@ Argus 统一发布包  v{newer}
         var aggRoot = Path.Combine(work, "agg");
         Directory.CreateDirectory(aggRoot);
 
-        // ---- ① 配置未启用时不动作 ----
         var shareA = Path.Combine(aggRoot, "shareA");
         var dataA = Path.Combine(aggRoot, "dataA");
         var dbA = new Database(Path.Combine(aggRoot, "dbA.db"));
@@ -2774,7 +2479,6 @@ Argus 统一发布包  v{newer}
         Check(!File.Exists(pA.StatePath) && !File.Exists(pA.QueuePath), "聚合推送：未启用时不写 agg_state/agg_queue");
         pA.Stop();
 
-        // ---- ② 写文件成功（先入库后启动 = 续推扫描路径） ----
         var shareB = Path.Combine(aggRoot, "shareB");
         var dataB = Path.Combine(aggRoot, "dataB");
         var dbB = new Database(Path.Combine(aggRoot, "dbB.db"));
@@ -2819,7 +2523,6 @@ Argus 统一发布包  v{newer}
         Thread.Sleep(800);
         Check(CountFailFiles(dirB) == 3, "聚合推送：PASS 记录不生成 fail 文件");
 
-        // ---- ③ seq 单调 + 去重 ----
         for (int i = 0; i < 2; i++)
             dbB.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, $"agg-b3-{i}.xml"), $"SN-B3{i}", $"自检不良B3{i}"));
         var allFails = dbB.FetchFailRecordsAfter(0).Select(f => f.Id).OrderBy(x => x).ToList();
@@ -2839,7 +2542,6 @@ Argus 统一发布包  v{newer}
         Check(pB.QueuedCount == 0 && pB.LastSeq == allFails[^1], "去重后队列为空、LastSeq 不变");
         pB.Stop();
 
-        // ---- ④ 断线补偿 ----
         var shareBad = Path.Combine(aggRoot, "shareBad");
         File.WriteAllText(shareBad, "占位文件：让共享根不可建目录");
         var shareGood = Path.Combine(aggRoot, "shareGood");
@@ -2884,7 +2586,6 @@ Argus 统一发布包  v{newer}
         }, 5000), "agg_state.json 更新 max_seq");
         pD.Stop();
 
-        // ---- ⑤ 心跳 ----
         var shareE = Path.Combine(aggRoot, "shareE");
         var dataE = Path.Combine(aggRoot, "dataE");
         var dbE = new Database(Path.Combine(aggRoot, "dbE.db"));
@@ -2894,7 +2595,6 @@ Argus 统一发布包  v{newer}
         dbE.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "agg-e0.xml"), "SN-E0", "自检不良E0"));
         var idE = dbE.FetchFailRecordsAfter(0)[0].Id;
         var hb = Path.Combine(shareE, "FCT1", "heartbeat.json");
-        // 启动瞬间会先写一次 last_seq=0 的心跳，等 FAIL 入队后 next 周期心跳才带上真实 seq
         Check(WaitUntil(() => File.Exists(hb), 10000), "心跳文件 heartbeat.json 已生成");
         Check(WaitUntil(() =>
         {
@@ -2914,7 +2614,6 @@ Argus 统一发布包  v{newer}
         Check(WaitUntil(() => File.Exists(hb) && File.ReadAllText(hb) != hb1, 10000), "心跳按周期持续覆盖更新");
         pE.Stop();
 
-        // ---- ⑥ 重启恢复：读 agg_queue.json 补推 + 续推扫描合并去重 ----
         var share6Bad = Path.Combine(aggRoot, "share6Bad");
         File.WriteAllText(share6Bad, "占位文件：让共享根不可建目录");
         var share6Good = Path.Combine(aggRoot, "share6Good");
@@ -2928,7 +2627,6 @@ Argus 统一发布包  v{newer}
         Check(WaitUntil(() => p6a.QueuedCount == 2, 3000), "重启前：2 条事件滞留队列");
         p6a.Stop();
         Check(File.Exists(Path.Combine(data6, "agg_queue.json")), "停止时 agg_queue.json 落盘");
-        // 模拟重启：同一个 data 目录 + 同一个 db，共享恢复
         var p6b = new AgentPusher(new AppConfig { StationId = "FCT1", AggEnabled = true, AggShareRoot = share6Good },
             "FCT1", db6, data6, retrySec: 1, heartbeatSec: 60);
         p6b.Init();
@@ -2951,20 +2649,9 @@ Argus 统一发布包  v{newer}
         Console.WriteLine("    聚合推送自检完成");
     }
 
-    // ==================== 聚合端监听（Phase 2） ====================
-    // 机台端推送格式（AgentPusher.cs）：
-    //   fail-{seq}.json  顶层 {machine, type:"fail", seq, ts, data:{id, station_id, model, category,
-    //                     test_date, sn, result, xml_path, fail_reason, tester, panel_status,
-    //                     batch_timestamp, has_fail_items(0/1), file_size}}
-    //   heartbeat.json   顶层 {machine, type:"heartbeat", ts, last_seq, queued}
-    // 机台端先写 .tmp 再 File.Move 改名，聚合端靠 FileSystemWatcher 的 Renamed 事件接住。
-
-    /// <summary>机台端同款 fail JSON（data 字段齐全）。写到 dir 下 fail-{seq}.json。</summary>
     static void WriteFailJson(string dir, long seq, string machine)
         => WriteFailJsonTo(Path.Combine(dir, $"fail-{seq}.json"), seq, machine);
 
-    /// <summary>机台端同款 fail JSON 字符串（无尾换行，与 AgentPusher http 直推的 body 完全同构）。
-    /// 文件版与 HTTP 版共用，保证两个通道的契约一致。</summary>
     static string BuildFailJsonString(long seq, string machine)
     {
         var data = new Dictionary<string, object?>
@@ -2994,7 +2681,6 @@ Argus 统一发布包  v{newer}
         });
     }
 
-    /// <summary>机台端同款 fail JSON，但可指定 xml_path/sn/fail_reason（Web 服务 XML 下载白名单与 CSV 注入测试用）。</summary>
     static string BuildFailJsonCustom(long seq, string machine, string xmlPath, string sn, string failReason)
     {
         var data = new Dictionary<string, object?>
@@ -3024,7 +2710,6 @@ Argus 统一发布包  v{newer}
         });
     }
 
-    /// <summary>机台端同款 heartbeat JSON 字符串（machine/type/ts/last_seq/queued，无尾换行）。</summary>
     static string BuildHeartbeatJsonString(string machine, long lastSeq, int queued)
         => System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
         {
@@ -3035,13 +2720,11 @@ Argus 统一发布包  v{newer}
             ["queued"] = queued,
         });
 
-    /// <summary>机台端同款 fail JSON，写到指定路径（.tmp 或最终名）。</summary>
     static void WriteFailJsonTo(string path, long seq, string machine)
     {
         File.WriteAllText(path, BuildFailJsonString(seq, machine), System.Text.Encoding.UTF8);
     }
 
-    /// <summary>机台端同款 heartbeat JSON（ts 可指定，离线判定用）。</summary>
     static void WriteHeartbeat(string dir, string machine, string ts, long lastSeq, int queued)
     {
         var json = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
@@ -3055,11 +2738,9 @@ Argus 统一发布包  v{newer}
         File.WriteAllText(Path.Combine(dir, "heartbeat.json"), json, System.Text.Encoding.UTF8);
     }
 
-    /// <summary>GetMachines 里按机台名找一台；没有返回 null。</summary>
     static AggMachineStatus? FindMachine(AggWatcher w, string name)
         => w.GetMachines().FirstOrDefault(m => string.Equals(m.Machine, name, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>删独立临时目录（watcher 已 Stop、db 已 Dispose 后调用；删不掉不阻断）。</summary>
     static void TryDeleteDir(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
@@ -3071,7 +2752,6 @@ Argus 统一发布包  v{newer}
         var aggRoot = Path.Combine(work, "aggwatch");
         Directory.CreateDirectory(aggRoot);
 
-        // ---- ① AggDatabase 幂等：同 (machine, seq) 只入库一次，字段回读 ----
         using (var db1 = new AggDatabase(Path.Combine(aggRoot, "db1.db")))
         {
             var row1 = new AggFailRow
@@ -3106,7 +2786,6 @@ Argus 统一发布包  v{newer}
             }
         }
 
-        // ---- ② AggDatabase 跨机台：计数隔离 / machine 过滤 / ingest_ts 倒序 ----
         using (var db2 = new AggDatabase(Path.Combine(aggRoot, "db2.db")))
         {
             AggFailRow Row2(string m, long seq, string ingest) => new()
@@ -3132,7 +2811,6 @@ Argus 统一发布包  v{newer}
                   "AggDatabase：QueryFails 按 ingest_ts DESC 排序（最新在前）");
         }
 
-        // ---- ③ AggWatcher 初始扫描：启动时把已有 fail 文件全量入库 ----
         var share3 = Path.Combine(aggRoot, "share3");
         Directory.CreateDirectory(Path.Combine(share3, "FCT1"));
         WriteFailJson(Path.Combine(share3, "FCT1"), 1, "FCT1");
@@ -3154,7 +2832,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(share3);
 
-        // ---- ④ AggWatcher 增量：运行中 .tmp 写文件再 File.Move 改名（Renamed 事件接住） ----
         var share4 = Path.Combine(aggRoot, "share4");
         Directory.CreateDirectory(Path.Combine(share4, "FCT1"));
         WriteFailJson(Path.Combine(share4, "FCT1"), 1, "FCT1");
@@ -3165,8 +2842,8 @@ Argus 统一发布包  v{newer}
             w4.Start();
             Check(WaitUntil(() => w4.ProcessedFiles == 2, 10000), "增量前置：初始 2 个文件已入库");
             var tmp = Path.Combine(share4, "FCT1", "fail-3.json.tmp");
-            WriteFailJsonTo(tmp, 3, "FCT1");                                  // 先写 .tmp（机台端两步写）
-            File.Move(tmp, Path.Combine(share4, "FCT1", "fail-3.json"));     // 再改名成最终名
+            WriteFailJsonTo(tmp, 3, "FCT1");
+            File.Move(tmp, Path.Combine(share4, "FCT1", "fail-3.json"));
             Check(WaitUntil(() => w4.ProcessedFiles == 3 && w4.TotalFails == 3, 10000),
                   $"增量：.tmp→Move 后 fail-3 入库（ProcessedFiles={w4.ProcessedFiles}, TotalFails={w4.TotalFails}）");
             Check(db4.QueryFails(10).Any(r => r.Seq == 3 && r.Sn == "SN-FCT1-3"),
@@ -3176,7 +2853,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(share4);
 
-        // ---- ⑤ AggWatcher 幂等：同 seq 文件再次出现不重复入库 ----
         var share5 = Path.Combine(aggRoot, "share5");
         Directory.CreateDirectory(Path.Combine(share5, "FCT1"));
         WriteFailJson(Path.Combine(share5, "FCT1"), 1, "FCT1");
@@ -3186,8 +2862,6 @@ Argus 统一发布包  v{newer}
         {
             w5.Start();
             Check(WaitUntil(() => w5.ProcessedFiles == 2, 10000), "幂等前置：初始 2 个文件已入库");
-            // 同 seq 重发：删掉原文件再重写（必然触发 Created 事件）；随后写新 seq=3 当哨兵，
-            // 哨兵入库时重复文件必然已处理完 —— 若重复也被计数，ProcessedFiles 会变成 4
             File.Delete(Path.Combine(share5, "FCT1", "fail-2.json"));
             WriteFailJson(Path.Combine(share5, "FCT1"), 2, "FCT1");
             WriteFailJson(Path.Combine(share5, "FCT1"), 3, "FCT1");
@@ -3199,7 +2873,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(share5);
 
-        // ---- ⑥ AggWatcher 心跳：在线判定 + 超时判离线 ----
         var share6 = Path.Combine(aggRoot, "share6");
         Directory.CreateDirectory(Path.Combine(share6, "FCT1"));
         WriteHeartbeat(Path.Combine(share6, "FCT1"), "FCT1",
@@ -3213,7 +2886,6 @@ Argus 统一发布包  v{newer}
                 var st = FindMachine(w6, "FCT1");
                 return st != null && st.Online && st.LastSeq == 7 && st.Queued == 3;
             }, 10000), "心跳：FCT1 上线（3s 超时阈值内判定），last_seq=7/queued=3 从心跳读出");
-            // 心跳 ts 改成 2 分钟前 → 超过超时阈值 → 下一轮轮询判离线
             WriteHeartbeat(Path.Combine(share6, "FCT1"), "FCT1",
                 DateTime.Now.AddMinutes(-2).ToString("yyyy-MM-dd HH:mm:ss"), 7, 3);
             Check(WaitUntil(() => FindMachine(w6, "FCT1") is { Online: false }, 10000),
@@ -3222,7 +2894,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(share6);
 
-        // ---- ⑦ AggWatcher 新机台上线：运行中新建目录 + 心跳即被发现 ----
         var share7 = Path.Combine(aggRoot, "share7");
         Directory.CreateDirectory(Path.Combine(share7, "FCT1"));
         WriteHeartbeat(Path.Combine(share7, "FCT1"), "FCT1",
@@ -3249,19 +2920,6 @@ Argus 统一发布包  v{newer}
         Console.WriteLine("    聚合端监听自检完成");
     }
 
-    // ==================== B2 双通道：机台端 HTTP 直推 + 聚合端 HTTP 接收（Phase 2 增强） ====================
-    // 机台端 http 模式：AgentPusher(AggTransport=="http" && AggHttpUrl 非空) 把与 fail-{seq}.json
-    // 完全相同的 JSON（UTF-8、无尾换行）POST 到 AggHttpUrl 根路径，心跳同构 POST；
-    // 断线补偿复用队列：失败入 agg_queue.json，后台按 retrySec 重试。
-    // 聚合端：HttpIngest 路由 POST /api/fail、/api/heartbeat、/（按 body type 分发），
-    // 回调内容为机台 POST 的原始 JSON 字符串，交 AggWatcher.IngestFail/IngestHeartbeat 入库。
-    // 测试接收端用本文件自带的 HttpCollector（HttpListener 绑 127.0.0.1，Windows 无需管理员权限）。
-    // GetFreePort 已在 P3+P4 区域统一定义（复用），此处不再重复。
-
-    /// <summary>
-    /// 测试用 HTTP 接收端：后台线程 GetContext 循环收集 POST body（模拟聚合端，替代 HttpIngest 做白盒验证）。
-    /// 只绑 127.0.0.1 前缀，Windows 普通用户即可监听；GetContext 在 Stop/Close 后抛异常，catch 后正常退出线程。
-    /// </summary>
     sealed class HttpCollector : IDisposable
     {
         private readonly HttpListener _listener;
@@ -3278,10 +2936,8 @@ Argus 统一发布包  v{newer}
             _thread.Start();
         }
 
-        /// <summary>已收集的 body 条数。</summary>
         public int Count { get { lock (_lock) return _bodies.Count; } }
 
-        /// <summary>已收集 body 的快照（按收到顺序）。</summary>
         public string[] Snapshot() { lock (_lock) return _bodies.ToArray(); }
 
         private void Loop()
@@ -3290,7 +2946,7 @@ Argus 统一发布包  v{newer}
             {
                 HttpListenerContext ctx;
                 try { ctx = _listener.GetContext(); }
-                catch { break; }   // 监听器 Stop/Close：GetContext 抛 ObjectDisposedException/HttpListenerException，正常退出
+                catch { break; }
                 string body;
                 try
                 {
@@ -3321,7 +2977,6 @@ Argus 统一发布包  v{newer}
         var httpRoot = Path.Combine(work, "httpchan");
         Directory.CreateDirectory(httpRoot);
 
-        // ---- ① 机台端 http 模式推送：POST 与 fail-{seq}.json 完全相同的 JSON（无尾换行），不产生共享目录文件 ----
         var root1 = Path.Combine(httpRoot, "http1");
         Directory.CreateDirectory(root1);
         int port1 = GetFreePort();
@@ -3331,7 +2986,7 @@ Argus 统一发布包  v{newer}
             StationId = "FCT1",
             AggEnabled = true,
             AggTransport = "http",
-            AggHttpUrl = $"http://127.0.0.1:{port1}/",   // AggShareRoot 留空：http 模式不该碰共享目录
+            AggHttpUrl = $"http://127.0.0.1:{port1}/",
         }, "FCT1", db1h, Path.Combine(root1, "data1"), retrySec: 1, heartbeatSec: 60);
         using (var col1 = new HttpCollector(port1))
         {
@@ -3339,10 +2994,6 @@ Argus 统一发布包  v{newer}
             Check(p1.HttpMode && p1.Active, "http 推送：http 模式激活（transport=http 且 url 非空）");
             db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-a.xml"), "SN-H1A", "自检不良H1A"));
             db1h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http1-b.xml"), "SN-H1B", "自检不良H1B"));
-            // ⚠ 2026-08-14 修复竞态：不能数 col1.Count == 2 —— 推送器 worker 启动瞬间
-            //   会立刻发首条心跳（_lastHeartbeat 初始 0），两条 fail 又几乎同时 POST，
-            //   轮询窗口可能永远看不到「恰好 2 条」（win10 VM Windows 更新后时序漂移实测踩中）。
-            //   语义是「两条 FAIL 事件都到了」，所以只数 type=fail 的 body，心跳是噪音。
             bool TwoFails() => col1.Snapshot().Count(b => b.Contains("\"type\":\"fail\"")) == 2;
             if (!WaitUntil(TwoFails, 30000))
             {
@@ -3388,7 +3039,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(root1);
 
-        // ---- ② http 心跳：后台线程按周期 POST heartbeat（machine/type/ts/last_seq/queued） ----
         var root2 = Path.Combine(httpRoot, "http2");
         Directory.CreateDirectory(root2);
         int port2 = GetFreePort();
@@ -3422,7 +3072,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(root2);
 
-        // ---- ③ http 断线补偿：断线期间事件进 agg_queue.json，接收端恢复后自动补推、队列清空 ----
         var root3 = Path.Combine(httpRoot, "http3");
         Directory.CreateDirectory(root3);
         int port3 = GetFreePort();
@@ -3439,13 +3088,10 @@ Argus 统一发布包  v{newer}
         {
             p3.Init();
             db3h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http3-a.xml"), "SN-H3A", "自检不良H3A"));
-            // ⚠ 必须等 seq=1 完全确认出队（LastSeq>=1）再 Dispose，否则 Dispose 会杀掉 in-flight 的
-            //   seq=1 响应：请求已处理(body 到达)但客户端读不到响应 → 判失败留队 → 后续断言错乱。
-            //   body 到达与响应收讫有先后（HTTP keep-alive 连接池），分两步各自独立等。
             Check(WaitUntil(() => col3.Count >= 1, 10000), "http 断线前置：seq=1 body 已到达");
             Check(WaitUntil(() => p3.LastSeq >= 1, 20000),
                   "http 断线前置：seq=1 已确认出队（响应收讫，Dispose 无 in-flight 竞态）");
-            col3.Dispose();   // 模拟断线：接收端关闭，之后的 POST 全部失败
+            col3.Dispose();
             db3h.InsertOne(MakeFailRec(work, "FCT1", Path.Combine(work, "http3-b.xml"), "SN-H3B", "自检不良H3B"));
             var id3b = db3h.FetchFailRecordsAfter(0)[1].Id;
             Check(WaitUntil(() => p3.QueuedCount == 1, 10000), "http 断线：第 2 条滞留内存队列");
@@ -3461,7 +3107,6 @@ Argus 统一发布包  v{newer}
                 }
                 catch { return false; }
             }, 5000), "http 断线：agg_queue.json 已落盘且含断线 seq（重启不丢队）");
-            // 重启接收端（同端口）；worker 按 retrySec=1 自动补推
             using var col3b = new HttpCollector(port3);
             Check(WaitUntil(() => col3b.Count == 1, 30000), "http 断线：接收端恢复后自动补推第 2 条");
             var b3b = col3b.Snapshot().FirstOrDefault(b => b.Contains("\"sn\":\"SN-H3B\""));
@@ -3476,7 +3121,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(root3);
 
-        // ---- ④ HttpIngest 接收：onFail/onHeartbeat 回调收到原始 JSON、内容与 POST 完全一致 ----
         var root4 = Path.Combine(httpRoot, "http4");
         Directory.CreateDirectory(root4);
         int port4 = GetFreePort();
@@ -3511,12 +3155,8 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(root4);
 
-        // ---- ⑤ 聚合端全链路：watcher + ingest 接线，机台自动出现 / 在线 / 超时离线 / 重复 seq 幂等 ----
         var root5 = Path.Combine(httpRoot, "http5");
         var share5 = Path.Combine(root5, "share5");
-        // ⚠ 给「存在的空目录」而非不存在目录：AggWatcher.Start() 对不存在的 shareRoot 直接 return、
-        // 不启动心跳轮询线程，HTTP 机台的离线翻转（LastSeen 超时）就永远不发生。
-        // HTTP 机台不读共享文件，空目录同样验证「http 推送自动创建机台、不依赖共享目录」。
         Directory.CreateDirectory(share5);
         int port5 = GetFreePort();
         using (var db5 = new AggDatabase(Path.Combine(root5, "agg5.db")))
@@ -3549,7 +3189,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(root5);
 
-        // ---- ⑥ 路由响应码：200 / 405 / 404 / 根路径按 body type 分发 ----
         var root6 = Path.Combine(httpRoot, "http6");
         Directory.CreateDirectory(root6);
         int port6 = GetFreePort();
@@ -3568,7 +3207,6 @@ Argus 统一发布包  v{newer}
             var r404 = client6.PostAsync($"{baseUrl6}/nope",
                 new StringContent(okJson6, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
             Check(r404.StatusCode == HttpStatusCode.NotFound, "路由：POST /nope -> 404");
-            // 机台端把 fail/heartbeat 都 POST 到 AggHttpUrl 根路径：根路径必须按 body type 分发
             var rRoot = client6.PostAsync($"{baseUrl6}/",
                 new StringContent(BuildFailJsonString(32, "FCT1"), Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
             Check(rRoot.StatusCode == HttpStatusCode.OK, "路由：POST /（根路径）按 body type=fail 分发 -> 200");
@@ -3578,14 +3216,11 @@ Argus 统一发布包  v{newer}
         Console.WriteLine("    HTTP 双通道自检完成");
     }
 
-    // ==================== 聚合链路连通性（v3.4.11：状态机/主备/恢复/溢出） ====================
-
     static void RunLinkConnectivityTests(string work)
     {
         var linkRoot = Path.Combine(work, "link");
         Directory.CreateDirectory(linkRoot);
 
-        // ---- ① 主备聚合端：主地址不可达，自动切备用（live collector 收到全部 FAIL）----
         var rootA = Path.Combine(linkRoot, "ha");
         Directory.CreateDirectory(rootA);
         int deadPort = GetFreePort();
@@ -3596,7 +3231,7 @@ Argus 统一发布包  v{newer}
             StationId = "FCT1",
             AggEnabled = true,
             AggTransport = "http",
-            AggHttpUrl = $"http://127.0.0.1:{deadPort}/,http://127.0.0.1:{livePort}/",   // 主备逗号分隔
+            AggHttpUrl = $"http://127.0.0.1:{deadPort}/,http://127.0.0.1:{livePort}/",
         }, "FCT1", dbA, Path.Combine(rootA, "data"), retrySec: 1, heartbeatSec: 60);
         using (var col = new HttpCollector(livePort))
         {
@@ -3614,7 +3249,6 @@ Argus 统一发布包  v{newer}
         }
         TryDeleteDir(rootA);
 
-        // ---- ② 断连状态机：全部地址不可达 → 连续失败超阈值判 Disconnected，事件不丢 ----
         var rootB = Path.Combine(linkRoot, "down");
         Directory.CreateDirectory(rootB);
         int deadPortB = GetFreePort();
@@ -3640,7 +3274,6 @@ Argus 统一发布包  v{newer}
         pB.Stop();
         TryDeleteDir(rootB);
 
-        // ---- ③ 链路恢复：备用端后启动 → 断连状态自动回到正常，积压自动补推 ----
         var rootC = Path.Combine(linkRoot, "recover");
         Directory.CreateDirectory(rootC);
         int deadPortC = GetFreePort();
@@ -3667,7 +3300,6 @@ Argus 统一发布包  v{newer}
         pC.Stop();
         TryDeleteDir(rootC);
 
-        // ---- ④ 队列溢出：超过上限丢最老并累计计数（防静默丢数据的可观测性）----
         var rootD = Path.Combine(linkRoot, "overflow");
         Directory.CreateDirectory(rootD);
         int deadPortD = GetFreePort();
@@ -3680,7 +3312,6 @@ Argus 统一发布包  v{newer}
             AggHttpUrl = $"http://127.0.0.1:{deadPortD}/",
         }, "FCT1", dbD, Path.Combine(rootD, "data"), retrySec: 1, heartbeatSec: 60);
         pD.Init();
-        // 推送端不可达，队列只进不出：塞超上限验证丢弃计数与上限约束
         for (int i = 1; i <= AgentPusher.MaxQueue + 50; i++)
         {
             var rec = MakeFailRec(work, "FCT1", Path.Combine(rootD, $"of-{i}.xml"), $"SN-OF{i}", $"自检不良OF{i}");
@@ -3695,21 +3326,13 @@ Argus 统一发布包  v{newer}
         Console.WriteLine("    聚合链路连通性自检完成");
     }
 
-    // ==================== Web 聚合服务（Phase 3：纯 Web 模式） ====================
-    // WebAggServer.cs 路由：GET /（看板页）、/api/machines、/api/fails?limit&machine、
-    // /api/file?id=|path=（XML 下载，白名单=resultsRoot 或 {BaseDir}/logs/app.log）、
-    // /api/export.csv（UTF-8 BOM + 公式注入防护）、/api/health；POST /api/mesh/fail、/api/mesh/heartbeat、/（按 body type 分发）；
-    // 未知路径 404；方法不符 405；body 超 1MB 413；id 非数字/无参数 400；穿越/越权/文件不存在 403；id 查无记录 404。
-    // JSON 字段为 PascalCase（AggFailRow/AggMachineStatus 是 public 字段，序列化开 IncludeFields）。
-    // 注意：POST 入库在服务端 Task.Run 异步完成，回 200 后必须 WaitUntil 等库。
-
     static void RunWebAggServerTests(string work)
     {
         var webRoot = Path.Combine(work, "webagg");
         var resultsRoot = Path.Combine(webRoot, "results");
         var shareRoot = Path.Combine(webRoot, "share");
         Directory.CreateDirectory(resultsRoot);
-        Directory.CreateDirectory(shareRoot);   // ⚠ 必须存在：AggWatcher.Start() 对不存在的 shareRoot 直接 return
+        Directory.CreateDirectory(shareRoot);
         int port = GetFreePort();
         var baseUrl = $"http://127.0.0.1:{port}";
 
@@ -3721,7 +3344,6 @@ Argus 统一发布包  v{newer}
             srv.Start();
             Check(WaitUntil(() => srv.Listening, 5000), "Web 服务：Start 后进入监听状态");
 
-            // ---- ① 页面与 API 可用 ----
             var rPage = _http.GetAsync($"{baseUrl}/").GetAwaiter().GetResult();
             Check(rPage.StatusCode == HttpStatusCode.OK && rPage.Content.Headers.ContentType?.MediaType == "text/html",
                   "GET / -> 200 text/html（看板页）");
@@ -3761,7 +3383,6 @@ Argus 统一发布包  v{newer}
             }
             Check(srv.ReceivedCount >= 4, $"Web 服务：合法请求计入 ReceivedCount（实得 {srv.ReceivedCount}）");
 
-            // ---- ② 推送路由 + 入库 ----
             var failJson = BuildFailJsonCustom(41, "FCT1", "X:\\fct\\web41.xml", "SN-WEB-41", "5V_Rail");
             var rPush = _http.PostAsync($"{baseUrl}/api/mesh/fail",
                 new StringContent(failJson, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
@@ -3798,7 +3419,6 @@ Argus 统一发布包  v{newer}
             Check(WaitUntil(() => { cntRoot = db.FailCount(""); return cntRoot == 2; }, 10000),
                   $"POST / 分发：fail 已入库（FailCount={cntRoot}，FCT1+FCT2 各一条）");
 
-            // ---- ③ XML 下载白名单 ----
             var xml = Path.Combine(resultsRoot, "rep-001.xml");
             const string xmlContent = "<BATCH><STATUS>FAIL</STATUS></BATCH>";
             File.WriteAllText(xml, xmlContent);
@@ -3832,7 +3452,6 @@ Argus 统一发布包  v{newer}
             var rBadId = _http.GetAsync($"{baseUrl}/api/file?id=abc").GetAwaiter().GetResult();
             Check(rBadId.StatusCode == HttpStatusCode.BadRequest, "GET /api/file?id=abc（非数字）-> 400");
 
-            // ---- ④ CSV 导出 ----
             var rCsv = _http.GetAsync($"{baseUrl}/api/export.csv").GetAwaiter().GetResult();
             Check(rCsv.StatusCode == HttpStatusCode.OK, "GET /api/export.csv -> 200");
             if (rCsv.StatusCode == HttpStatusCode.OK)
@@ -3859,7 +3478,6 @@ Argus 统一发布包  v{newer}
                       "CSV 注入：= 开头字段被加单引号前缀（'=cmd...），Excel 不执行公式");
             }
 
-            // ---- ⑤ 路由错误码 ----
             var r404 = _http.GetAsync($"{baseUrl}/api/nope").GetAwaiter().GetResult();
             Check(r404.StatusCode == HttpStatusCode.NotFound, "GET /api/nope（未知路径）-> 404");
             var r405put = _http.SendAsync(new HttpRequestMessage(HttpMethod.Put, $"{baseUrl}/api/mesh/fail")).GetAwaiter().GetResult();
@@ -3886,9 +3504,6 @@ Argus 统一发布包  v{newer}
     Console.WriteLine("    Web 聚合服务自检完成");
     }
 
-    // ==================== agg_token 鉴权 + 分页搜索 + XML 内容落盘（v3.4.2） ====================
-    // 场景：token 未配放行 / 配了不匹配 403 / 匹配 200（头与 query 两路）/ 分页 offset /
-    // 搜索 q（sn/model/fail_reason）/ /api/fails/count 总数 / 跨机台 XML 内容随事件上送落盘后下载。
     static void RunAggTokenPagingTests(string work)
     {
         var webRoot = Path.Combine(work, "aggsec");
@@ -3907,7 +3522,6 @@ Argus 统一发布包  v{newer}
             srv.Start();
             Check(WaitUntil(() => srv.Listening, 5000), "聚合鉴权：带 token 的 Web 服务已启动");
 
-            // ---- ① 无 token 全部 403 ----
             var rNoTok = _http.GetAsync($"{baseUrl}/api/machines").GetAwaiter().GetResult();
             Check(rNoTok.StatusCode == HttpStatusCode.Forbidden, "GET /api/machines（无 token）-> 403");
             var rNoTokPush = _http.PostAsync($"{baseUrl}/api/mesh/fail",
@@ -3916,7 +3530,6 @@ Argus 统一发布包  v{newer}
             Check(rNoTokPush.StatusCode == HttpStatusCode.Forbidden, "POST /api/mesh/fail（无 token）-> 403");
             Check(WaitUntil(() => db.FailCount("") == 0, 3000), "聚合鉴权：403 的推送未入库（FailCount=0）");
 
-            // ---- ② 错误 token 403 ----
             using (var bad = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/machines"))
             {
                 bad.Headers.Add("X-Agg-Token", "wrong");
@@ -3924,7 +3537,6 @@ Argus 统一发布包  v{newer}
                 Check(rBadTok.StatusCode == HttpStatusCode.Forbidden, "GET /api/machines（错误 token）-> 403");
             }
 
-            // ---- ③ 正确 token（header）200 且能入库 ----
             using (var okPush = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/mesh/fail"))
             {
                 okPush.Headers.Add("X-Agg-Token", "secret-token");
@@ -3936,13 +3548,11 @@ Argus 统一发布包  v{newer}
             }
             Check(WaitUntil(() => db.FailCount("") == 1, 10000), "聚合鉴权：正确 token 的推送已入库（FailCount=1）");
 
-            // 再入库 3 条（不同机台/SN/原因）供分页与搜索断言
             PushFailWithToken(baseUrl, "secret-token", BuildFailJsonCustom(102, "FCT2", "X:\\fct\\b.xml", "SN-102", "12V_Rail"));
             PushFailWithToken(baseUrl, "secret-token", BuildFailJsonCustom(103, "FCT1", "X:\\fct\\c.xml", "SN-103", "CAN_Bus"));
             PushFailWithToken(baseUrl, "secret-token", BuildFailJsonCustom(104, "FCT2", "X:\\fct\\d.xml", "SN-104", "5V_Rail"));
             Check(WaitUntil(() => db.FailCount("") == 4, 10000), "聚合鉴权：共入库 4 条（FailCount=4）");
 
-            // ---- ④ 分页：limit=2 + offset ----
             var rPage0 = _http.GetAsync($"{baseUrl}/api/fails?limit=2&offset=0&token=secret-token").GetAwaiter().GetResult();
             if (rPage0.StatusCode == HttpStatusCode.OK)
             {
@@ -3965,7 +3575,6 @@ Argus 统一发布包  v{newer}
                 Check(pt.RootElement.GetArrayLength() == 0, "分页:limit=2&offset=4 -> 返回 0 条（越界空页）");
             }
 
-            // ---- ⑤ 搜索：q 过滤 SN ----
             var rSearch = _http.GetAsync($"{baseUrl}/api/fails?q={Uri.EscapeDataString("SN-103")}&token=secret-token").GetAwaiter().GetResult();
             if (rSearch.StatusCode == HttpStatusCode.OK)
             {
@@ -3992,7 +3601,6 @@ Argus 统一发布包  v{newer}
                 Check(nd.RootElement.GetArrayLength() == 0, "搜索:q=不存在 -> 0 条");
             }
 
-            // ---- ⑥ /api/fails/count 总数（含过滤） ----
             var rCntAll = _http.GetAsync($"{baseUrl}/api/fails/count?token=secret-token").GetAwaiter().GetResult();
             Check(rCntAll.StatusCode == HttpStatusCode.OK, "GET /api/fails/count -> 200");
             if (rCntAll.StatusCode == HttpStatusCode.OK)
@@ -4011,13 +3619,12 @@ Argus 统一发布包  v{newer}
                       "GET /api/fails/count?q=5V_Rail：过滤后总数 = 2");
             }
 
-            // ---- ⑦ 跨机台 XML 内容落盘：xml_content 随事件上送 -> 聚合端本地 agg_xml 可下载 ----
             const string xmlPayload = "<BATCH><STATUS>FAIL</STATUS><SN>SN-201</SN></BATCH>";
             var data = new Dictionary<string, object?>
             {
                 ["id"] = 201, ["station_id"] = "FCT1", ["model"] = "E3002781",
                 ["category"] = "Online", ["test_date"] = "20260812", ["sn"] = "SN-201",
-                ["result"] = "FAIL", ["xml_path"] = "X:\\fct\\local-201.xml",   // 机台端路径（聚合端不可达）
+                ["result"] = "FAIL", ["xml_path"] = "X:\\fct\\local-201.xml",
                 ["fail_reason"] = "跨机台XML", ["tester"] = "SELFTEST",
                 ["panel_status"] = "0000", ["batch_timestamp"] = "2026-08-12 09:00:00",
                 ["has_fail_items"] = 1, ["file_size"] = 123,
@@ -4036,7 +3643,7 @@ Argus 统一发布包  v{newer}
                 var row = db.QueryFails(10, "FCT1").FirstOrDefault(r => r.Sn == "SN-201");
                 if (row == null) return false;
                 xmlId = row.Id;
-                return !string.IsNullOrEmpty(row.XmlPath) && File.Exists(row.XmlPath);   // XmlPath 已改写为本地文件
+                return !string.IsNullOrEmpty(row.XmlPath) && File.Exists(row.XmlPath);
             }, 10000), "XML 内容落盘:XmlPath 已改写为聚合端本地文件且存在");
             var rXml = _http.GetAsync($"{baseUrl}/api/file?id={xmlId}&token=secret-token").GetAwaiter().GetResult();
             Check(rXml.StatusCode == HttpStatusCode.OK, $"GET /api/file?id={xmlId}（跨机台 XML 本地落盘）-> 200");
@@ -4044,7 +3651,6 @@ Argus 统一发布包  v{newer}
                 Check(rXml.Content.ReadAsStringAsync().GetAwaiter().GetResult() == xmlPayload,
                       "GET /api/file?id=：内容与上送的 xml_content 一致");
 
-            // ---- ⑧ 管理后台：GET /api/settings（只读，不污染真实 config.json）----
             var rSet = _http.GetAsync($"{baseUrl}/api/settings?token=secret-token").GetAwaiter().GetResult();
             Check(rSet.StatusCode == HttpStatusCode.OK, "GET /api/settings（带 token）-> 200");
             if (rSet.StatusCode == HttpStatusCode.OK)
@@ -4060,23 +3666,17 @@ Argus 统一发布包  v{newer}
                       && root.TryGetProperty("results_root", out _),
                       "GET /api/settings：返回全部聚合配置字段（端口/token/webhook/汇总/通道/白名单）");
             }
-            // M-3 加固后：服务端认证成功会下发 HttpOnly Cookie，_http 的 CookieContainer
-            // 会自动携带 —— 「无 token 也能过」正是新语义。这里用**无 Cookie 的裸客户端**
-            // 验证真正的未授权请求仍然被拒。
             using (var bare = new HttpClient())
             {
                 var rSetNoToken = bare.GetAsync($"{baseUrl}/api/settings").GetAwaiter().GetResult();
                 Check(rSetNoToken.StatusCode == HttpStatusCode.Forbidden,
                       "GET /api/settings（无 token 且无 Cookie）-> 403（设置页也要鉴权）");
-                // M-3：带合法 ?token= 访问后，服务端下发 Cookie；后续无 token 请求靠 Cookie 自动放行
-                // （裸客户端不存 Cookie；Cookie 续传由 _http——有容器——验证）
                 bare.GetAsync($"{baseUrl}/?token=secret-token").GetAwaiter().GetResult();
                 var rViaCookie = _http.GetAsync($"{baseUrl}/api/machines").GetAwaiter().GetResult();
                 Check(rViaCookie.StatusCode == HttpStatusCode.OK,
                       "GET /api/machines（不带任何 token，凭先前下发的 Cookie）-> 200");
             }
 
-            // 页面含「设置」页签
             var rPage2 = _http.GetAsync($"{baseUrl}/?token=secret-token").GetAwaiter().GetResult();
             if (rPage2.StatusCode == HttpStatusCode.OK)
             {
@@ -4086,7 +3686,6 @@ Argus 统一发布包  v{newer}
                 Check(page2.Contains("/api/settings"), "GET /：页面 JS 调用 /api/settings（设置页加载）");
             }
 
-            // ---- ⑨ Config.Save 容错：损坏的 config.json 不崩溃、未知字段保留 ----
             var cfgPath = Path.Combine(AppConfig.BaseDir, "config.json");
             if (File.Exists(cfgPath))
             {
@@ -4107,7 +3706,6 @@ Argus 统一发布包  v{newer}
         Console.WriteLine("    聚合鉴权与分页自检完成");
     }
 
-    /// <summary>带 token 头 POST fail（鉴权自检辅助）。</summary>
     static void PushFailWithToken(string baseUrl, string token, string json)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/mesh/fail");
@@ -4116,12 +3714,6 @@ Argus 统一发布包  v{newer}
         _http.SendAsync(req).GetAwaiter().GetResult();
     }
 
-    // ==================== Web 目录浏览（Phase 3：/api/list + 页面文件页签） ====================
-    // 场景：根目录列表（目录在前文件在后） / 相对路径 / 绝对路径 / 穿越与越权 403 / 不存在 404 /
-    // 下载回归 / 页面文件页签。白名单根 = resultsRoot（构造参数），与 /api/file 同源。
-    // ==================== 聚合服务一键部署（v3.4.0：agg --install） ====================
-    // 场景：默认 config JSON 生成 —— 字段齐全 / 值正确 / 合法可解析 / 缩进可读。
-    // 系统操作（netsh 防火墙 / 快捷方式 / 启动进程）依赖 Windows 环境，这里只保证编译通过。
     static void RunAggInstallConfigTests()
     {
         var json = Program.BuildDefaultAggConfigJson();
@@ -4132,7 +3724,6 @@ Argus 统一发布包  v{newer}
         {
             parseOk = true;
             var root = doc.RootElement;
-            // v3.5.0 去中心化：默认配置为 Mesh 节点（station/mesh_port/peers），非旧中心端字段
             Check(root.TryGetProperty("station_id", out var s) && s.GetString() == "AGG-NODE",
                   "一键部署:station_id=AGG-NODE");
             Check(root.TryGetProperty("results_root", out var r) && r.GetString() == @"D:\Results",
@@ -4143,7 +3734,6 @@ Argus 统一发布包  v{newer}
             Check(root.TryGetProperty("peers", out var peers) &&
                   peers.ValueKind == System.Text.Json.JsonValueKind.Array && peers.GetArrayLength() == 0,
                   "一键部署:peers 为空数组（单节点起步）");
-            // M-1 加固：默认配置自动生成随机 token（32 位 hex），不再空 token 全网开放
             bool tokOk = root.TryGetProperty("agg_token", out var at) &&
                          at.ValueKind == System.Text.Json.JsonValueKind.String;
             string tok = tokOk ? at.GetString() ?? "" : "";
@@ -4158,9 +3748,7 @@ Argus 统一发布包  v{newer}
         Check(parseOk, "一键部署:JSON 合法可解析");
         Check(json.Contains("  ") && json.Contains("\n"), "一键部署:JSON 已缩进（WriteIndented 可读格式）");
 
-        // ---- v3.4.4：AggDeployer 内嵌部署器（不再依赖外部 bat） ----
         var depJson = AggDeployer.BuildDefaultConfigJson();
-        // M-1 后每次调用生成**不同**随机 token：把两份 JSON 的 token 归一成占位符再比（结构仍须一致）
         static string MaskToken(string s)
         {
             using var d = System.Text.Json.JsonDocument.Parse(s);
@@ -4181,8 +3769,7 @@ Argus 统一发布包  v{newer}
         var resultsRoot = Path.Combine(webRoot, "results");
         var shareRoot = Path.Combine(webRoot, "share");
         Directory.CreateDirectory(resultsRoot);
-        Directory.CreateDirectory(shareRoot);   // ⚠ 必须存在：AggWatcher.Start() 对不存在的 shareRoot 直接 return
-        // 造目录结构：test.xml + sub/sub.txt + empty-dir（空目录也应在列表里）
+        Directory.CreateDirectory(shareRoot);
         const string xmlContent = "<BATCH><STATUS>FAIL</STATUS></BATCH>";
         File.WriteAllText(Path.Combine(resultsRoot, "test.xml"), xmlContent);
         var subDir = Path.Combine(resultsRoot, "sub");
@@ -4201,7 +3788,6 @@ Argus 统一发布包  v{newer}
             srv.Start();
             Check(WaitUntil(() => srv.Listening, 5000), "目录浏览：Web 服务进入监听状态");
 
-            // ---- ① 根目录列表：目录在前文件在后、各自按名排序 ----
             var rRoot = _http.GetAsync($"{baseUrl}/api/list").GetAwaiter().GetResult();
             Check(rRoot.StatusCode == HttpStatusCode.OK, "GET /api/list（无 path = 根目录）-> 200");
             if (rRoot.StatusCode == HttpStatusCode.OK)
@@ -4228,7 +3814,6 @@ Argus 统一发布包  v{newer}
                       "GET /api/list：Modified 格式 yyyy-MM-dd HH:mm:ss");
             }
 
-            // ---- ② 相对路径子目录 ----
             var rSub = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString("sub")}").GetAwaiter().GetResult();
             Check(rSub.StatusCode == HttpStatusCode.OK, "GET /api/list?path=sub（相对路径）-> 200");
             if (rSub.StatusCode == HttpStatusCode.OK)
@@ -4241,7 +3826,6 @@ Argus 统一发布包  v{newer}
                       "GET /api/list?path=sub：列出 sub.txt");
             }
 
-            // ---- ③ 绝对路径子目录（白名单内放行） ----
             var rAbs = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString(subDir)}").GetAwaiter().GetResult();
             Check(rAbs.StatusCode == HttpStatusCode.OK, "GET /api/list?path=<根下子目录绝对路径> -> 200");
             if (rAbs.StatusCode == HttpStatusCode.OK)
@@ -4253,7 +3837,6 @@ Argus 统一发布包  v{newer}
                       "GET /api/list?path=绝对路径：同样列出 sub.txt");
             }
 
-            // ---- ④ 越权 / 穿越 / 不存在 ----
             var rTraversal = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString("../outside")}").GetAwaiter().GetResult();
             Check(rTraversal.StatusCode == HttpStatusCode.Forbidden, "GET /api/list?path=../outside（目录穿越）-> 403");
             var rWindows = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString(@"C:\Windows")}").GetAwaiter().GetResult();
@@ -4264,7 +3847,6 @@ Argus 统一发布包  v{newer}
             var rGhost = _http.GetAsync($"{baseUrl}/api/list?path={Uri.EscapeDataString("no-such-dir")}").GetAwaiter().GetResult();
             Check(rGhost.StatusCode == HttpStatusCode.NotFound, "GET /api/list?path=不存在目录 -> 404");
 
-            // ---- ⑤ 下载回归 + 页面文件页签 ----
             var rFile = _http.GetAsync($"{baseUrl}/api/file?path={Uri.EscapeDataString(Path.Combine(resultsRoot, "test.xml"))}").GetAwaiter().GetResult();
             Check(rFile.StatusCode == HttpStatusCode.OK
                   && rFile.Content.ReadAsStringAsync().GetAwaiter().GetResult() == xmlContent,
@@ -4287,7 +3869,6 @@ Argus 统一发布包  v{newer}
 
     static void RunP5Tests(string work)
     {
-        // ---------- DbMigrator v4 ----------
         {
             var p = Path.Combine(work, "p5mig_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             using (var c = new SqliteConnection($"Data Source={p}"))
@@ -4302,7 +3883,6 @@ Argus 统一发布包  v{newer}
             }
             try { File.Delete(p); } catch { }
         }
-        // ---------- AggDatabase 维修看板 4 列状态机 + legacy ----------
         {
             var p = Path.Combine(work, "p5agg_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             var db = new AggDatabase(p);
@@ -4325,12 +3905,10 @@ Argus 统一发布包  v{newer}
             Check(listAll.Count==5, $"ListMaintenance 全量 5 条（实得 {listAll.Count}）");
             Check(db.UpdateMaintenanceStatus(idU, "in_progress"), "拖拽改状态 in_progress");
             Check(db.GetMaintenance(idU)!.Status=="in_progress", "状态已更新");
-            // 全字段更新（拖拽弹全字段确认）
             var rec = db.GetMaintenance(idO)!;
             rec.Status="resolved"; rec.Resolver="李四、王五"; rec.Resolution="换板";
             Check(db.UpdateMaintenance(rec), "全字段更新成功");
             Check(db.GetMaintenance(idO)!.Resolver=="李四、王五", "多人 resolver 写入正确");
-            // 删除回退语义（记录删除后，真实 FAIL 仍在则待办回列由 Sync 验证，此处只验证删除本身）
             Check(db.DeleteMaintenance(idR), "删除维修记录成功");
             Check(db.GetMaintenance(idR)==null, "删除后不在库");
         }
@@ -4346,7 +3924,6 @@ Argus 统一发布包  v{newer}
     static string priorityZhOfTest(int cnt)=> cnt>=20?"高":cnt>=5?"中":"低";
     static void RunP6DeviceHeadlessFetcherTests(string work)
     {
-        // ---------- DbMigrator v5：device 三表 ----------
         {
             var path = Path.Combine(work, "devmig_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             using var c = new SqliteConnection($"Data Source={path}");
@@ -4359,7 +3936,6 @@ Argus 统一发布包  v{newer}
             try { File.Delete(path); } catch { }
         }
 
-        // ---------- v3.21.0 补接线：predict_* 6 键 Load/known/Save 三处同步（原版只加属性，config.json 写了不生效）----------
         {
             var cfg = new AppConfig();
             Check(cfg.PredictReconcileEnabled && cfg.PredictReconcileHorizonDays == 14 && cfg.PredictReconcileCronHour == 4,
@@ -4370,14 +3946,12 @@ Argus 统一发布包  v{newer}
             var backup2 = File.Exists(cfgFile) ? File.ReadAllText(cfgFile) : null;
             try
             {
-                // Load 接线：有效值读回
                 File.WriteAllText(cfgFile, "{\"predict_reconcile_enabled\":false,\"predict_reconcile_horizon_days\":21,\"predict_reconcile_cron_hour\":5,\"predict_tune_enabled\":false,\"predict_tune_min_samples\":50,\"predict_accuracy_retain_days\":90}");
                 var loaded = AppConfig.Load();
                 Check(!loaded.PredictReconcileEnabled && loaded.PredictReconcileHorizonDays == 21 && loaded.PredictReconcileCronHour == 5,
                     "Config predict_reconcile_* config.json 写入后 Load 读回（接线验证）");
                 Check(!loaded.PredictTuneEnabled && loaded.PredictTuneMinSamples == 50 && loaded.PredictAccuracyRetainDays == 90,
                     "Config predict_tune_*/retain config.json 写入后 Load 读回");
-                // 非法值回退默认（越界/负数/0）
                 File.WriteAllText(cfgFile, "{\"predict_reconcile_horizon_days\":0,\"predict_reconcile_cron_hour\":99,\"predict_tune_min_samples\":-1,\"predict_accuracy_retain_days\":0}");
                 var loaded2 = AppConfig.Load();
                 Check(loaded2.PredictReconcileHorizonDays == 14 && loaded2.PredictReconcileCronHour == 4 && loaded2.PredictTuneMinSamples == 30 && loaded2.PredictAccuracyRetainDays == 180,
@@ -4389,7 +3963,6 @@ Argus 统一发布包  v{newer}
             }
         }
 
-        // ---------- DeviceInfoCollector 采集 ----------
         {
             var cfg = new AppConfig { StationId = "TEST-MACHINE", DeviceInfoEnabled = true, DeviceInfoIntervalSec = 300, Peers = new List<string>() };
             var col = new DeviceInfoCollector(cfg, "TEST-MACHINE", new string[0]);
@@ -4405,7 +3978,6 @@ Argus 统一发布包  v{newer}
             col.Dispose();
         }
 
-        // ---------- AggDatabase 设备落库 + 采样滚动 ----------
         {
             var dbPath = Path.Combine(work, "devdb_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             using var db = new AggDatabase(dbPath);
@@ -4414,16 +3986,13 @@ Argus 统一发布包  v{newer}
             db.UpsertDeviceInfo(row);
             var got = db.GetDeviceInfo("DEV1");
             Check(got != null && got.Hostname == "HOST1" && got.CpuUsage == 55.5, "UpsertDeviceInfo + Get 正确");
-            // 轻量更新
             db.UpsertDeviceLight("DEV1", 90.0, 9000, 16000);
             var got2 = db.GetDeviceInfo("DEV1");
             Check(got2 != null && got2.CpuUsage == 90.0 && got2.Hostname == "HOST1", "UpsertDeviceLight 保留 hostname 仅更新轻量");
-            // 新机台轻量占位
             db.UpsertDeviceLight("DEV2", 10.0, 1000, 8000);
             Check(db.GetDeviceInfo("DEV2") != null, "UpsertDeviceLight 新机台占位创建");
             var all = db.ListDeviceInfos();
             Check(all.Count == 2, $"ListDeviceInfos 2 台（实得 {all.Count}）");
-            // 采样
             var oldTs = DateTime.Now.AddDays(-8).ToString("yyyy-MM-dd HH:mm:ss");
             db.InsertDeviceSample(new DeviceSampleRow { Machine = "DEV1", Ts = oldTs, CpuUsage = 10, MemUsedMb = 1000, DiskFreeGb = 90 });
             db.InsertDeviceSample(new DeviceSampleRow { Machine = "DEV1", Ts = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), CpuUsage = 20, MemUsedMb = 2000, DiskFreeGb = 80 });
@@ -4433,7 +4002,6 @@ Argus 统一发布包  v{newer}
             var purged = db.PurgeOldDeviceSamples(7);
             Check(purged == 1, $"PurgeOld 7 天删除 1 条旧采样（实删 {purged}）");
             Check(db.QueryDeviceSamples("DEV1", 10).Count == 1, "Purge 后剩 1 条");
-            // FCT
             var fct = new DeviceFctRow { Machine = "DEV1", IniPath = "C:\\FTS\\FCT.ini", Found = true, Models = new List<string> { "E300" }, FwVersions = new List<(string, string)> { ("FW1", "1.0") }, Devices = new List<FctDeviceInfo> { new FctDeviceInfo { Name = "DUT", Port = "COM1", Type = "com", Online = true } }, LastSeen = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") };
             db.UpsertDeviceFct(fct);
             var gotFct = db.GetDeviceFct("DEV1");
@@ -4441,23 +4009,19 @@ Argus 统一发布包  v{newer}
             Check(db.ListDeviceFcts().Count == 1, "ListDeviceFcts 1 条");
         }
 
-        // ---------- MeshPusher 心跳轻量 system 字段 ----------
         {
             var tmpDb = new Database(Path.Combine(work, "pusher_" + Guid.NewGuid().ToString("N")[..6] + ".db"));
             var cfg = new AppConfig { StationId = "M1", Peers = new List<string>() };
             var pusher = new MeshPusher(cfg, "M1", tmpDb, new string[0]);
             pusher.SetLightProvider(() => (12.3, 1024, 2048));
-            // 反射取 BuildHeartbeatJson
             var mi = typeof(MeshPusher).GetMethod("BuildHeartbeatJson", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
             var json = (string)mi.Invoke(pusher, null)!;
             Check(json.Contains("\"system\"") && json.Contains("cpu_usage") && json.Contains("12.3"), "心跳 JSON 含 system.cpu_usage 轻量字段");
-            // 无 provider 时不含 system
             var pusher2 = new MeshPusher(cfg, "M1", tmpDb, new string[0]);
             var json2 = (string)mi.Invoke(pusher2, null)!;
             Check(!json2.Contains("\"system\""), "无 lightProvider 时心跳不含 system（向后兼容）");
         }
 
-        // ---------- MeshReceiver info/fct + heartbeat light 落库 ----------
         {
             var dbPath = Path.Combine(work, "recv_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             using var db = new AggDatabase(dbPath);
@@ -4471,22 +4035,18 @@ Argus 统一发布包  v{newer}
             recv.HandleFctIni(fctJson);
             var f = db.GetDeviceFct("RDEV");
             Check(f != null && f.Found && f.Models.Count == 1, "HandleFctIni 落库正确");
-            // heartbeat light
             var hb = "{\"machine\":\"RDEV\",\"type\":\"heartbeat\",\"ts\":\"2026-08-28 12:00:30\",\"last_seq\":0,\"queued\":0,\"system\":{\"cpu_usage\":77.7,\"mem_used_mb\":3000,\"mem_total_mb\":8000}}";
             recv.HandleHeartbeat(hb);
             var d2 = db.GetDeviceInfo("RDEV");
             Check(d2 != null && d2.CpuUsage == 77.7, "HandleHeartbeat light 更新 cpu（保留 hostname）");
-            // peers 视图含该机台
             var peers = recv.GetPeerStatuses();
             Check(peers.Any(p => p.Machine == "RDEV"), "HandleInfo 后 peer 视图含 RDEV");
         }
 
-        // ---------- HeadlessService 组装 ----------
         {
             var tmp = Path.Combine(work, "headless_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmp);
             var cfg = new AppConfig { StationId = "HEAD1", MeshPort = GetFreePort(), Peers = new List<string>(), DeviceInfoEnabled = false, ResultsRoot = tmp };
-            // withEngine=false 避免 Engine 文件监控对临时目录扫描
             var svc = new HeadlessService(cfg, withEngine: false);
             Check(svc.Mesh != null, "HeadlessService Mesh 非空");
             Check(svc.Db != null, "HeadlessService Db 非空");
@@ -4499,7 +4059,6 @@ Argus 统一发布包  v{newer}
             Check(true, "HeadlessService Dispose 无异常");
             TryDeleteDir(tmp);
         }
-        // withEngine=true
         {
             var tmp2 = Path.Combine(work, "headless2_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmp2);
@@ -4513,17 +4072,14 @@ Argus 统一发布包  v{newer}
             TryDeleteDir(tmp2);
         }
 
-        // ---------- ServiceManager（sc create 思路） ----------
         {
             Check(typeof(ServiceManager).GetField("ServiceName") != null || true, "ServiceManager 类型存在");
             var exists = ServiceManager.Exists();
             Check(true, $"ServiceManager.Exists() 调用无异常（返回 {exists}）");
-            // Install/Uninstall 不实跑（需管理员），仅检查方法存在且不抛
             Check(typeof(ServiceManager).GetMethod("Install") != null, "ServiceManager.Install 方法存在");
             Check(typeof(ServiceManager).GetMethod("Uninstall") != null, "ServiceManager.Uninstall 方法存在");
         }
 
-        // ---------- DbMaintenance 采样清理集成 ----------
         {
             var dbPath = Path.Combine(work, "maintdev_" + Guid.NewGuid().ToString("N")[..6] + ".db");
             using var db = new AggDatabase(dbPath);
@@ -4532,18 +4088,14 @@ Argus 统一发布包  v{newer}
             db.InsertDeviceSample(new DeviceSampleRow { Machine = "M1", Ts = old, CpuUsage = 10, MemUsedMb = 1000, DiskFreeGb = 50 });
             Check(db.QueryDeviceSamples("M1", 10).Count == 1, "维护前采样 1 条");
             var maint = DbMaintenance.StartFor(new AppConfig { DbMaintenanceHour = DateTime.Now.Hour, DbVacuumThresholdMb = 0, DeviceSamplesRetainDays = 7 }, db);
-            // 直接触发 RunNow（含 purge）
             maint.RunNow();
-            // purge 应已删除旧采样
             Thread.Sleep(200);
-            // 再查
             var after = db.QueryDeviceSamples("M1", 10).Count;
             Check(after == 0, $"维护 RunNow 后旧采样被清理（剩余 {after}）");
             maint.Stop();
             try { File.Delete(dbPath); } catch { }
         }
 
-        // ==================== v3.21.1 规格 01 良率归因：DB 层 + 分析器 + LRU + ConfigWatcher ====================
         {
             var tmpA = Path.Combine(work, "yldattr_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmpA);
@@ -4553,7 +4105,6 @@ Argus 统一发布包  v{newer}
                 agg.Open();
                 var today = DateTime.Now.ToString("yyyyMMdd");
                 var yest = DateTime.Now.AddDays(-1).ToString("yyyyMMdd");
-                // 混合 PASS/FAIL（归因 SQL 需要总测试量算 yield%，不能只造 FAIL）
                 agg.InsertBatch(new[]
                 {
                     new AggFailRow { Machine="FCT_A", Seq=1, TestDate=yest, Result="FAIL", FailReason="Solder Short",   Model="MOD_X", Sn="SN1" },
@@ -4562,12 +4113,10 @@ Argus 统一发布包  v{newer}
                     new AggFailRow { Machine="FCT_A", Seq=4, TestDate=today, Result="FAIL", FailReason="Connector Loose", Model="MOD_Y", Sn="SN4" },
                 });
 
-                // 总失败计数（含 daysBack 边界）
                 Check(agg.GetRecentFailCount("FCT_A", 7) == 3, "归因: GetRecentFailCount 7 天 = 3（2 昨天 + 1 今天 FAIL）");
                 Check(agg.GetRecentFailCount("FCT_A", 0) == 1, "归因: daysBack=0 边界 → 只计今天 = 1");
                 Check(agg.GetRecentFailCount("FCT_NOPE", 7) == 0, "归因: 未知机台 → 0");
 
-                // 型号维度分解（yield% / 贡献度 / 排序）
                 var model = agg.DecomposeByModel("FCT_A", DateTime.Today.AddDays(-7), DateTime.Today, 20);
                 Check(model.Count == 2, $"归因: DecomposeByModel 2 个型号（实得 {model.Count}）");
                 var mx = model.First(x => x.Model == "MOD_X");
@@ -4578,18 +4127,15 @@ Argus 统一发布包  v{newer}
                 Check(Math.Abs(my.Contribution - 50.0) < 0.1, $"归因: MOD_Y 贡献度≈50.0（1/2 最大失败，实得 {my.Contribution}）");
                 Check(model[0].Model == "MOD_X" && model[0].Rank == 1, "归因: fail 降序 → MOD_X Rank=1");
 
-                // fixture 维度（fail_reason 前缀分组）
                 var fix = agg.DecomposeByFixture("FCT_A", DateTime.Today.AddDays(-7), DateTime.Today, 20);
                 Check(fix.Count == 2, $"归因: DecomposeByFixture 2 个前缀（实得 {fix.Count}）");
                 var solder = fix.First(x => x.Model == "Solder");
                 Check(solder.Fail == 2 && Math.Abs(solder.Contribution - 66.7) < 0.1, "归因: fixture Solder Fail=2 贡献≈66.7（基准=前缀失败总和 3，贡献度后算修复回归）");
 
-                // YieldAttributor 静态入口（含空结果边界）
                 var attr = YieldAttributor.AnalyzeModel(agg, "FCT_A", 7);
                 Check(attr.Count == 2 && attr[0].Model == "MOD_X", "归因: YieldAttributor.AnalyzeModel top1 = MOD_X");
                 Check(YieldAttributor.AnalyzeModel(agg, "FCT_NOPE", 7).Count == 0, "归因: AnalyzeModel 未知机台 → 空列表");
 
-                // ---------- ConfigWatcher：非法拒绝（天然回滚）/ 合法触发一次 ----------
                 var cfgPath = Path.Combine(tmpA, "config.json");
                 File.WriteAllText(cfgPath, "{\"log_level\":\"INFO\"}");
                 int fired = 0; string? firedJson = null;
@@ -4605,23 +4151,19 @@ Argus 统一发布包  v{newer}
                     Check(firedJson != null && firedJson.Contains("DEBUG"), "ConfigWatcher: 事件携带新配置原文");
                 }
 
-                // ---------- LRUCache：容量淘汰 / 命中不回调 / 精确过期淘汰 ----------
                 var lru = new LRUCache<string, string>(2);
                 lru.Set("A", "va"); lru.Set("B", "vb"); lru.Set("C", "vc");
                 Check(lru.Count == 2, $"LRU: 超容量淘汰最久未用 → Count=2（实得 {lru.Count}）");
                 int factCalls = 0;
                 var va2 = lru.GetOrSet("A", () => { factCalls++; return "regen"; });
                 Check(va2 == "regen" && factCalls == 1, "LRU: A 已被淘汰 → GetOrSet 重新生成");
-                // GetOrSet("A") 重新生成时容量满 → 挤掉 B（此刻链表尾），验证 C 仍命中
                 var vc = lru.GetOrSet("C", () => { factCalls++; return "x"; });
                 Check(vc == "vc" && factCalls == 1, "LRU: C 命中且不调 factory（GetOrSet A 未误删 C）");
 
-                // TTL 过期精确性（回归：原版 _order.RemoveFirst() 会误删最新条目）
-                // 余量放大抗 Windows Sleep 精度漂移（±16ms 粒度）：A/B/C 存活 250ms 全过期，D 存活 ~150ms 保留
                 var lru2 = new LRUCache<string, string>(10, TimeSpan.FromMilliseconds(200));
                 lru2.Set("A", "1"); lru2.Set("B", "2"); lru2.Set("C", "3");
                 Thread.Sleep(100);
-                lru2.Set("D", "4");   // D 在 A/B/C 过期判定前写入，CreatedAt 最新
+                lru2.Set("D", "4");
                 Thread.Sleep(150);
                 lru2.TryPruneExpired();
                 Check(lru2.Count == 1, $"LRU: TTL 过期只淘汰 A/B/C、保留最新 D → Count=1（实得 {lru2.Count}）");
@@ -4635,7 +4177,6 @@ Argus 统一发布包  v{newer}
             }
         }
 
-        // ==================== v3.21.1 GET /api/yield/attribution（viewer 可读 + 边界 + 鉴权）====================
         {
             var webRoot = Path.Combine(work, "web_attr_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(Path.Combine(webRoot, "public"));
@@ -4668,7 +4209,6 @@ Argus 统一发布包  v{newer}
                 Check(r2.StatusCode == HttpStatusCode.BadRequest, "归因API: 缺 machine 路径参数 → 400");
                 var r3 = HttpGetWithToken($"{baseUrl}/api/yield/attribution/FCT_W?days=999", tok);
                 Check(r3.StatusCode == HttpStatusCode.OK, "归因API: days=999 越界 → clamp 到 90 不报错");
-                // 无 token 403：必须用无 cookie 的独立 HttpClient（static _http 可能残留早期登录 Set-Cookie）
                 using (var httpNoCookie = new HttpClient())
                 {
                     var r4 = httpNoCookie.GetAsync($"{baseUrl}/api/yield/attribution/FCT_W").GetAwaiter().GetResult();
@@ -4683,7 +4223,6 @@ Argus 统一发布包  v{newer}
             }
         }
 
-        // ==================== v3.22.0 规格01 补全：真 FIXTURE_ID 解析/入库/归因 + LRU 接线 + 规格04 健康分 ====================
         {
             var tmpV = Path.Combine(work, "v3220_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmpV);
@@ -4698,7 +4237,6 @@ Argus 统一发布包  v{newer}
             var oldCpuPct = cfg.DeviceAlertCpuPct;
             try
             {
-                // ---------- ① fixture：解析侧 FACTORY@FIXTURE_ID → ParseOutput.FixtureId ----------
                 var xmlDir = Path.Combine(tmpV, "Online", "MODEL1", "20260903");
                 Directory.CreateDirectory(xmlDir);
                 var xmlPath = Path.Combine(xmlDir, "F_SN1_20260903120000_123.xml");
@@ -4709,7 +4247,6 @@ Argus 统一发布包  v{newer}
                 Check(parsed != null && parsed.Result == "FAIL", "fixture: 默认解析器识别 F_ FAIL 文件");
                 Check(parsed != null && parsed.FixtureId == "FIX-01",
                     $"fixture: FACTORY@FIXTURE_ID 解析进 ParseOutput（实得 {parsed?.FixtureId ?? "<null>"}）");
-                // 无 FIXTURE_ID 属性 → null（前缀回退兼容）
                 var xmlPath2 = Path.Combine(xmlDir, "F_SN2_20260903120001_124.xml");
                 File.WriteAllText(xmlPath2,
                     "<FACTORY USER=\"op1\" TESTER=\"FCT6_T1\"><PANEL STATUS=\"Passed\"/>"
@@ -4717,7 +4254,6 @@ Argus 统一发布包  v{newer}
                 var parsed2 = FctAggregator.Parsing.ParserRegistry.Instance.Resolve(xmlPath2, File.ReadAllText(xmlPath2));
                 Check(parsed2 != null && string.IsNullOrEmpty(parsed2.FixtureId), "fixture: XML 无 FIXTURE_ID → null（老格式不受影响）");
 
-                // ---------- ①b UUT Status Err 排除（v3.24.3）：纯 UUT 降级 INTERRUPTED / 混含真实失败保持 FAIL ----------
                 var xmlPathU = Path.Combine(xmlDir, "F_SN3_20260903120002_125.xml");
                 File.WriteAllText(xmlPathU,
                     "<FACTORY USER=\"op1\" TESTER=\"FCT6_T1\"><PANEL STATUS=\"Passed\"/>"
@@ -4743,7 +4279,6 @@ Argus 统一发布包  v{newer}
                 Check(parsedN != null && parsedN.Result == "FAIL",
                     "UUT 排除: 无失败项也无 UUT 的 F_ 文件维持 FAIL（回归防线不误伤）");
 
-                // ---------- ② fixture：InsertBatch 入库 + QueryFails 回读 + 真治具归因分组 ----------
                 var agg = new AggDatabase(Path.Combine(tmpV, "agg.db"));
                 agg.Open();
                 var today = DateTime.Now.ToString("yyyyMMdd");
@@ -4764,7 +4299,6 @@ Argus 统一发布包  v{newer}
                 Check(!fix.Any(x => x.Model == "Solder"), "fixture: 有真治具 ID 的行不再按前缀分组（Solder 前缀组不存在）");
                 agg.Close();
 
-                // ---------- ③ LRU 接线：MeshQueryService 缓存容量 + TTL 由 LRUCache 托管 ----------
                 MeshQueryService.ClearCache();
                 for (int i = 0; i < 300; i++) MeshQueryService.PutCached($"k{i:000}", $"v{i}");
                 Check(MeshQueryService.CacheCount == 256, $"LRU接线: 300 次写入后容量封顶 256（实得 {MeshQueryService.CacheCount}）");
@@ -4772,7 +4306,6 @@ Argus 统一发布包  v{newer}
                 Check(MeshQueryService.TryGetCached("k299", out var v299) && v299 == "v299", "LRU接线: 最新条目命中（k299）");
                 MeshQueryService.ClearCache();
 
-                // ---------- ④ 规格04：4 个子分单测（纯静态，无 IO） ----------
                 Check(DeviceHealthScorer.CpuScore(20, 0, cfg) == 80, "健康分: CpuScore(20%) = 80");
                 Check(DeviceHealthScorer.CpuScore(95, 0, cfg) == 5, "健康分: CpuScore(95%) = 5");
                 Check(DeviceHealthScorer.CpuScore(70, 10, cfg) == 0, "健康分: CPU 70%+趋势+10%/天（3 天外推 100>95）→ 扣 30 后 0");
@@ -4790,7 +4323,6 @@ Argus 统一发布包  v{newer}
                 Check(DeviceHealthScorer.OfflineScore(400, 80, cfg) == 0, "健康分: 真离线 400s（>300s=0，std 罚不穿 0）");
                 Check(DeviceHealthScorer.OfflineScore(0, 80, cfg) == 80, "健康分: 在线但心跳 std=80s → 100-20 = 80");
 
-                // ---------- ⑤ 规格04：Score 集成（device_info + samples 种子） ----------
                 var aggH = new AggDatabase(Path.Combine(tmpV, "health.db"));
                 aggH.Open();
                 var nowStr = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -4814,20 +4346,17 @@ Argus 统一发布包  v{newer}
                 Check(co != null && co.Level == "critical", $"健康分: CPU95%+离线 600s 多指标齐崩 → health={co?.Health} critical");
                 Check(rep.Summary.Ok + rep.Summary.Warn + rep.Summary.Critical == rep.Machines.Count, "健康分: summary 三档计数守恒");
 
-                // 阈值边界：health=71.5 卡在 warn/critical 阈值间
                 cfg.HealthWarnThreshold = 72;
                 Check(DeviceHealthScorer.Score(aggH, cfg).Machines.First(x => x.Machine == "FCT_B").Level == "warn", "健康分: warn 阈值 72 → 71.5 判 warn");
                 cfg.HealthWarnThreshold = 71;
                 Check(DeviceHealthScorer.Score(aggH, cfg).Machines.First(x => x.Machine == "FCT_B").Level == "ok", "健康分: warn 阈值 71 → 71.5 判 ok（边界含端点）");
                 cfg.HealthWarnThreshold = oldWarn;
-                // 权重调整生效
                 cfg.HealthWeightCpu = 1.0; cfg.HealthWeightDisk = 0; cfg.HealthWeightMemory = 0; cfg.HealthWeightOffline = 0;
                 var bw = DeviceHealthScorer.Score(aggH, cfg).Machines.First(x => x.Machine == "FCT_B").Health;
                 Check(Math.Abs(bw - 5) < 0.01, $"健康分: weight_cpu=1.0 → FCT_B health=5（实得 {bw}，权重可配）");
                 cfg.HealthWeightCpu = oldWC; cfg.HealthWeightDisk = oldWD; cfg.HealthWeightMemory = oldWM; cfg.HealthWeightOffline = oldWO;
                 aggH.Close();
 
-                // ---------- ⑥ 规格04：HighlightEngine 软替换 + 开关回退 ----------
                 cfg.HealthScoreEnabled = true;
                 var hlNew = HighlightEngine.GetHighlights(aggH, cfg);
                 Check(hlNew.Any(x => x.Machine == "FCT_B" && x.Reason.Contains("健康分")), "健康分: enabled=true → 高亮为综合口径（含「健康分」字样）");
@@ -4836,7 +4365,6 @@ Argus 统一发布包  v{newer}
                 Check(hlOld.Any(x => x.Machine == "FCT_B" && x.Reason.Contains("CPU")), "健康分: enabled=false → 回退 v3.19.0 单指标高亮（CPU 阈值口径）");
                 cfg.HealthScoreEnabled = oldHealthOn;
 
-                // ---------- ⑦ 配置键默认值缺省可运行 ----------
                 var fresh = new AppConfig();
                 Check(fresh.HealthScoreEnabled && fresh.HealthWarnThreshold == 80 && fresh.HealthCriticalThreshold == 50,
                     "健康分: config 默认 enabled=true / warn 80 / critical 50（缺省可运行）");
@@ -4853,13 +4381,11 @@ Argus 统一发布包  v{newer}
             }
         }
 
-        // ==================== v3.22.1 图形化升级向导：包校验/脚本定位（纯逻辑，无 UI）====================
         {
             var tmpU = Path.Combine(work, "upgwiz_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmpU);
             try
             {
-                // 合成"真实结构"更新包：扁平根 Argus.exe + config.json + public/ + runtimes/（对齐 make_package.ps1 产物）
                 var pkgRoot = Path.Combine(tmpU, "pkg");
                 Directory.CreateDirectory(Path.Combine(pkgRoot, "public"));
                 Directory.CreateDirectory(Path.Combine(pkgRoot, "runtimes", "win", "lib", "net8.0"));
@@ -4874,14 +4400,12 @@ Argus 统一发布包  v{newer}
                 var zipPath = Path.Combine(tmpU, "Argus-v3.22.1-update.zip");
                 System.IO.Compression.ZipFile.CreateFromDirectory(pkgRoot, zipPath);
 
-                // 解包 → 校验通过 + 版本号可读
                 var stage1 = Path.Combine(tmpU, "stage_ok");
                 System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, stage1);
                 var (ok1, ver1, err1) = FctAggregator.modules.Upgrader.UpgradeWizard.ValidateStage(stage1);
                 Check(ok1, $"升级向导: 合成真实结构包校验通过{(ok1 ? "" : "：" + err1)}");
                 Check(!string.IsNullOrEmpty(ver1), $"升级向导: 包内版本号可读（v{ver1}）");
 
-                // 污染包：含 data\ → 拒绝（防覆盖现场数据）
                 var badPkg = Path.Combine(tmpU, "bad_pkg");
                 Directory.CreateDirectory(Path.Combine(badPkg, "data"));
                 File.Copy(Path.Combine(pkgRoot, "Argus.exe"), Path.Combine(badPkg, "Argus.exe"));
@@ -4889,14 +4413,12 @@ Argus 统一发布包  v{newer}
                 var (ok2, _, err2) = FctAggregator.modules.Upgrader.UpgradeWizard.ValidateStage(badPkg);
                 Check(!ok2 && err2.Contains("data"), $"升级向导: 含 data\\ 目录的包被拒绝（{err2}）");
 
-                // 缺 Argus.exe → 拒绝
                 var noExe = Path.Combine(tmpU, "no_exe");
                 Directory.CreateDirectory(noExe);
                 File.WriteAllText(Path.Combine(noExe, "config.json"), "{}");
                 var (ok3, _, err3) = FctAggregator.modules.Upgrader.UpgradeWizard.ValidateStage(noExe);
                 Check(!ok3 && err3.Contains("Argus.exe"), $"升级向导: 缺 Argus.exe 的包被拒绝（{err3}）");
 
-                // 部署脚本定位：tools\ 优先于安装目录根，最后才包内
                 var baseDir = Path.Combine(tmpU, "base");
                 Directory.CreateDirectory(Path.Combine(baseDir, "tools"));
                 File.WriteAllText(Path.Combine(baseDir, "tools", "deploy_update.ps1"), "# tools");
@@ -4917,9 +4439,7 @@ Argus 统一发布包  v{newer}
             }
         }
 
-        // ==================== v3.26.0 主题（暗黑模式已移除，固定浅色）====================
         {
-            // 固定浅色令牌：系统原生色 + 对比度硬指标（文字与背景差 ≥ 120 亮度）
             int Lum(Color c) => (c.R + c.G + c.B) / 3;
             var lightBg = Theme.Bg;
             var lightText = Theme.TextMain;
@@ -4930,7 +4450,6 @@ Argus 统一发布包  v{newer}
                   Theme.TextSub.ToArgb() != Theme.Surface.ToArgb(),
                   "主题: 撞色修复——文字令牌与面板底色不同值（白字白底类回归防线）");
 
-            // Apply 重刷稳定：两轮颜色一致（防"每次刷新换色"退化）
             using (var f = new Form { BackColor = Theme.Bg })
             {
                 var lbl = new Label { Text = "x" };
@@ -4939,25 +4458,22 @@ Argus 统一发布包  v{newer}
                 f.Controls.Add(lbl); f.Controls.Add(dg); f.Controls.Add(pnl);
                 Theme.Apply(f, isPageRoot: true);
                 var bg1 = f.BackColor; var lbl1 = lbl.ForeColor; var dgCell1 = dg.DefaultCellStyle.BackColor;
-                Theme.Apply(f, isPageRoot: true);   // 第二轮（模拟重刷）
+                Theme.Apply(f, isPageRoot: true);
                 Check(f.BackColor == bg1 && f.BackColor == Theme.Bg, "主题: Apply 两轮颜色稳定（Bg=系统控件色）");
                 Check(lbl.ForeColor == lbl1 && lbl.ForeColor == Theme.TextMain, "主题: Label 两轮均刷成正文色");
                 Check(dg.DefaultCellStyle.BackColor == dgCell1 && dgCell1 == Theme.Surface, "主题: DataGridView 单元格底=Surface");
                 Check(dg.BackgroundColor == Theme.Bg, "主题: DataGridView 背景=Bg（StyleGrid 走令牌）");
-                // 按钮：系统原生外观
                 var btn = Theme.MakeButton("测试", 60);
                 Check(btn.FlatStyle == FlatStyle.System, "主题: 按钮 FlatStyle.System 系统原生");
             }
         }
 
-        // ==================== v3.26.0 无感热升级（auto_update）====================
         {
             Check(new AppConfig().AutoUpdate, "无感热升级: config auto_update 缺省 true（自动暂存+自动重启）");
             Check(UpdateChecker.ParseZipVersion("Argus-v3.26.0-update.zip") == new Version(3, 26, 0),
                 "无感热升级: 更新包文件名解析版本号");
         }
 
-        // ==================== v3.22.0 GET /api/devices/health（viewer 可读 + 鉴权）====================
         {
             var webRoot = Path.Combine(work, "web_health_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(Path.Combine(webRoot, "public"));
@@ -4997,7 +4513,6 @@ Argus 统一发布包  v{newer}
             }
         }
 
-        // ==================== v3.23.3 客户端主页 Database 统计 ====================
         Console.WriteLine("\n【v3.23.3 客户端主页】Database 统计方法");
         {
             var dbDir = Path.Combine(work, "selftest_v3233_db");
@@ -5007,8 +4522,7 @@ Argus 统一发布包  v{newer}
 
             var db = new Database(dbFile);
             var todayStr = DateTime.Now.ToString("yyyy-MM-dd");
-            
-            // 1. 插入模拟记录：涵盖 PASS、FAIL、不同小时、多测项失败
+
             var records = new List<TestRecord>
             {
                 new TestRecord
@@ -5071,7 +4585,6 @@ Argus 统一发布包  v{newer}
             };
             db.BatchInsert(records);
 
-            // --- 断言 1: FetchDailyHourlyStats 统计 ---
             var hourlyStats = db.FetchDailyHourlyStats("", todayStr);
             Check(hourlyStats.Count == 24, "FetchDailyHourlyStats: 返回完整 24 小时槽位（0..23）");
             var h8 = hourlyStats[8];
@@ -5082,7 +4595,6 @@ Argus 统一发布包  v{newer}
             var h0 = hourlyStats[0];
             Check(h0.Total == 0 && h0.YieldRate == 0.0, "无数据时段产量为 0且良率显示 0.0%");
 
-            // --- 断言 2: FetchDailyTopFails 统计 ---
             var topFails = db.FetchDailyTopFails("", todayStr, 5);
             Check(topFails.Count >= 2, $"FetchDailyTopFails: 返回不良项清单（{topFails.Count}项）");
             var top1 = topFails[0];
@@ -5091,14 +4603,12 @@ Argus 统一发布包  v{newer}
             var top2 = topFails[1];
             Check(top2.FailItem == "CurrentLimit" && top2.Count == 1, $"Top2 故障项正确: CurrentLimit 频次 1 (实得 {top2.FailItem}:{top2.Count})");
 
-            // --- 断言 3: FetchRecentFailAlerts 统计 ---
             var recentAlerts = db.FetchRecentFailAlerts("", 10);
             Check(recentAlerts.Count == 2, $"FetchRecentFailAlerts: 返回最近 2 条 FAIL 记录（实得 {recentAlerts.Count}）");
             Check(recentAlerts[0].Sn == "SN_2026_004", $"流水逆序排列: 最新一条为 SN_2026_004 (实得 {recentAlerts[0].Sn})");
             Check(recentAlerts[0].FailReason == "VoltageCheck", "流水包含完整失败原因字段");
             Check(!string.IsNullOrEmpty(recentAlerts[0].TimeText), $"流水包含格式化时间: {recentAlerts[0].TimeText}");
 
-            // --- 断言 5: FetchMonthlyStats 当月统计（v3.24.1 当月综合良率口径） ---
             {
                 var monthDbPath = Path.Combine(Path.GetTempPath(), "argus_monthly_" + DateTime.Now.Ticks + ".db");
                 try
@@ -5129,20 +4639,16 @@ Argus 统一发布包  v{newer}
             try { Directory.Delete(dbDir, true); } catch { }
         }
 
-        // ==================== v3.24.0 S1: G49ProductDictionary & FailReasonMerger & Config ====================
         Console.WriteLine("\n【v3.24.0 S1】G49ProductDictionary & FailReasonMerger 真实脏样本解析与三级归并断言");
         {
-            // 1. G49ProductDictionary 核心字典与语义分类验证
             Check(G49ProductDictionary.FindKnownSignal("SiC_G_HV_Low_Level") != null, "字典包含 SiC_G_HV_Low_Level");
             Check(G49ProductDictionary.FindKnownSignal("RES_v_ResAng(45°)") != null, "字典包含旋变 45°");
             Check(G49ProductDictionary.FindKnownSignal("TC_AI_Cur_1")?.FamilyName == "TC_AI_Cur", "TC_AI_Cur_1 属于三相电流族");
             Check(G49ProductDictionary.FindKnownSignal("P5V_CAN")?.SemanticType == FailSemanticType.Measurement, "P5V_CAN 为 Measurement 语义");
 
-            // 2. 注入测试语义识别
             Check(G49ProductDictionary.IsInjectionSection("8.19.1"), "8.19.1 识别为 Injection 注入型章节");
             Check(G49ProductDictionary.IsInjectionSection("8.20.2"), "8.20.2 识别为 Injection 注入型章节");
 
-            // 3. FailReasonMerger 基础与开关关闭场景
             var rawRes = "8.11.6.1 RES_v_ResAng(45°)(XCP)";
             var keyOff = FailReasonMerger.GetMergedKey(rawRes, false, "signal");
             Check(keyOff == rawRes, "开关关闭时 GetMergedKey 回退原串");
@@ -5152,38 +4658,30 @@ Argus 统一发布包  v{newer}
             Check(keySignal.Contains("RES_v_ResAng") && keySignal.Contains("(XCP)"), "signal 粒度下旋变 45° 归并为 RES_v_ResAng(XCP)");
             Check(parsedSignal.RootCauseHint.Contains("旋变"), "旋变故障匹配治具根因 (工装/模拟器)");
 
-            // 4. Section 粒度归并
             var keySec = FailReasonMerger.GetMergedKey(rawRes, true, "section");
             Check(keySec == "§8.11", "section 粒度下归并为章号 §8.11");
 
-            // 5. 真实脏样本鲁棒性断言
-            // ① 无空格: 8.18.2.2SiC_G_HV...
             var dirtyNoSpace = FailReasonMerger.Parse("8.18.2.2SiC_G_HV_Low_Level_HU(OSC)");
             var keyNoSpace = FailReasonMerger.GetMergedKey("8.18.2.2SiC_G_HV_Low_Level_HU(OSC)", true, "signal");
             Check(dirtyNoSpace.Section == "8.18.2.2", "无空格章节号成功剥离: 8.18.2.2");
             Check(keyNoSpace.Contains("SiC_G_HV_Low_Level") && keyNoSpace.Contains("(OSC)"), "六相栅极 _HU 归并为 SiC_G_HV_Low_Level(OSC)");
 
-            // ② 双空格: 7.1.3  IOH_CAN(DMM)
             var dirtyDoubleSpace = FailReasonMerger.Parse("7.1.3  IOH_CAN(DMM)");
             Check(dirtyDoubleSpace.Section == "7.1.3", "双空格章节号成功提取");
             Check(dirtyDoubleSpace.SignalBase == "IOH_CAN", "信号基名正确: IOH_CAN");
 
-            // ③ Volt for 前缀
             var dirtyVoltFor = FailReasonMerger.Parse("8.9.2.1 Volt for TC_AI_Cur_1 (DMM)");
             var keyVoltFor = FailReasonMerger.GetMergedKey("8.9.2.1 Volt for TC_AI_Cur_1 (DMM)", true, "signal");
             Check(keyVoltFor.Contains("TC_AI_Cur") && keyVoltFor.Contains("(DMM)"), "Volt for 前缀剥离且三相电流 _1 归并");
 
-            // ④ 尾随值规格详情
             var dirtyValSpec = FailReasonMerger.Parse("8.1.3.2 KL30_1(Power)(值=33.85, 规格=5~, mA)");
             var keyValSpec = FailReasonMerger.GetMergedKey("8.1.3.2 KL30_1(Power)(值=33.85, 规格=5~, mA)", true, "signal");
             Check(dirtyValSpec.SignalBase == "KL30_1", "值与规格详情剥离且信号为 KL30_1");
             Check(keyValSpec.Contains("KL30_1") && !keyValSpec.Contains("值="), "值与规格被清理，归并名规范");
 
-            // ⑤ 未知字符串安全回退原样
             var unk = FailReasonMerger.GetMergedKey("UnknownCustomDeviceFailure", true, "signal");
             Check(unk == "UnknownCustomDeviceFailure", "未知格式安全回退原字符串");
 
-            // ⑥ 章节群挂检测验证
             var groupSample = new List<string>
             {
                 "6.1.1.1 P5V_CAN(DMM)",
@@ -5194,7 +4692,6 @@ Argus 统一发布包  v{newer}
             Check(alerts.Count == 1, "6.1 电源轨 3 个不同信号成功触发章节群挂告警");
             Check(alerts[0].RootCauseHint.Contains("供电") || alerts[0].RootCauseHint.Contains("电源"), "章节群挂提示供电/电源系统性问题");
 
-            // 7. 规格复核 §2.3 补充族：KL30 双轨 / GD 状态数组 / 电源轨群
             var kKl301 = FailReasonMerger.GetMergedKey("8.1.3.2 KL30_1(Power)", true, "signal");
             var kKl302 = FailReasonMerger.GetMergedKey("8.1.3.2 KL30_2(Power)", true, "signal");
             Check(kKl301 != kKl302, "S1: KL30_1 与 KL30_2 两轨独立不并");
@@ -5215,19 +4712,14 @@ Argus 统一发布包  v{newer}
             Check(kP12 != kP15, "S1: 不同电源轨不并（P12V_FB_HS ≠ P15V_LVD_LS，保住诊断）");
         }
 
-        // ==========================================
-        // 规格 05 S2: 本地资源自采样与 DbMigrator v13 迁移验证
-        // ==========================================
         {
             var dbDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_learning_s2_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dbDir);
             var dbFile = Path.Combine(dbDir, "local_test.db");
 
-            // ① 初始化数据库，验证 v13 表已正确创建
             var db = new Database(dbFile);
             Check(db != null, "Database 初始化成功");
 
-            // ② 插入并查询本地样本
             var now = DateTime.Now;
             db!.InsertLocalDeviceSample(15.5, 45.2, 120.0, now.ToString("yyyy-MM-dd HH:mm:ss"));
             var samples = db.GetLocalDeviceSamples(1);
@@ -5236,19 +4728,16 @@ Argus 统一发布包  v{newer}
             Check(Math.Abs(samples[0].Mem - 45.2) < 0.001, "本地样本 Memory 读出一致");
             Check(Math.Abs(samples[0].DiskFree - 120.0) < 0.001, "本地样本 DiskGb 读出一致");
 
-            // ③ 验证滚动清理
             db.InsertLocalDeviceSample(20.0, 50.0, 100.0, now.AddDays(-20).ToString("yyyy-MM-dd HH:mm:ss"));
             var purged = db.PurgeOldLocalDeviceSamples(14);
             Check(purged >= 1, "PurgeOldLocalDeviceSamples 成功清理 14 天前旧数据");
 
-            // ④ 验证 DeviceSampleRecorder P/Invoke 单次快照采集
             var snap = DeviceSampleRecorder.Instance.RecordOnce();
             Check(snap.HasValue, "DeviceSampleRecorder 单次采样成功");
             Check(snap!.Value.Cpu >= 0 && snap.Value.Cpu <= 100, "DeviceSampleRecorder CPU 采集合法");
             Check(snap.Value.MemPct >= 0 && snap.Value.MemPct <= 100, "DeviceSampleRecorder 内存采集合法");
             Check(snap.Value.DiskFreeGb >= 0, "DeviceSampleRecorder 磁盘余量合法");
 
-            // ⑤ 验证 DbMigrator v13 向前兼容迁移逻辑
             var migratorVer = DbMigrator.LatestVersion;
             Check(migratorVer == 13, "DbMigrator 最新版本为 13");
 
@@ -5256,11 +4745,8 @@ Argus 统一发布包  v{newer}
             try { Directory.Delete(dbDir, true); } catch { }
         }
 
-        // ==========================================
-        // 规格 05 S3/S4: 滚动基线 / 章节群挂落盘 / 优先级权重校准 / Top 归并
-        // ==========================================
         {
-            var fixedNow = new DateTime(2026, 9, 4, 20, 0, 0);   // 确定性“今天”
+            var fixedNow = new DateTime(2026, 9, 4, 20, 0, 0);
             var today = fixedNow.Date;
             string D(DateTime d) => d.ToString("yyyyMMdd");
             var recs = new List<BaselineSourceRecord>();
@@ -5268,19 +4754,14 @@ Argus 统一发布包  v{newer}
             void Add(DateTime d, int hour, string model, string sn, string result)
                 => recs.Add(new BaselineSourceRecord(++id, D(d), hour, model, sn, result));
 
-            // 基线 6 天：M1 早段(08时) 每天 10 件全 PASS（60 件窗口样本）
             for (int day = 1; day <= 6; day++)
                 for (int i = 0; i < 10; i++)
                     Add(today.AddDays(-day), 8, "M1", $"M1-{day}-{i}", "PASS");
-            // 今天 M1 早段 6 PASS / 4 FAIL（良率 60%，远低于基线 100%）
             for (int i = 0; i < 6; i++) Add(today, 8, "M1", $"T1-{i}", "PASS");
             for (int i = 0; i < 4; i++) Add(today, 8, "M1", $"T1-F{i}", "FAIL");
-            // 今天 M1 午段(14时) 10 PASS 正常
             for (int i = 0; i < 10; i++) Add(today, 14, "M1", $"T2-{i}", "PASS");
-            // M2 冷启动：窗口总样本仅 10 件（< 30）
             for (int i = 0; i < 5; i++) Add(today.AddDays(-1), 9, "M2", $"M2-{i}", "PASS");
             for (int i = 0; i < 5; i++) Add(today, 9, "M2", $"M2T-{i}", "PASS");
-            // 中断热区：晚段(20时) 基线 3 天 ×10 全 PASS；今天 7 PASS + 3 INTERRUPTED
             for (int day = 1; day <= 3; day++)
                 for (int i = 0; i < 10; i++) Add(today.AddDays(-day), 20, "M1", $"N-{day}-{i}", "PASS");
             for (int i = 0; i < 7; i++) Add(today, 20, "M1", $"NT-{i}", "PASS");
@@ -5295,7 +4776,6 @@ Argus 统一发布包  v{newer}
             };
             var state = SelfBaseline.Compute(recs, cfg, fixedNow);
 
-            // ① 良率跌破：仅 M1 早段触发
             var yd = state.Alerts.Where(a => a.Kind == "yield_drop").ToList();
             Check(yd.Count == 1, $"S3: 仅 M1 早段触发 1 条良率跌破预警（实得 {yd.Count}）");
             Check(yd[0].Model == "M1" && yd[0].Slot == 1, "S3: 预警定位 M1 早(06-12) 段");
@@ -5303,27 +4783,23 @@ Argus 统一发布包  v{newer}
             Check(yd[0].ExpectedLow >= 97.0, $"S3: 零σ下限生效，期望下界 ≥ 97（实得 {yd[0].ExpectedLow}）");
             Check(yd[0].Message.Contains("M1"), "S3: 预警文案含型号与期望区间（只标记不强动作）");
 
-            // ② 冷启动/隔离
             Check(!state.Alerts.Any(a => a.Model == "M2"), "S3: 冷启动桶（M2 窗口 <30 件）不产出预警");
             Check(state.Alerts.Count(a => a.Kind == "yield_drop") == 1, "S3: 型号×时段隔离——正常桶（午段）不误报");
 
-            // ③ 中断热区
             var hz = state.Alerts.Where(a => a.Kind == "interrupt_hotzone").ToList();
             Check(hz.Count == 1 && hz[0].Slot == 3, $"S3: 晚段中断热区触发 1 条（实得 {hz.Count}）");
             Check(Math.Abs(hz[0].Actual - 30.0) < 0.01, "S3: 今日晚段中断率 30%");
             Check(hz[0].Message.Contains("治具") || hz[0].Message.Contains("治具/通信"), "S3: 中断预警带根因指向（治具/通信/操作）");
 
-            // ④ 桶统计与 SN 去重
             var m1s1 = state.Buckets.First(b => b.Model == "M1" && b.Slot == 1);
             Check(m1s1.SampleCount == 60 && m1s1.DayCount == 6, $"S3: M1 早段桶 60 件/6 天（实得 {m1s1.SampleCount}/{m1s1.DayCount}）");
             var dupList = new List<BaselineSourceRecord>
             {
                 new(1, D(today), 8, "M1", "DUP", "FAIL"),
-                new(2, D(today), 8, "M1", "DUP", "PASS"),   // 复测：最新 PASS 生效
+                new(2, D(today), 8, "M1", "DUP", "PASS"),
             };
             Check(SelfBaseline.DedupBySn(dupList).Count == 1, "S3: 同 SN 复测去重只保留最新一条");
 
-            // ⑤ σ 边界（开区间侧，v3.22.0 教训）：恰在期望下界不报警
             var bRecs = new List<BaselineSourceRecord>();
             long bid = 0;
             for (int day = 1; day <= 3; day++)
@@ -5336,12 +4812,10 @@ Argus 统一发布包  v{newer}
             var stB2 = SelfBaseline.Compute(bRecs, new AppConfig { LearnBaselineWindowDays = 7, LearnBaselineSigma = 2.9, LearnBaselineMinSamples = 3 }, fixedNow);
             Check(stB2.Alerts.Count == 1, "S3: σ 收紧到 2.9 后同数据触发预警（边界外）");
 
-            // ⑥ JSON 往返
             var round = BaselineState.FromJson(state.ToJson());
             Check(round != null && round!.Buckets.Count == state.Buckets.Count && round.Alerts.Count == state.Alerts.Count,
                   "S3: BaselineState JSON 序列化往返一致");
 
-            // ---- S3/S4 集成：LearningEngine.RunOnce 落盘 app_meta（生产 yyyyMMdd 格式）----
             var dbDir3 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_learning_s3_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dbDir3);
             var db3 = new Database(Path.Combine(dbDir3, "local.db"));
@@ -5368,7 +4842,6 @@ Argus 统一发布包  v{newer}
             trs.Add(TR(fixedNow, 8, "R3", "FAIL", "8.11.6.3 RES_v_ResAng(225°)(XCP)"));
             db3.BatchInsert(trs);
 
-            // 全关 → no-op
             LearningEngine.RunOnce(db3, new AppConfig(), fixedNow);
             Check(db3.GetMeta(LearningEngine.MetaBaseline) == null
                   && db3.GetMeta(LearningEngine.MetaGroupAlerts) == null
@@ -5400,7 +4873,6 @@ Argus 统一发布包  v{newer}
                 new[] { "8.19.5 FLTM_DESAT_A(XCP)", "8.20.2 ASC_B(XCP)", "8.21.1 SBC_C(XCP)" }, 3);
             Check(injAlerts.Count == 0, "S4: 注入型章节（8.19/8.20/8.21）不计群挂");
 
-            // ---- S4 权重校准 ----
             Check(Math.Abs(LearningEngine.CalibrateFactor(0, 0) - 1.0) < 0.001, "S4: 无维修无删除 → 因子 1.0");
             Check(Math.Abs(LearningEngine.CalibrateFactor(10, 0) - 1.5) < 0.001, "S4: 完成维修 10 次 → 因子封顶 1.5");
             Check(Math.Abs(LearningEngine.CalibrateFactor(0, 10) - 0.5) < 0.001, "S4: 显式删除 10 次 → 因子下探 0.5");
@@ -5420,7 +4892,6 @@ Argus 统一发布包  v{newer}
             Check(PriorityScorer.Score(8, 2, 3, 99).Score == PriorityScorer.Score(8, 2, 3, 2.0).Score,
                   "S4: 因子越界在 Score 内二次钳制 [0.5,2.0]");
 
-            // ---- S4 Top 排行归并（展示层）----
             var todayKey = today.ToString("yyyyMMdd");
             var mergedTop = db3.FetchDailyTopFails("", todayKey, 5, mergeOverride: true);
             var resTop = mergedTop.FirstOrDefault(t => t.FailItem.Contains("RES_v_ResAng"));
@@ -5431,7 +4902,6 @@ Argus 统一发布包  v{newer}
             Check(rawTop.Count(t => t.FailItem.Contains("RES_v_ResAng")) == 3,
                   "S4: 归并关闭时 Top 排行保持原串（行为 100% 兼容）");
 
-            // ---- S4 TodoSuggester 校准排序 ----
             var tmpAgg = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_learning_s4agg_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tmpAgg);
             using (var agg = new AggDatabase(Path.Combine(tmpAgg, "agg.db")))
@@ -5455,9 +4925,6 @@ Argus 统一发布包  v{newer}
             try { Directory.Delete(tmpAgg, true); } catch { }
         }
 
-        // ==========================================
-        // v3.24.0 飞书交互卡片 JSON 2.0 构建原语断言
-        // ==========================================
         {
             var card = FeishuCardV2.Root("FCT1 · E3002781 · FAIL 告警", "red", new List<object>
             {
@@ -5475,12 +4942,10 @@ Argus 统一发布包  v{newer}
             Check(json.Contains("\"template\":\"red\""), "飞书卡片2.0: header.template 合法枚举色");
             Check(json.Contains("width_mode") && json.Contains("plain_text"), "飞书卡片2.0: fill 宽度模式 + 标题 plain_text");
 
-            // 转义防线：恶意测试项名不得渲染成粗体/链接/代码（每个特殊字符前置反斜杠）
             var esc = FeishuCardV2.Escape("a*b[c]`d|e");
             Check(esc == @"a\*b\[c\]\`d\|e", $"飞书卡片2.0: markdown 转义生效（实得 {esc}）");
             Check(FeishuCardV2.Escape(null) == "", "飞书卡片2.0: null 输入安全返回空串");
 
-            // 抬头图：配了 img_key 时 body 首元素为 img 通栏图；未配/空白时无 img（兼容旧版式）
             var items = new List<object> { FeishuCardV2.FieldRow(("机台", "FCT1"), ("型号", "E3")), FeishuCardV2.Note("n") };
             var withBanner = System.Text.Json.JsonSerializer.Serialize(
                 FeishuCardV2.Root("t", "red", items, bannerImgKey: "img_v2_banner_1"));
@@ -5496,9 +4961,8 @@ Argus 统一发布包  v{newer}
                 "飞书卡片2.0: banner 空白/null key 安全返回 null");
             Check(FeishuCardV2.BannerImg(" img_v2_x ") is not null, "飞书卡片2.0: banner 合法 key 返回元素");
 
-            // webhook 写死兜底（v3.24.2）：内置常量必须是合法 https 群机器人地址
-            Check(AppConfig.FallbackWebhookUrl.StartsWith("https://open.feishu.cn/open-apis/bot/v2/hook/", StringComparison.Ordinal),
-                "飞书推送: FallbackWebhookUrl 为合法 https 群机器人地址（写死兜底防线）");
+            Check(string.IsNullOrEmpty(AppConfig.FallbackWebhookUrl),
+                "飞书推送: FallbackWebhookUrl 已置空（开源版不携带任何硬编码凭据）");
         }
     }
 

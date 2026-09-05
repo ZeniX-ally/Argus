@@ -3,7 +3,6 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>飞书群机器人 FAIL 告警推送。</summary>
 public static class FeishuNotifier
 {
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
@@ -15,20 +14,12 @@ public static class FeishuNotifier
         await PostCard(webhookUrl, BuildFailCard(record), record.Sn ?? "?");
     }
 
-    /// <summary>
-    /// 待办/维修状态变更推送。卡片格式与 FAIL 告警一致（header 机台·型号 + 对称两列 + note）。
-    /// </summary>
     public static async Task SendStatusChangeAlert(string webhookUrl, MaintenanceRecord rec, string fromStatus, string toStatus)
     {
         if (string.IsNullOrWhiteSpace(webhookUrl)) return;
         await PostCard(webhookUrl, BuildStatusChangeCard(rec, fromStatus, toStatus), $"#{rec.Id} {rec.FailItem}");
     }
 
-    /// <summary>
-    /// 聚合链路告警（v3.4.11 连通性加固）：机台端在聚合端断连/恢复/队列溢出时推送。
-    /// kind: disconnected=断连（红）/ recovered=恢复（绿）/ overflow=队列溢出（黄，2.0 无 amber 模板色）。
-    /// 走机台自己的 webhook，聚合端挂掉时告警依然能发出（聚合端发的离线告警在此场景不可用）。
-    /// </summary>
     public static async Task SendAggLinkAlert(string webhookUrl, string machine, string kind, string detail)
     {
         if (string.IsNullOrWhiteSpace(webhookUrl)) return;
@@ -49,13 +40,15 @@ public static class FeishuNotifier
         await PostCard(webhookUrl, card, $"link-{kind}-{machine}");
     }
 
-    /// <summary>卡片 POST + 重试（两种推送共用）。tag 仅用于最终失败日志定位。</summary>
     private static async Task PostCard(string webhookUrl, object card, string tag)
     {
-        // v3.24.2：config 未配 webhook_url 时回落到内置群机器人（Config.FallbackWebhookUrl）
         if (string.IsNullOrWhiteSpace(webhookUrl))
             webhookUrl = AppConfig.FallbackWebhookUrl;
-        // 飞书机器人只支持 https；若误配成 http:// 会明文泄露 webhook token（含密钥的完整 URL）
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            Logger.Info($"[飞书推送] 未配置 webhook_url，跳过推送 | {tag}");
+            return;
+        }
         if (!webhookUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
             Logger.Error($"[飞书推送] 拒绝发送: webhook 必须 https://（当前前缀 {webhookUrl[..Math.Min(24, webhookUrl.Length)]}…）| {tag}");
@@ -82,10 +75,6 @@ public static class FeishuNotifier
         Logger.Error($"飞书推送最终失败: {tag}");
     }
 
-    /// <summary>
-    /// 交互卡片（JSON 2.0）：机台/型号前置到 header，正文用 column_set 等宽多列 + hr 分区。
-    /// 失败项不再用 6 列表格（手机窄屏会被挤/截断），改为每项一行统一格式。
-    /// </summary>
     private static object BuildFailCard(TestRecord r)
     {
         var station = string.IsNullOrWhiteSpace(r.StationId) ? "未知机台" : r.StationId;
@@ -93,11 +82,8 @@ public static class FeishuNotifier
 
         var elements = new List<object>
         {
-            // 等宽两列（column_set，等同旧 div.fields is_short 布局）：机台 | 型号
             FeishuCardV2.FieldRow(("机台", station), ("型号", model)),
-            // 位置 | 时间
             FeishuCardV2.FieldRow(("位置", r.Category), ("时间", FmtTime(r.BatchTimestamp))),
-            // SN 长，占满整行
             FeishuCardV2.Md($"**产品 SN**\n{FeishuCardV2.Escape(r.Sn ?? "—")}"),
         };
 
@@ -119,10 +105,6 @@ public static class FeishuNotifier
         return FeishuCardV2.Root($"{station} · {model} · FAIL 告警", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
     }
 
-    /// <summary>
-    /// 待办状态变更卡片（JSON 2.0）：结构照搬 FAIL 告警（header 机台·型号 + column_set 多列 + hr 分区）。
-    /// 只把「失败项」换成「状态变化」+ 故障项 + 维修人/措施。
-    /// </summary>
     private static object BuildStatusChangeCard(MaintenanceRecord r, string fromStatus, string toStatus)
     {
         var station = string.IsNullOrWhiteSpace(r.StationId) ? "未知机台" : r.StationId;
@@ -132,11 +114,8 @@ public static class FeishuNotifier
 
         var elements = new List<object>
         {
-            // 等宽两列：机台 | 型号
             FeishuCardV2.FieldRow(("机台", station), ("型号", model)),
-            // 状态变更（旧 → 新）| 严重度
             FeishuCardV2.FieldRow(("状态变更", $"{fromZh} → {toZh}"), ("严重度", MaintenanceMeta.SeverityZhOf(r.Severity))),
-            // 故障项 / SN 整行
             FeishuCardV2.Md($"**故障项**\n{FeishuCardV2.Escape(string.IsNullOrWhiteSpace(r.FailItem) ? "—" : r.FailItem)}"),
         };
 
@@ -159,7 +138,6 @@ public static class FeishuNotifier
         return FeishuCardV2.Root($"{station} · {model} · 待办状态变更", "blue", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
     }
 
-    /// <summary>失败项每行统一格式：▸ 名称 = 实测值（规格 下限 ~ 上限）。标题「**失败项 ×N**」由调用方作为 heading 单独输出。</summary>
     private static string BuildFailItems(TestRecord r)
     {
         var sb = new StringBuilder();
@@ -173,7 +151,6 @@ public static class FeishuNotifier
         return sb.ToString().TrimEnd();
     }
 
-    /// <summary>时间统一格式（ISO 带时区/毫秒、14/17 位数字都能识别）。空 → "—"。</summary>
     private static string FmtTime(string? ts)
     {
         var n = TimeUtil.Normalize(ts);
