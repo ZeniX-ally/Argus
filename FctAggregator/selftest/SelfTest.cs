@@ -5244,9 +5244,14 @@ Argus 统一发布包  v{newer}
                   "规格06: MarginRatio σ=0 安全返回 MaxValue");
 
             var dbA6n = new Database(Path.Combine(dirA6, "noop.db"));
-            AnalysisEngine.RunOnce(dbA6n, new AppConfig { AnalyzeDriftEnabled = false, AnalyzeCpkEnabled = false }, fixedNow);
-            Check(dbA6n.GetMeta(AnalysisEngine.MetaDrift) == null && dbA6n.GetMeta(AnalysisEngine.MetaCpk) == null,
-                  "规格06: 分析开关显式全关 RunOnce no-op");
+            AnalysisEngine.RunOnce(dbA6n, new AppConfig
+            {
+                AnalyzeDriftEnabled = false, AnalyzeCpkEnabled = false,
+                AnalyzeFailAttrEnabled = false, AnalyzeFixtureEnabled = false,
+            }, fixedNow);
+            Check(dbA6n.GetMeta(AnalysisEngine.MetaDrift) == null && dbA6n.GetMeta(AnalysisEngine.MetaCpk) == null
+                  && dbA6n.GetMeta(AnalysisEngine.MetaAttribution) == null && dbA6n.GetMeta(AnalysisEngine.MetaFixture) == null,
+                  "规格06: 分析四开关显式全关 RunOnce no-op（不写任何 meta）");
             AnalysisEngine.RunOnce(dbA6, new AppConfig { AnalyzeDriftEnabled = true, AnalyzeCpkEnabled = true, AnalyzeMinSamples = 2, AnalyzeWindowDays = 7 }, fixedNow);
             var driftState = AnalysisEngine.GetDriftState(dbA6);
             var cpkState = AnalysisEngine.GetCpkState(dbA6);
@@ -5351,6 +5356,250 @@ Argus 统一发布包  v{newer}
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             try { Directory.Delete(dirB6, true); } catch { }
             Console.WriteLine("[规格06] 回填组完成");
+
+            // ---------- 期2：fail_items 落表 ----------
+            Console.WriteLine("\n【规格06期2】失败项明细 fail_items …");
+            object? Scalar(string dbPath, string sql)
+            {
+                using var c = new SqliteConnection($"Data Source={dbPath}");
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = sql;
+                var v = cmd.ExecuteScalar();
+                return v is DBNull ? null : v;
+            }
+            var dirE6 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_p6s2_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dirE6);
+            var dbE6Path = Path.Combine(dirE6, "local.db");
+            var dbE6 = new Database(dbE6Path);
+            int seqE6 = 0;
+            TestRecord FR(string ts, string tester, string fixture, string result, string panel,
+                (string name, string value, string lo, string hi, string unit, string rule)[] items)
+            {
+                seqE6++;
+                return new TestRecord
+                {
+                    StationId = "FCT1", Model = "E3002781", Result = result, TestDate = "20260905",
+                    BatchTimestamp = ts, Tester = tester, FixtureId = fixture, PanelStatus = panel,
+                    XmlPath = $@"C:\t\e6_{seqE6}.xml",
+                    FailedTests = items.Select(i => new FailedTest
+                    { Name = i.name, Value = i.value, Lolim = i.lo, Hilim = i.hi, Unit = i.unit, Rule = i.rule }).ToList(),
+                };
+            }
+            TestRecord PR(string ts, string tester, string fixture, (string name, double v, double lo, double hi)[] ms)
+            {
+                seqE6++;
+                return new TestRecord
+                {
+                    StationId = "FCT1", Model = "E3002781", Result = "PASS", TestDate = "20260905",
+                    BatchTimestamp = ts, Tester = tester, FixtureId = fixture, PanelStatus = "Passed",
+                    XmlPath = $@"C:\t\e6_{seqE6}.xml",
+                    Measurements = ms.Select(m => new MeasurementRow
+                    { TestName = m.name, Value = m.v, Lolim = m.lo, Hilim = m.hi, Unit = "V" }).ToList(),
+                };
+            }
+
+            var f1 = FR("2026-09-05 08:30:00", "T1", "FX1", "FAIL", "Failed", new[]
+            {
+                ("V_KL30", "3.29", "10.8", "14.4", "V", "LeGe"),
+                ("CONT", "Open", "", "", "", ""),
+            });
+            dbE6.BatchInsert(new[] { f1 });
+            Check(RowCount(dbE6Path, "fail_items") == 2, $"期2: FAIL 记录失败项自动挂接（实得 {RowCount(dbE6Path, "fail_items")}）");
+            Check(Convert.ToDouble(Scalar(dbE6Path, "SELECT value FROM fail_items WHERE test_name='V_KL30'")) == 3.29
+                  && (string?)Scalar(dbE6Path, "SELECT value_text FROM fail_items WHERE test_name='V_KL30'") == "3.29",
+                  "期2: 数值失败项 value REAL + value_text 原串");
+            Check(Scalar(dbE6Path, "SELECT value FROM fail_items WHERE test_name='CONT'") == null
+                  && (string?)Scalar(dbE6Path, "SELECT value_text FROM fail_items WHERE test_name='CONT'") == "Open",
+                  "期2: 非数值失败项 value 空 + value_text 保留");
+            Check(Convert.ToInt64(Scalar(dbE6Path, "SELECT hour FROM fail_items WHERE test_name='V_KL30'")) == 8,
+                  "期2: hour 取自 batch_timestamp 空格格式");
+            var fT = FR("2026-09-05T09:30:00", "T1", "FX1", "FAIL", "Failed",
+                new[] { ("V_KL30", "3.3", "10.8", "14.4", "V", "LeGe") });
+            dbE6.BatchInsert(new[] { fT });
+            Check(Convert.ToInt64(Scalar(dbE6Path, "SELECT hour FROM fail_items WHERE ts='2026-09-05T09:30:00'")) == 9,
+                  "期2: hour 兼容 T 分隔格式");
+            var fPass = FR("2026-09-05 10:00:00", "T1", "FX1", "PASS", "Passed",
+                new[] { ("GHOST", "1", "", "", "", "") });
+            var fInt = FR("2026-09-05 10:30:00", "T1", "FX1", "INTERRUPTED", "Failed",
+                new[] { ("GHOST2", "1", "", "", "", "") });
+            dbE6.BatchInsert(new[] { fPass, fInt });
+            Check(RowCount(dbE6Path, "fail_items") == 3,
+                  "期2: PASS/INTERRUPTED 记录不落失败项（仅 FAIL 前置守卫）");
+            var ridF1 = IdOfRec(dbE6Path, f1.XmlPath);
+            dbE6.BatchInsert(new[] { f1 });
+            dbE6.InsertFailItemsFor(new List<(TestRecord, long)> { (f1, ridF1) });
+            Check(RowCount(dbE6Path, "fail_items") == 3, "期2: fail_items UNIQUE(record_id,test_name) 幂等");
+            var fOld = FR("2026-01-01 00:00:00", "T1", "FX1", "FAIL", "Failed",
+                new[] { ("T_OLD", "1", "", "", "", "") });
+            dbE6.BatchInsert(new[] { fOld });
+            var purgedFi = dbE6.PurgeOldFailItems(90);
+            Check(purgedFi >= 1 && RowCount(dbE6Path, "fail_items") == 3,
+                  $"期2: PurgeOldFailItems 清旧留新（删 {purgedFi}）");
+            Console.WriteLine("[规格06期2] fail_items 组完成");
+
+            // ---------- 期2：多维归因 ----------
+            Console.WriteLine("\n【规格06期2】失败多维归因 …");
+            var dirF6 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_p6attr_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dirF6);
+            var dbF6Path = Path.Combine(dirF6, "local.db");
+            var dbF6 = new Database(dbF6Path);
+            var recsF = new List<TestRecord>();
+            for (int i = 0; i < 20; i++)
+            {
+                recsF.Add(FR($"2026-09-05 08:{i:00}:00", "T1", "FX1", "FAIL", "Failed",
+                    new[] { ("X", "1", "", "", "", "") }));
+                recsF.Add(FR($"2026-09-05 10:{i + 20:00}:00", "T1", "FX1", "PASS", "Passed", Array.Empty<(string, string, string, string, string, string)>()));
+                recsF.Add(FR($"2026-09-05 10:{i:00}:00", "T2", "FX2", "PASS", "Passed", Array.Empty<(string, string, string, string, string, string)>()));
+                recsF.Add(FR($"2026-09-05 10:{i + 40:00}:00", "T2", "FX2", i < 4 ? "FAIL" : "PASS", i < 4 ? "Failed" : "Passed", Array.Empty<(string, string, string, string, string, string)>()));
+            }
+            dbF6.BatchInsert(recsF);
+            var cfgF = new AppConfig { AnalyzeWindowDays = 7, AnalyzeAttrMinBucket = 20, AnalyzeAttrDevRatio = 1.5 };
+            var attrState = FailAttributor.Run(dbF6, cfgF, fixedNow);
+            Check(attrState.TotalN == 80 && Math.Abs(attrState.GlobalFailRate - 0.3) < 1e-6,
+                  $"期2: 归因全局口径（n={attrState.TotalN}，全局失败率 {attrState.GlobalFailRate}）");
+            Check(attrState.Buckets.Count == 3, $"期2: fixture/tester/hour 三桶异常（实得 {attrState.Buckets.Count}）");
+            var bFx1 = attrState.Buckets.FirstOrDefault(b => b.Dim == "fixture" && b.Key == "FX1");
+            Check(bFx1 != null && Math.Abs(bFx1.Ratio - 1.67) < 0.01 && bFx1.N == 40 && bFx1.Fails == 20,
+                  "期2: 治具 FX1 偏差比 1.67 触发");
+            Check(bFx1 != null && Math.Abs(bFx1.PanelNgRate - 0.5) < 1e-6, "期2: panel NG 率按 fixture 统计");
+            Check(attrState.Buckets.All(b => !(b.Dim == "fixture" && b.Key == "FX2")),
+                  "期2: 治具 FX2 低于阈值不报");
+            Check(attrState.Buckets.First().Dim == "hour" && attrState.Buckets.First().Key == "8",
+                  "期2: 偏差比降序（hour=8 最先）");
+            var cfgF5 = new AppConfig { AnalyzeWindowDays = 7, AnalyzeAttrMinBucket = 50, AnalyzeAttrDevRatio = 1.5 };
+            Check(FailAttributor.Run(dbF6, cfgF5, fixedNow).Buckets.Count == 0,
+                  "期2: 桶样本 < min_bucket 跳过");
+            var dbF6b = new Database(Path.Combine(dirF6, "allpass.db"));
+            var passOnly = new List<TestRecord>();
+            for (int i = 0; i < 30; i++)
+                passOnly.Add(FR($"2026-09-05 10:{i:00}:00", "T1", "FX1", "PASS", "Passed",
+                    Array.Empty<(string, string, string, string, string, string)>()));
+            dbF6b.BatchInsert(passOnly);
+            Check(FailAttributor.Run(dbF6b, cfgF, fixedNow).Buckets.Count == 0
+                  && FailAttributor.Run(dbF6b, cfgF, fixedNow).GlobalFailRate == 0,
+                  "期2: 全局零失败无可比基线不报警");
+
+            for (int h = 10; h <= 15; h++)
+            {
+                for (int k = 0; k < h - 9; k++)
+                    dbF6b.BatchInsert(new[] { FR($"2026-09-05 {h:00}:{k:00}:00", "T1", "FX1", "FAIL", "Failed",
+                        Array.Empty<(string, string, string, string, string, string)>()) });
+                dbF6b.InsertLocalDeviceSample(h * 10.0, 50, 100, $"{fixedNow:yyyy-MM-dd} {h:00}:05:00");
+            }
+            var attrCorr = FailAttributor.Run(dbF6b, cfgF, fixedNow);
+            var cpuCorr = attrCorr.ResourceCorrelations.FirstOrDefault(c => c.Metric == "cpu");
+            Check(cpuCorr != null && Math.Abs(cpuCorr.R - 1.0) < 0.01,
+                  $"期2: 资源关联 Pearson 正例（cpu r={cpuCorr?.R ?? double.NaN}，corr={attrCorr.ResourceCorrelations.Count}）");
+            Check(attrCorr.ResourceCorrelations.All(c => c.Metric != "mem"),
+                  "期2: 零方差序列（mem 恒 50）不出相关");
+            Check(double.IsNaN(FailAttributor.Pearson(new[] { 1.0, 1, 1 }, new[] { 1.0, 2, 3 })),
+                  "期2: Pearson 零方差返回 NaN");
+            Check(Math.Abs(FailAttributor.Pearson(new[] { 1.0, 2, 3, 4 }, new[] { 2.0, 1, 2, 1 })) < 0.6,
+                  "期2: Pearson 弱相关低于阈值");
+            Console.WriteLine("[规格06期2] 归因组完成");
+
+            // ---------- 期2：tester 效应量 + PASS 工厂信息补齐 ----------
+            Console.WriteLine("\n【规格06期2】tester 效应量对比 …");
+            var dirG6 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_p6fx_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dirG6);
+            var dbG6Path = Path.Combine(dirG6, "local.db");
+            var dbG6 = new Database(dbG6Path);
+            var recsG = new List<TestRecord>();
+            for (int i = 0; i < 30; i++)
+            {
+                recsG.Add(PR("2026-09-05 12:00:00", "TA", "FX1", new[]
+                {
+                    ("T_EFF1", 9.8 + (i % 3) * 0.2, 9.0, 12.0),
+                    ("T_EFF2", 10.0 + (i % 2) * 0.2, 9.0, 12.0),
+                }));
+                recsG.Add(PR("2026-09-05 12:30:00", "TB", "FX1", new[]
+                {
+                    ("T_EFF1", 10.8 + (i % 3) * 0.2, 9.0, 12.0),
+                    ("T_EFF2", 10.4 + (i % 2) * 0.2, 9.0, 12.0),
+                }));
+                recsG.Add(PR("2026-09-05 13:00:00", "UNKNOWN", "FX1", new[]
+                {
+                    ("T_EFF1", 15.0, 9.0, 12.0),
+                    ("T_EFF2", 15.0, 9.0, 12.0),
+                }));
+            }
+            dbG6.BatchInsert(recsG);
+            var testerStats = dbG6.FetchTesterMeasurementStats("2026-08-30");
+            Check(testerStats.Where(t => t.TestName == "T_EFF1").All(t => t.Tester is "TA" or "TB"),
+                  "期2: tester='UNKNOWN' 脏数据剔除");
+            var cfgG = new AppConfig { AnalyzeWindowDays = 7, AnalyzeMinSamples = 30, AnalyzeEffectD = 0.8 };
+            var fxState = FixtureComparator.Run(dbG6, cfgG, fixedNow);
+            Check(fxState.Effects.Count == 2, $"期2: 两个测项出效应量（实得 {fxState.Effects.Count}）");
+            Check(fxState.Effects[0].TestName == "T_EFF1" && Math.Abs(fxState.Effects[0].D - 6.02) < 0.05,
+                  $"期2: 效应量正例 d≈6.02（旋转值列 σ≈0.166，实得 {fxState.Effects[0].D}）且降序在前");
+            Check(fxState.Effects[1].TestName == "T_EFF2" && Math.Abs(fxState.Effects[1].D - 3.93) < 0.05,
+                  $"期2: 次强效应 d≈3.93 仍超 0.8 阈值入清单");
+            var dbG6b = new Database(Path.Combine(dirG6, "const.db"));
+            var recsG2 = new List<TestRecord>();
+            for (int i = 0; i < 30; i++)
+            {
+                recsG2.Add(PR("2026-09-05 12:00:00", "TA", "FX1", new[] { ("T_C", 10.0, 9.0, 12.0) }));
+                recsG2.Add(PR("2026-09-05 12:30:00", "TB", "FX1", new[] { ("T_C", 11.0, 9.0, 12.0) }));
+                recsG2.Add(PR("2026-09-05 13:00:00", "TC", "FX1", new[] { ("T_S", 10.0 + (i % 3) * 0.2, 9.0, 12.0) }));
+            }
+            dbG6b.BatchInsert(recsG2);
+            var fxConst = FixtureComparator.Run(dbG6b, cfgG, fixedNow);
+            Check(fxConst.Effects.All(e => e.TestName != "T_C"),
+                  "期2: 双 tester 恒定值 σ 防零（量程下限）跳过");
+            Check(fxConst.Effects.Count == 0, "期2: 单 tester 测项跳过对比");
+
+            var passXml2 = "<FACTORY USER=\"op9\" TESTER=\"T1\" FIXTURE_ID=\"FX01\">" +
+                           "<PANEL STATUS=\"Passed\"><DUT ID=\"D\"><TEST NAME=\"V\" STATUS=\"Passed\" VALUE=\"1\"/></DUT></PANEL></FACTORY>";
+            var passFile2 = Path.Combine(work, "a6res2", "Online", "E3002781", "20260905", "P_UNIT_SN009_0001.xml");
+            Directory.CreateDirectory(Path.GetDirectoryName(passFile2)!);
+            File.WriteAllText(passFile2, passXml2);
+            var parser2 = new FctAggregator.Parsing.DefaultResultParser(FctAggregator.Parsing.ParserRuleSet.Default, "FCT1");
+            var outp2 = parser2.Parse(passFile2, passXml2);
+            Check(outp2 != null && outp2.Tester == "T1" && outp2.FixtureId == "FX01" && outp2.Result == "PASS",
+                  "期2: PASS 工厂信息补齐（tester/fixture_id 单遍读取）");
+            var parser3 = new FctAggregator.Parsing.DefaultResultParser(FctAggregator.Parsing.ParserRuleSet.Default, null);
+            var outp3 = parser3.Parse(passFile2, passXml2);
+            Check(outp3 != null && outp3.StationId == "UNKNOWN",
+                  "期2: tester 非机台号格式时 station 口径回落 UNKNOWN（FCT-01 不含 FCT{i}）");
+            var passXml3 = passXml2.Replace("TESTER=\"T1\"", "TESTER=\"FCT3\"");
+            File.WriteAllText(passFile2, passXml3);
+            var outp4 = parser3.Parse(passFile2, passXml3);
+            Check(outp4 != null && outp4.StationId == "FCT3",
+                  "期2: PASS tester 含 FCT{i} 时 station 提取实测机台号（口径改进）");
+            Console.WriteLine("[规格06期2] 对比组完成");
+
+            // ---------- 期2：快照落盘与 round trip ----------
+            Console.WriteLine("\n【规格06期2】分析快照 round trip …");
+            AnalysisEngine.RunOnce(dbF6, new AppConfig
+            {
+                AnalyzeDriftEnabled = false, AnalyzeCpkEnabled = false,
+                AnalyzeFailAttrEnabled = true, AnalyzeFixtureEnabled = true,
+                AnalyzeWindowDays = 7, AnalyzeAttrMinBucket = 20, AnalyzeAttrDevRatio = 1.5,
+                AnalyzeMinSamples = 30, AnalyzeEffectD = 0.8,
+            }, fixedNow);
+            var attrGet = AnalysisEngine.GetAttributionState(dbF6);
+            Check(attrGet != null && attrGet.Buckets.Count == 3 && attrGet.Date == "2026-09-05",
+                  "期2: RunOnce 落盘归因快照且可读回");
+            Check(AttributionState.FromJson(attrGet!.ToJson())!.Buckets.Count == attrGet.Buckets.Count,
+                  "期2: AttributionState JSON 往返一致");
+            AnalysisEngine.RunOnce(dbG6, new AppConfig
+            {
+                AnalyzeDriftEnabled = false, AnalyzeCpkEnabled = false,
+                AnalyzeFailAttrEnabled = false, AnalyzeFixtureEnabled = true,
+                AnalyzeWindowDays = 7, AnalyzeMinSamples = 30, AnalyzeEffectD = 0.8,
+            }, fixedNow);
+            var fxGet = AnalysisEngine.GetFixtureState(dbG6);
+            Check(fxGet != null && fxGet.Effects.Count == 2, "期2: RunOnce 落盘 tester 对比快照且可读回");
+            Check(FixtureState.FromJson(fxGet!.ToJson())!.Effects.Count == fxGet.Effects.Count,
+                  "期2: FixtureState JSON 往返一致");
+            Check(AttributionState.FromJson("not-json") == null && FixtureState.FromJson("") == null,
+                  "期2: 坏 JSON 安全返回 null");
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dirE6, true); } catch { }
+            try { Directory.Delete(dirF6, true); } catch { }
+            try { Directory.Delete(dirG6, true); } catch { }
+            Console.WriteLine("[规格06期2] 快照组完成");
         }
     }
 

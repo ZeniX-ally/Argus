@@ -89,6 +89,11 @@ public class AppConfig
     public int AnalyzeMeasureRetentionDays { get; set; } = 30;
     public int AnalyzeFailItemRetentionDays { get; set; } = 90;
     public bool AnalyzeTdmsEnabled { get; set; } = false;
+    public bool AnalyzeFailAttrEnabled { get; set; } = true;
+    public bool AnalyzeFixtureEnabled { get; set; } = true;
+    public int AnalyzeAttrMinBucket { get; set; } = 20;
+    public double AnalyzeAttrDevRatio { get; set; } = 1.5;
+    public double AnalyzeEffectD { get; set; } = 0.8;
 
     private static AppConfig? _instance;
     public const string FallbackWebhookUrl = "";
@@ -273,6 +278,11 @@ public class AppConfig
                 if (root.TryGetProperty("analyze_measure_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var amr) && amr >= 1) cfg.AnalyzeMeasureRetentionDays = amr;
                 if (root.TryGetProperty("analyze_failitem_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var afi) && afi >= 1) cfg.AnalyzeFailItemRetentionDays = afi;
                 if (root.TryGetProperty("analyze_tdms_enabled", out v)) cfg.AnalyzeTdmsEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("analyze_fail_attr_enabled", out v)) cfg.AnalyzeFailAttrEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("analyze_fixture_enabled", out v)) cfg.AnalyzeFixtureEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("analyze_attr_min_bucket", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var aam) && aam >= 1) cfg.AnalyzeAttrMinBucket = aam;
+                if (root.TryGetProperty("analyze_attr_dev_ratio", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var aad) && aad > 0) cfg.AnalyzeAttrDevRatio = aad;
+                if (root.TryGetProperty("analyze_effect_d", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var aed) && aed > 0) cfg.AnalyzeEffectD = aed;
                 if (string.IsNullOrEmpty(cfg.AggToken))
                 {
                     Logger.Warning("[安全] agg_token 未配置，当前为未鉴权模式，建议在config.json配置随机token");
@@ -340,6 +350,8 @@ public class AppConfig
                     "analyze_drift_enabled", "analyze_cpk_enabled", "analyze_window_days",
                     "analyze_min_samples", "analyze_drift_sigma", "analyze_drift_warn_ratio",
                     "analyze_measure_retention_days", "analyze_failitem_retention_days", "analyze_tdms_enabled",
+                    "analyze_fail_attr_enabled", "analyze_fixture_enabled", "analyze_attr_min_bucket",
+                    "analyze_attr_dev_ratio", "analyze_effect_d",
                 };
                 foreach (var prop in doc.RootElement.EnumerateObject())
                 {
@@ -433,6 +445,11 @@ public class AppConfig
                 writer.WriteNumber("analyze_measure_retention_days", AnalyzeMeasureRetentionDays);
                 writer.WriteNumber("analyze_failitem_retention_days", AnalyzeFailItemRetentionDays);
                 writer.WriteBoolean("analyze_tdms_enabled", AnalyzeTdmsEnabled);
+                writer.WriteBoolean("analyze_fail_attr_enabled", AnalyzeFailAttrEnabled);
+                writer.WriteBoolean("analyze_fixture_enabled", AnalyzeFixtureEnabled);
+                writer.WriteNumber("analyze_attr_min_bucket", AnalyzeAttrMinBucket);
+                writer.WriteNumber("analyze_attr_dev_ratio", AnalyzeAttrDevRatio);
+                writer.WriteNumber("analyze_effect_d", AnalyzeEffectD);
                 writer.WriteEndObject();
             }
             var tmp = path + ".tmp";

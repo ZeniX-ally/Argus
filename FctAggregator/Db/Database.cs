@@ -484,6 +484,7 @@ public sealed partial class Database
         tx.Commit();
         NotifyRecordsInserted(insertedRows);
         InsertMeasurementsFor(insertedRows);
+        InsertFailItemsFor(insertedRows);
         return inserted;
     }
 
@@ -564,6 +565,196 @@ public sealed partial class Database
         cmd.CommandText = "DELETE FROM fail_items WHERE COALESCE(ts,'') <> '' AND substr(COALESCE(ts,''),1,10) < @cutoff";
         cmd.Parameters.AddWithValue("@cutoff", cutoff);
         return cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>规格06期2：FAIL 失败项明细批量入库（独立事务，失败仅告警不回滚主记录）。value_text 恒存原串。</summary>
+    public void InsertFailItemsFor(List<(TestRecord Rec, long Id)> rows)
+    {
+        var withF = rows.Where(r => r.Rec.Result == "FAIL" && r.Rec.FailedTests.Count > 0).ToList();
+        if (withF.Count == 0) return;
+        try
+        {
+            using var conn = Open();
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+                INSERT OR IGNORE INTO fail_items
+                (record_id, xml_path, station_id, model, sn, test_date, ts, fixture_id, tester, panel_status, hour, test_name, value, value_text, lolim, hilim, unit, rule)
+                VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @fixture, @tester, @panel, @hour, @name, @value, @vtext, @lolim, @hilim, @unit, @rule)";
+            var pRid = cmd.Parameters.Add("@rid", SqliteType.Integer);
+            var pPath = cmd.Parameters.Add("@path", SqliteType.Text);
+            var pStation = cmd.Parameters.Add("@station", SqliteType.Text);
+            var pModel = cmd.Parameters.Add("@model", SqliteType.Text);
+            var pSn = cmd.Parameters.Add("@sn", SqliteType.Text);
+            var pDate = cmd.Parameters.Add("@date", SqliteType.Text);
+            var pTs = cmd.Parameters.Add("@ts", SqliteType.Text);
+            var pFixture = cmd.Parameters.Add("@fixture", SqliteType.Text);
+            var pTester = cmd.Parameters.Add("@tester", SqliteType.Text);
+            var pPanel = cmd.Parameters.Add("@panel", SqliteType.Text);
+            var pHour = cmd.Parameters.Add("@hour", SqliteType.Integer);
+            var pName = cmd.Parameters.Add("@name", SqliteType.Text);
+            var pValue = cmd.Parameters.Add("@value", SqliteType.Real);
+            var pVText = cmd.Parameters.Add("@vtext", SqliteType.Text);
+            var pLo = cmd.Parameters.Add("@lolim", SqliteType.Real);
+            var pHi = cmd.Parameters.Add("@hilim", SqliteType.Real);
+            var pUnit = cmd.Parameters.Add("@unit", SqliteType.Text);
+            var pRule = cmd.Parameters.Add("@rule", SqliteType.Text);
+            static double? ParseNum(string? s) => string.IsNullOrWhiteSpace(s) ? null :
+                double.TryParse(s, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : (double?)null;
+            static int? ParseHour(string? ts)
+            {
+                if (string.IsNullOrWhiteSpace(ts) || ts.Length < 13) return null;
+                return int.TryParse(ts.Substring(11, 2), out var h) && h is >= 0 and <= 23 ? h : (int?)null;
+            }
+            foreach (var (rec, id) in withF)
+            {
+                var ts = (object?)rec.BatchTimestamp ?? DBNull.Value;
+                var hour = (object?)ParseHour(rec.BatchTimestamp) ?? DBNull.Value;
+                foreach (var f in rec.FailedTests)
+                {
+                    pRid.Value = id;
+                    pPath.Value = rec.XmlPath;
+                    pStation.Value = (object?)rec.StationId ?? DBNull.Value;
+                    pModel.Value = (object?)rec.Model ?? DBNull.Value;
+                    pSn.Value = (object?)rec.Sn ?? DBNull.Value;
+                    pDate.Value = (object?)rec.TestDate ?? DBNull.Value;
+                    pTs.Value = ts;
+                    pFixture.Value = (object?)rec.FixtureId ?? DBNull.Value;
+                    pTester.Value = (object?)rec.Tester ?? DBNull.Value;
+                    pPanel.Value = (object?)rec.PanelStatus ?? DBNull.Value;
+                    pHour.Value = hour;
+                    pName.Value = f.Name;
+                    pValue.Value = (object?)ParseNum(f.Value) ?? DBNull.Value;
+                    pVText.Value = string.IsNullOrEmpty(f.Value) ? DBNull.Value : f.Value;
+                    pLo.Value = (object?)ParseNum(f.Lolim) ?? DBNull.Value;
+                    pHi.Value = (object?)ParseNum(f.Hilim) ?? DBNull.Value;
+                    pUnit.Value = (object?)f.Unit ?? DBNull.Value;
+                    pRule.Value = (object?)f.Rule ?? DBNull.Value;
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            tx.Commit();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[分析采集] 失败项明细入库失败(不影响主记录): {ex.Message}");
+        }
+    }
+
+    /// <summary>规格06期2：归因聚合源——全局计数 + fixture/tester/hour 三维桶 + 逐小时失败数。</summary>
+    public AttributionSource FetchAttributionStats(string since)
+    {
+        var src = new AttributionSource();
+        using var conn = Open();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = @"
+                SELECT COUNT(*),
+                       SUM(CASE WHEN result='FAIL' THEN 1 ELSE 0 END)
+                FROM test_records
+                WHERE substr(COALESCE(NULLIF(batch_timestamp,''),created_at),1,10) >= @since";
+            cmd.Parameters.AddWithValue("@since", since);
+            using var r = cmd.ExecuteReader();
+            if (r.Read())
+            {
+                src.TotalN = r.IsDBNull(0) ? 0 : r.GetInt64(0);
+                src.TotalFails = r.IsDBNull(1) ? 0 : r.GetInt64(1);
+            }
+        }
+        var dims = new (string Dim, string KeyExpr, string ExtraWhere)[]
+        {
+            ("fixture", "COALESCE(fixture_id,'')", "AND COALESCE(fixture_id,'') <> ''"),
+            ("tester", "COALESCE(tester,'')", "AND COALESCE(tester,'') <> '' AND COALESCE(tester,'') <> 'UNKNOWN'"),
+            ("hour", "CAST(substr(COALESCE(NULLIF(batch_timestamp,''),created_at),12,2) AS INTEGER)", ""),
+        };
+        foreach (var (dim, keyExpr, extra) in dims)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"
+                SELECT {keyExpr} AS k, COUNT(*) AS n,
+                       SUM(CASE WHEN result='FAIL' THEN 1 ELSE 0 END) AS fails,
+                       SUM(CASE WHEN panel_status IS NOT NULL AND panel_status<>'' AND panel_status<>'Passed' THEN 1 ELSE 0 END) AS panelng
+                FROM test_records
+                WHERE substr(COALESCE(NULLIF(batch_timestamp,''),created_at),1,10) >= @since
+                  {extra}
+                GROUP BY k";
+            cmd.Parameters.AddWithValue("@since", since);
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                if (r.IsDBNull(0)) continue;
+                src.Buckets.Add(new AttrBucketRow
+                {
+                    Dim = dim,
+                    Key = r.GetValue(0).ToString() ?? "",
+                    N = r.GetInt64(1),
+                    Fails = r.IsDBNull(2) ? 0 : r.GetInt64(2),
+                    PanelNg = r.IsDBNull(3) ? 0 : r.GetInt64(3),
+                });
+            }
+        }
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = @"
+                SELECT CAST(substr(COALESCE(NULLIF(batch_timestamp,''),created_at),12,2) AS INTEGER) AS h,
+                       SUM(CASE WHEN result='FAIL' THEN 1 ELSE 0 END)
+                FROM test_records
+                WHERE substr(COALESCE(NULLIF(batch_timestamp,''),created_at),1,10) >= @since
+                  AND length(COALESCE(NULLIF(batch_timestamp,''),created_at)) >= 12
+                GROUP BY h";
+            cmd.Parameters.AddWithValue("@since", since);
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                if (r.IsDBNull(0)) continue;
+                var h = Convert.ToInt32(r.GetValue(0));
+                if (h is >= 0 and <= 23)
+                    src.HourlyFails[h] = r.IsDBNull(1) ? 0 : r.GetInt64(1);
+            }
+        }
+        return src;
+    }
+
+    /// <summary>规格06期2：tester 效应量聚合源（测量值 JOIN 主记录取 tester）。</summary>
+    public List<TesterStatsRow> FetchTesterMeasurementStats(string since)
+    {
+        var list = new List<TesterStatsRow>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COALESCE(m.model,''), m.test_name, COALESCE(r.tester,''), COUNT(*),
+                   AVG(m.value), AVG(m.value*m.value),
+                   MIN(m.lolim), MAX(m.hilim), MAX(m.unit)
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE m.ts >= @since AND m.value IS NOT NULL
+              AND COALESCE(r.tester,'') <> '' AND COALESCE(r.tester,'') <> 'UNKNOWN'
+            GROUP BY 1, 2, 3";
+        cmd.Parameters.AddWithValue("@since", since);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            long n = r.GetInt64(3);
+            double mean = r.IsDBNull(4) ? 0 : r.GetDouble(4);
+            double meanSq = r.IsDBNull(5) ? 0 : r.GetDouble(5);
+            double popVar = Math.Max(0, meanSq - mean * mean);
+            double sampleVar = n > 1 ? popVar * n / (n - 1) : 0;
+            list.Add(new TesterStatsRow
+            {
+                Model = r.GetString(0),
+                TestName = r.GetString(1),
+                Tester = r.GetString(2),
+                N = (int)n,
+                Mean = mean,
+                Sigma = Math.Sqrt(sampleVar),
+                Lolim = r.IsDBNull(6) ? null : r.GetDouble(6),
+                Hilim = r.IsDBNull(7) ? null : r.GetDouble(7),
+                Unit = r.IsDBNull(8) ? null : r.GetString(8),
+            });
+        }
+        return list;
     }
 
     /// <summary>规格06：测量值按 (model, test_name) 聚合统计（ts 日期前缀区间，to 端不含）。</summary>

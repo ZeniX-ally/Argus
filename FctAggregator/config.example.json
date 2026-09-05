@@ -66,6 +66,11 @@
     "analyze_measure_retention_days": 30,
     "analyze_failitem_retention_days": 90,
     "analyze_tdms_enabled": false,
+    "analyze_fail_attr_enabled": true,
+    "analyze_fixture_enabled": true,
+    "analyze_attr_min_bucket": 20,
+    "analyze_attr_dev_ratio": 1.5,
+    "analyze_effect_d": 0.8,
     "peers": [
         "http://10.0.0.2:8081/",
         "http://10.0.0.3:8081/"

@@ -47,7 +47,10 @@ public sealed class DefaultResultParser : IResultParser
 
         if (isPass)
         {
-            user = ReadUserOnly(rawXml);
+            var fac = ReadFactoryOnly(rawXml);
+            user = fac.user;
+            tester = fac.tester;
+            fixtureId = fac.fixtureId;
             if (_rules.IsDebug(user))
                 return new ParseOutput { Skipped = true, SkipReason = "debug" };
             result = "PASS";
@@ -268,7 +271,8 @@ public sealed class DefaultResultParser : IResultParser
         return rows;
     }
 
-    private string? ReadUserOnly(string rawXml)
+    /// <summary>PASS 文件轻量读取：FACTORY 处一次取 USER/TESTER/FIXTURE_ID 即停（期2 补齐 tester/fixture，治具分母与 tester 对比依赖）。</summary>
+    private (string? user, string? tester, string? fixtureId) ReadFactoryOnly(string rawXml)
     {
         try
         {
@@ -285,14 +289,17 @@ public sealed class DefaultResultParser : IResultParser
             {
                 if (reader.NodeType != XmlNodeType.Element) continue;
                 if (reader.Name == "FACTORY")
-                    return reader.GetAttribute(_rules.AttrFactoryUser) ?? "";
+                    return (
+                        reader.GetAttribute(_rules.AttrFactoryUser),
+                        reader.GetAttribute(_rules.AttrTester),
+                        reader.GetAttribute(_rules.AttrFixtureId));
                 if (reader.Name == "PANEL") break;
             }
         }
         catch (Exception ex)
         {
-            Logger.Warning($"ReadUserOnly 失败: {ex.Message}");
+            Logger.Warning($"ReadFactoryOnly 失败: {ex.Message}");
         }
-        return null;
+        return (null, null, null);
     }
 }

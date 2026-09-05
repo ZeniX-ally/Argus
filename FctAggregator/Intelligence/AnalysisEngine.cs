@@ -84,13 +84,16 @@ public static class AnalysisEngine
 {
     public const string MetaDrift = "analyze_drift_state";
     public const string MetaCpk = "analyze_cpk_state";
+    public const string MetaAttribution = "analyze_attribution_state";
+    public const string MetaFixture = "analyze_fixture_state";
     public const int MaxAlerts = 100;
     public const int MaxCpkItems = 200;
     public const double CpkLowThreshold = 1.33;
 
     public static void RunOnce(Database db, AppConfig cfg, DateTime? now = null)
     {
-        if (!cfg.AnalyzeDriftEnabled && !cfg.AnalyzeCpkEnabled) return;
+        if (!cfg.AnalyzeDriftEnabled && !cfg.AnalyzeCpkEnabled
+            && !cfg.AnalyzeFailAttrEnabled && !cfg.AnalyzeFixtureEnabled) return;
         var today = (now ?? DateTime.Now).Date;
         if (cfg.AnalyzeDriftEnabled)
         {
@@ -101,6 +104,24 @@ public static class AnalysisEngine
         {
             try { RunCpk(db, cfg, today); }
             catch (Exception ex) { Logger.Warning($"[分析] CPK 计算失败: {ex.Message}"); }
+        }
+        if (cfg.AnalyzeFailAttrEnabled)
+        {
+            try
+            {
+                var state = FailAttributor.Run(db, cfg, today);
+                db.SetMeta(MetaAttribution, state.ToJson());
+            }
+            catch (Exception ex) { Logger.Warning($"[分析] 失败归因失败: {ex.Message}"); }
+        }
+        if (cfg.AnalyzeFixtureEnabled)
+        {
+            try
+            {
+                var state = FixtureComparator.Run(db, cfg, today);
+                db.SetMeta(MetaFixture, state.ToJson());
+            }
+            catch (Exception ex) { Logger.Warning($"[分析] tester 对比失败: {ex.Message}"); }
         }
     }
 
@@ -145,4 +166,6 @@ public static class AnalysisEngine
 
     public static DriftState? GetDriftState(Database db) => DriftState.FromJson(db.GetMeta(MetaDrift));
     public static CpkState? GetCpkState(Database db) => CpkState.FromJson(db.GetMeta(MetaCpk));
+    public static AttributionState? GetAttributionState(Database db) => AttributionState.FromJson(db.GetMeta(MetaAttribution));
+    public static FixtureState? GetFixtureState(Database db) => FixtureState.FromJson(db.GetMeta(MetaFixture));
 }

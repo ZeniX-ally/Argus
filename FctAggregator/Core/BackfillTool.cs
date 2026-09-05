@@ -55,7 +55,7 @@ public static class BackfillTool
         Console.WriteLine($"测量值回填: {dbFile}");
         Console.WriteLine($"窗口: {from:yyyy-MM-dd} ~ {today:yyyy-MM-dd}（--days {days}，已处理天数按水位跳过）");
 
-        long insertedRecords = 0, insertedMeasurements = 0, scanned = 0;
+        long insertedRecords = 0, insertedMeasurements = 0, insertedFailItems = 0, scanned = 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var cat in new[] { "Online", "Offline" })
         {
@@ -74,14 +74,16 @@ public static class BackfillTool
                         .OrderBy(p => p, StringComparer.Ordinal).ToList();
                     if (files.Count == 0) continue;
 
-                    long dayRecords = 0, dayMeasurements = 0;
+                    long dayRecords = 0, dayMeasurements = 0, dayFailItems = 0;
                     for (int i = 0; i < files.Count; i += 100)
                     {
                         var chunk = files.Skip(i).Take(100).Select(Path.GetFullPath).ToList();
                         var existing = db.GetExistingPaths(chunk);
                         var ids = db.GetRecordIdsByPaths(chunk, "PASS");
+                        var failIds = db.GetRecordIdsByPaths(chunk, "FAIL");
                         var newRecords = new List<TestRecord>();
                         var measureRows = new List<(TestRecord, long)>();
+                        var failItemRows = new List<(TestRecord, long)>();
                         foreach (var p in chunk)
                         {
                             scanned++;
@@ -98,6 +100,12 @@ public static class BackfillTool
                                     if (rec != null && rec.Measurements.Count > 0)
                                         measureRows.Add((rec, rid));
                                 }
+                                else if (failIds.TryGetValue(p, out var fid))
+                                {
+                                    var rec = processor.ParseAndClassify(p);
+                                    if (rec != null && rec.FailedTests.Count > 0)
+                                        failItemRows.Add((rec, fid));
+                                }
                             }
                             catch (Exception ex) { Logger.Warning($"[回填] 解析失败 {p}: {ex.Message}"); }
                         }
@@ -108,17 +116,23 @@ public static class BackfillTool
                             db.InsertMeasurementsFor(measureRows);
                             dayMeasurements += measureRows.Sum(r => r.Item1.Measurements.Count);
                         }
+                        if (failItemRows.Count > 0)
+                        {
+                            db.InsertFailItemsFor(failItemRows);
+                            dayFailItems += failItemRows.Sum(r => r.Item1.FailedTests.Count);
+                        }
                         if (scanned % 200 == 0) Thread.Sleep(100);
                     }
                     insertedRecords += dayRecords;
                     insertedMeasurements += dayMeasurements;
-                    Console.WriteLine($"  {day:yyyy-MM-dd} {Path.GetFileName(modelDir)}: 文件 {files.Count}，新记录 {dayRecords}，补测量 {dayMeasurements}");
+                    insertedFailItems += dayFailItems;
+                    Console.WriteLine($"  {day:yyyy-MM-dd} {Path.GetFileName(modelDir)}: 文件 {files.Count}，新记录 {dayRecords}，补测量 {dayMeasurements}，补失败项 {dayFailItems}");
                     db.SetMeta(MetaWatermark, day.ToString("yyyy-MM-dd"));
                 }
             }
         }
 
-        Console.WriteLine($"回填完成: 扫描 {scanned} 文件，新记录 {insertedRecords}，补测量值 {insertedMeasurements} 行，耗时 {sw.Elapsed:hh\\:mm\\:ss}");
+        Console.WriteLine($"回填完成: 扫描 {scanned} 文件，新记录 {insertedRecords}，补测量值 {insertedMeasurements} 行，补失败项 {insertedFailItems} 行，耗时 {sw.Elapsed:hh\\:mm\\:ss}");
         return 0;
     }
 }
