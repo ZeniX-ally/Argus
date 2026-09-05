@@ -1,18 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!--
-    FCT 工具套件（v3.0.0：单 exe 工具箱，数据分发已独立出去）
-
-    v2.9.0 曾把 5 个独立项目合并进这一个程序集；v3.0.0 又把**数据分发**拆了出去
-    （它能改时间戳/造数/批量投放，不该出现在产线机台的主程序里，见 FctDistributor/）。
-    现在这里是：主程序 = 采集聚合，外加 3 个「工具箱」入口，
-    源码在 modules\<Name>\ 下，各自保留自己的 namespace（FctFailRanker /
-    FctFetcher / FctTdmsViewer），所以 MainForm / Program / XlsxWriter 这些同名类不会打架。
-
-    ⚠ 4 个 Program 各有一个 Main -> 用 <StartupObject> 显式指定主入口，
-      否则 CS0017「程序定义了多个入口点」。各工具的 Main 保留着（内含 CLI 逻辑），
-      由 FctAggregator.Program 按子命令转发。
-  -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -22,68 +9,31 @@
     <AssemblyName>Argus</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
     <StartupObject>FctAggregator.Program</StartupObject>
-    <!-- v3.8.0：public/ 静态服务 + 在线 XML + 窗口细分 + 机台卡自定义已实现，版本号同步提升（规范 §3.1） -->
-    <!-- v3.9.0：P1 剩余落地 —— yld_daily 心跳日统计 + users 三角色 + audit_log + /api/status（规范 §3.1：Y=新功能） -->
-    <!-- v3.10.0：P1-A 可观测 —— /api/metrics 指标 + Logger 日志滚动（架构方案 P1-1/P1-4） -->
-    <!-- v3.11.0：P1-B 容灾 + P3 良率页 + 前端白屏修复 -->
-    <!-- v3.13.0：P5 维修/待办全功能服务端化（Agent B，2026-08-28） -->
-    <!-- v3.15.0：Lite-Settings 剩余前端设置与体验层（Agent Lite，2026-08-28） -->
-    <!-- v3.14.0：P6 设备监控 + P2-A 无头服务化 + P7 数据拉取雏形（Agent C，2026-08-28） -->
-    <!-- v3.16.0：Lite-Fetch 数据拉取完整 + 报告中心 + 程序日志（2026-08-28，零第三方、手写OOXML、真实xlsx/zip、热力、归档对比、时间轴diff） -->
-    <!-- v3.18.0：Lite-Ops 告警规则热更新（PATCH /api/alerts/rules，admin+审计+越界校验，免重启）+ 待办自定义区间 UI -->
-    <!-- v3.19.0：智能化九域（域1/2/3/4/7/8/9：时间识别/DB巡检/配置校验推荐/设备预测/维修智能/布局高亮/告警自愈预测） -->
-    <!-- v3.20.0：算法优化规格02 预测准确率自反馈 —— DbMigrator v10 predict_accuracy_log + PredictAccuracyReconciler 对账 + /api/predict/accuracy -->
-    <!-- v3.21.0：算法优化规格03 季节性分解 —— YieldDecomposer（hourly/daily/weekly）+ /api/yield/decompose(+config) + 季节性页 + predict_* 配置键补接线 -->
-    <!-- v3.21.1：算法优化规格01 良率归因 —— YieldAttributor + /api/yield/attribution + 归因页；DbMigrator v11 慢查询索引；ConfigWatcher 配置热更新校验；upgrade 升级向导子命令 -->
-    <!-- v3.22.0：算法优化规格04 设备健康综合分 —— DeviceHealthScorer + /api/devices/health + 健康分页；规格01 补全真 FIXTURE_ID（DbMigrator v12）；LRUCache 接线 MeshQueryService -->
-    <!-- v3.22.1：图形化升级向导重写 —— deploy_update.ps1 GUI 前端（演练→执行→回滚命令）；-ExcludePid 防自杀；打包器随包带部署脚本 -->
-    <!-- v3.23.0：暗黑模式 —— Theme 令牌双值属性 + config.ui_theme 持久化 + 顶栏一键切换；待办看板/预览撞色修复 -->
-    <!-- v3.23.1：deploy_update.ps1 覆盖兜底 —— 进程漏网占用时再杀+重试，失败给回滚指引不裸抛 -->
-    <!-- v3.23.2：FAIL 记录页面升级 —— 文件名时间高精度识别（支持 17/14 位数字段到秒）；相同 SN 合并问题与树形分组折叠（Web 看板 + 客户端 WinForms） -->
-    <!-- v3.23.3：客户端主页工业大屏看板升级 —— 24H 小时产量与良率走势图、当日产能与质量双环仪表盘（去除班次，以当日为准）、当日 Top 5 故障不良项排行、实时异常告警与动态播报流 -->
-    <!-- v3.24.0：规格 05 机台端自学习 —— G49 信号族字典+故障归并/章节群挂+根因指向、良率×时段段滚动基线+中断热区、本机资源自采样(v13 device_samples_local)、维修优先级权重自学习；全部 config learn_* 开关默认关 -->
-    <!-- v3.24.1：飞书卡片抬头图 —— config feishu_banner_img_key 可配 img_key，全部告警卡 body 最顶端插入通栏 img；缺省空=旧版式兼容 -->
-    <!-- v3.24.2：飞书 webhook 写死兜底 —— config webhook_url 未配置时机台端告警回落 Config.FallbackWebhookUrl 内置群机器人 -->
-    <!-- v3.24.3：UUT Status Err 全链路排除 —— 纯 UUT 的 F_ 文件降级 INTERRUPTED（不计 Fail/不推送），混含真实失败仅剔除该项；XmlParser 采集口径对齐 -->
-    <!-- v3.25.0：待办合并升级 spec 原理级 —— G49TodoRules 章节/信号族/别名归并（DMM 名/接口名/XCP 名同轨一卡，相序通道剥离），未命中回落名称归并；config todo_spec_merge 默认开 -->
-    <!-- v3.26.0：移除暗黑模式（固定系统原生浅色，config.ui_theme 废弃自动忽略）+ 无感热升级 —— config auto_update 默认开，检测到 data/updates 新包自动暂存+托盘告知+分离进程重启提交，零弹窗零人工 -->
-    <!-- v3.26.2：test_records 补 fixture_id 列 —— 建表含列 + 老库 ALTER 自动补列（重复列忽略）；BatchInsert 写入、FetchFailRecordsAfter 续推回读带 FixtureId，断线补偿不再丢治具归因 -->
-    <Version>3.26.2</Version>
-  <AssemblyVersion>3.26.2.0</AssemblyVersion>
-  <FileVersion>3.26.2.0</FileVersion>
+    <Version>3.26.3</Version>
+  <AssemblyVersion>3.26.3.0</AssemblyVersion>
+  <FileVersion>3.26.3.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>
-    <!-- 单文件、框架依赖发布时体积最小 -->
     <SelfContained>false</SelfContained>
-    <!-- 依赖锁定：还原时生成 packages.lock.json，保证可复现构建 -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 自检工程独立编译，不属于主程序（不排除的话它的 obj\AssemblyInfo.cs 会被当成源码 -> CS0579 特性重复） -->
     <Compile Remove="selftest\**" />
     <None Remove="selftest\**" />
     <EmbeddedResource Remove="selftest\**" />
-    <!-- tools\xlsxdump\ 同理：它是独立小工程（xlsx 长相核对），
-         不排除的话它的 obj\AssemblyInfo.cs 会被默认 glob 当成主程序源码 -> CS0579 -->
     <Compile Remove="tools\**" />
     <None Remove="tools\**" />
     <EmbeddedResource Remove="tools\**" />
 
-    <!-- 取数/TDMS 工具从嵌入资源里找图标（按 EndsWith("app_icon.ico") 匹配，一份就够） -->
     <EmbeddedResource Include="app_icon.ico" />
-    <!-- v3.1.0 开启动画素材（SplashForm 按 EndsWith("argus_splash.png") 匹配） -->
     <EmbeddedResource Include="assets\splash\argus_splash.png" />
-    <!-- v3.8.0 演示/前端模块化：public/ 静态资源随构建复制到输出目录（WebAggServer 经 /public/* 服务） -->
     <Content Include="public\**\*.*" CopyToOutputDirectory="PreserveNewest" />
 
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
-    <!-- CVE-2025-6965/70873 修复:8.0.x 传递依赖仍是 SQLitePCLRaw 2.1.6(SQLite 3.41.2,低于修复线 3.50.2),
-         显式覆盖到 2.1.12(自带 SQLite 3.53.3) -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
-    <!-- TDMS 波形查看（原 fct-tdms-viewer 的依赖） -->
     <PackageReference Include="TDMSReader" Version="3.1.0" />
   </ItemGroup>
 
