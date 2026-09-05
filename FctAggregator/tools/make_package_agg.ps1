@@ -1,30 +1,11 @@
-﻿# 打包 Argus 聚合后端纯净包 v3.4.1（机台端采集包用 make_package.ps1，本脚本只打聚合包）
-#
-# 本包只含聚合服务相关：Argus.exe（agg --web / agg --install）+ 运行依赖 +
-# 一键部署聚合服务.bat + 聚合服务说明.md + config.json（聚合端模板）+ data\ + logs\。
-#
-# ⚠ 不打包：启动.bat（机台采集用）、版本更新说明.md / 覆盖说明.md / 更新日志.md
-#   （机台端文档，聚合端不需要）、webhook（聚合端没有飞书推送）。
-#
-# ⚠ 聚合端 config 模板直接写死（与 Program.BuildDefaultAggConfigJson 一致），
-#   不用 webhook——机台端 config 不在这里，聚合端不需要飞书推送。
-#
-# ⚠ 程序文件来自 bin\Release\net8.0-windows（先 dotnet build -c Release）；
-#   本脚本输出到 dist-agg\（仓库根下新建，dotnet clean 不会动它）。
-#   版本号 $ver 保持与 FctAggregator.csproj 的 <Version> 一致。
-$ErrorActionPreference = 'Stop'
-# SSH/CI 非交互会话无控制台：Write-Progress 抛 HostException 会中止脚本，静默进度条
+﻿$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-# 路径自己推（写死绝对路径会静静失效）
 $root  = (Resolve-Path "$PSScriptRoot\..").Path
-# ⚠ 版本号自动读 FctAggregator.csproj 的 <Version>（2026-08-14 修复：曾手写 $ver='3.4.1'
-#   导致 csproj 升到 3.4.10 后打出的 zip 仍叫 Argus-Agg-v3.4.1.zip，包名版本滞后于程序）
 $ver   = [regex]::Match((Get-Content (Join-Path $root 'FctAggregator.csproj') -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
 if (-not $ver) { throw 'FctAggregator.csproj 里找不到 <Version>' }
 $build = Join-Path $root 'bin\Release\net8.0-windows'
 $out   = Join-Path $root 'dist-agg'
 
-# 程序文件（不含 pdb / config.json；聚合服务是同一 exe，依赖清单与机台包一致）
 $progFiles = @(
     'Argus.exe',
     'Argus.dll',
@@ -38,14 +19,8 @@ $progFiles = @(
     'System.IO.Ports.dll',
     'TDMSReader.dll'
 )
-# 聚合包随包文件：bat 在 tools\ 下，说明文档在仓库根
-# ⚠ config.json 不在此列表：由 Write-PackageAggConfig 生成聚合模板后单独入包
 $aggFiles = @('一键部署聚合服务.bat', '聚合服务说明.md')
 
-<#
-  生成聚合端 config.json 模板（写死，与 Program.BuildDefaultAggConfigJson 一致）。
-  ⚠ 无 webhook：机台端 config 不在这里，聚合端不需要飞书推送。
-#>
 function Write-PackageAggConfig([string]$destPath) {
     $json = @'
 {

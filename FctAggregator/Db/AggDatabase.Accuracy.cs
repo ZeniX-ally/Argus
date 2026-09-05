@@ -2,37 +2,25 @@ using Microsoft.Data.Sqlite;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 预测准确率对账表（v3.20.0 规格 02）的读写方法。
-/// Schema 见 <see cref="DbMigrator"/> v10 迁移。
-///
-/// 写路径：单写者 WAL + _writeLock（与 AggDatabase 主文件其他写一致）；
-/// 读路径：短租连接（OpenReader），对账批量读 + /api/predict/accuracy 高频调用不阻塞写。
-/// </summary>
 public partial class AggDatabase
 {
-    /// <summary>一条对账记录（predict_accuracy_log 一行）。</summary>
     public sealed class AccuracyRow
     {
         public long Id;
-        public string Rule = "";           // yield/cpu/disk/offline
+        public string Rule = "";
         public string Machine = "";
-        public long PredictId;             // alert_predict_log.id 或 device_predict_log.id
-        public string PredictTable = "";   // 'alert' | 'device'
+        public long PredictId;
+        public string PredictTable = "";
         public double? PredictedValue;
         public double? ActualValue;
         public double? Threshold;
         public bool Hit;
         public double? LeadDays;
-        public string PredictedAt = "";    // 原预测时间 (yyyy-MM-dd HH:mm:ss)
-        public string ReconciledAt = "";   // 对账时间
+        public string PredictedAt = "";
+        public string ReconciledAt = "";
         public string Note = "";
     }
 
-    /// <summary>
-    /// UPSERT 一条对账（(predict_table, predict_id) UNIQUE）：同一预测二次对账直接替换，
-    /// 避免重复 key 异常阻塞批量对账循环。
-    /// </summary>
     public void UpsertPredictAccuracy(AccuracyRow r)
     {
         if (string.IsNullOrWhiteSpace(r.Machine) || string.IsNullOrWhiteSpace(r.Rule)
@@ -75,10 +63,6 @@ public partial class AggDatabase
         }
     }
 
-    /// <summary>
-    /// 查询对账记录：rule / machine 可空过滤；days 回溯 reconciled_at >= now - days；
-    /// limit 上限 5000 防单次拉爆。/api/predict/accuracy 与 PredictAccuracyReconciler 都走这里。
-    /// </summary>
     public List<AccuracyRow> QueryPredictAccuracy(string? rule = null, string? machine = null, int days = 30, int limit = 5000)
     {
         var list = new List<AccuracyRow>();
@@ -111,10 +95,6 @@ public partial class AggDatabase
         return list;
     }
 
-    /// <summary>
-    /// 统计某规则的命中率（自检 + /api/predict/accuracy summary 用）：
-    /// 返回 (总数, hit 数, 平均 lead_days)。无记录返回 (0, 0, 0)。
-    /// </summary>
     public (int Total, int Hit, double AvgLeadDays) CountPredictAccuracyByRule(string rule, int days = 30)
     {
         if (string.IsNullOrEmpty(rule)) return (0, 0, 0);
@@ -138,9 +118,6 @@ public partial class AggDatabase
         return (total, hit, lead);
     }
 
-    /// <summary>
-    /// 某 (predict_table, predict_id) 是否已对账：用于去重，跳过重复对账（每小时可能多次触发对账）。
-    /// </summary>
     public bool PredictAccuracyExists(string predictTable, long predictId)
     {
         if (string.IsNullOrEmpty(predictTable) || predictId <= 0) return false;
@@ -152,10 +129,6 @@ public partial class AggDatabase
         return cmd.ExecuteScalar() != null;
     }
 
-    /// <summary>
-    /// 滚动清理：删除早于 retainDays 天的对账记录。DbMaintenance.RunNow 每日调用。
-    /// 返回删除行数。
-    /// </summary>
     public int PurgeOldPredictAccuracy(int retainDays)
     {
         if (retainDays <= 0) retainDays = 180;

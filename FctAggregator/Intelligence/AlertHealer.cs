@@ -1,6 +1,5 @@
 ﻿namespace FctAggregator;
 
-/// <summary>域9 自愈联动（v3.19.0 C）：告警后自动巡检建议。</summary>
 public static class AlertHealer
 {
     public sealed class HealItem
@@ -19,7 +18,6 @@ public static class AlertHealer
             list.Add(new HealItem{ Machine=machine, AlertRule=rule, Suggestion=ins.Suggestion, Detail=ins.Detail});
         }
         if(list.Count==0){
-            // 通用建议
             string sug = rule=="disk" ? "清理 data/archive 或扩容" : rule=="cpu" ? "检查高 CPU 进程/重启服务" : rule=="offline" ? "检查网络/服务存活" : "检查良率相关机台与治具";
             list.Add(new HealItem{ Machine=machine, AlertRule=rule, Suggestion=sug, Detail="自动巡检生成" });
         }

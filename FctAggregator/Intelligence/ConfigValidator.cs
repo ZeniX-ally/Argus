@@ -1,6 +1,5 @@
 ﻿namespace FctAggregator;
 
-/// <summary>域3 配置智能化 — 校验（v3.19.0）：peers/路径/阈值非法自动提示。</summary>
 public static class ConfigValidator
 {
     public static List<string> Validate(AppConfig cfg)
@@ -12,7 +11,6 @@ public static class ConfigValidator
             errs.Add($"agg_http_port 非法: {cfg.AggHttpPort}");
         if (string.IsNullOrWhiteSpace(cfg.ResultsRoot))
             errs.Add("results_root 为空");
-        // fct_ini_path 可为空（未找到时提示，但不算错误）
         foreach (var p in cfg.Peers)
         {
             if (!Uri.TryCreate(p, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))

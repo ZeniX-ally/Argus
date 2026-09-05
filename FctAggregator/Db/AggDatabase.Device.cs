@@ -3,14 +3,8 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 聚合库设备监控扩展（P6，Agent C）：device_info 快照 + device_samples 趋势 + device_fct。
-/// 单写者 WAL，走现有 _writeLock；读短租连接；采样 5 分钟 8640 行/天，无压力；滚动保留 7 天。
-/// 硬件约束：≤30 台、系统信息不走 mesh 补偿队列、不参与 (machine,seq) 幂等。
-/// </summary>
 public partial class AggDatabase
 {
-    // ===== device_info：machine 主键快照 =====
 
     public void UpsertDeviceInfo(DeviceInfoRow r)
     {
@@ -55,7 +49,6 @@ public partial class AggDatabase
         }
     }
 
-    /// <summary>轻量心跳更新（仅 cpu/mem/last_seen，不覆盖 hostname 等已采集的全量字段）。</summary>
     public void UpsertDeviceLight(string machine, double cpuUsage, int memUsedMb, int memTotalMb)
     {
         if (string.IsNullOrWhiteSpace(machine)) return;
@@ -63,7 +56,6 @@ public partial class AggDatabase
         lock (_writeLock)
         {
             Open();
-            // 若不存在先插占位（hostname 等空），再更新轻量字段
             using var ins = _conn!.CreateCommand();
             ins.CommandText = @"INSERT OR IGNORE INTO device_info (machine, last_seen, updated_at) VALUES (@m,@last,@upd)";
             ins.Parameters.AddWithValue("@m", machine);
@@ -145,8 +137,6 @@ public partial class AggDatabase
         };
     }
 
-    // ===== device_samples =====
-
     public void InsertDeviceSample(DeviceSampleRow s)
     {
         if (string.IsNullOrWhiteSpace(s.Machine)) return;
@@ -193,12 +183,10 @@ public partial class AggDatabase
                 DiskFreeGb = r.IsDBNull(5) ? 0 : r.GetDouble(5),
             });
         }
-        // 返回时按时间升序便于前端 canvas 绘制
         list.Reverse();
         return list;
     }
 
-    /// <summary>滚动清理：删除早于 retainDays 天的采样（DbMaintenance 每日调用）。返回删除行数。</summary>
     public int PurgeOldDeviceSamples(int retainDays)
     {
         if (retainDays <= 0) retainDays = 7;
@@ -212,8 +200,6 @@ public partial class AggDatabase
             return cmd.ExecuteNonQuery();
         }
     }
-
-    // ===== device_fct =====
 
     public void UpsertDeviceFct(DeviceFctRow r)
     {
@@ -341,7 +327,6 @@ public partial class AggDatabase
                 foreach (var e in doc.RootElement.EnumerateArray()) row.Models.Add(e.GetString() ?? "");
             }
             catch { }
-            // fw/dev/a2l 同上简化，列表页不需展开
             list.Add(row);
         }
         return list;

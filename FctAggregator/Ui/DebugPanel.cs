@@ -2,7 +2,6 @@ using System.Text;
 
 namespace FctAggregator;
 
-/// <summary>Debug 工具页: 各类测试/查询/管理功能, 结果显示在输出框。</summary>
 public class DebugPanel : Panel
 {
     private readonly Engine _engine;
@@ -19,7 +18,6 @@ public class DebugPanel : Panel
         Padding = new Padding(Theme.Gap);
         BackColor = Theme.Bg;
 
-        // 按钮工具栏(横向流式, 带分组标签)
         var bar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top, Height = 78, WrapContents = true, AutoScroll = false, BackColor = Theme.Bg,
@@ -79,7 +77,6 @@ public class DebugPanel : Panel
         _output.AppendText($"[{DateTime.Now:HH:mm:ss}] {text}{Environment.NewLine}");
     }
 
-    // ==================== 功能 ====================
     private void TestPush()
     {
         var cfg = _engine.Config;
@@ -168,7 +165,6 @@ public class DebugPanel : Panel
         Print($"最大SN: {_engine.Db.MaxSn() ?? "(无)"}");
     }
 
-    /// <summary>手动跑一次待办同步（平时由引擎/看板自动调）。</summary>
     private void TodoSync()
     {
         var days = _engine.Config.TodoScanDays;
@@ -177,10 +173,6 @@ public class DebugPanel : Panel
         Print($"水位线(已并入的 test_records 最大 id): {_engine.Db.GetMeta("todo_sync_last_id") ?? "(未设置)"}");
     }
 
-    /// <summary>
-    /// 预览“大项合并”的效果：当前库里的故障项会被归成哪些待办大项。
-    /// 现场命名习惯各不相同，上线前用这个确认不会错合并 / 漏合并。
-    /// </summary>
     private void TodoPreview()
     {
         var srcs = _engine.Db.FailItemSources("");
@@ -214,7 +206,6 @@ public class DebugPanel : Panel
         Print($"  todo_scan_days: {c.TodoScanDays}（待办只扫近 {c.TodoScanDays} 天；已登记的永久保留）");
     }
 
-    /// <summary>弹一条假的不良提示，验证 Windows 通知是否被系统屏蔽。</summary>
     private void TestDesktopNotify()
     {
         if (!DesktopNotifier.Enabled)

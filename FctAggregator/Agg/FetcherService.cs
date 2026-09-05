@@ -6,19 +6,13 @@ using FctShared;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 数据拉取完整服务化（P7，Lite-Fetch，2026-08-28）：
-/// 基于 Fetcher/FailRanker 逻辑，异步生成真实 xlsx/zip（含趋势/分布/热力），支持按机台/时间段/型号筛选，
-/// 进度可轮询（0-100），完成后提供下载。零第三方，手写 OOXML 经 FctShared.Xlsx，含 CSV 注入防护与 BOM。
-/// 约束：≤30 台，单 exe，InMemory 队列 + 文件落盘 data/fetch_exports，容量 100 兜底，过期 2h 清理。
-/// </summary>
 public sealed class FetchJob
 {
     public string Id = Guid.NewGuid().ToString("N")[..8];
-    public string Status = "pending"; // pending | running | done | failed
+    public string Status = "pending";
     public string QueryJson = "";
     public int Total;
-    public int Progress; // 0-100
+    public int Progress;
     public List<Dictionary<string, object?>> Preview = new();
     public string CreatedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
     public string FinishedAt = "";
@@ -26,23 +20,22 @@ public sealed class FetchJob
     public string? FilePath;
     public string? FileName;
     public long FileSize;
-    public string Format = "xlsx"; // xlsx | zip | csv
+    public string Format = "xlsx";
     public DateTime ExpireAt = DateTime.Now.AddHours(2);
 }
 
-/// <summary>拉取筛选条件（queryJson 归一化）。</summary>
 public sealed class FetchFilter
 {
     public string? Machine;
     public string? Model;
     public string? Station;
     public string? Category;
-    public string? DateFrom; // yyyyMMdd 或 yyyy-MM-dd
+    public string? DateFrom;
     public string? DateTo;
     public int Limit = 5000;
     public int Offset;
-    public bool PackZip; // 是否打包 zip（含 xlsx + csv）
-    public string Format = "xlsx"; // xlsx | csv | zip
+    public bool PackZip;
+    public string Format = "xlsx";
     public static FetchFilter FromJson(string json)
     {
         var f = new FetchFilter();
@@ -96,7 +89,6 @@ public static class FetcherService
 
     public static string ExportRoot => Path.Combine(AppConfig.BaseDir, "data", "fetch_exports");
 
-    /// <summary>兼容旧雏形：直接传 producer（内存预览）。</summary>
     public static FetchJob Create(string queryJson, Func<List<Dictionary<string, object?>>> producer)
     {
         var job = new FetchJob { QueryJson = queryJson, Status = "running", Progress = 5 };
@@ -110,7 +102,6 @@ public static class FetcherService
                 job.Progress = 60;
                 job.Preview = data.Take(100).ToList();
                 job.Total = data.Count;
-                // 异步生成真实 xlsx（若未提供 producer 的文件，则退化为仅预览）
                 job.Progress = 90;
                 job.Status = "done";
                 job.Progress = 100;
@@ -122,7 +113,6 @@ public static class FetcherService
         return job;
     }
 
-    /// <summary>完整导出：按筛选条件从 AggDatabase 聚合数据，生成真实 xlsx/zip（含趋势/分布/热力）。</summary>
     public static FetchJob CreateExport(AggDatabase db, string queryJson)
     {
         var filter = FetchFilter.FromJson(queryJson);
@@ -134,7 +124,6 @@ public static class FetcherService
             try
             {
                 job.Progress = 10;
-                // 1) 拉取过滤后的 FAIL 明细（基于 agg_records + yld_daily，不膨胀 mesh）
                 var allRows = QueryFiltered(db, filter);
                 job.Total = allRows.Count;
                 job.Preview = allRows.Take(100).Select(r => new Dictionary<string, object?>
@@ -145,7 +134,6 @@ public static class FetcherService
                 }).ToList();
                 job.Progress = 30;
 
-                // 2) 趋势/分布/热力
                 int days = 30;
                 if (!string.IsNullOrEmpty(filter.DateFrom) && !string.IsNullOrEmpty(filter.DateTo))
                 {
@@ -164,14 +152,12 @@ public static class FetcherService
                 var heat = ReportService.GetHeatmap(db, filter.Machine, days);
                 job.Progress = 65;
 
-                // 3) 生成 xlsx（多 Sheet）
                 var xlsxPath = Path.Combine(ExportRoot, $"{job.Id}.xlsx");
                 FetchXlsxWriter.WriteFetch(xlsxPath, allRows, trends, dist, heat, filter);
                 job.Progress = 85;
                 job.FilePath = xlsxPath;
                 job.FileName = $"fetch_{DateTime.Now:yyyyMMdd_HHmmss}_{job.Id}.xlsx";
 
-                // 4) 按需打包 zip 或转 csv
                 if (filter.Format == "csv")
                 {
                     var csvPath = Path.Combine(ExportRoot, $"{job.Id}.csv");
@@ -188,7 +174,6 @@ public static class FetcherService
                     using (var zip = new ZipArchive(zipFs, ZipArchiveMode.Create))
                     {
                         zip.CreateEntryFromFile(xlsxPath, Path.GetFileName(xlsxPath));
-                        // 同步生成 csv 入 zip（BOM 防护）
                         var headers = new[] { "时间", "机台", "型号", "SN", "测试日期", "失败原因", "测试员", "站点", "类别", "结果" };
                         var rows = allRows.Select(r => new[] { string.IsNullOrEmpty(r.Ts) ? r.IngestTs : r.Ts, r.Machine, r.Model, r.Sn, r.TestDate, r.FailReason, r.Tester, r.StationId, r.Category, r.Result });
                         var csvBytes = CsvUtil.BuildSimpleBytes(headers, rows);
@@ -221,7 +206,6 @@ public static class FetcherService
 
     private static List<AggFailRow> QueryFiltered(AggDatabase db, FetchFilter f)
     {
-        // 先按机台粗筛（QueryFails 带 machine 过滤走索引），再内存细筛型号/日期/站点
         var limit = Math.Min(f.Limit + f.Offset + 100, 20000);
         var baseRows = db.QueryFails(limit, string.IsNullOrWhiteSpace(f.Machine) ? null : f.Machine.Trim(), 0, null);
         var df = FetchFilter.NormalizeDate(f.DateFrom);
@@ -235,7 +219,6 @@ public static class FetcherService
             if (!string.IsNullOrEmpty(dt) && string.CompareOrdinal(r.TestDate ?? "", dt) > 0) return false;
             return true;
         }).ToList();
-        // 分页
         if (f.Offset > 0) filtered = filtered.Skip(f.Offset).ToList();
         if (filtered.Count > f.Limit) filtered = filtered.Take(f.Limit).ToList();
         return filtered;
@@ -273,12 +256,8 @@ public static class FetcherService
     public static List<FetchJob> List(int limit = 20) => _jobs.Values.OrderByDescending(j => j.CreatedAt).Take(Math.Min(limit, 50)).ToList();
 }
 
-/// <summary>
-/// 趋势/分布/热力数据接口（P7 报告中心）：基于 yld_daily 与 agg_records 实时聚合，零膨胀，读短租连接。
-/// </summary>
 public static class ReportService
 {
-    /// <summary>趋势：按日期返回全机台或单机台的 total/pass/fail/yield 序列（近 days 天，默认 30）。</summary>
     public static List<Dictionary<string, object?>> GetTrend(AggDatabase db, string? machine, int days)
     {
         days = Math.Clamp(days, 1, 90);
@@ -314,7 +293,6 @@ public static class ReportService
         return result;
     }
 
-    /// <summary>分布：按 model / fail_reason / station_id 等维度统计 fail 数（LIMIT 50）。</summary>
     public static List<Dictionary<string, object?>> GetDistribution(AggDatabase db, string field, string? machine, int limit)
     {
         field = (field ?? "fail_reason").Trim().ToLowerInvariant();
@@ -342,19 +320,16 @@ public static class ReportService
         }).ToList();
     }
 
-    /// <summary>热力：机台 × 日期 的 FAIL 密度矩阵（用于前端热力图）。返回 { machines[], dates[], matrix[machine][date]=count }。</summary>
     public static Dictionary<string, object?> GetHeatmap(AggDatabase db, string? machine, int days)
     {
         days = Math.Clamp(days, 1, 90);
         var to = DateTime.Now.ToString("yyyyMMdd");
         var from = DateTime.Now.AddDays(-days + 1).ToString("yyyyMMdd");
-        // 全量取 FAIL 明细，按 machine+test_date 聚合
         var rows = db.QueryFails(5000, machine);
         var filtered = string.IsNullOrEmpty(from) ? rows : rows.Where(r => string.CompareOrdinal(r.TestDate ?? "", from) >= 0 && string.CompareOrdinal(r.TestDate ?? "", to) <= 0).ToList();
         var machines = filtered.Select(r => r.Machine).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
         if (string.IsNullOrWhiteSpace(machine) && machines.Count == 0)
         {
-            // 若无 FAIL 但有 yld_daily，补机台名
             var stats = db.QueryDailyStats(null, from, to, 5000);
             machines = stats.Select(s => s.Machine).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
         }
@@ -384,10 +359,6 @@ public static class ReportService
     }
 }
 
-/// <summary>
-/// Fetch 专用 xlsx 生成器（手写 OOXML，经 FctShared.Xlsx，零第三方，黑白红主题）。
-/// 4 Sheet：捞取清单（明细）、趋势、分布、热力；列宽/冻结行/样式与 Fetcher/FailRanker 口径一致但服务端复用。
-/// </summary>
 internal static class FetchXlsxWriter
 {
     private const int S_NORMAL = 0;
@@ -483,7 +454,6 @@ internal static class FetchXlsxWriter
         var machines = heat.TryGetValue("machines", out var mv) ? (mv as List<string> ?? new List<string>()) : new List<string>();
         var dates = heat.TryGetValue("dates", out var dv) ? (dv as List<string> ?? new List<string>()) : new List<string>();
         var matrix = heat.TryGetValue("matrix", out var mm) ? (mm as Dictionary<string, Dictionary<string, int>> ?? new Dictionary<string, Dictionary<string, int>>()) : new Dictionary<string, Dictionary<string, int>>();
-        // 表头：首列 机台 + 日期列
         var header = new List<Xlsx.Cell> { Xlsx.T("机台\\日期", S_HEADER) };
         foreach (var d in dates) header.Add(Xlsx.T(d, S_HEADER));
         sh.ColWidths.Add(14);
@@ -496,7 +466,6 @@ internal static class FetchXlsxWriter
             foreach (var d in dates)
             {
                 var cnt = rowMap.GetValueOrDefault(d, 0);
-                // 热力数值用不同样式：0 灰，1-2 黑，≥3 红（通过数值本身，后续前端色阶；xlsx 仅保留数值）
                 row.Add(Xlsx.N(cnt, S_NUM_C));
             }
             sh.Rows.Add(row);
@@ -525,13 +494,9 @@ internal static class FetchXlsxWriter
         sb.Append("</borders>");
         sb.Append("<cellStyleXfs count=\"1\"><xf/></cellStyleXfs>");
         sb.Append("<cellXfs count=\"4\">");
-        // 0 NORMAL 左对齐边框
         sb.Append("<xf fontId=\"0\" fillId=\"0\" borderId=\"1\" applyFont=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"left\" vertical=\"center\" wrapText=\"0\"/></xf>");
-        // 1 HEADER 白粗蓝底居中
         sb.Append("<xf fontId=\"1\" fillId=\"2\" borderId=\"1\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\" wrapText=\"0\"/></xf>");
-        // 2 TEXT_C
         sb.Append("<xf fontId=\"0\" fillId=\"0\" borderId=\"1\" applyFont=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\" wrapText=\"0\"/></xf>");
-        // 3 NUM_C
         sb.Append("<xf fontId=\"0\" fillId=\"0\" borderId=\"1\" applyFont=\"1\" applyBorder=\"1\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\" wrapText=\"0\"/></xf>");
         sb.Append("</cellXfs>");
         sb.Append("<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>");

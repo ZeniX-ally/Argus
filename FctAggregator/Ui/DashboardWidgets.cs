@@ -2,9 +2,6 @@ using System.Drawing.Drawing2D;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 工业大屏看板：24小时逐小时产出与良率走势双轴图。
-/// </summary>
 public sealed class HourlyTrendChart : Control
 {
     private List<HourlyStatItem> _stats = new();
@@ -65,15 +62,12 @@ public sealed class HourlyTrendChart : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
-        // 绘制工业质感卡片背景
         Theme.DrawCard(g, ClientRectangle, null);
 
-        // 标题与图例
         TextRenderer.DrawText(g, "24小时逐小时产出与良率趋势", Theme.BodyBold,
             new Rectangle(16, 12, 280, 24), Theme.TextMain,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
-        // 图例 (PASS 绿, FAIL 红, 良率折线 蓝)
         int legX = Width - 240;
         DrawLegend(g, legX, 16, Theme.Success, "PASS 产出");
         DrawLegend(g, legX + 75, 16, Theme.Danger, "FAIL 异常");
@@ -88,36 +82,30 @@ public sealed class HourlyTrendChart : Control
 
         if (chartW <= 20 || chartH <= 20) return;
 
-        // 找出最大产量，用于做 Y 轴比例
         int maxTotal = 10;
         foreach (var it in _stats)
         {
             if (it.Total > maxTotal) maxTotal = it.Total;
         }
-        // 向上圆整
         maxTotal = ((maxTotal / 10) + 1) * 10;
 
-        // 背景水平参考线与左/右 Y 轴刻度
         using var gridPen = new Pen(Color.FromArgb(38, Theme.TextFaint), 1f) { DashStyle = DashStyle.Dot };
         for (int i = 0; i <= 4; i++)
         {
             float y = chartBottom - (chartH * (i / 4f));
             g.DrawLine(gridPen, chartLeft, y, chartRight, y);
 
-            // 左 Y 轴刻度 (件数)
             int val = (int)(maxTotal * (i / 4f));
             TextRenderer.DrawText(g, val.ToString(), Theme.Tiny,
                 new Rectangle(4, (int)y - 8, chartLeft - 8, 16), Theme.TextFaint,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
-            // 右 Y 轴刻度 (良率 0%, 25%, 50%, 75%, 100%)
             int yld = i * 25;
             TextRenderer.DrawText(g, $"{yld}%", Theme.Tiny,
                 new Rectangle(chartRight + 6, (int)y - 8, 40, 16), Theme.TextFaint,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
         }
 
-        // X 轴基线
         using var axisPen = new Pen(Color.FromArgb(80, Theme.TextFaint), 1f);
         g.DrawLine(axisPen, chartLeft, chartBottom, chartRight, chartBottom);
 
@@ -128,7 +116,6 @@ public sealed class HourlyTrendChart : Control
 
         var points = new List<PointF>();
 
-        // 绘制柱状图 (堆叠柱: 下面 PASS 绿色，上面 FAIL 红色)
         using var passBrush = new SolidBrush(Color.FromArgb(200, 39, 174, 96));
         using var failBrush = new SolidBrush(Color.FromArgb(220, 235, 77, 75));
         using var hoverBrush = new SolidBrush(Color.FromArgb(40, 255, 255, 255));
@@ -139,7 +126,6 @@ public sealed class HourlyTrendChart : Control
             float cx = chartLeft + (h * slotW) + (slotW / 2f);
             float bx = cx - (barW / 2f);
 
-            // 悬停背景高亮
             if (h == _hoverHour)
             {
                 g.FillRectangle(hoverBrush, chartLeft + (h * slotW), chartTop, slotW, chartH);
@@ -160,7 +146,6 @@ public sealed class HourlyTrendChart : Control
                 }
             }
 
-            // X 轴刻度标签 (偶数小时显示)
             if (h % 2 == 0)
             {
                 TextRenderer.DrawText(g, $"{h:D2}h", Theme.Tiny,
@@ -168,7 +153,6 @@ public sealed class HourlyTrendChart : Control
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
 
-            // 收集良率折线点
             if (item.Total > 0)
             {
                 float py = chartBottom - (float)(item.YieldRate / 100.0 * chartH);
@@ -176,14 +160,12 @@ public sealed class HourlyTrendChart : Control
             }
         }
 
-        // 绘制良率折线
         if (points.Count > 1)
         {
             using var linePen = new Pen(Color.FromArgb(0, 180, 255), 2.2f);
             g.DrawLines(linePen, points.ToArray());
         }
 
-        // 绘制折点圆环
         using var ptFill = new SolidBrush(Color.FromArgb(240, 255, 255));
         using var ptBorder = new Pen(Color.FromArgb(0, 180, 255), 2f);
         using var lowYieldPen = new Pen(Theme.Danger, 2.5f);
@@ -209,7 +191,6 @@ public sealed class HourlyTrendChart : Control
             }
         }
 
-        // 绘制悬停 Tooltip 框
         if (_hoverHour >= 0 && _hoverHour < 24)
         {
             DrawHoverTooltip(g, _stats[_hoverHour], chartLeft + (_hoverHour * slotW) + (slotW / 2f), chartTop, chartH);
@@ -260,9 +241,6 @@ public sealed class HourlyTrendChart : Control
     }
 }
 
-/// <summary>
-/// 工业大屏看板：当月综合良率质量指标仪表盘。
-/// </summary>
 public sealed class TodayGaugePanel : Control
 {
     private int _pass;
@@ -292,7 +270,6 @@ public sealed class TodayGaugePanel : Control
 
         Theme.DrawCard(g, ClientRectangle, null);
 
-        // 标题
         TextRenderer.DrawText(g, "当月综合良率", Theme.BodyBold,
             new Rectangle(16, 12, 240, 24), Theme.TextMain,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
@@ -303,14 +280,12 @@ public sealed class TodayGaugePanel : Control
         int gaugeY = 44;
         int gaugeH = Height - gaugeY - 54;
 
-        // 仪表环：当月综合良率
         Color yieldColor = total == 0 ? Theme.TextFaint : (yieldRate >= 98.0 ? Theme.Success : (yieldRate >= 95.0 ? Color.FromArgb(241, 196, 15) : Theme.Danger));
         DrawRingMeter(g, new Rectangle(0, gaugeY, Width, gaugeH),
             yieldRate, total > 0 ? $"{yieldRate:F1}%" : "—",
             yieldRate >= 98.0 ? "质量状态: 达标 (≥98%)" : "质量状态: 需关注",
             yieldColor);
 
-        // 底部指标横条 (当月已测数、中断数)
         int botY = Height - 48;
         using var divPen = new Pen(Color.FromArgb(30, Theme.TextFaint), 1f);
         g.DrawLine(divPen, 16, botY, Width - 16, botY);
@@ -326,7 +301,6 @@ public sealed class TodayGaugePanel : Control
         const int subH = 16;
         const int gap = 4;
 
-        // 可用高度 = 总高 - 副文字 - 上下留白，圆环尺寸同时受宽度限制
         int availH = r.Height - subH - gap * 2;
         int size = Math.Min(r.Width - 24, availH);
         if (size < 40) return;
@@ -335,11 +309,9 @@ public sealed class TodayGaugePanel : Control
         int cy = r.Y + gap + (availH / 2);
         var ringRect = new Rectangle(cx - size / 2, cy - size / 2, size, size);
 
-        // 背景灰色圆环
         using var bgPen = new Pen(Color.FromArgb(35, Theme.TextFaint), penW) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         g.DrawArc(bgPen, ringRect, 135, 270);
 
-        // 前景圆环 (扫过的角度)
         float sweep = (float)(Math.Clamp(percent, 0.0, 100.0) / 100.0 * 270.0);
         if (sweep > 1)
         {
@@ -347,12 +319,10 @@ public sealed class TodayGaugePanel : Control
             g.DrawArc(arcPen, ringRect, 135, sweep);
         }
 
-        // 中心大字：与圆环共用同一条中轴线（水平/垂直均对齐圆心）
         TextRenderer.DrawText(g, centerText, Theme.NumberMid,
             new Rectangle(cx - size / 2, cy - 20, size, 40), Theme.TextMain,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 
-        // 底部补充说明 (位于圆环下方，不与弧线重叠)
         TextRenderer.DrawText(g, subText, Theme.Tiny,
             new Rectangle(r.X + 4, r.Bottom - subH - gap, r.Width - 8, subH), Theme.TextFaint,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
@@ -369,9 +339,6 @@ public sealed class TodayGaugePanel : Control
     }
 }
 
-/// <summary>
-/// 工业大屏看板：当日 Top 5 故障不良项排行榜。
-/// </summary>
 public sealed class TopFailRankPanel : Control
 {
     private List<TopFailItem> _items = new();
@@ -397,7 +364,6 @@ public sealed class TopFailRankPanel : Control
 
         Theme.DrawCard(g, ClientRectangle, null);
 
-        // 标题与副标
         TextRenderer.DrawText(g, "当日 Top 5 故障不良项排行", Theme.BodyBold,
             new Rectangle(16, 12, 220, 24), Theme.TextMain,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
@@ -423,16 +389,13 @@ public sealed class TopFailRankPanel : Control
             var it = _items[i];
             int y = startY + (i * rowH);
 
-            // 排名徽章
             DrawBadge(g, 16, y + 4, i + 1);
 
-            // 不良测项名称
             int nameW = (int)(Width * 0.40f);
             TextRenderer.DrawText(g, it.FailItem, Theme.BodyBold,
                 new Rectangle(46, y + 4, nameW, 18), Theme.TextMain,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-            // 频次与占比说明
             string ratioText = $"{it.Count}次 ({it.Ratio:F1}%)";
             if (!string.IsNullOrEmpty(it.MainStation)) ratioText += $" · 机台:{it.MainStation}";
 
@@ -440,7 +403,6 @@ public sealed class TopFailRankPanel : Control
                 new Rectangle(Width - 170, y + 4, 155, 18), Theme.TextFaint,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
-            // 水平进度占比条
             int barX = 46;
             int barY = y + 24;
             int barMaxW = Width - barX - 16;
@@ -460,10 +422,10 @@ public sealed class TopFailRankPanel : Control
     {
         Color bg = rank switch
         {
-            1 => Color.FromArgb(231, 76, 60),  // 红色/金
-            2 => Color.FromArgb(230, 126, 34), // 橙色
-            3 => Color.FromArgb(241, 196, 15), // 黄色
-            _ => Color.FromArgb(80, 90, 105)   // 深灰
+            1 => Color.FromArgb(231, 76, 60),
+            2 => Color.FromArgb(230, 126, 34),
+            3 => Color.FromArgb(241, 196, 15),
+            _ => Color.FromArgb(80, 90, 105)
         };
         using var b = new SolidBrush(bg);
         g.FillEllipse(b, x, y, 20, 20);
@@ -473,9 +435,6 @@ public sealed class TopFailRankPanel : Control
     }
 }
 
-/// <summary>
-/// 工业大屏看板：实时异常告警与动态播报流列表。
-/// </summary>
 public sealed class LiveAlertPanel : Control
 {
     private List<LiveFailAlert> _alerts = new();
@@ -536,7 +495,6 @@ public sealed class LiveAlertPanel : Control
 
         Theme.DrawCard(g, ClientRectangle, null);
 
-        // 标题与呼吸指示灯
         using var dotB = new SolidBrush(Theme.Danger);
         g.FillEllipse(dotB, 16, 18, 10, 10);
 
@@ -566,7 +524,6 @@ public sealed class LiveAlertPanel : Control
             int y = startY + (i * rowH);
             var rowRect = new Rectangle(12, y, Width - 24, rowH - 4);
 
-            // 悬停背景
             if (i == _hoverIndex)
             {
                 using var hovB = new SolidBrush(Color.FromArgb(40, 255, 255, 255));
@@ -578,17 +535,14 @@ public sealed class LiveAlertPanel : Control
                 g.FillRectangle(cardB, rowRect);
             }
 
-            // 异常红边框
             using var borP = new Pen(Color.FromArgb(60, 235, 77, 75), 1f);
             g.DrawRectangle(borP, rowRect);
 
-            // 时间标签
             string timeStr = a.TimeText.Length >= 19 ? a.TimeText.Substring(11, 8) : a.TimeText;
             TextRenderer.DrawText(g, timeStr, Theme.Tiny,
                 new Rectangle(18, y, 65, rowH - 4), Color.FromArgb(235, 120, 120),
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
-            // 机台标签
             if (!string.IsNullOrEmpty(a.StationId))
             {
                 var stRect = new Rectangle(85, y + 4, 75, rowH - 12);
@@ -598,7 +552,6 @@ public sealed class LiveAlertPanel : Control
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
 
-            // SN 与失败原因
             int txtX = 168;
             int txtW = Width - txtX - 80;
             string desc = $"SN:{a.Sn}  |  {a.FailReason}";
@@ -606,7 +559,6 @@ public sealed class LiveAlertPanel : Control
                 new Rectangle(txtX, y, txtW, rowH - 4), Theme.TextMain,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-            // 测试员 / 状态
             TextRenderer.DrawText(g, a.Tester, Theme.Tiny,
                 new Rectangle(Width - 85, y, 70, rowH - 4), Theme.TextFaint,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);

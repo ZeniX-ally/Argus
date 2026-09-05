@@ -4,38 +4,20 @@ using System.Threading.Tasks;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 单 peer 的链路状态（改造自原 AgentPusher 的 AggLinkSnapshot；去中心化后每台机对多个 peer 各有独立链路）。
-/// </summary>
 public sealed class PeerLink
 {
     public string Url = "";
     public AggLinkState State = AggLinkState.Unknown;
     public DateTime LastSuccessAt;
     public int ConsecutiveFailures;
-    public int Backlog;            // 该 peer 待推积压
+    public int Backlog;
     public DateTime DisconnectedSince;
     public bool DisconnectAlertSent;
-    // v3.17.0 Lite-Infra：per-peer 成功/失败计数（/api/metrics 失败率可观测）
     public long Sent;
     public long Failed;
-    /// <summary>per-peer 失败率（0-1，sent+failed==0 时 0）。</summary>
     public double FailureRate => (Sent + Failed) == 0 ? 0 : (double)Failed / (Sent + Failed);
 }
 
-/// <summary>
-/// 出站推送器（P2P 去中心化核心组件之一）。
-///
-/// 复用原 AgentPusher 已被产线验证的稳健性范式：
-/// - 事件只入内存队列、后台线程发送（绝不阻塞采集主链路）；
-/// - 发送失败进断线补偿队列、看门狗退避重启（杜绝静默断连）；
-/// - (machine, seq) 幂等：每个 peer 各自维护 maxSeq + 重启续推扫描。
-///
-/// 与原 AgentPusher 的区别：
-/// - 不再有 smb 文件通道，纯 http POST 到各 peer 的 /api/mesh/fail 与 /api/mesh/heartbeat；
-/// - 一对多：向配置的所有 peer 广播同一条 FAIL/心跳（单 peer 失败不影响其他 peer）；
-/// - seq 仍用本地 test_records 自增 id（本机即数据源头，machine=本机名）。
-/// </summary>
 public sealed class MeshPusher
 {
     public const int MaxQueue = 5000;
@@ -46,7 +28,6 @@ public sealed class MeshPusher
 
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
 
-    /// <summary>静态 HTTP 发送（供 MeshReceiver 按需拉取 XML 等跨机请求复用同一连接池）。</summary>
     internal static HttpResponseMessage SendStatic(HttpRequestMessage req) => _http.Send(req);
     internal static Task<HttpResponseMessage> SendStaticAsync(HttpRequestMessage req, CancellationToken ct = default) => _http.SendAsync(req, ct);
 
@@ -72,11 +53,9 @@ public sealed class MeshPusher
     private long _lastQueuePersist;
     private long _lastHeartbeat;
     private long _droppedCount;
-    // v3.10.0 P1-1 观测：发送成功 / 失败 累计（TryPostOne 每 peer 每次尝试计 1）
     private long _sentCount;
     private long _failCount;
 
-    // 每 peer 独立链路状态（索引与 _peers 对齐）
     private readonly PeerLink[] _links;
 
     public string StatePath => Path.Combine(_dataDir, "mesh_state.json");
@@ -84,13 +63,9 @@ public sealed class MeshPusher
     public bool Active { get; private set; }
     public string Machine => _machine;
 
-    /// <summary>队列积压数（/api/metrics 观测）。</summary>
     public int QueuedCount { get { lock (_lock) return _pending.Count; } }
-    /// <summary>累计丢弃事件数（队列超上限时，FAIL 仍在本地库可续推）。</summary>
     public long DroppedCount => Interlocked.Read(ref _droppedCount);
-    /// <summary>发送成功尝试次数（每 peer 计 1）。</summary>
     public long SentCount => Interlocked.Read(ref _sentCount);
-    /// <summary>发送失败尝试次数（每 peer 计 1）。</summary>
     public long FailCount => Interlocked.Read(ref _failCount);
 
     public MeshPusher(AppConfig cfg, string stationId, Database db,
@@ -153,8 +128,6 @@ public sealed class MeshPusher
 
     internal void EnqueueFail(TestRecord rec, long id) => Enqueue("fail", id, BuildFailJson(rec, id));
 
-    /// <summary>通用事件广播（非 FAIL，如全局待办变更）：立即向所有 peer 的 /api/mesh/event 广播。
-    /// 与 FAIL 不同，todo 等事件不走断线补偿队列（最终由 Gossiper/重放保证一致），仅做 best-effort 实时同步。</summary>
     public void BroadcastEvent(string type, string json)
     {
         if (!Active || _stopping) return;
@@ -166,7 +139,7 @@ public sealed class MeshPusher
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
                 if (!string.IsNullOrEmpty(_cfg.AggToken)) req.Headers.Add(TokenHeader, _cfg.AggToken);
-                _ = _http.SendAsync(req);   // best-effort，不阻塞
+                _ = _http.SendAsync(req);
             }
             catch (Exception ex) { Logger.Warning($"[Mesh推送] 广播事件 {type} 失败 {_peers[i]}: {ex.Message}"); }
         }
@@ -210,7 +183,6 @@ public sealed class MeshPusher
                 foreach (var item in work)
                 {
                     if (_stopping) break;
-                    // 向所有 peer 广播：任一成功即认为该事件已传播（去中心化最终一致）
                     if (!TryBroadcast(item)) continue;
                     sent.Add(item);
                 }
@@ -271,9 +243,6 @@ public sealed class MeshPusher
         catch (Exception ex) { Logger.Warning($"[Mesh推送] 续推扫描失败: {ex.Message}"); }
     }
 
-    /// <summary>向所有 peer 广播一条事件：全部失败才返回 false（保留在队列重试）。
-    /// v3.17.0 Lite-Infra：单 worker 串行 → 按 peer 并发（Parallel.ForEach），共享队列，单 peer 慢不拖累全链路；
-    /// 仍共享队列与 (machine,seq) 幂等：任一 peer 成功即认为已传播（去中心化最终一致，失败保留重试）。</summary>
     private bool TryBroadcast(AggQueueItem item)
     {
         if (_peers.Length == 0) return false;
@@ -283,7 +252,6 @@ public sealed class MeshPusher
             return TryPostOne(url, item.Json, 0);
         }
         int anyOk = 0;
-        // 按 peer 并发：每个 peer 独立任务，共享 HttpClient（线程安全），单 peer 慢不阻塞其他
         Parallel.ForEach(System.Linq.Enumerable.Range(0, _peers.Length), i =>
         {
             var url = _peers[i] + (_peers[i].EndsWith("/") ? "" : "/") + (item.Type == "fail" ? "api/mesh/fail" : "api/mesh/heartbeat");
@@ -302,20 +270,20 @@ public sealed class MeshPusher
             var resp = _http.Send(req);
             if (resp.IsSuccessStatusCode)
             {
-                Interlocked.Increment(ref _sentCount);   // v3.10.0 P1-1 观测
-                Interlocked.Increment(ref _links[linkIdx].Sent); // v3.17.0 per-peer
+                Interlocked.Increment(ref _sentCount);
+                Interlocked.Increment(ref _links[linkIdx].Sent);
                 RecordSuccess(linkIdx);
                 return true;
             }
-            Interlocked.Increment(ref _failCount);       // v3.10.0 P1-1 观测
-            Interlocked.Increment(ref _links[linkIdx].Failed); // v3.17.0 per-peer
+            Interlocked.Increment(ref _failCount);
+            Interlocked.Increment(ref _links[linkIdx].Failed);
             RecordFailure(linkIdx, $"HTTP {(int)resp.StatusCode}");
             return false;
         }
         catch (Exception ex)
         {
-            Interlocked.Increment(ref _failCount);       // v3.10.0 P1-1 观测
-            Interlocked.Increment(ref _links[linkIdx].Failed); // v3.17.0 per-peer
+            Interlocked.Increment(ref _failCount);
+            Interlocked.Increment(ref _links[linkIdx].Failed);
             RecordFailure(linkIdx, ex.Message);
             return false;
         }
@@ -341,7 +309,6 @@ public sealed class MeshPusher
             catch (Exception ex) { Interlocked.Increment(ref _links[0].Failed); Interlocked.Increment(ref _failCount); RecordFailure(0, ex.Message); }
             return;
         }
-        // v3.17.0：心跳也按 peer 并发，单 peer 慢不拖累其他
         Parallel.ForEach(System.Linq.Enumerable.Range(0, _peers.Length), i =>
         {
             var url = _peers[i] + (_peers[i].EndsWith("/") ? "" : "/") + "api/mesh/heartbeat";
@@ -393,7 +360,6 @@ public sealed class MeshPusher
 
     public PeerLink[] GetLinks() => _links.ToArray();
 
-    /// <summary>v3.17.0 Lite-Infra：per-peer 失败率快照（/api/metrics 可观测）。</summary>
     public object[] GetPerPeerMetrics()
     {
         var arr = new object[_links.Length];
@@ -409,16 +375,12 @@ public sealed class MeshPusher
         return arr;
     }
 
-    // P6 设备监控：轻量心跳 cpu/mem 注入（由 DeviceInfoCollector 注册回调提供，向后兼容缺字段视为未知）
     private Func<(double cpu, int memUsed, int memTotal)>? _lightProvider;
     public void SetLightProvider(Func<(double cpu, int memUsed, int memTotal)> provider) => _lightProvider = provider;
 
     private string BuildHeartbeatJson()
     {
         long lastSeq; lock (_lock) { lastSeq = _maxSeenSeq; }
-        // v3.8.0 总纲 P1 D1：心跳携带今日统计（机台本地 test_records 聚合，不推全量 PASS）。
-        // 聚合端按 (machine, today) 幂等 upsert 到 yld_daily —— 良率数据底座，聚合零膨胀。
-        // test_date 有索引，30s 一次的 COUNT 开销可忽略；FetchDailyStats 用目录日期口径。
         var today = DateTime.Now.ToString("yyyyMMdd");
         var st = _db.FetchDailyStats(_machine, today);
         var dict = new Dictionary<string, object>
@@ -435,7 +397,6 @@ public sealed class MeshPusher
             ["today_interrupted"] = st.Interrupted,
             ["today_products"] = st.TodayProductCount,
         };
-        // P6：心跳捎带轻量系统状态（cpu_usage/mem），对端缺字段视为未知，向后兼容
         try
         {
             var prov = _lightProvider;
@@ -459,7 +420,6 @@ public sealed class MeshPusher
             ["tester"] = rec.Tester, ["panel_status"] = rec.PanelStatus,
             ["batch_timestamp"] = rec.BatchTimestamp,
             ["has_fail_items"] = rec.HasFailItems ? 1 : 0, ["file_size"] = rec.FileSize,
-            // v3.22.0 规格01 fixture 归因：治具 ID 随推（对端老版本忽略未知字段，协议向后兼容；空则不带省流量）
             ["xml_available"] = 1,
         };
         if (!string.IsNullOrEmpty(rec.FixtureId)) data["fixture_id"] = rec.FixtureId;
@@ -472,7 +432,6 @@ public sealed class MeshPusher
 
     public long LastSeq { get { lock (_lock) return _maxSeq; } }
 
-    // ===== 持久化（复用 AgentPusher 的原子写范式）=====
     private void LoadState()
     {
         try

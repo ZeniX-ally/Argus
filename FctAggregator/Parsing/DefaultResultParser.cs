@@ -5,18 +5,6 @@ using FctAggregator;
 
 namespace FctAggregator.Parsing;
 
-/// <summary>
-/// 内置默认解析器：完整复刻 v3.4.x 的 FCT BATCH 格式解析（Processor + Classifier + XmlParser 之和），
-/// 但所有"硬编码参数"改为读取 <see cref="ParserRuleSet"/>，从而既兼容现有格式、又能被 parsers.json 调参。
-///
-/// 解析流程（与原 Processor.ParseAndClassify 严格对齐）：
-///   1. 路径元信息（category/model/date/prefix/sn/filetime）；
-///   2. PASS(P_)：轻量读 USER 判 debug；
-///   3. FAIL/INTERRUPTED(F_/O_)：深度解析 XML（时间戳/USER/TESTER/PANEL/SN/失败步骤），
-///      排除 IgnoredFailSteps，按前缀+fail 项分类；
-///   4. 时间源优先级 PANEL → BATCH → 文件名 → 目录日期；
-///   5. 机台号：优先传入 defaultStation，否则从 tester 提取，再否则 UNKNOWN。
-/// </summary>
 public sealed class DefaultResultParser : IResultParser
 {
     private readonly ParserRuleSet _rules;
@@ -42,7 +30,6 @@ public sealed class DefaultResultParser : IResultParser
             return new ParseOutput { Skipped = true, SkipReason = $"路径不匹配规则 {_rules.Id}" };
         }
 
-        // 文件名前缀校验：不在 P_/F_/O_ 等配置前缀里 → 不认识，交给责任链下一个或跳过
         if (!_rules.PrefixResults.ContainsKey(info.Prefix))
         {
             return new ParseOutput { Skipped = true, SkipReason = $"未知文件名前缀 '{info.Prefix}'" };
@@ -75,7 +62,6 @@ public sealed class DefaultResultParser : IResultParser
             if (_rules.IsDebug(pr.FactoryUser))
                 return new ParseOutput { Skipped = true, SkipReason = "debug" };
 
-            // 前缀分类（与原 Classifier.ClassifyByPrefix 对齐）：P_=PASS, F_=FAIL, O_=有 fail 项则 FAIL 否则 INTERRUPTED
             result = mapped switch
             {
                 "PASS" => "PASS",
@@ -94,16 +80,11 @@ public sealed class DefaultResultParser : IResultParser
             hasFail = pr.HasFailItems;
             failedTests = pr.FailedTests;
             fixtureId = pr.FixtureId;
-            // v3.24.3 UUT Status Err 排除：剔除后无任何真实失败项的 F_ 文件降级 INTERRUPTED
-            // （不计 Fail 统计、不触发 FAIL 推送/待办；仅当确有排除项发生时才降级，规则不匹配的零失败文件维持原判）
             if (result == "FAIL" && !hasFail && pr.SawIgnoredFail)
                 result = "INTERRUPTED";
             if (string.IsNullOrEmpty(snFromName)) snFromName = pr.Sn;
         }
 
-        // 域1 智能时间：文件名时间优先，但用系统时间近邻校验判 SN/误匹配（v3.19.0）。
-        // 真正新落盘的 log 文件名时间最贴近系统时间；与系统偏差 >30 天则视为
-        // SN/批次号误匹配（TsSegRe 常见陷阱），回退到目录日期。
         var ts = info.FileTime != null
             ? TimeUtil.ResolveFileNameTime(info.FileTime, DateTime.Now)
             : "";
@@ -139,8 +120,6 @@ public sealed class DefaultResultParser : IResultParser
         };
     }
 
-    // ===== 以下复刻 XmlParser 的 XML 元素提取，但全部走 _rules 的属性名/排除项 =====
-
     private sealed class MiniResult
     {
         public bool Error;
@@ -151,7 +130,6 @@ public sealed class DefaultResultParser : IResultParser
         public string? Sn;
         public string? FailReason;
         public bool HasFailItems;
-        /// <summary>出现过被 IgnoredFailSteps 排除的失败项（如 UUT Status Err）——纯 UUT 文件降级判定依据。</summary>
         public bool SawIgnoredFail;
         public List<FailedTest> FailedTests = new();
     }
@@ -163,7 +141,7 @@ public sealed class DefaultResultParser : IResultParser
         {
             var settings = new XmlReaderSettings
             {
-                DtdProcessing = DtdProcessing.Prohibit,   // 防 XXE
+                DtdProcessing = DtdProcessing.Prohibit,
                 XmlResolver = null,
                 IgnoreComments = true,
                 IgnoreWhitespace = true,
@@ -179,11 +157,9 @@ public sealed class DefaultResultParser : IResultParser
                     case "FACTORY":
                         r.FactoryUser = reader.GetAttribute(_rules.AttrFactoryUser);
                         r.Tester = reader.GetAttribute(_rules.AttrTester);
-                        // v3.22.0 规格01 fixture 归因：FACTORY@FIXTURE_ID（缺省保持 null）
                         r.FixtureId ??= reader.GetAttribute(_rules.AttrFixtureId);
                         break;
                     case "PANEL":
-                        // PANEL 也可能携带治具号（部分产线格式）：FACTORY 未命中时兜底
                         r.FixtureId ??= reader.GetAttribute(_rules.AttrFixtureId);
                         r.PanelStatus = reader.GetAttribute(_rules.AttrPanelStatus);
                         break;
@@ -199,7 +175,7 @@ public sealed class DefaultResultParser : IResultParser
                         if (reader.GetAttribute(_rules.AttrTestStatus) == "Failed")
                         {
                             var name = reader.GetAttribute(_rules.AttrTestName) ?? "";
-                            if (_rules.IgnoredFailSteps.Any(ig => name.Contains(ig))) { r.SawIgnoredFail = true; break; } // 排除非真实不良
+                            if (_rules.IgnoredFailSteps.Any(ig => name.Contains(ig))) { r.SawIgnoredFail = true; break; }
                             r.HasFailItems = true;
                             r.FailReason ??= name;
                             r.FailedTests.Add(new FailedTest

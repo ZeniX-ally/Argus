@@ -1,13 +1,3 @@
-# FCT.ini 现场诊断 —— 拷到机台上直接跑（不依赖仓库、不改任何东西，纯只读）
-#   pwsh -File diag_fctini.ps1
-#   或右键「使用 PowerShell 运行」
-#
-# 干什么：把「程序为什么读不到 FCT.ini」一次问清 ——
-#   1. config.json 里配的是什么路径、那个路径到底存不存在
-#   2. 程序内置的 4 个候选路径分别什么情况
-#   3. 全盘找一遍真实的 FCT.ini 在哪
-#   4. 找到后验证「能不能在被测试软件占用时读出来」并打印关键段落
-#   5. 直接给出应该往 config.json 里写的那一行
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -15,7 +5,6 @@ Write-Host "================ FCT.ini 诊断 ================" -ForegroundColor C
 Write-Host "机器: $env:COMPUTERNAME   用户: $env:USERNAME   时间: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
 
-# ---------- 1. 找 config.json ----------
 $cfgCandidates = @(
     (Join-Path $PSScriptRoot 'config.json'),
     (Join-Path (Get-Location) 'config.json'),
@@ -37,7 +26,6 @@ if ($cfgPath) {
 }
 Write-Host ""
 
-# ---------- 2. 逐个检查候选路径 ----------
 Write-Host "[2] 逐个检查候选路径（程序内置顺序）" -ForegroundColor Cyan
 $cands = @()
 if ($configured) { $cands += $configured }
@@ -59,7 +47,6 @@ foreach ($p in $cands) {
 }
 Write-Host ""
 
-# ---------- 3. 全盘搜真实位置 ----------
 Write-Host "[3] 全盘搜 FCT.ini（每个盘限时，可能要十几秒）..." -ForegroundColor Cyan
 $hits = @()
 foreach ($drive in (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Free -ne $null })) {
@@ -83,12 +70,10 @@ if (-not $hits) {
 }
 Write-Host ""
 
-# ---------- 4. 验证可读性（模拟程序的共享读取）----------
 $target = if ($hits) { $hits[0].FullName } elseif ($configured -and (Test-Path $configured)) { $configured } else { $null }
 if ($target) {
     Write-Host "[4] 验证读取: $target" -ForegroundColor Cyan
     try {
-        # 与程序完全相同的打开方式：FileShare.ReadWrite（允许测试软件正占着）
         $fs = [System.IO.File]::Open($target, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
         $sr = New-Object System.IO.StreamReader($fs)
         $text = $sr.ReadToEnd(); $sr.Close(); $fs.Close()

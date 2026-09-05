@@ -1,13 +1,12 @@
 ﻿namespace FctAggregator;
 
-/// <summary>域4 设备智能 — 巡检自愈建议（v3.19.0 D）：不自动执行，仅生成建议列表。</summary>
 public static class DeviceInspector
 {
     public sealed class SuggestItem
     {
         public string Machine = "";
-        public string Kind = ""; // disk / com / offline / fct
-        public string Level = ""; // warn / info
+        public string Kind = "";
+        public string Level = "";
         public string Detail = "";
         public string Suggestion = "";
     }
@@ -30,7 +29,6 @@ public static class DeviceInspector
                     list.Add(new SuggestItem{ Machine=info.Machine, Kind="offline", Level="warn", Detail=$"离线 {(DateTime.Now-dt).TotalMinutes:0} 分钟", Suggestion="检查网络/服务是否存活"});
             }
         }
-        // FCT COM 离线提示
         try
         {
             var fcts = db.ListDeviceFcts();

@@ -1,10 +1,5 @@
 #requires -Version 7
-<#
-  GUI 冒烟测试：解压完整包到临时目录 -> 启动 -> 断言【主窗口真的存在且标题正确】-> 关掉
-  只看"进程还活着"是不够的：v2.9.4 曾出现进程秒退(0xC0000005)，也可能出现进程活着但窗口没建起来。
-#>
 param(
-    # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
     [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.2.zip",
     [string]$ExpectTitle = 'Argus'
 )
@@ -14,7 +9,6 @@ $tmp = Join-Path $env:TEMP "fct_gui_$(Get-Random -Maximum 999999)"
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 Expand-Archive $Zip -DestinationPath $tmp
 
-# 指向空的假 results，避免扫真实 D:\Results；关掉飞书
 $cfgPath = Join-Path $tmp 'config.json'
 $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
 $cfg.results_root = Join-Path $tmp 'FakeResults'
@@ -26,7 +20,6 @@ $exe = Join-Path $tmp 'Argus.exe'
 $proc = Start-Process -FilePath $exe -PassThru
 $fail = 0
 
-# 等真正的主窗口出现（最多 30s）：跳过开启动画的无边框 splash（空标题），直到标题含 Argus
 $title = $null
 for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Milliseconds 500
@@ -50,7 +43,7 @@ if ($proc.HasExited) {
         Write-Host "[FAIL] 标题不含预期版本号 ($ExpectTitle)" -ForegroundColor Red
         $fail++
     }
-    Start-Sleep -Seconds 3          # 多停一会，让定时器/后台线程跑起来，暴露延迟崩溃
+    Start-Sleep -Seconds 3
     $proc.Refresh()
     if ($proc.HasExited) {
         Write-Host "[FAIL] 窗口出现后又崩了，ExitCode=$($proc.ExitCode)" -ForegroundColor Red
@@ -62,7 +55,6 @@ if ($proc.HasExited) {
 
 if (-not $proc.HasExited) { $proc | Stop-Process -Force; Start-Sleep -Milliseconds 800 }
 
-# 检查日志里有没有 ERROR
 $log = Join-Path $tmp 'logs\app.log'
 if (Test-Path $log) {
     $errs = Select-String -Path $log -Pattern '\| ERROR' -ErrorAction SilentlyContinue

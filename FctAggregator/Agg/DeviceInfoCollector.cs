@@ -6,14 +6,6 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 设备信息采集器（P6 设备监控，D1-D3）。
-/// 两级采集：
-///   L0 轻量（30s 心跳捎带 cpu/mem）—— 由 MeshPusher.BuildHeartbeatJson 调用 <see cref="GetLightSnapshot"/> 取值；
-///   L1 全量（5 分钟，DeviceInfoCollector 定时推送 POST /api/mesh/info + /api/mesh/fctini）—— 设备信息 + FCT.ini 快照。
-/// 硬件约束：≤30 台、系统信息不走 mesh 断线补偿、不参与 (machine,seq) 幂等、单写者 WAL。
-/// 零第三方依赖：Environment / DriveInfo / Process / Dns / NetworkInterface，WMI 可用时补充 cpu_model/mac，不可用降级.
-/// </summary>
 public sealed class DeviceInfoCollector : IDisposable
 {
     private readonly AppConfig _cfg;
@@ -32,7 +24,6 @@ public sealed class DeviceInfoCollector : IDisposable
         _cfg = cfg;
         _machine = string.IsNullOrEmpty(machine) ? "UNKNOWN" : machine;
         _peers = peers.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()).ToArray();
-        // 初始化 CPU 采样基线
         try
         {
             var proc = Process.GetCurrentProcess();
@@ -42,7 +33,6 @@ public sealed class DeviceInfoCollector : IDisposable
         catch { }
     }
 
-    /// <summary>启动定时采集线程（若 device_info_enabled=false 则不启动）。</summary>
     public void Start()
     {
         if (!_cfg.DeviceInfoEnabled) { Logger.Info("[设备采集] 已禁用（device_info_enabled=false）"); return; }
@@ -51,7 +41,6 @@ public sealed class DeviceInfoCollector : IDisposable
         _thread = new Thread(Loop) { IsBackground = true, Name = "device-collector" };
         _thread.Start();
         Logger.Info($"[设备采集] 已启动: machine={_machine}, interval={_cfg.DeviceInfoIntervalSec}s, peers={_peers.Length}");
-        // 立即推一次（避免等 5 分钟看板才有数据）
         Task.Run(() => { try { PushFull(); } catch (Exception ex) { Logger.Warning($"[设备采集] 首次推送失败: {ex.Message}"); } });
     }
 
@@ -87,7 +76,6 @@ public sealed class DeviceInfoCollector : IDisposable
         var fctJson = SerializeFct(fct);
         foreach (var peer in _peers)
         {
-            // 系统信息不走补偿队列，丢了下轮补——失败静默
             _ = TryPost(peer, "api/mesh/info", infoJson);
             _ = TryPost(peer, "api/mesh/fctini", fctJson);
         }
@@ -110,7 +98,6 @@ public sealed class DeviceInfoCollector : IDisposable
         catch (Exception ex) { Logger.Warning($"[设备采集] POST {path} -> {peer} 异常: {ex.Message}"); }
     }
 
-    /// <summary>轻量快照（供 MeshPusher 心跳捎带，30s）。</summary>
     public (double cpuUsage, int memUsedMb, int memTotalMb) GetLightSnapshot()
     {
         try
@@ -122,7 +109,6 @@ public sealed class DeviceInfoCollector : IDisposable
         catch { return (0, 0, 0); }
     }
 
-    /// <summary>全量 L1 采集（5 分钟）。</summary>
     public DeviceInfoRow CollectFull()
     {
         var row = new DeviceInfoRow { Machine = _machine };
@@ -155,7 +141,6 @@ public sealed class DeviceInfoCollector : IDisposable
             row.Error = data.Error;
             row.Models = data.Models.ToList();
             row.FwVersions = data.FwVersions.ToList();
-            // DeviceInfo (FctIni) -> FctDeviceInfo
             row.Devices = data.Devices.Select(d => new FctDeviceInfo { Name = d.Name, Port = d.Port, Type = d.Type, Online = d.Online }).ToList();
             row.A2lFiles = data.A2lFiles.ToList();
         }
@@ -169,8 +154,6 @@ public sealed class DeviceInfoCollector : IDisposable
         return row;
     }
 
-    // ===== 采集 helpers（零第三方，失败降级） =====
-
     private static string ResolveIp()
     {
         try
@@ -180,7 +163,6 @@ public sealed class DeviceInfoCollector : IDisposable
             foreach (var ip in entry.AddressList)
                 if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
                     return ip.ToString();
-            // 回落：首个非回环
             foreach (var ip in entry.AddressList)
                 if (!IPAddress.IsLoopback(ip)) return ip.ToString();
         }
@@ -210,7 +192,6 @@ public sealed class DeviceInfoCollector : IDisposable
     {
         int cores = Environment.ProcessorCount;
         string model = "";
-        // 尝试 Windows 注册表读取 CPU 型号（无 WMI 依赖，零额外包）
         try
         {
             if (OperatingSystem.IsWindows())
@@ -258,13 +239,11 @@ public sealed class DeviceInfoCollector : IDisposable
             long totalBytes = gcInfo.TotalAvailableMemoryBytes;
             if (totalBytes <= 0)
             {
-                // 回落：物理内存不可知时用 WorkingSet 近似
                 var proc = Process.GetCurrentProcess();
                 long used = proc.WorkingSet64;
                 return (0, (int)(used / 1024 / 1024));
             }
             long usedBytes = GC.GetTotalMemory(false);
-            // 更准：用 Process WorkingSet
             try { usedBytes = Process.GetCurrentProcess().WorkingSet64; } catch { }
             int totalMb = (int)(totalBytes / 1024 / 1024);
             int usedMb = (int)(usedBytes / 1024 / 1024);

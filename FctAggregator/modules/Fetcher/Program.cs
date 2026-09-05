@@ -11,12 +11,6 @@ internal static class Program
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     private const int SW_HIDE = 0;
 
-    /// <summary>
-    /// 为什么是控制台程序(Exe)而不是 WinExe:
-    /// WinExe 启动时 .NET 已将 Console.Out 绑定为 TextWriter.Null, AttachConsole
-    /// 在管道/重定向场景下不可靠(实测 stdout 恒为空)。
-    /// 改用 Exe 使 stdout 天然可重定向, GUI 模式再把控制台窗口隐起来。
-    /// </summary>
     private static void HideConsoleWindow()
     {
         var h = GetConsoleWindow();
@@ -34,7 +28,7 @@ internal static class Program
     {
         if (args.Length == 0)
         {
-            HideConsoleWindow();     // 无参数 -> GUI, 隐藏控制台窗口
+            HideConsoleWindow();
             ApplicationConfiguration.Initialize();
             Application.Run(new MainForm());
             return 0;
@@ -44,11 +38,6 @@ internal static class Program
         return RunCli(args);
     }
 
-    /// <summary>
-    /// v2.9.0：合入套件后由 <c>FctAggregator.Program</c> 转发子命令
-    /// （<c>Argus.exe fetch …</c>），因此开一个 internal 口子。
-    /// 本类的 <c>Main</c> 保留（不再是入口，由 csproj 的 StartupObject 指定）。
-    /// </summary>
     internal static int RunCliEntry(string[] args) => RunCli(args);
 
     private static int RunCli(string[] args)

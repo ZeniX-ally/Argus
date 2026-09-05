@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -62,8 +62,6 @@ public class MainForm : Form
 
 	private List<CsvExporter.GroupResult> _byModel = new();
 
-	private TreeNode? _tvFirstClickNode;
-
 	private TableLayoutPanel? _inputPanel;
 
 	public MainForm()
@@ -107,7 +105,6 @@ public class MainForm : Form
 		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
 		root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-		// Row 0: 结果目录
 		AddLab(root, "结果目录:", 0, 0);
 		_txtRoot.Dock = DockStyle.Fill;
 		_txtRoot.Text = LoadDefaultRoot();
@@ -121,7 +118,6 @@ public class MainForm : Form
 		root.SetColumn(_btnBrowse, 2);
 		root.SetRow(_btnBrowse, 0);
 
-		// Row 1: 日期区间 + 扫描 + 导出
 		AddLab(root, "起始日期:", 0, 1);
 		_dtStart.Format = DateTimePickerFormat.Custom;
 		_dtStart.CustomFormat = "yyyy-MM-dd";
@@ -167,7 +163,6 @@ public class MainForm : Form
 		root.SetColumn(_btnExportRank, 5);
 		root.SetRow(_btnExportRank, 2);
 
-		// Row 3: progress
 		_progress.Dock = DockStyle.Fill;
 		root.SetColumn(_progress, 0);
 		root.SetRow(_progress, 3);
@@ -558,57 +553,11 @@ public class MainForm : Form
 		catch { return false; }
 	}
 
-	private void OnSurveyMouseDown(object? sender, MouseEventArgs e)
-	{
-		if (e.Button != MouseButtons.Left) return;
-		TreeNode? treeNode = _tvSurvey.GetNodeAt(e.X, e.Y);
-		if (treeNode != null)
-		{
-			Rectangle bounds = treeNode.Bounds;
-			if (e.Y < bounds.Top || e.Y >= bounds.Bottom) treeNode = null;
-		}
-		if (e.Clicks == 1)
-		{
-			_tvFirstClickNode = treeNode;
-		}
-		else if (e.Clicks == 2)
-		{
-			TreeNode? first = _tvFirstClickNode;
-			if (first != null && first == treeNode && first.Tag is FsTag { IsDir: false } fsTag)
-			{
-				OpenFile(fsTag.Path);
-			}
-		}
-	}
-
 	private void OnSurveyBeforeExpand(object? sender, TreeViewCancelEventArgs e)
 	{
 		if (e.Node?.Tag is FsTag { IsDir: true, Loaded: false })
 		{
 			PopulateChildren(e.Node);
-		}
-	}
-
-	private void OpenFile(string path)
-	{
-		if (!File.Exists(path))
-		{
-			MessageBox.Show("文件不存在:\n" + path, "提示", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
-			return;
-		}
-		if (path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
-		{
-			ShowXmlContent(path);
-			return;
-		}
-		try
-		{
-			Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
-		}
-		catch (Exception ex)
-		{
-			MessageBox.Show("打开失败: " + ex.Message);
-			Log("[打开文件失败] " + ex.Message);
 		}
 	}
 

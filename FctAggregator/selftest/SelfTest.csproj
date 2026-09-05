@@ -1,10 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <!--
-    自检工程：不属于主程序，独立运行。
-    直接引用主项目的源文件（只挑与维修记录相关的，不碰 Engine/Processor/UI）。
-    运行:  dotnet run –project selftest\SelfTest.csproj -c Release
-  -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -15,15 +10,12 @@
     <AssemblyName>FctAggregator.SelfTest</AssemblyName>
     <StartupObject>SelfTest</StartupObject>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <!-- v3.5.0：自检以 AgentPusher/AggWatcher（已标记遗留 Obsolete）为回归基准，属预期引用，全工程抑制 CS0618 -->
     <NoWarn>$(NoWarn);CS0618</NoWarn>
-    <!-- 依赖锁定：还原时生成 packages.lock.json，保证可复现构建 -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="SelfTest.cs" />
-    <!-- 2026-09-01 源码分组后改目录通配：与主工程默认 glob 同集，新增文件不再漏加（历史注释的坑） -->
     <Compile Include="..\Core\**\*.cs" />
     <Compile Include="..\Db\**\*.cs" />
     <Compile Include="..\Mesh\**\*.cs" />
@@ -33,25 +25,16 @@
     <Compile Include="..\Infra\**\*.cs" />
     <Compile Include="..\Program.cs" />
     <Compile Include="..\Parsing\**\*.cs" />
-    <!-- v2.9.0：四个合入的工具（各自 namespace，同名类不打架）。
-         它们的 Program 都有 Main，所以本工程也要显式指定 StartupObject -->
     <Compile Include="..\modules\**\*.cs" />
-    <!-- 与主程序一致：图标作为嵌入资源，否则 AppIcon 会退到系统灰图（断言就白做了） -->
     <EmbeddedResource Include="..\app_icon.ico" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
-    <!-- CVE-2025-6965/70873 修复:8.0.x 传递依赖仍是 SQLitePCLRaw 2.1.6(SQLite 3.41.2,低于修复线 3.50.2),
-         显式覆盖到 2.1.12(自带 SQLite 3.53.3) -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
     <PackageReference Include="TDMSReader" Version="3.1.0" />
   </ItemGroup>
 
 </Project>
-
-
-
-
 

@@ -6,36 +6,15 @@ using System.Threading;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 套件唯一入口（v2.9.0 起）。
-///
-/// 五个原独立程序合成一个 exe，各工具自己的 <c>Program.Main</c> 仍在源码里
-/// （里面有 CLI 逻辑），靠 csproj 的 <c>&lt;StartupObject&gt;</c> 指定本类为真入口。
-///
-/// 用法：
-/// <code>
-/// Argus.exe                 主程序 GUI（采集聚合 + 工具箱）
-/// Argus.exe fetch --diag    取数工具 CLI（原 FCT-Fetcher.exe）
-/// Argus.exe tdms --help     TDMS 工具 CLI（原 FCT-TdmsViewer.exe）
-/// Argus.exe tdms x.tdms     直接用 TDMS 窗口打开文件
-/// Argus.exe --help          子命令一览
-/// </code>
-/// </summary>
 static class Program
 {
     private static Mutex? _singleInstanceMutex;
-    private static ConfigWatcher? _configWatcher; // v3.21.1 P1 配置热更新（static 保引用防 GC 回收）
+    private static ConfigWatcher? _configWatcher;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AttachConsole(int dwProcessId);
     private const int AttachParentProcess = -1;
 
-    /// <summary>
-    /// 本程序是 WinExe（GUI 优先，不闪控制台窗口），跑 CLI 子命令时得把父进程的控制台接过来。
-    /// ⚠ 只 AttachConsole 不够 —— 必须再 <see cref="Console.SetOut"/> 到
-    /// <see cref="Console.OpenStandardOutput"/>，否则 .NET 早已把 Console.Out 绑成
-    /// TextWriter.Null，管道/重定向下输出会全部丢失（原 fetcher/tdms 就是为此才做成控制台程序）。
-    /// </summary>
     private static void EnsureConsole()
     {
         try { AttachConsole(AttachParentProcess); } catch { }
@@ -53,13 +32,9 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
-        // ===== 启动参数 =====
-        // --debug（大小写不敏感）：显示侧边栏「调试工具」入口（清库/推送测试/自启开关，产线不应能进）。
-        // 先剥离再分发子命令，否则 "--debug" 会被当成未知子命令拒掉。
         bool debugMode = args.Any(a => a.Equals("--debug", StringComparison.OrdinalIgnoreCase));
         args = args.Where(a => !a.Equals("--debug", StringComparison.OrdinalIgnoreCase)).ToArray();
 
-        // ===== 子命令（CLI）=====
         if (args.Length > 0)
         {
             var sub = args[0].Trim().ToLowerInvariant();
@@ -71,7 +46,6 @@ static class Program
                     return FctFetcher.Program.RunCliEntry(rest.Length == 0 ? new[] { "--help" } : rest);
 
                 case "tdms":
-                    // 带 --xxx 走 CLI；给个文件路径就直接用 GUI 打开
                     if (rest.Length > 0 && rest[0].StartsWith("-"))
                     {
                         EnsureConsole();
@@ -88,29 +62,24 @@ static class Program
                     return RunToolGui(() => new FctFailRanker.MainForm());
 
                 case "upgrade":
-                    // 升级向导：图形化一键升级工具（v3.21.1）- 简化版
                     return FctAggregator.modules.Upgrader.UpgradeEntry.Run();
 
                 case "agg":
-                    // 一键部署：config 生成 / 防火墙放行 / 开机自启 / 启动服务（优先于 --web）
                     if (rest.Any(a => a.Equals("--install", StringComparison.OrdinalIgnoreCase)))
                     {
                         EnsureConsole();
                         return RunAggInstall();
                     }
-                    // 纯 Web 服务模式：无窗体常驻，浏览器访问 http://机台IP:端口 看板（v3.5.0 即本机 Mesh 节点）
                     if (rest.Any(a => a.Equals("--web", StringComparison.OrdinalIgnoreCase)))
                     {
                         EnsureConsole();
                         return RunAggWebService();
                     }
-                    // P2-A 无头服务化：Windows Service 注册/启停（sc create 思路，会话锁定不中断、崩溃自愈）
                     if (rest.Any(a => a.Equals("--service", StringComparison.OrdinalIgnoreCase)))
                     {
                         EnsureConsole();
                         return RunAggService(rest);
                     }
-                    // 无参数：提示用法（去中心化下聚合端=本机 Mesh 节点，统一走 --web / --install / --service）
                     EnsureConsole();
                     Console.WriteLine("用法: Argus.exe agg --web       启动本机 Mesh 节点（Web 看板，无窗体）");
                     Console.WriteLine("      Argus.exe agg --install  一键部署本机 Mesh 节点（防火墙/开机自启/启动）");
@@ -124,7 +93,6 @@ static class Program
                     PrintUsage();
                     return 0;
             }
-            // 不认识的参数：当成 TDMS 文件拖到 exe 上（保持原 tdms-viewer 的行为）
             if (File.Exists(args[0]) && args[0].EndsWith(".tdms", StringComparison.OrdinalIgnoreCase))
                 return RunToolGui(() =>
                 {
@@ -138,10 +106,6 @@ static class Program
             return 2;
         }
 
-        // ===== 更新器：启动时提交暂存更新（v3.6.0） =====
-        // 更新器「立即更新」会重启自身并带 --post-update：此时旧实例已退出、文件未锁定，
-        // 这里把暂存的更新文件覆盖到程序目录，完成升级。失败自动回滚，绝不影响现场数据。
-        // 也处理普通启动时残留的 pending（上次选了立即更新但没等到重启的情况）。
         bool postUpdate = args.Any(a => a.Equals("--post-update", StringComparison.OrdinalIgnoreCase));
         args = args.Where(a => !a.Equals("--post-update", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (postUpdate || UpdateChecker.HasPendingUpdate())
@@ -157,8 +121,6 @@ static class Program
             }
         }
 
-        // ===== 主程序 GUI =====
-        // 单实例保护（只管 GUI；CLI 子命令不受限，否则主程序开着就没法跑命令行）
         _singleInstanceMutex = new Mutex(true, @"Global\Argus_SingleInstance", out bool isNew);
         if (!isNew)
         {
@@ -172,7 +134,6 @@ static class Program
         var cfg = AppConfig.Instance;
         Logger.SetLevel(cfg.LogLevel);
 
-        // v3.5.0 解析智能化：加载 parsers.json（若存在）注入解析注册表；缺失则回落内置默认解析器
         try
         {
             var pPath = Path.Combine(AppConfig.BaseDir, cfg.ParsersPath);
@@ -185,20 +146,13 @@ static class Program
             Logger.Warning($"[解析] 注册表初始化失败，回落内置默认: {ex.Message}");
         }
 
-        // 开机自启改为手动(Debug页提供开关): 启动时自动写自启项会被 EDR(如SentinelOne)当作
-        // “自我持久化”行为拦截。需要自启时由运维手动开启或把快捷方式拖到启动文件夹。
-        // try { AutoStart.EnsureFirstRun(); } catch { }
-
-        // 启动后台引擎
         var engine = new Engine(cfg);
-        
-        // v3.21.1 P1: 配置热更新监听（在引擎启动后）
+
         try
         {
             _configWatcher = new ConfigWatcher(Path.Combine(AppConfig.BaseDir, "config.json"));
             _configWatcher.ConfigChanged += (sender, newCfg) =>
             {
-                // 配置变更后，可选触发引擎重新加载某些动态参数
                 Logger.Info("[ConfigWatcher] 新配置已生效");
             };
         }
@@ -206,10 +160,9 @@ static class Program
         {
             Logger.Warning($"[ConfigWatcher] 启动失败：{ex.Message}（将继续运行但无法热更新）");
         }
-        
+
         engine.Start();
 
-        // 开启动画（v3.1.0）：splash 先于主窗口播放；主窗口显示 450ms 后收起（视觉无缝）
         var splashImg = SplashForm.TryLoadEmbedded();
         SplashForm? splash = null;
         if (splashImg != null)
@@ -218,14 +171,12 @@ static class Program
             splash.Start();
         }
 
-        // 预构造主窗口（布局就绪即可零延迟显示）
         var form = new MainForm(engine, debugMode);
 
         if (splash != null)
         {
             form.Shown += (_, _) =>
             {
-                // 主窗口已显示：450ms 后隐藏 splash（此时动画通常已缩成圆点或接近尾声）
                 var t = new System.Windows.Forms.Timer { Interval = 450 };
                 t.Tick += (_, _) =>
                 {
@@ -245,7 +196,6 @@ static class Program
         return 0;
     }
 
-    /// <summary>单独把某个工具窗口作为独立进程跑起来（不启动采集引擎）。</summary>
     private static int RunToolGui(Func<Form> factory)
     {
         ApplicationConfiguration.Initialize();
@@ -254,16 +204,11 @@ static class Program
         return 0;
     }
 
-    /// <summary>
-    /// 聚合端纯 Web 服务模式（argus agg --web）：聚合监听 + HttpListener 看板，无窗体常驻。
-    /// 主线程阻塞等待 Ctrl+C 优雅退出；Ctrl+C 只置标志，退出路径统一走 using Dispose 停全部组件。
-    /// </summary>
     private static int RunAggWebService()
     {
         var cfg = AppConfig.Instance;
         try { Logger.SetLevel(cfg.LogLevel); } catch { }
 
-        // 组件组装/启动/退出统一交给 HeadlessService，Ctrl+C 退出后由 using 释放
         using var svc = new HeadlessService(cfg);
         svc.Start();
 
@@ -282,7 +227,6 @@ static class Program
             Console.WriteLine("警告: Mesh 节点启动失败——端口被占用或缺少监听权限（尝试以管理员身份运行）");
         }
 
-        // Ctrl+C 优雅退出：e.Cancel 拦截默认终止，置标志让主循环退出，随后走 using Dispose
         var running = true;
         Console.CancelKeyPress += (_, e) =>
         {
@@ -295,12 +239,6 @@ static class Program
         return 0;
     }
 
-    /// <summary>
-    /// 一键部署聚合服务（argus agg --install）：config 生成 / 防火墙放行 / 开机自启 / 启动服务。
-    /// 逻辑在 <see cref="AggDeployer"/>（内嵌，不依赖外部 bat）；本方法只是 CLI 壳：
-    /// 打印每步结果与访问地址（GUI 按钮也走 AggDeployer，结果用弹窗展示）。
-    /// ⚠ EDR(SentinelOne) 兼容：开机自启用「启动文件夹快捷方式」，不写注册表 Run/服务键。
-    /// </summary>
     private static int RunAggInstall()
     {
         Console.WriteLine("聚合服务一键部署");
@@ -340,11 +278,6 @@ static class Program
         return 0;
     }
 
-    /// <summary>
-    /// Windows Service 模式（P2-A，sc create 思路）：注册/启停服务，保证会话锁定不中断采集、崩溃自愈（failure 重启）。
-    /// 用法：Argus.exe agg --service install | uninstall | start | stop | status
-    /// 未带动作时打印帮助。需管理员权限（sc create/delete/start/stop）。
-    /// </summary>
     private static int RunAggService(string[] args)
     {
         var op = args.FirstOrDefault(a => !a.Equals("--service", StringComparison.OrdinalIgnoreCase) && !a.StartsWith("-"))?.Trim().ToLowerInvariant() ?? "";
@@ -381,10 +314,8 @@ static class Program
         return res.ok ? 0 : 1;
     }
 
-    /// <summary>默认聚合端配置 JSON（转发到 AggDeployer，自检/历史兼容用）。</summary>
     internal static string BuildDefaultAggConfigJson() => AggDeployer.BuildDefaultConfigJson();
 
-    /// <summary>枚举本机 IPv4 非回环地址（打印浏览器访问地址用）；失败返回空表。</summary>
     private static List<string> LocalIPv4Addresses()
     {
         var list = new List<string>();

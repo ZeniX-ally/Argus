@@ -2,34 +2,16 @@ using System.Drawing.Drawing2D;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 卡片详情预览（**单击卡片**弹出）。
-///
-/// 看板卡片就那么大，长故障项名、故障描述、维修措施、以及**被合并的 fail 项清单**
-/// 在卡上必然显示不全（只能靠 tooltip，且不能选中复制）。
-/// 这个轻量弹窗把完整内容摊开：
-///   · 上半部分 = 键值明细（只读 TextBox，**可选中复制**测试项名）
-///   · 下半部分 = 「合并的 fail 项」列表，带各自的真实不良次数
-///
-/// 行为像个 popup：失焦 / Esc / 打开下一个预览 / 看板刷新 都会自动关掉，
-/// 全局只保留一个实例，不会糊满屏。
-/// </summary>
 public class CardPreviewForm : Form
 {
     private static CardPreviewForm? _open;
 
-    /// <summary>关掉当前预览（看板 Reload、切页时调用，避免留着过期内容）。</summary>
     public static void CloseCurrent()
     {
         try { _open?.Close(); } catch { }
         _open = null;
     }
 
-    /// <summary>
-    /// 在 <paramref name="anchor"/> 旁边弹出预览。
-    /// </summary>
-    /// <param name="rows">键值明细（键会右对齐补齐）。</param>
-    /// <param name="mergedItems">合并的 fail 项 → 次数（null / 空则不显示该区）。</param>
     public static void ShowFor(Control anchor, string title, string subtitle, Color accent,
                                IEnumerable<(string k, string v)> rows,
                                IEnumerable<(string item, int count)>? mergedItems,
@@ -63,7 +45,6 @@ public class CardPreviewForm : Form
         KeyPreview = true;
         Padding = new Padding(1);
 
-        // ===== 标题条 =====
         var head = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = accent };
         var titleLabel = new Label
         {
@@ -89,10 +70,6 @@ public class CardPreviewForm : Form
         head.Controls.Add(subLabel);
         head.Controls.Add(close);
 
-        // ===== 明细（可选中复制）=====
-        // ⚠ TabStop=false：WinForms 的 TextBox 一旦因“窗口激活/Tab”拿到焦点就会**自动全选**，
-        // popup 一弹出文字全蓝了，看着就像“单击就选中了文字”。
-        // 靠鼠标点进去的焦点不会全选（只放光标），所以手动划选复制不受影响。
         var detail = new TextBox
         {
             Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None,
@@ -101,7 +78,7 @@ public class CardPreviewForm : Form
             Text = string.Join(Environment.NewLine, rows.Select(r => $"{r.k}  {r.v}")),
         };
         _detail = detail;
-        detail.GotFocus += (_, _) => ClearAutoSelection();     // 任何途径拿到焦点都不开局全选
+        detail.GotFocus += (_, _) => ClearAutoSelection();
         var lineCount = Math.Max(1, detail.Text.Split('\n').Length);
         detail.Height = Math.Min(300, 6 + lineCount * 19);
 
@@ -114,7 +91,6 @@ public class CardPreviewForm : Form
 
         int total = head.Height + detailHost.Height;
 
-        // ===== 合并的 fail 项 =====
         var merged = mergedItems?.ToList() ?? new List<(string item, int count)>();
         if (merged.Count > 0)
         {
@@ -123,7 +99,6 @@ public class CardPreviewForm : Form
                 Dock = DockStyle.Top, Height = 24, Padding = new Padding(12, 2, 12, 0),
                 Text = merged.Count > 1 ? $"合并的 fail 项（{merged.Count} 项）" : "来源 fail 项",
                 Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
-                // v3.23.0 修复：原 FromArgb(242,242,242) 近白字落在白底 Surface 上——白字白底看不清（暗黑同样适配）
                 ForeColor = Theme.TextSub,
             };
             var list = new ListView
@@ -131,7 +106,7 @@ public class CardPreviewForm : Form
                 Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
                 GridLines = false, HeaderStyle = ColumnHeaderStyle.Nonclickable,
                 BorderStyle = BorderStyle.FixedSingle, Font = new Font("Microsoft YaHei UI", 8.5F),
-                TabStop = false,                       // 同理：不抢焦点、不自动高亮首行
+                TabStop = false,
             };
             list.Columns.Add("次数", 52, HorizontalAlignment.Center);
             list.Columns.Add("原始测试项", 372);
@@ -154,7 +129,6 @@ public class CardPreviewForm : Form
             total += mergedTitle.Height + mergedHost.Height;
         }
 
-        // ===== 底部提示 =====
         var foot = new Label
         {
             Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(12, 4, 12, 4),
@@ -168,11 +142,10 @@ public class CardPreviewForm : Form
         Height = Math.Min(620, total);
 
         Deactivate += (_, _) => Close();
-        Activated += (_, _) => ClearAutoSelection();       // 激活时 WinForms 可能又把焦点塞给输入框
+        Activated += (_, _) => ClearAutoSelection();
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
     }
 
-    /// <summary>自检用：明细区当前选中了多少字符（刚弹出时必须是 0）。</summary>
     internal int DetailSelectionLength => _detail.SelectionLength;
 
     protected override void OnShown(EventArgs e)
@@ -181,19 +154,17 @@ public class CardPreviewForm : Form
         ClearAutoSelection();
     }
 
-    /// <summary>清掉“因激活而全选”的选区，并把焦点从输入控件上拿走。</summary>
     private void ClearAutoSelection()
     {
         try
         {
             _detail.SelectionStart = 0;
             _detail.SelectionLength = 0;
-            if (ActiveControl != null) ActiveControl = null;   // 焦点给窗口本身，Esc 仍然能关
+            if (ActiveControl != null) ActiveControl = null;
         }
         catch { }
     }
 
-    /// <summary>贴着卡片右侧弹出；越界就翻到左侧 / 贴边，保证完整可见。</summary>
     private void PositionNear(Control anchor)
     {
         var screen = Screen.FromControl(anchor).WorkingArea;
@@ -208,7 +179,6 @@ public class CardPreviewForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        // 无边框窗口自己画一圈边，否则白底会和看板糊在一起
         using var pen = new Pen(_accent);
         e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
     }

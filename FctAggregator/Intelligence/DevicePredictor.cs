@@ -2,21 +2,19 @@
 
 namespace FctAggregator;
 
-/// <summary>域4 设备智能 — 异常预测（v3.19.0 A）：基于 device_samples 7 天滑动窗口。</summary>
 public static class DevicePredictor
 {
     public sealed class PredictItem
     {
         public string Machine = "";
-        public string Metric = ""; // cpu / disk / offline
-        public string Level = "";  // warn / critical
+        public string Metric = "";
+        public string Level = "";
         public double Current;
         public double Predicted;
         public int? DaysToExhaust;
         public string Detail = "";
     }
 
-    /// <summary>预测全部机台（CPU 趋势 / 磁盘耗尽 / 离线抖动）。</summary>
     public static List<PredictItem> Predict(AggDatabase db, int windowDays = 7)
     {
         var list = new List<PredictItem>();
@@ -29,7 +27,6 @@ public static class DevicePredictor
             {
                 var samples = db.QueryDeviceSamples(info.Machine, 2000, from, null);
                 if (samples.Count < 3) continue;
-                // CPU 线性趋势：按时间排序 samples 已升序
                 var cpuTrend = PredictCpu(samples, info.CpuUsage);
                 if (cpuTrend != null) { cpuTrend.Machine = info.Machine; list.Add(cpuTrend); }
                 var diskPred = PredictDisk(samples, info.DiskFreeGb);
@@ -43,7 +40,6 @@ public static class DevicePredictor
 
     private static PredictItem? PredictCpu(List<DeviceSampleRow> samples, double currentCpu)
     {
-        // 线性回归 slope per day
         var n = samples.Count;
         var xs = new double[n];
         var ys = new double[n];
@@ -55,7 +51,7 @@ public static class DevicePredictor
             ys[i] = samples[i].CpuUsage;
         }
         var slope = LinearSlope(xs, ys);
-        if (double.IsNaN(slope) || slope <= 0.1) return null; // 每天增长 <0.2% 忽略
+        if (double.IsNaN(slope) || slope <= 0.1) return null;
         var predicted3d = currentCpu + slope * 3;
         if (predicted3d < 90) return null;
         var level = predicted3d >= 95 ? "critical" : "warn";
@@ -73,7 +69,7 @@ public static class DevicePredictor
         var t1 = TryParseTime(samples.Last().Ts);
         var days = (t1 - t0).TotalDays;
         if (days < 1) days = 1;
-        var consumed = first - last; // 正数表示在消耗
+        var consumed = first - last;
         if (consumed <= 0.05) return null;
         var perDay = consumed / days;
         if (perDay <= 0) return null;
@@ -85,12 +81,10 @@ public static class DevicePredictor
 
     private static PredictItem? PredictOffline(List<DeviceSampleRow> samples, string lastSeen)
     {
-        // 离线抖动：最近样本心跳间隔方差大或 lastSeen 超 90s
         if (string.IsNullOrEmpty(lastSeen) || !DateTime.TryParse(lastSeen, out var lastDt)) return null;
         var gapSec = (DateTime.Now - lastDt).TotalSeconds;
         if (gapSec > 300) return new PredictItem{ Metric="offline", Level="critical", Current=gapSec, Predicted=gapSec, Detail=$"离线 {gapSec:0}s 未上报"};
         if (gapSec > 90) return new PredictItem{ Metric="offline", Level="warn", Current=gapSec, Predicted=gapSec, Detail=$"心跳延迟 {gapSec:0}s"};
-        // 抖动：计算采样间隔 std
         if (samples.Count >= 5)
         {
             var intervals = new List<double>();
@@ -106,11 +100,6 @@ public static class DevicePredictor
         return null;
     }
 
-    /// <summary>
-    /// 通用线性趋势斜率（每天变化量；规格 04 设备健康分用，复用 <see cref="LinearSlope"/>）。
-    /// metric = "cpu" → CPU% 每日变化；"disk" → 剩余 GB 每日变化（负数=在消耗）。
-    /// 样本 &lt; 2 或无法解析时间返回 NaN。
-    /// </summary>
     public static double TrendPerDay(List<DeviceSampleRow> samples, string metric)
     {
         var n = samples.Count;
@@ -146,7 +135,6 @@ public static class DevicePredictor
         return DateTime.Now;
     }
 
-    /// <summary>落库预测日志（供 /api/devices/predict 历史查询）。</summary>
     public static void LogPredictions(AggDatabase db, List<PredictItem> items)
     {
         foreach(var it in items)

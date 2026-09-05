@@ -3,41 +3,29 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 聚合端飞书告警/汇总服务（Phase 3）。
-///
-/// 两类推送（webhook 未配置则全部跳过，纯增强不阻塞聚合）：
-///   1. 离线告警：机台在线→离线翻转立即推卡片（红 header「机台离线」+ 机台名 + 最后确认时间）；
-///   2. 定时汇总：每 agg_summary_minutes（默认 60）分钟推一次各机台 FAIL 总数/在线状态汇总卡片。
-///
-/// 线程模型：<see cref="Start"/> 起一个后台线程做定时汇总；MachineOffline 事件由
-/// AggWatcher 心跳线程回调（事件内做异步推送，不阻塞心跳轮询）。
-/// 幂等/防抖：同一机台 10 分钟内只报一次离线（重复翻转不刷屏）；汇总按周期整点近似。
-/// </summary>
 public class AggAlertService : IDisposable
 {
-    private const int OfflineMinIntervalSec = 600;   // 同一机台两次离线告警最小间隔（防抖）
-    private const int OnlineMinIntervalSec = 600;    // 同一机台两次上线通知最小间隔（防抖，与离线对称）
+    private const int OfflineMinIntervalSec = 600;
+    private const int OnlineMinIntervalSec = 600;
 
-    private readonly MeshReceiver? _receiver;   // v3.5.0 去中心化告警源（非 null 时优先）
-#pragma warning disable CS0618   // 遗留中心模式源（仅旧 GUI/兼容路径构造）
+    private readonly MeshReceiver? _receiver;
+#pragma warning disable CS0618
     private readonly AggWatcher? _watcher;
 #pragma warning restore CS0618
     private readonly AggDatabase _db;
     private readonly string _webhook;
     private readonly int _summaryMinutes;
-    private readonly Dictionary<string, long> _lastOfflineAt = new();   // 机台 -> 上次离线告警 TickCount
-    private readonly Dictionary<string, long> _lastOnlineAt = new();    // 机台 -> 上次上线通知 TickCount
-    private readonly Dictionary<string, long> _lastDiskAlert = new();   // P6 设备磁盘告警防抖
-    private readonly Dictionary<string, long> _lastCpuAlert = new();    // P6 CPU 告警防抖
-    private readonly Dictionary<string, long> _lastDeviceOffline = new(); // P6 设备离线告警防抖
-    private readonly Dictionary<string, long> _lastYieldAlert = new(); // P8 良率跌破告警防抖
+    private readonly Dictionary<string, long> _lastOfflineAt = new();
+    private readonly Dictionary<string, long> _lastOnlineAt = new();
+    private readonly Dictionary<string, long> _lastDiskAlert = new();
+    private readonly Dictionary<string, long> _lastCpuAlert = new();
+    private readonly Dictionary<string, long> _lastDeviceOffline = new();
+    private readonly Dictionary<string, long> _lastYieldAlert = new();
     private Thread? _thread;
     private Thread? _deviceThread;
     private volatile bool _stopping;
     private volatile bool _started;
 
-    /// <summary>v3.5.0 去中心化：告警源为本机 MeshReceiver（peer 离线/上线事件同源）。</summary>
     public AggAlertService(MeshReceiver receiver, AggDatabase db, string webhook, int summaryMinutes)
     {
         _receiver = receiver;
@@ -46,7 +34,6 @@ public class AggAlertService : IDisposable
         _summaryMinutes = Math.Max(1, summaryMinutes);
     }
 
-    /// <summary>遗留中心模式源（v3.5.0 前，仅旧 AggCenterForm GUI 兼容路径使用）。</summary>
 #pragma warning disable CS0618
     public AggAlertService(AggWatcher watcher, AggDatabase db, string webhook, int summaryMinutes)
     {
@@ -57,7 +44,6 @@ public class AggAlertService : IDisposable
     }
 #pragma warning restore CS0618
 
-    /// <summary>告警源机台在线状态（去中心化：MeshReceiver peer 视图；旧模式：AggWatcher 机台视图）。</summary>
     private List<PeerStatusDto> GetMachines()
     {
         if (_receiver != null) return _receiver.GetPeerStatuses();
@@ -71,12 +57,8 @@ public class AggAlertService : IDisposable
 #pragma warning restore CS0618
     }
 
-    /// <summary>是否配置了飞书 webhook（未配置则 Start 只挂事件不推，汇总线程不启动）。</summary>
     public bool Enabled => !string.IsNullOrWhiteSpace(_webhook);
 
-    /// <summary>启动：订阅离线/上线事件 + 起汇总线程（webhook 未配置时只记录日志不启动）。
-    /// 防抖预热：启动瞬间已在离线/在线的机台直接记入防抖表，避免服务重启后
-    /// 对「本来就离线/在线」的机台重复告警（v3.4.11 连通性加固）。</summary>
     public void Start()
     {
         if (_started) return;
@@ -87,7 +69,6 @@ public class AggAlertService : IDisposable
             return;
         }
         SubscribeSourceEvents();
-        // 防抖预热：现有状态不告警（离线机台不重复报、在线机台不报上线）
         try
         {
             var now = Environment.TickCount64;
@@ -100,13 +81,11 @@ public class AggAlertService : IDisposable
         catch (Exception ex) { Logger.Warning($"[聚合告警] 防抖预热失败: {ex.Message}"); }
         _thread = new Thread(SummaryLoop) { IsBackground = true, Name = "agg-alert" };
         _thread.Start();
-        // P6 设备告警轮询（磁盘/CPU/离线，每 60s 一次，复用同 webhook）
         _deviceThread = new Thread(DeviceAlertLoop) { IsBackground = true, Name = "agg-device-alert" };
         _deviceThread.Start();
         Logger.Info($"[聚合告警] 已启用: 离线告警+上线通知(同机台{OfflineMinIntervalSec / 60}分钟防抖) + 定时汇总(每{_summaryMinutes}分钟) + 设备告警(磁盘/CPU/离线) + 良率跌破(阈值 {AppConfig.Instance.YieldAlertYieldPct}% {(AppConfig.Instance.YieldAlertEnabled ? "启用" : "关闭")})");
     }
 
-    /// <summary>停止：退订事件 + 停后台线程。</summary>
     public void Stop()
     {
         if (!_started) return;
@@ -119,7 +98,6 @@ public class AggAlertService : IDisposable
 
     public void Dispose() => Stop();
 
-    /// <summary>订阅告警源事件（按构造源分发）。</summary>
     private void SubscribeSourceEvents()
     {
         if (_receiver != null)
@@ -136,7 +114,6 @@ public class AggAlertService : IDisposable
 #pragma warning restore CS0618
     }
 
-    /// <summary>退订告警源事件。</summary>
     private void UnsubscribeSourceEvents()
     {
         if (_receiver != null)
@@ -153,15 +130,13 @@ public class AggAlertService : IDisposable
 #pragma warning restore CS0618
     }
 
-    // ==================== 离线告警 ====================
-
     private void OnMachineOffline(string machine, DateTime lastSeen)
     {
         var now = Environment.TickCount64;
         lock (_lastOfflineAt)
         {
             if (_lastOfflineAt.TryGetValue(machine, out var last) && now - last < OfflineMinIntervalSec * 1000L)
-                return;   // 防抖：短时间内同机台重复翻转不刷屏
+                return;
             _lastOfflineAt[machine] = now;
         }
         Logger.Warning($"[聚合告警] 机台离线: {machine}（最后确认 {lastSeen:yyyy-MM-dd HH:mm:ss}）");
@@ -180,15 +155,13 @@ public class AggAlertService : IDisposable
         await PostCard(FeishuCardV2.Root($"机台离线 · {machine}", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
-    // ==================== 恢复上线通知（v3.4.11 连通性加固） ====================
-
     private void OnMachineOnline(string machine, DateTime lastSeen)
     {
         var now = Environment.TickCount64;
         lock (_lastOnlineAt)
         {
             if (_lastOnlineAt.TryGetValue(machine, out var last) && now - last < OnlineMinIntervalSec * 1000L)
-                return;   // 防抖：短时间重复翻转不刷屏
+                return;
             _lastOnlineAt[machine] = now;
         }
         Logger.Info($"[聚合告警] 机台恢复上线: {machine}");
@@ -207,11 +180,8 @@ public class AggAlertService : IDisposable
         await PostCard(FeishuCardV2.Root($"机台恢复上线 · {machine}", "green", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
-    // ==================== 定时汇总 ====================
-
     private void SummaryLoop()
     {
-        // 启动后等一个周期再首次推（避免服务刚起就刷屏）
         var waitMs = _summaryMinutes * 60_000;
         while (!_stopping)
         {
@@ -247,7 +217,6 @@ public class AggAlertService : IDisposable
 
         var elements = new List<object>
         {
-            // 四个统计字段，2×2 等宽布局（column_set 每行两列）
             FeishuCardV2.FieldRow(("机台总数", machines.Count.ToString()), ("在线", $"{online} / {machines.Count}")),
             FeishuCardV2.FieldRow(("累计 FAIL", totalFails < 0 ? "—" : totalFails.ToString()), ("离线", (machines.Count - online).ToString())),
         };
@@ -272,11 +241,8 @@ public class AggAlertService : IDisposable
         await PostCard(FeishuCardV2.Root($"Argus 聚合汇总 · {DateTime.Now:MM-dd HH:mm}", "blue", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
-    // ==================== P6 设备告警（磁盘/CPU/离线，进飞书，复用同 webhook） ====================
-
     private void DeviceAlertLoop()
     {
-        // 启动后等 30s 再首次扫描（等首批 device_info 上报完成）
         for (int i = 0; i < 30 && !_stopping; i++) try { Thread.Sleep(1000); } catch { }
         while (!_stopping)
         {
@@ -288,19 +254,16 @@ public class AggAlertService : IDisposable
         }
     }
 
-    /// <summary>P8 告警规则中心：良率跌破检测（基于 yld_daily 今日汇总，阈值来自 Config.yield_alert_*）。</summary>
     private void CheckYieldAlerts()
     {
         if (!Enabled) return;
         var cfg = AppConfig.Instance;
         if (!cfg.YieldAlertEnabled || cfg.YieldAlertYieldPct <= 0) return;
         var thr = cfg.YieldAlertYieldPct;
-        // 取今日各机台良率（yld_daily 按 (machine, test_date) 幂等，今日统计已在心跳 30s 上报）
         var today = DateTime.Now.ToString("yyyyMMdd");
         List<AggDatabase.YldDailyRow> rows;
         try { rows = _db.QueryDailyStats(dateFromYmd: today, dateToYmd: today); } catch { return; }
         if (rows.Count == 0) return;
-        // 按机台聚合（同一机台今日可能多行？实际上 machine+date 唯一，这里直接取）
         var byMachine = new Dictionary<string, (int total, int pass)>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows)
         {
@@ -331,7 +294,6 @@ public class AggAlertService : IDisposable
         }
     }
 
-    /// <summary>统一规则快照（供 /api/alerts/rules 可观测）：磁盘/CPU/离线/良率四规则阈值与开关。</summary>
     public static object GetAlertRulesSnapshot()
     {
         var cfg = AppConfig.Instance;
@@ -359,7 +321,6 @@ public class AggAlertService : IDisposable
         var now = DateTime.Now;
         foreach (var dev in devices)
         {
-            // 离线判定：last_seen 超阈值（与 MeshReceiver 90s 心跳超时独立，设备阈值可配 5 分钟）
             if (offlineMin > 0 && !string.IsNullOrEmpty(dev.LastSeen))
             {
                 if (DateTime.TryParse(dev.LastSeen, out var last))
@@ -380,7 +341,6 @@ public class AggAlertService : IDisposable
                     }
                 }
             }
-            // 磁盘告警：剩余 < 阈值
             if (diskThr > 0 && dev.DiskFreeGb > 0 && dev.DiskFreeGb < diskThr)
             {
                 var key = dev.Machine;
@@ -398,7 +358,6 @@ public class AggAlertService : IDisposable
                      _ = SendDeviceDiskAlertAsync(dev, diskThr);
                 }
             }
-            // CPU 告警：当前采样 > 阈值（0=关闭）
             if (cpuThr > 0 && dev.CpuUsage >= cpuThr)
             {
                 var key = dev.Machine;
@@ -471,11 +430,8 @@ public class AggAlertService : IDisposable
         await PostCard(FeishuCardV2.Root($"良率跌破 · {machine}", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey));
     }
 
-    // ==================== 飞书卡片发送（复用机台端卡片样式约定） ====================
-
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
-    /// <summary>卡片 POST（无重试——告警是尽力而为，失败下轮汇总还会带状态；返回是否成功）。</summary>
     private async Task<bool> PostCard(object card)
     {
         if (!Enabled) return false;

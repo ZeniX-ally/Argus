@@ -54,7 +54,6 @@ public class FailItemPickerForm : Form
 
 	public List<string> SelectedItems { get; private set; } = new List<string>();
 
-
 	private int ScanDays => _engine.Config.TodoScanDays;
 
 	public FailItemPickerForm(Engine engine)
@@ -453,16 +452,16 @@ public class FailItemPickerForm : Form
 				ListViewItem.ListViewSubItemCollection subItems = listViewItem.SubItems;
 				subItems.Add(item.Models.Count switch
 				{
-					0 => "—", 
-					1 => item.Models.First(), 
-					_ => $"{item.Models.First()} 等 {item.Models.Count} 个", 
+					0 => "—",
+					1 => item.Models.First(),
+					_ => $"{item.Models.First()} 等 {item.Models.Count} 个",
 				});
 				subItems = listViewItem.SubItems;
 				subItems.Add(item.Stations.Count switch
 				{
-					0 => "—", 
-					1 => item.Stations.First(), 
-					_ => $"{item.Stations.Count} 台", 
+					0 => "—",
+					1 => item.Stations.First(),
+					_ => $"{item.Stations.Count} 台",
 				});
 				_list.Items.Add(listViewItem);
 			}

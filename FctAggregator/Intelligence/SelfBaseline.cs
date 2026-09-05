@@ -3,16 +3,10 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 时段段（规格 05 §2.2：四段制，不做 24 小时分桶）。
-/// 夜 00-06 / 早 06-12 / 午 12-18 / 晚 18-24 —— 工程依据：FCT 产线测试集中在白班，
-/// 24 小时分桶夜间桶样本过稀永远冷启动；四段保证每桶可学习。
-/// </summary>
 public static class TimeSlot
 {
     public const int Count = 4;
 
-    /// <summary>小时 → 时段段号 0..3（越界钳制）。</summary>
     public static int SlotOfHour(int hour) => Math.Clamp(hour / 6, 0, Count - 1);
 
     public static string NameOf(int slot) => slot switch
@@ -24,22 +18,16 @@ public static class TimeSlot
     };
 }
 
-/// <summary>一个「型号 × 时段段」基线桶的滚动统计（窗口内逐日取值再聚合）。</summary>
 public sealed class BaselineBucketStat
 {
     public string Model { get; set; } = "";
     public int Slot { get; set; }
-    /// <summary>窗口内有样本的天数。</summary>
     public int DayCount { get; set; }
-    /// <summary>窗口内 SN 去重后的总件数（冷启动判定依据）。</summary>
     public int SampleCount { get; set; }
-    /// <summary>日良率均值 %（pass/(pass+fail)，中断不计入良率口径）。</summary>
     public double YieldMean { get; set; }
-    /// <summary>日良率总体标准差。</summary>
     public double YieldSigma { get; set; }
 }
 
-/// <summary>一个时段段的全局（跨型号）日中断率基线——中断独立通道，不混入良率学习。</summary>
 public sealed class SlotInterruptStat
 {
     public int Slot { get; set; }
@@ -49,10 +37,8 @@ public sealed class SlotInterruptStat
     public double RateSigma { get; set; }
 }
 
-/// <summary>基线预警条目（只标记不强动作；每条必带期望区间与实际值）。</summary>
 public sealed class BaselineAlert
 {
-    /// <summary>yield_drop = 良率跌破基线；interrupt_hotzone = 中断率升破基线（时段热区）。</summary>
     public string Kind { get; set; } = "";
     public string Date { get; set; } = "";
     public string Model { get; set; } = "";
@@ -65,7 +51,6 @@ public sealed class BaselineAlert
     public string Message { get; set; } = "";
 }
 
-/// <summary>基线状态快照（落 app_meta 的 learn_baseline_state，设置页可查可重置）。</summary>
 public sealed class BaselineState
 {
     public string ComputedAt { get; set; } = "";
@@ -87,22 +72,10 @@ public sealed class BaselineState
     }
 }
 
-/// <summary>
-/// 规格 05 S3：机台端滚动基线核心（纯函数，全部可测）。
-/// 口径（依据 G49 spec 与规格决策）：
-/// · 分桶 = 型号 × 时段段（四段），滚动 learn_baseline_window_days 天窗口；
-/// · SN 去重：同 (日, 桶, SN) 多次记录取最新一条的结果（复测非独立样本）；
-/// · 良率 = pass/(pass+fail)，INTERRUPTED 独立通道不混入；
-/// · 预警 = 今日良率跌破 mean−k·σ（只报跌不报涨）/ 今日中断率升破 mean+k·σ（时段热区）；
-/// · σ 下限 1.0 个百分点（零 σ 防误报，借鉴规格 03 yield_seasonality_min_sigma 经验）；
-/// · 冷启动：桶窗口样本 &lt; learn_baseline_min_samples 不产出预警（宁缺勿滥）。
-/// </summary>
 public static class SelfBaseline
 {
-    /// <summary>σ 有效下限（百分点）。窗口内日良率完全一致（σ=0）时防止单件波动即触发预警。</summary>
     public const double SigmaFloor = 1.0;
 
-    /// <summary>解析 test_date 的两种落库格式（生产 yyyyMMdd / 自检与部分链路 yyyy-MM-dd）。失败返回 null。</summary>
     public static DateTime? ParseYmd(string? s)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
@@ -112,10 +85,6 @@ public static class SelfBaseline
         return null;
     }
 
-    /// <summary>
-    /// SN 去重：同 (日, 时段段, 型号, SN) 只保留 id 最大（最新）的一条结果。
-    /// SN 为空的记录各自独立（无法归属同一块板，不参与去重合并）。
-    /// </summary>
     public static List<BaselineSourceRecord> DedupBySn(IEnumerable<BaselineSourceRecord> records)
     {
         var deduped = new List<BaselineSourceRecord>();
@@ -135,10 +104,6 @@ public static class SelfBaseline
         return deduped;
     }
 
-    /// <summary>
-    /// 一步计算：全窗口源记录 → 基线快照（分桶统计 + 今日预警）。
-    /// baselineDays = 窗口内除今日外的日期；今日记录仅用于评估不进基线。
-    /// </summary>
     public static BaselineState Compute(IEnumerable<BaselineSourceRecord> records, AppConfig cfg, DateTime? now = null)
     {
         var today = (now ?? DateTime.Now).Date;
@@ -167,7 +132,6 @@ public static class SelfBaseline
         };
     }
 
-    /// <summary>构建「型号 × 时段段」基线桶（逐日良率取均值与总体标准差）。</summary>
     public static List<BaselineBucketStat> BuildBuckets(List<BaselineSourceRecord> baselineRecs)
     {
         var buckets = new List<BaselineBucketStat>();
@@ -204,7 +168,6 @@ public static class SelfBaseline
         return buckets;
     }
 
-    /// <summary>构建时段段全局（跨型号）日中断率基线。</summary>
     public static List<SlotInterruptStat> BuildSlotInterruptBaseline(List<BaselineSourceRecord> baselineRecs)
     {
         var stats = new List<SlotInterruptStat>();
@@ -233,10 +196,6 @@ public static class SelfBaseline
         return stats;
     }
 
-    /// <summary>
-    /// 评估今日：良率跌破 mean−k·σ 预警（只报跌）；中断率升破 mean+k·σ 时段热区预警（只报升）。
-    /// 冷启动桶（窗口样本 &lt; minSamples）不产出预警。
-    /// </summary>
     public static List<BaselineAlert> EvaluateToday(
         List<BaselineSourceRecord> todayRecs,
         List<BaselineBucketStat> buckets,
@@ -249,7 +208,6 @@ public static class SelfBaseline
         var dateYmd = today.ToString("yyyy-MM-dd");
         var bucketMap = buckets.ToDictionary(b => (b.Model, b.Slot));
 
-        // 1) 型号 × 时段段 良率跌破
         foreach (var grp in todayRecs.GroupBy(r => (r.Model ?? "", TimeSlot.SlotOfHour(r.Hour))))
         {
             int pass = 0, fail = 0, intr = 0;
@@ -259,11 +217,11 @@ public static class SelfBaseline
                 else if (string.Equals(r.Result, "FAIL", StringComparison.OrdinalIgnoreCase)) fail++;
                 else intr++;
             }
-            if (pass + fail <= 0) continue;   // 纯中断日不评良率（走中断通道）
+            if (pass + fail <= 0) continue;
             double yieldPct = (double)pass / (pass + fail) * 100.0;
 
-            if (!bucketMap.TryGetValue(grp.Key, out var b)) continue;        // 无基线（新型号/新时段）不预警
-            if (b.SampleCount < minSamples) continue;                        // 冷启动宁缺勿滥
+            if (!bucketMap.TryGetValue(grp.Key, out var b)) continue;
+            if (b.SampleCount < minSamples) continue;
             double effSigma = Math.Max(b.YieldSigma, SigmaFloor);
             double low = b.YieldMean - sigmaK * effSigma;
             if (yieldPct < low)
@@ -286,7 +244,6 @@ public static class SelfBaseline
             }
         }
 
-        // 2) 时段段全局中断率热区
         foreach (var grp in todayRecs.GroupBy(r => TimeSlot.SlotOfHour(r.Hour)))
         {
             int total = grp.Count();
@@ -297,7 +254,7 @@ public static class SelfBaseline
             double rate = (double)intr / total * 100.0;
 
             var s = slotInterrupts.FirstOrDefault(x => x.Slot == grp.Key);
-            if (s == null || s.SampleCount < minSamples) continue;           // 冷启动
+            if (s == null || s.SampleCount < minSamples) continue;
             double effSigma = Math.Max(s.RateSigma, SigmaFloor);
             double high = s.RateMean + sigmaK * effSigma;
             if (rate > high)
@@ -325,7 +282,6 @@ public static class SelfBaseline
 
     private static double Mean(List<double> xs) => xs.Count == 0 ? 0 : xs.Average();
 
-    /// <summary>总体标准差（÷N）；空/单点返回 0（评估侧用 SigmaFloor 兜底）。</summary>
     private static double Std(List<double> xs)
     {
         if (xs.Count <= 1) return 0;

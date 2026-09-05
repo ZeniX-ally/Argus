@@ -1,28 +1,7 @@
 ﻿#requires -Version 7
-<#
-  升级演练：证明「更新包覆盖上去不会动现场的配置与历史数据」。
-
-  流程（全在临时目录，绝不碰真实机台/仓库数据）：
-    1. 解压一个**旧版本完整包**当作「机台现状」，改好 config.json（写入可识别的自定义值）
-    2. 启动旧版 -> 丢 2 条 FAIL 让它入库 -> 关掉
-    3. 再往库里插 2 条维修记录（模拟现场攒的历史数据）
-    4. 记录 config.json 的 SHA256 与各表行数
-    5. 用**更新包**整包覆盖
-    6. 启动新版（会跑数据库迁移与待办同步）-> 关掉
-    7. 校验：config.json 一字节没动、旧数据一行没少、新表已建好
-
-  用法：
-    .\tools\upgrade_drill.ps1                       # 默认从 v2.8.0 升到当前更新包
-    .\tools\upgrade_drill.ps1 -OldZip <旧完整包.zip>
-#>
 param(
-    # 默认拿 v2.4.0 作基线：它还没有 todo_items / app_meta 两张表，
-    # 能真正考到「升级时自动建新表且不动旧数据」这条路径。
     [string]$OldZip = "$PSScriptRoot\..\..\Releases\aggregator\FCT-Aggregator-v2.4.0.zip",
     [string]$NewUpdateZip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.2-update.zip",
-    # 默认 skip_historical_scan=true（演练跑得快）。
-    # ⚠ 加上 -FullScan 则模拟现场默认配置（false）：只有这条路径会在启动时
-    #   把历史不良并入待办登记表（SyncTodos 挂在「历史扇描后」）。
     [switch]$FullScan,
     [switch]$KeepTemp
 )
@@ -43,12 +22,12 @@ function Start-AndWait([string]$exe, [int]$sec) {
     Start-Sleep -Seconds $sec
     $p.Refresh()
     if (-not $p.HasExited) { $p | Stop-Process -Force }
-    Start-Sleep -Milliseconds 1200      # 等文件句柄释放，否则覆盖会失败
+    Start-Sleep -Milliseconds 1200
     return $p
 }
 
 $tmp = Join-Path $env:TEMP "fct_drill_$(Get-Random -Maximum 999999)"
-$station = Join-Path $tmp 'station'          # 模拟机台程序目录
+$station = Join-Path $tmp 'station'
 New-Item -ItemType Directory -Path $station -Force | Out-Null
 
 Write-Host "===== 1. 铺「机台现状」：$([IO.Path]::GetFileName($OldZip)) =====" -ForegroundColor Cyan
@@ -65,20 +44,12 @@ $cfg.results_root = $results
 $cfg.webhook_url = ''
 $cfg.station_id = 'FCT9'
 $cfg.skip_historical_scan = (-not $FullScan)
-# 写入两个「现场特有」的值，升级后必须原样保留
 $cfg | Add-Member -NotePropertyName todo_scan_days -NotePropertyValue 45 -Force
 $cfg | Add-Member -NotePropertyName '_现场备注' -NotePropertyValue '这行是现场加的，升级后必须还在' -Force
 $cfg | ConvertTo-Json -Depth 6 | Set-Content $cfgPath -Encoding utf8
 $cfgHashBefore = (Get-FileHash $cfgPath -Algorithm SHA256).Hash
 Write-Host "  config.json SHA256(升级前) = $($cfgHashBefore.Substring(0,16))..."
 
-<#
-  ⚠ v3.0.1 起 AssemblyName 由 FCT-Aggregator 改成 Argus，可执行文件因此改名。
-    旧完整包（v2.x / v3.0.0）里是 FCT-Aggregator.exe，必须按老包自己的名字启动，
-    否则这里会 Get-Item 报「路径不存在」（曾导致本演练在 v2.x 基线上完全跑不起来）。
-    覆盖之后新版固定叫 Argus.exe —— 旧 exe **不会被更新包删掉**，
-    所以「启动新版」必须显式用 $newExe，不能沿用 $oldExe（那是残留的旧程序）。
-#>
 $oldExe = Join-Path $station 'Argus.exe'
 if (-not (Test-Path $oldExe)) {
     $oldExe = Join-Path $station 'FCT-Aggregator.exe'

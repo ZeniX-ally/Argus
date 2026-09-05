@@ -1,16 +1,5 @@
 namespace FctAggregator;
 
-/// <summary>
-/// FAIL 记录页（v3.1.0.3：树形 + 表格双视图）。
-/// <code>
-/// ┌ [刷新] [树形|表格] 共 N 条 FAIL · M 个失败项  [搜索框.......] 双击 SN 查看 XML ┐
-/// ├──────────────────────────────────────────────────────────────────────────┤
-/// │ 表格视图：失败项（按次数倒序、高频标红） | SN | 型号 | 时间                 │
-/// │ 树形视图：▾ 失败项 [N 次] → SN · 型号 · 时间                                │
-/// └──────────────────────────────────────────────────────────────────────────┘
-/// </code>
-/// 两种视图共用：搜索即时过滤（失败项/SN/型号）、双击打开 XML 报告。
-/// </summary>
 public sealed class FailListPanel : Panel
 {
     private readonly Engine _engine;
@@ -27,16 +16,13 @@ public sealed class FailListPanel : Panel
     private bool SnMode => (_sort.SelectedItem as string) == SortSn;
     private bool TimeMode => (_sort.SelectedItem as string) == SortTime;
 
-    /// <summary>最近一次加载的 FAIL 记录（过滤时重建视图用）。</summary>
     private List<FailRecord> _all = new();
 
-    /// <summary>按失败项聚合后的分组（按次数倒序）。</summary>
     private List<GroupData> _groups = new();
 
-    /// <summary>按 SN 聚合后的分组（按最新时间倒序）。</summary>
     private List<SnGroupData> _snGroups = new();
 
-    private bool _treeMode = false;   // 默认表格视图（横向规范列对齐）
+    private bool _treeMode = false;
 
     private sealed class GroupData
     {
@@ -61,27 +47,23 @@ public sealed class FailListPanel : Panel
         BuildUi();
     }
 
-    // =================================================================
-    //  界面
-    // =================================================================
     private void BuildUi()
     {
         Padding = new Padding(Theme.Gap);
         BackColor = Theme.Bg;
 
-        // ---- 工具栏：TableLayoutPanel 横向规范各元素位置 ----
         var bar = new TableLayoutPanel
         {
             Dock = DockStyle.Top, Height = 44, ColumnCount = 7, RowCount = 1,
             BackColor = Theme.Bg, Padding = new Padding(0, 7, 0, 5),
         };
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 0 刷新
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 1 树形
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 2 表格
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 3 计数
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); // 4 搜索框
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 5 提示
-        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 6 排序方式
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         var btnRefresh = Theme.MakeButton("刷新", 76);
         btnRefresh.Margin = new Padding(0, 0, 6, 0);
@@ -121,7 +103,6 @@ public sealed class FailListPanel : Panel
         };
         bar.Controls.Add(hint, 5, 0);
 
-        // ---- 排序方式: 按失败项分组(默认) / 按SN合并问题 / 按时间倒序 ----
         _sort = new ComboBox
         {
             Width = 140, DropDownStyle = ComboBoxStyle.DropDownList,
@@ -132,7 +113,6 @@ public sealed class FailListPanel : Panel
         _sort.SelectedIndexChanged += (_, _) => RebuildActiveView();
         bar.Controls.Add(_sort, 6, 0);
 
-        // ---- 表格视图（默认）----
         _grid = new DataGridView
         {
             Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false,
@@ -158,7 +138,6 @@ public sealed class FailListPanel : Panel
         _grid.Columns["time"]!.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
         _grid.CellDoubleClick += Grid_CellDoubleClick;
 
-        // ---- 树形视图 ----
         _tree = new TreeView
         {
             Dock = DockStyle.Fill, BackColor = Theme.Surface, Font = Theme.Body,
@@ -174,7 +153,6 @@ public sealed class FailListPanel : Panel
         _tree.Visible = false;
     }
 
-    /// <summary>切换 树形/表格 视图，并同步按钮高亮。</summary>
     private void SetView(bool tree)
     {
         if (_treeMode == tree) return;
@@ -188,9 +166,6 @@ public sealed class FailListPanel : Panel
         RebuildActiveView();
     }
 
-    // =================================================================
-    //  数据加载
-    // =================================================================
     public void Refresh2()
     {
         try
@@ -206,9 +181,6 @@ public sealed class FailListPanel : Panel
         }
     }
 
-    /// <summary>按失败项聚合：组内时间倒序，组按次数倒序。
-    /// ⚠ 排序必须用统一格式后的时间：TestDate 是 8 位数字、Timestamp 是 ISO，原始字符串比较会错乱。
-    /// 规格 05 S4：learn_fail_merge_enabled 开启时按 G49 字典/正则归并 key 聚合（仅展示层分组，记录数据不动）。</summary>
     private void ComputeGroups()
     {
         var cfg = AppConfig.Instance;
@@ -228,7 +200,6 @@ public sealed class FailListPanel : Panel
             .ToList();
     }
 
-    /// <summary>按 SN 聚合合并问题：组内记录按提取的最准时间倒序，组按最新测试时间倒序。</summary>
     private void ComputeSnGroups()
     {
         _snGroups = _all
@@ -253,7 +224,6 @@ public sealed class FailListPanel : Panel
             .ToList();
     }
 
-    /// <summary>时间列显示: 优先从 log 文件名提取真实测试时间(精确到秒 yyyy-MM-dd HH:mm:ss); 次选 batch 时间; 兜底目录日期。</summary>
     private static string DisplayTime(FailRecord f)
     {
         var fnTime = TimeUtil.ExtractFileNameTime(f.XmlPath);
@@ -275,9 +245,6 @@ public sealed class FailListPanel : Panel
         else BuildGrid();
     }
 
-    // =================================================================
-    //  表格视图
-    // =================================================================
     private void BuildGrid()
     {
         var keys = FilterKeys;
@@ -290,7 +257,6 @@ public sealed class FailListPanel : Panel
             int hitCount = 0;
             if (SnMode)
             {
-                // 按 SN 合并问题: 每一行展示一个 SN, 失败项列合并展示
                 int gi = 0;
                 foreach (var g in _snGroups)
                 {
@@ -320,7 +286,6 @@ public sealed class FailListPanel : Panel
             }
             else if (TimeMode)
             {
-                // 平铺: 全部记录按时间倒序(日期 → 时间)。失败项次数从分组取, 高频仍标色
                 var counts = _groups.ToDictionary(g => g.FailItem, g => g.Count, StringComparer.OrdinalIgnoreCase);
                 var rows = _all.OrderByDescending(r => TimeUtil.Normalize(r.TestDate))
                                .ThenByDescending(r => TimeUtil.Normalize(r.Timestamp))
@@ -335,7 +300,7 @@ public sealed class FailListPanel : Panel
             }
             else
             {
-                int gi = 0;   // 分组序号（隔组浅色底纹，视觉上区分区块）
+                int gi = 0;
                 foreach (var g in _groups)
                 {
                     bool grpHit = !hasFilter || Hit(g.FailItem);
@@ -357,12 +322,11 @@ public sealed class FailListPanel : Panel
         }
     }
 
-    /// <summary>表格加一行(两模式共用)。count = 该失败项总次数, gi = 分区序号(隔区浅色底纹)。</summary>
     private void AddGridRow(FailRecord f, int count, int gi)
     {
         var alt = gi % 2 == 0 ? Theme.Surface : Theme.AltRowA;
         var fg = count >= 5 ? Theme.Danger
-               : count >= 2 ? Theme.Warning          // 中频 → 中性灰（黑白红语义：只有告急才用红）
+               : count >= 2 ? Theme.Warning
                : Theme.TextMain;
         int i = _grid.Rows.Add();
         var r = _grid.Rows[i];
@@ -376,9 +340,6 @@ public sealed class FailListPanel : Panel
         r.Cells[3].Value = DisplayTime(f);
     }
 
-    // =================================================================
-    //  树形视图
-    // =================================================================
     private void BuildTree()
     {
         var keys = FilterKeys;
@@ -391,7 +352,6 @@ public sealed class FailListPanel : Panel
             int hitCount = 0;
             if (SnMode)
             {
-                // 按 SN 分组折叠: 每个 SN 为一个父节点, 展开后展示该 SN 具体每个失败问题明细
                 foreach (var g in _snGroups)
                 {
                     bool snHit = !hasFilter || Hit(g.Sn) || Hit(g.Model);
@@ -432,7 +392,6 @@ public sealed class FailListPanel : Panel
             }
             else if (TimeMode)
             {
-                // 按日期分组: 每天一个父节点, 组内按时间倒序
                 var rows = _all.OrderByDescending(r => TimeUtil.Normalize(r.TestDate))
                                .ThenByDescending(r => TimeUtil.Normalize(r.Timestamp))
                                .ToList();
@@ -509,9 +468,6 @@ public sealed class FailListPanel : Panel
         }
     }
 
-    // =================================================================
-    //  双击打开 XML
-    // =================================================================
     private void Grid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
     {
         if (e.RowIndex >= 0 && _grid.Rows[e.RowIndex].Tag is string p) OpenXml(p);
@@ -520,7 +476,7 @@ public sealed class FailListPanel : Panel
     private void Tree_DoubleClick(object? sender, EventArgs e)
     {
         if (_tree.SelectedNode?.Tag is not string tag) return;
-        if (!tag.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) return;  // 组节点 Tag=失败项名
+        if (!tag.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) return;
         OpenXml(tag);
     }
 

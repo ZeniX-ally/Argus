@@ -6,7 +6,7 @@ public class DeviceInfo
 {
     public string Name { get; set; } = "";
     public string Port { get; set; } = "";
-    public string Type { get; set; } = "com";  // com / usb
+    public string Type { get; set; } = "com";
     public bool Online { get; set; }
 }
 
@@ -21,10 +21,8 @@ public class FctIniData
     public List<(string Label, string File)> A2lFiles { get; set; } = new();
 }
 
-/// <summary>解析 FCT.ini + COM 口在线状态。</summary>
 public static class FctIni
 {
-    /// <summary>当前活动 COM 口(注册表 SERIALCOMM)。</summary>
     public static HashSet<string> GetActiveComPorts()
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -42,7 +40,6 @@ public static class FctIni
         return set;
     }
 
-    /// <summary>系统所有 COM 口(SerialPort.GetPortNames, 无额外依赖)。</summary>
     public static HashSet<string> ScanSystemComPorts()
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -53,13 +50,11 @@ public static class FctIni
         }
         catch
         {
-            // 回退到注册表活动口
             foreach (var p in GetActiveComPorts()) set.Add(p);
         }
         return set;
     }
 
-    /// <summary>常见的 FCT.ini 候选路径(config 配的找不到时依次尝试)。</summary>
     private static IEnumerable<string> CandidatePaths(string configured)
     {
         if (!string.IsNullOrWhiteSpace(configured)) yield return configured;
@@ -69,18 +64,9 @@ public static class FctIni
         yield return @"C:\FTS\FCT.ini";
     }
 
-    // ==================== 自动识别（v3.3.0：不依赖配置路径） ====================
-
     private static string? _autoFound;
     private static readonly object _autoLock = new();
 
-    /// <summary>
-    /// 自动识别电脑里的 FCT.ini（进程内缓存，只搜一次）：
-    ///   1) 常规已知路径快速命中
-    ///   2) 各固定盘符下的 FTS 安装树（深度 ≤ 8）
-    ///   3) 兜底：各盘浅层全盘搜索（深度 ≤ 5，跳过系统/用户目录）
-    /// 找不到返回 null。
-    /// </summary>
     public static string? AutoFindIni()
     {
         lock (_autoLock) if (_autoFound != null) return _autoFound;
@@ -110,7 +96,6 @@ public static class FctIni
         return _autoFound;
     }
 
-    /// <summary>在目录树里按文件名找 FCT.ini（递归，深度受限；跳过系统目录；权限异常吞掉）。</summary>
     public static string? SearchFtsTree(DirectoryInfo root, int maxDepth = 8)
     {
         if (!root.Exists || maxDepth <= 0) return null;
@@ -129,7 +114,6 @@ public static class FctIni
         return null;
     }
 
-    /// <summary>浅层全盘搜索（每层都找 FCT.ini，深度受限）。</summary>
     public static string? SearchShallow(DirectoryInfo root, int maxDepth)
     {
         if (!root.Exists || maxDepth <= 0) return null;
@@ -149,13 +133,11 @@ public static class FctIni
         return null;
     }
 
-    /// <summary>跳过系统/海量目录（全盘搜索的性能与安全边界）。</summary>
     private static bool SkipDir(string name) => name.ToLowerInvariant() is
         "windows" or "$recycle.bin" or "system volume information" or "programdata" or
         "users" or "appdata" or "documents and settings" or "recovery" or "perflogs" or
         ".git" or "node_modules" or "msys64" or "cygwin64" or "windows kits" or "windowsapps";
 
-    /// <summary>File.Exists 判存在（目录无权限时返回 false 不抛）。</summary>
     private static bool TryExists(string p, out string real)
     {
         real = "";
@@ -166,7 +148,6 @@ public static class FctIni
 
     public static FctIniData Parse(string iniPath)
     {
-        // 多路径自动查找 + 详细诊断
         var tried = new List<string>();
         string? found = null;
         string? diag = null;
@@ -176,11 +157,9 @@ public static class FctIni
             try
             {
                 if (File.Exists(p)) { found = p; break; }
-                // File.Exists=false 可能是真不存在, 也可能是目录无权限枚举; 尝试列目录区分
                 var dir = Path.GetDirectoryName(p);
                 if (dir != null && Directory.Exists(dir))
                 {
-                    // 目录在, 但 File.Exists 说文件不在 -> 列一下目录看到底有啥(处理大小写/隐藏字符)
                     try
                     {
                         var match = Directory.EnumerateFiles(dir, "*.ini")
@@ -200,7 +179,6 @@ public static class FctIni
             }
         }
 
-        // 常规路径没命中 -> 自动识别（FTS 安装树 → 全盘有限深度）
         if (found == null)
         {
             Logger.Info("[设备状态] 常规路径未命中，自动识别 FCT.ini…");
@@ -220,13 +198,12 @@ public static class FctIni
         }
         iniPath = found;
         Logger.Info($"[设备状态] 使用 FCT.ini: {iniPath}");
-        // 解析 ini 为 section -> (key,value) 列表(保留顺序)
         var sections = ParseIniFile(iniPath);
         d.Found = true;
 
         var active = GetActiveComPorts();
         var systemPorts = ScanSystemComPorts();
-        var iniComMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // 端口 -> 设备名
+        var iniComMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         if (sections.TryGetValue("Resource Name", out var rn))
         {
@@ -248,7 +225,6 @@ public static class FctIni
             }
         }
 
-        // 合并系统所有COM口 + ini配置的口
         var allPorts = new HashSet<string>(systemPorts, StringComparer.OrdinalIgnoreCase);
         foreach (var p in iniComMap.Keys) allPorts.Add(p);
         var comDevices = allPorts
@@ -261,7 +237,6 @@ public static class FctIni
                 Online = active.Contains(p),
             }).ToList();
 
-        // COM 在前, USB 在后
         var usb = d.Devices.Where(x => x.Type == "usb").ToList();
         d.Devices = comDevices.Concat(usb).ToList();
 
@@ -279,12 +254,10 @@ public static class FctIni
         return 9999;
     }
 
-    /// <summary>解析 INI 文件为 section -> [(key,value)]。忽略 ; 注释行。</summary>
     private static Dictionary<string, List<(string, string)>> ParseIniFile(string path)
     {
         var result = new Dictionary<string, List<(string, string)>>(StringComparer.OrdinalIgnoreCase);
         var current = "";
-        // 共享读取: 允许读取正被其他程序(如FCT测试软件)占用/写入的文件
         string[] lines;
         using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
         using (var sr = new StreamReader(fs))

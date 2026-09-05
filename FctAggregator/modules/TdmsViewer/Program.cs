@@ -10,10 +10,6 @@ internal static class Program
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     private const int SW_HIDE = 0;
 
-    /// <summary>
-    /// 用控制台程序(Exe)而非 WinExe：WinExe 启动时 .NET 已把 Console.Out 绑为
-    /// TextWriter.Null，CLI 输出在管道/重定向下会全部丢失。GUI 模式再隐藏控制台窗口。
-    /// </summary>
     private static void HideConsole()
     {
         var h = GetConsoleWindow();
@@ -23,7 +19,6 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        // 无参数，或参数是一个 .tdms 路径（双击关联/拖到 exe 上）-> GUI
         bool cliMode = args.Length > 0 && args[0].StartsWith("--");
 
         if (!cliMode)
@@ -40,10 +35,6 @@ internal static class Program
         return RunCli(args);
     }
 
-    /// <summary>
-    /// v2.9.0：合入套件后由 <c>FctAggregator.Program</c> 转发子命令
-    /// （<c>Argus.exe tdms …</c>），因此开一个 internal 口子。
-    /// </summary>
     internal static int RunCliEntry(string[] args) => RunCli(args);
 
     private static int RunCli(string[] args)

@@ -1,22 +1,11 @@
 namespace FctAggregator;
 
-/// <summary>
-/// 维修人员字段的**多人**支持。
-///
-/// `maintenance_records.resolver` 是一列 TEXT，多人时存成 `张三、李四`（分隔符统一用 `、`）。
-/// 读的时候要按成员拆开，否则：
-///   · 候选下拉里会出现「张三、李四」这种组合项
-///   · 改名 / 计数会算错（把整串当一个人）
-/// 所以拆分兼容常见几种分隔符（、，,／/；;| 以及顿号前后的空格）。
-/// </summary>
 public static class ResolverUtil
 {
-    /// <summary>写库统一用的分隔符。</summary>
     public const string Sep = "、";
 
     private static readonly char[] Splitters = { '\u3001', ',', '\uff0c', '/', '\uff0f', ';', '\uff1b', '|', '\u3002' };
 
-    /// <summary>把 resolver 字段拆成人名列表（去空、去重、保持出现顺序）。</summary>
     public static List<string> Split(string? field)
     {
         var result = new List<string>();
@@ -31,7 +20,6 @@ public static class ResolverUtil
         return result;
     }
 
-    /// <summary>把人名列表拼回字段值（去空、去重）。</summary>
     public static string Join(IEnumerable<string>? names)
     {
         if (names == null) return "";
@@ -46,10 +34,8 @@ public static class ResolverUtil
         return string.Join(Sep, list);
     }
 
-    /// <summary>规范化：把任意写法统一成 `张三、李四`。</summary>
     public static string Normalize(string? field) => Join(Split(field));
 
-    /// <summary>字段里是否**包含某个人**（成员级比较，不是子串匹配）。</summary>
     public static bool Contains(string? field, string name)
     {
         name = (name ?? "").Trim();
@@ -57,7 +43,6 @@ public static class ResolverUtil
         return Split(field).Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>把字段里的某个人换成新名字（其余人保持原样、原顺序）。</summary>
     public static string Replace(string? field, string oldName, string newName)
     {
         oldName = (oldName ?? "").Trim();
@@ -71,16 +56,6 @@ public static class ResolverUtil
     }
 }
 
-/// <summary>
-/// 维修人员名单管理。表单里「维修人员」右边那个【+ 人员】按钮打开它。
-///
-/// 名单与「历史记录里用过的名字」是两回事：
-///   · 名单 = 你主动录的班组名单，可增可删可改名（存 `resolvers` 表）
-///   · 历史 = 已有维修记录的 `resolver` 值，只读
-/// 下拉候选 = 名单 ∪ 历史（名单在前）。所以：
-///   · 提前把人录进来 → 一条记录都没有时下拉也有内容
-///   · 敲错的名字 → 从名单里删掉；要连历史一起纠正就用【改名】并勾同步
-/// </summary>
 public class ResolverManagerForm : Form
 {
     private readonly Database _db;
@@ -88,7 +63,6 @@ public class ResolverManagerForm : Form
     private readonly TextBox _name = new();
     private readonly Label _hint = new();
 
-    /// <summary>关闭后是否有过改动（调用方据此刷新下拉）。</summary>
     public bool Changed { get; private set; }
 
     public ResolverManagerForm(Database db, string? preset = null)
@@ -165,7 +139,6 @@ public class ResolverManagerForm : Form
         _list.BeginUpdate();
         _list.Items.Clear();
         foreach (var n in roster) _list.Items.Add(n);
-        // 历史里有、名单里没有的，列出来并标注（可以点【添加】把它正式收进名单）
         foreach (var n in history)
             if (!inRoster.Contains(n)) _list.Items.Add(n + "   (仅历史记录)");
         _list.EndUpdate();
@@ -175,7 +148,6 @@ public class ResolverManagerForm : Form
                         ? $"，另有 {extra} 个只出现在历史记录里" : "");
     }
 
-    /// <summary>列表里选中的名字（去掉「(仅历史记录)」标注）。</summary>
     private string? Selected()
     {
         if (_list.SelectedItem is not string s) return null;
@@ -196,7 +168,6 @@ public class ResolverManagerForm : Form
                 Logger.Info($"维修人员名单新增: {n}");
                 _name.Clear();
                 Reload();
-                // 选中刚加的那个，给个明确反馈
                 for (int i = 0; i < _list.Items.Count; i++)
                     if (string.Equals(_list.Items[i]?.ToString(), n, StringComparison.OrdinalIgnoreCase))
                     { _list.SelectedIndex = i; break; }
@@ -274,7 +245,6 @@ public class ResolverManagerForm : Form
     }
 }
 
-/// <summary>改名小窗：新名字 + 是否同步历史记录（默认不同步）。</summary>
 public class RenameResolverForm : Form
 {
     public string NewName => _name.Text.Trim();
@@ -298,7 +268,7 @@ public class RenameResolverForm : Form
         _name.SelectAll();
 
         _sync.Left = 16; _sync.Top = 52; _sync.Width = 350; _sync.Height = 40;
-        _sync.Checked = false;      // 改名单 ≠ 改历史数据，勾了才动
+        _sync.Checked = false;
         _sync.Text = usedCount > 0
             ? $"同时把 {usedCount} 条历史维修记录里的「{oldName}」也改掉（治错别字）"
             : "同时改历史记录（当前没有用到这个名字的记录）";
@@ -312,17 +282,10 @@ public class RenameResolverForm : Form
     }
 }
 
-/// <summary>
-/// 维修人员**多选**框：一条维修记录可以有多个维修人（存成 `张三、李四`）。
-/// 候选 = 名单 ∪ 历史用过的名字；勾几个就是几个。
-/// 底部可以直接「新增人员并勾选」，不用先跑去名单管理。
-/// </summary>
 public class ResolverPickerForm : Form
 {
-    /// <summary>勾选结果（已按 `、` 拼好）。</summary>
     public string Result { get; private set; } = "";
 
-    /// <summary>勾选的人名列表。</summary>
     public List<string> SelectedNames { get; private set; } = new();
 
     private readonly Database _db;
@@ -390,7 +353,6 @@ public class ResolverPickerForm : Form
             if (IsHandleCreated) BeginInvoke(UpdateHint); else UpdateHint();
         };
 
-        // 直接新增并勾选，省得先去名单管理
         var lblNew = new Label { Left = 14, Top = 366, Width = 58, Text = "新增:", TextAlign = ContentAlignment.MiddleRight };
         _newName.Left = 76; _newName.Top = 364; _newName.Width = 190;
         _newName.PlaceholderText = "输入新人员姓名";
@@ -414,7 +376,6 @@ public class ResolverPickerForm : Form
         ok.Click += (_, _) =>
         {
             SelectedNames = _all.Where(n => _checked.Contains(n)).ToList();
-            // 勾了但已不在候选里的（比如刚被别处删掉）也保留
             foreach (var n in _checked)
                 if (!SelectedNames.Any(x => string.Equals(x, n, StringComparison.OrdinalIgnoreCase)))
                     SelectedNames.Add(n);
@@ -441,7 +402,7 @@ public class ResolverPickerForm : Form
         if (n.Length > 32) { MessageBox.Show("姓名过长（最多 32 个字）。", "提示"); return; }
         try
         {
-            _db.AddResolver(n);          // 已存在也没关系，下面照样勾上
+            _db.AddResolver(n);
             _checked.Add(n);
             _newName.Clear();
             Reload();
@@ -459,7 +420,6 @@ public class ResolverPickerForm : Form
     {
         try { _all = _db.ListResolvers(); }
         catch (Exception ex) { Logger.Warning($"读取维修人候选失败: {ex.Message}"); _all = new List<string>(); }
-        // 已勾选但不在候选里的（历史遗留 / 手工输入）也要显示出来
         foreach (var n in _checked)
             if (!_all.Any(x => string.Equals(x, n, StringComparison.OrdinalIgnoreCase))) _all.Add(n);
         Rebind();
@@ -497,7 +457,6 @@ public class ResolverPickerForm : Form
                                         : "→ " + ResolverUtil.Join(picked));
     }
 
-    // ---- 自检用 ----
     public IReadOnlyList<string> AllCandidates => _all;
     public int CheckedCount => _checked.Count;
     public void SetFilterForTest(string kw) => _filter.Text = kw;

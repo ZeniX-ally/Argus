@@ -1,18 +1,5 @@
 #requires -Version 7
-<#
-  不良 → 桌面提示 + 待办入列 的端到端冒烟测试。
-
-  做的事：
-    1. 解压完整包到临时目录，配置指向假的 Results（含一个型号目录，否则不会挂监控）
-    2. 启动程序，等主窗口出现
-    3. 丢一个 F_ 开头的 FAIL xml 进去
-    4. 断言：日志出现 [入库] ... FAIL、桌面提示已就绪、且无 ERROR / 提示弹出失败
-    5. 断言：库里能聚合出这条未确认不良（= 看板「待办」列会显示它）
-
-  注意：Windows 通知能否**肉眼看到**受系统「通知与专注助手」设置影响，脚本只能验证代码路径没炸。
-#>
 param(
-    # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
     [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.2.zip"
 )
 $ErrorActionPreference = 'Stop'
@@ -32,7 +19,7 @@ $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
 $cfg.results_root = $results
 $cfg.webhook_url = ''
 $cfg.station_id = 'FCT9'
-$cfg.skip_historical_scan = $true         # 跳过历史扫描 -> 立刻允许推送/提示
+$cfg.skip_historical_scan = $true
 $cfg | Add-Member -NotePropertyName desktop_notify -NotePropertyValue $true -Force
 $cfg | Add-Member -NotePropertyName notify_min_interval_sec -NotePropertyValue 1 -Force
 $cfg | ConvertTo-Json -Depth 6 | Set-Content $cfgPath -Encoding utf8
@@ -49,7 +36,6 @@ for ($i = 0; $i -lt 40; $i++) {
 }
 if ($proc.HasExited) { Write-Host "[FAIL] 进程已退出 ExitCode=$($proc.ExitCode)" -ForegroundColor Red; exit 1 }
 
-# ---- 丢一条 FAIL ----
 $sn = "${model}TEST0001"
 $xml = @"
 <?xml version="1.0" encoding="utf-8"?>

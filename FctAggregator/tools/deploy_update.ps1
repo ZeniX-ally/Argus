@@ -1,64 +1,4 @@
 ﻿#requires -Version 5.1
-<#
-.SYNOPSIS
-    Argus 更新包自动部署工具（识别新包 -> 自动找到机台上的旧安装 -> 备份 -> 覆盖 -> 校验）
-
-.DESCRIPTION
-    针对 FctAggregator（Argus / 旧名 FCT-Aggregator）的现场升级。
-    刻意兼容 Windows PowerShell 5.1（产线机台通常没有 pwsh 7），因此
-    不使用 ?? / ?: / && 等 7.x 语法。
-
-    == 默认是演练模式 ==
-    不加 -Execute 时只输出部署计划，绝不改动任何文件。
-
-    == 为什么需要这个工具 ==
-    v3.0.1 起可执行文件由 FCT-Aggregator.exe 改名为 Argus.exe，且互斥体名
-    也从 FCT_Aggregator_SingleInstance 改为 Argus_SingleInstance。更新包只能
-    添加/覆盖同名文件、无法删除旧文件，于是跨 v3.0.1 升级后旧 exe 会残留，
-    与新版可同时运行并同写一个数据库。本工具会一并清理这些残留。
-
-    == 不动的东西 ==
-    data\（数据库）、logs\ 原样保留；config.json 按包内模板**合并更新**（保留 station_id/results_root/webhook_url 与现场自定义字段，原文件先备份）。
-
-.PARAMETER Zip
-    更新包 zip。留空则在脚本所在目录、当前目录里找版本号最高的 Argus-v*-update.zip。
-
-.PARAMETER Target
-    机台安装目录。留空则自动发现（运行中进程 -> 启动文件夹快捷方式 -> 磁盘扫描）。
-
-.PARAMETER Execute
-    真正执行部署。不加则仅演练。
-
-.PARAMETER KeepLegacy
-    保留旧 exe 与旧启动快捷方式（默认会清理）。
-
-.PARAMETER NoDbBackup
-    不备份 data\*.db（库很大时用；程序本身不会改动库结构，但仍建议备份）。
-
-.PARAMETER NoStart
-    部署完成后不自动启动程序做校验。
-
-.PARAMETER ExcludePid
-    停进程时排除的 PID（v3.22.1）：图形化升级向导（Argus.exe upgrade）本身也是
-    运行中的 Argus 进程，把自己 PID 传进来可避免部署引擎把向导一并停掉。
-
-.PARAMETER Rollback
-    回滚：传入本工具生成的备份目录路径，把程序文件恢复原状。
-
-.EXAMPLE
-    .\deploy_update.ps1
-    演练：自动找包、自动找安装位置，打印计划但不改任何东西。
-
-.EXAMPLE
-    .\deploy_update.ps1 -Execute
-    实际部署。
-
-.EXAMPLE
-    .\deploy_update.ps1 -Zip D:\Argus-v3.2.2-update.zip -Target "D:\Argus" -Execute
-
-.EXAMPLE
-    .\deploy_update.ps1 -Rollback "D:\Argus\_backup_20260805_143000"
-#>
 [CmdletBinding()]
 param(
     [string]$Zip,
@@ -73,14 +13,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# v3.23.1：交互会话（双击/手动控制台）下脚本结束或报错都保持窗口，直接看清结果；
-# SSH / 计划任务等非交互会话（[Environment]::UserInteractive=false）自动跳过，不挂死。
 function Wait-Key {
     if (-not [Environment]::UserInteractive) { return }
     Write-Host ""
     Read-Host "  按回车键退出..." | Out-Null
 }
-# 兜底捕获一切未处理错误（含 ErrorActionPreference=Stop 冒泡的裸异常）：显示错误后停留再退出
 trap {
     Write-Host ""
     Write-Host ("-" * 68) -ForegroundColor Red
@@ -90,22 +27,18 @@ trap {
     exit 1
 }
 
-# ---- v2.9.0 合并进单 exe / v3.0.1 改名后应当清理的旧程序 ----
-# 【重要】FCT-Distributor.exe 不在此列：v3.0.0 起数据分发器是独立程序，仍在使用，删了会让现场分发功能消失。
 $LegacyExe = @(
-    'FCT-Aggregator.exe',   # 被 Argus.exe 取代（v3.0.1 改名）
-    'FCT-FailRanker.exe',   # 以下三个 v2.9.0 已合并进主 exe
+    'FCT-Aggregator.exe',
+    'FCT-FailRanker.exe',
     'FCT-Fetcher.exe',
     'FCT-TdmsViewer.exe'
 )
-$LegacyLnk = @('FCT-Aggregator.lnk', 'Argus.lnk')  # Argus.lnk 会在部署后按需重建
-$KeepAlways = @()                              # 包内 config.json 为模板，部署时合并更新（原配置先备份）
+$LegacyLnk = @('FCT-Aggregator.lnk', 'Argus.lnk')
+$KeepAlways = @()
 $NewExeName = 'Argus.exe'
 
 $script:Warn = 0
 
-# Get-FileHash 在 PowerShell 4.0+ 可用，但某些机台（含本机）5.1 里缺失（模块损坏）
-# 内置替代：用 .NET 原生 SHA256 计算，结果完全一致
 function SafeFileHash([string]$Path, [string]$Algorithm = 'SHA256') {
     if (Get-Command Get-FileHash -EA SilentlyContinue) {
         return Get-FileHash $Path -Algorithm $Algorithm
@@ -119,16 +52,10 @@ function SafeFileHash([string]$Path, [string]$Algorithm = 'SHA256') {
     return [pscustomobject]@{ Algorithm = $Algorithm; Hash = $sb.ToString().ToUpper(); Path = $Path }
 }
 
-# 发现占用安装目录的 Argus 相关进程。
-# 兼容两种启动方式：
-#   方式1：直接跑 Argus.exe（进程 Path 在安装目录下，Get-Process 可见）
-#   方式2：启动.bat -> dotnet "Argus.dll"（进程是 dotnet.exe，Path 是 dotnet 安装路径，
-#          必须查 Win32_Process 的 CommandLine 才能确认它在跑哪个安装目录）
-# 返回统一对象列表，至少含 Id / ProcessName / CommandLine。
 function Get-ArgusProcesses([string]$dest) {
     $list = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
         $_.Path -and $_.Path.StartsWith($dest, [StringComparison]::OrdinalIgnoreCase) })
-    $destPat = [regex]::Escape($dest.TrimEnd('\')) + '\\'   # 后接反斜杠，防止 D:\Argus 误匹配 D:\Argus-测试机
+    $destPat = [regex]::Escape($dest.TrimEnd('\')) + '\\'
     try {
         $dotnet = Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction Stop
         foreach ($p in $dotnet) {
@@ -143,19 +70,13 @@ function Get-ArgusProcesses([string]$dest) {
             }
         }
     } catch {
-        # CIM 不可用（老系统/权限受限）时退回仅 Get-Process 的结果
     }
-    # v3.22.1：图形化升级向导（Argus.exe upgrade）把自己 PID 传入 -ExcludePid，
-    # 部署阶段不停向导自身——否则向导会在"结束进程"一步把自己杀掉。
     if ($ExcludePid -gt 0) {
         $list = @($list | Where-Object { $_.Id -ne $ExcludePid })
     }
     return $list
 }
 
-# v3.23.1：覆盖前兜底杀进程——Get-ArgusProcesses 依赖 CIM 探测 dotnet 进程，
-# 部分产线机 WMI 受限会漏网，导致停进程"成功"但 Argus.dll 仍被占用。
-# 兜底用进程名直杀（不依赖 CIM）+ dotnet 命令行反查（尽力），排除 -ExcludePid。
 function Kill-ArgusForOverwrite {
     $ids = @()
     foreach ($n in @('Argus', 'FCT-Aggregator')) {
@@ -174,10 +95,9 @@ function Kill-ArgusForOverwrite {
     } catch { }
     $ids = @($ids | Select-Object -Unique)
     foreach ($id in $ids) { try { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue } catch { } }
-    if ($ids.Count -gt 0) { Start-Sleep -Seconds 2 }   # 等文件句柄释放
+    if ($ids.Count -gt 0) { Start-Sleep -Seconds 2 }
 }
 
-# 覆盖单个文件：失败先兜底杀进程再重试（最多 3 次）。
 function Copy-FileRetry([string]$src, [string]$dest, [string]$name) {
     for ($i = 1; $i -le 3; $i++) {
         try {
@@ -202,9 +122,6 @@ function Info([string]$m) { Write-Host "  [--]   $m" -ForegroundColor Gray }
 function Warn2([string]$m) { Write-Host "  [WARN] $m" -ForegroundColor Yellow; $script:Warn++ }
 function Die([string]$m) { Write-Host "  [FAIL] $m" -ForegroundColor Red; Wait-Key; exit 1 }
 
-# ============================================================
-# 回滚模式
-# ============================================================
 if ($Rollback) {
     Write-Head "回滚模式"
     if (-not (Test-Path $Rollback)) { Die "备份目录不存在: $Rollback" }
@@ -231,9 +148,6 @@ if ($Rollback) {
     Wait-Key; exit 0
 }
 
-# ============================================================
-# 1. 定位并校验更新包
-# ============================================================
 Write-Head "1. 识别更新包"
 
 if (-not $Zip) {
@@ -247,7 +161,6 @@ if (-not $Zip) {
     if ($cands.Count -eq 0) {
         Die "未找到更新包。请把 Argus-v*-update.zip 放到脚本旁边，或用 -Zip 指定路径。"
     }
-    # 按版本号排序取最高，而不是按文件名字符串（避免 v3.10 < v3.9 的错误）
     $Zip = ($cands | Sort-Object {
             $m = [regex]::Match($_.Name, 'v(\d+)\.(\d+)\.(\d+)')
             if ($m.Success) {
@@ -274,7 +187,6 @@ if (-not (Test-Path $stageExe)) { Die "包内没有 $NewExeName，这不是 Argu
 $newVer = (Get-Item $stageExe).VersionInfo.FileVersion
 Ok "包内版本 = $newVer"
 
-# 包内 config.json = 配置模板（v3.2.2 起更新包有意携带，用于恢复被冲掉的现场配置）
 $pkgCfgPath = Join-Path $stage 'config.json'
 $pkgHasConfig = Test-Path $pkgCfgPath
 if ($pkgHasConfig) {
@@ -294,13 +206,9 @@ Ok "包校验通过：无 data\ / logs\ / *.db"
 $pkgFiles = Get-ChildItem $stage -File
 Info "包内 $($pkgFiles.Count) 个文件待部署"
 
-# ============================================================
-# 2. 自动发现机台安装位置
-# ============================================================
 Write-Head "2. 定位机台上的旧安装"
 
 function Test-ArgusDir([string]$dir) {
-    # 判定「这是一个 Argus 安装目录」：有主程序 exe，且有现场痕迹（config.json 或 data\）
     if (-not $dir -or -not (Test-Path $dir)) { return $false }
     $hasExe = (Test-Path (Join-Path $dir $NewExeName)) -or (Test-Path (Join-Path $dir 'FCT-Aggregator.exe'))
     if (-not $hasExe) { return $false }
@@ -310,8 +218,6 @@ function Test-ArgusDir([string]$dir) {
 
 $found = New-Object System.Collections.Generic.List[object]
 
-# 「启动」文件夹：既用于发现安装位置，也用于后续清理旧 .lnk，
-# 所以必须在自动发现逻辑之外定义（指定 -Target 时也要能用）。
 $startupDirs = @(
     [Environment]::GetFolderPath('Startup'),
     [Environment]::GetFolderPath('CommonStartup')
@@ -331,15 +237,12 @@ function Add-Cand([string]$dir, [string]$how) {
     })
 }
 
-# 已明确指定 -Target 时，整个自动发现都跳过（尤其不能去扇磁盘）
 if (-not $Target) {
 
-# 策略 A：正在运行的进程（最可靠）
 foreach ($n in @('Argus', 'FCT-Aggregator')) {
     $ps = Get-Process -Name $n -ErrorAction SilentlyContinue
     foreach ($p in $ps) { if ($p.Path) { Add-Cand (Split-Path $p.Path -Parent) "运行中进程 $n (PID $($p.Id))" } }
 }
-# 策略 A2：启动.bat 方式（dotnet "Argus.dll"）进程名是 dotnet.exe，按 CommandLine 反查 dll 所在目录
 try {
     foreach ($p in (Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" -ErrorAction Stop)) {
         $cl = $p.CommandLine
@@ -352,7 +255,6 @@ try {
     }
 } catch { }
 
-# 策略 B：「启动」文件夹里的快捷方式（程序自启用的就是这个）
 $shell = New-Object -ComObject WScript.Shell
 foreach ($sd in $startupDirs) {
     if (-not $sd -or -not (Test-Path $sd)) { continue }
@@ -366,10 +268,6 @@ foreach ($sd in $startupDirs) {
     }
 }
 
-# 策略 C：扫描高概率位置。
-# ⚠ 不做全盘递归：开发机/服务器上动辄几十万文件（node_modules 之类），
-#   曾实测全盘扫描直接超时。盘符只查**根目录一层**（工具常直接放盘根），
-#   只有 Program Files / FTS 等高概率目录才做有限深度递归。
 if ($found.Count -eq 0) {
     Info "进程与自启项都没找到，扫描常见安装位置..."
     $scan = New-Object System.Collections.Generic.List[object]
@@ -400,7 +298,7 @@ if ($found.Count -eq 0) {
     }
 }
 
-}  # end if (-not $Target)
+}
 
 if ($Target) {
     if (-not (Test-Path $Target)) { Die "指定的目录不存在: $Target" }
@@ -425,9 +323,6 @@ if ($Target) {
     Ok "锁定安装目录: $dest"
 }
 
-# ============================================================
-# 3. 生成部署计划
-# ============================================================
 Write-Head "3. 部署计划"
 
 $curExeNew = Join-Path $dest $NewExeName
@@ -440,16 +335,14 @@ Write-Host "  现场版本: $oldVer"
 Write-Host "  升级到:   $newVer"
 if ($oldVer -eq $newVer) { Warn2 "版本号相同，这是一次重复部署（仍可继续，属幂等操作）" }
 
-# 待覆盖 / 新增
 $willOverwrite = @(); $willAdd = @()
 foreach ($f in $pkgFiles) {
-    if ($f.Name -eq 'config.json') { continue }   # 走合并部署，不计入覆盖统计
+    if ($f.Name -eq 'config.json') { continue }
     if (Test-Path (Join-Path $dest $f.Name)) { $willOverwrite += $f.Name } else { $willAdd += $f.Name }
 }
 Write-Host "  覆盖同名文件: $($willOverwrite.Count) 个"
 if ($willAdd.Count -gt 0) { Write-Host "  新增文件:     $($willAdd.Count) 个 -> $($willAdd -join ', ')" }
 
-# 现场受保护文件
 Write-Host ""
 Write-Host "  以下现场文件不会被动：" -ForegroundColor Green
 foreach ($k in $KeepAlways) {
@@ -466,7 +359,6 @@ foreach ($sub in @('data', 'logs')) {
     }
 }
 
-# legacy 残留
 $legacyHits = @()
 foreach ($le in $LegacyExe) {
     $lp = Join-Path $dest $le
@@ -500,7 +392,6 @@ if ($legacyHits.Count -gt 0 -or $lnkHits.Count -gt 0) {
     Info "无旧程序残留需要清理"
 }
 
-# 运行中进程
 $running = @(Get-ArgusProcesses $dest)
 Write-Host ""
 if ($running.Count -gt 0) {
@@ -526,12 +417,8 @@ if (-not $Execute) {
     Wait-Key; exit 0
 }
 
-# ============================================================
-# 4. 执行部署
-# ============================================================
 Write-Head "4. 执行部署"
 
-# 4.1 结束进程
 foreach ($p in $running) {
     Write-Host "  结束 $($p.ProcessName) (PID $($p.Id))..."
     try {
@@ -548,7 +435,6 @@ if ($running.Count -gt 0) {
     Ok "程序已全部退出"
 }
 
-# 4.2 备份
 New-Item -ItemType Directory -Path (Join-Path $backupDir 'program') -Force | Out-Null
 $dest | Set-Content (Join-Path $backupDir 'restore-manifest.txt') -Encoding UTF8
 $bkCount = 0
@@ -575,14 +461,11 @@ if (-not $NoDbBackup) {
     }
 }
 
-# 4.3 覆盖（config.json 跳过——它走下面的合并部署，不能直接盖）
-# v3.23.1：逐文件兜底（进程漏网占用 → 再杀 → 重试）；仍失败汇总提示回滚命令，不裸抛
 $copied = 0; $failed = @()
 foreach ($f in $pkgFiles) {
     if ($f.Name -eq 'config.json') { continue }
     if (Copy-FileRetry $f.FullName $dest $f.Name) { $copied++ } else { $failed += $f.Name }
 }
-# runtimes 目录树（deps.json 声明的运行时文件，如 System.IO.Ports 实现版）——必须随包部署
 if (Test-Path (Join-Path $stage 'runtimes')) {
     $rtOk = $false
     for ($i = 1; $i -le 3; $i++) {
@@ -591,7 +474,6 @@ if (Test-Path (Join-Path $stage 'runtimes')) {
     }
     if (-not $rtOk) { $failed += 'runtimes\' }
 }
-# v3.22.1：public\ 前端静态资源树（Web 看板全部页面）——此前漏部署导致升级后前端停留旧版
 if (Test-Path (Join-Path $stage 'public')) {
     try { Copy-Item (Join-Path $stage 'public') $dest -Recurse -Force -ErrorAction Stop } catch { Kill-ArgusForOverwrite }
 }
@@ -613,15 +495,10 @@ if ($failed.Count -gt 0) {
 }
 Ok "已覆盖 $copied 个程序文件 + runtimes/public 运行时资源树（config.json 另行合并处理）"
 
-# 4.4 config.json 合并部署：包内模板为基准，保留现场 station_id/results_root/webhook_url/agg_token 与现场自定义字段
-# （避免 station_id 丢失 -> 库名由 {sid}.db 退回 fct.db -> 现场看起来“历史数据消失”；
-#   webhook_url / agg_token 是凭据，模板里为空值，现场已配置则必须保留现场，避免升级把推送/鉴权打没）
 if ($pkgHasConfig) {
     $siteCfg = Join-Path $dest 'config.json'
     if (Test-Path $siteCfg) {
         try {
-            # ⚠ 必须显式 -Encoding UTF8：PS 5.1 默认按 ANSI/GBK 读无 BOM 的 UTF-8 文件，
-            #   中文会乱码且引号可能被吞（GBK 双字节次字节可含 0x22），JSON 直接解析失败
             $site = Get-Content $siteCfg -Raw -Encoding UTF8 | ConvertFrom-Json
             $pkg = Get-Content $pkgCfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
             foreach ($prop in $site.PSObject.Properties) {
@@ -629,17 +506,12 @@ if ($pkgHasConfig) {
                     $pkg | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
                 }
             }
-            # 机台特有值必须保留现场：station_id（库名）、results_root（各机台扫描路径不同，
-            # 模板里的 D:/Results 是开发机路径，覆盖到现场会扫错目录）、
-            # webhook_url / agg_token（凭据：现场已配好则保留现场，现场为空才用模板值——模板值也是空）
             foreach ($keepKey in @('station_id', 'results_root', 'webhook_url', 'agg_token')) {
                 if ($site.$keepKey) { $pkg.$keepKey = $site.$keepKey }
             }
             $pkg | ConvertTo-Json -Depth 6 | Set-Content $siteCfg -Encoding UTF8
             Ok "config.json 已合并更新：station_id/results_root/webhook_url/agg_token 保留现场值，模板字段（fct_ini_path 等）已生效"
         } catch {
-            # 现场 config.json 无法解析（乱码/损坏）时**保留原文件不动**，宁缺毋滥：
-            # 至少不丢 station_id（库名）。模板内容留在备份里供人工合并。
             Warn2 "config.json 无法解析（$($_.Exception.Message)），原文件保留未动"
             Write-Host "         请人工把包内模板字段合入 $siteCfg（模板原文已备份在 $backupDir\config.json 旁）" -ForegroundColor Yellow
             Copy-Item $pkgCfgPath $backupDir -Force -ErrorAction SilentlyContinue
@@ -650,7 +522,6 @@ if ($pkgHasConfig) {
     }
 }
 
-# 4.4 清理 legacy
 if (-not $KeepLegacy) {
     foreach ($l in $legacyHits) {
         Remove-Item $l.Path -Force
@@ -668,9 +539,6 @@ if (-not $KeepLegacy) {
     }
 }
 
-# ============================================================
-# 5. 校验
-# ============================================================
 Write-Head "5. 校验"
 
 $destExe = Join-Path $dest $NewExeName
@@ -696,7 +564,7 @@ if ($pkgHasConfig) {
 }
 
 foreach ($n in $pkgFiles.Name) {
-    if ($n -eq 'config.json') { continue }   # 合并后的 config 与模板必然不同，不参与逐文件比对
+    if ($n -eq 'config.json') { continue }
     $a = Join-Path $stage $n; $b = Join-Path $dest $n
     if ((SafeFileHash $a).Hash -ne (SafeFileHash $b).Hash) {
         Warn2 "文件校验不一致: $n"
@@ -704,7 +572,6 @@ foreach ($n in $pkgFiles.Name) {
 }
 Ok "包内程序文件与机台上的副本 SHA256 一致（config.json 为合并结果，单独校验）"
 
-# runtimes 树完整性：deps.json 声明的 win 运行时文件必须都在目标目录
 $rtChk = Join-Path $dest 'runtimes\win\lib\net8.0\System.IO.Ports.dll'
 if (Test-Path $rtChk) { Ok "runtimes 运行时树已部署（System.IO.Ports 实现版在位）" }
 else { Warn2 "runtimes 树缺失：$rtChk —— 新版启动会报 System.IO.Ports 找不到，请勿继续使用" }
@@ -715,7 +582,6 @@ if (-not $NoStart) {
     $logLenBefore = 0
     if (Test-Path $logPath) { $logLenBefore = (Get-Content $logPath -Raw -Encoding UTF8).Length }
     try {
-        # 生产主流是启动.bat（dotnet "Argus.dll"）方式：目录里有 Argus.dll 就按 dll 方式启动校验
         if (Test-Path $destDll) {
             $dotnet = Join-Path ${env:ProgramFiles} 'dotnet\dotnet.exe'
             if (-not (Test-Path $dotnet)) { $dotnet = 'dotnet' }
@@ -759,7 +625,6 @@ if (-not $NoStart) {
 
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 
-# ============================================================
 Write-Host ""
 if ($script:Warn -eq 0) {
     Write-Host ("=" * 68) -ForegroundColor Green

@@ -4,7 +4,6 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>域4 设备智能 — FCT.ini 变更检测（v3.19.0 B）：哈希比对 + 落 fct_change_log。</summary>
 public static class FctIniWatcher
 {
     public static string ComputeHash(DeviceFctRow row)
@@ -49,18 +48,14 @@ public static class FctIniWatcher
         return changes;
     }
 
-    /// <summary>比对并落库；有变更返回 true。</summary>
     public static bool CheckAndLog(AggDatabase db, DeviceFctRow newRow)
     {
         if(string.IsNullOrWhiteSpace(newRow.Machine)) return false;
         var old = db.GetDeviceFct(newRow.Machine);
         if(old != null && ComputeHash(old) == ComputeHash(newRow)) return false;
-        // 若旧记录不存在，首次上报也记一条
         var changes = Diff(old, newRow);
-        // 首次上报无旧记录时 Diff 返回 1 条“首次上报”，也应落库一次；后续无变更不落
         bool isFirst = old==null;
         if(!isFirst && changes.Count==0) return false;
-        // 去重：若旧 hash 与新 hash 相同且非首次，说明无实质变更
         if(!isFirst)
         {
             var oh = ComputeHash(old!);
@@ -71,7 +66,6 @@ public static class FctIniWatcher
         var hash = ComputeHash(newRow);
         db.InsertFctChange(newRow.Machine, detail, hash);
         try{ db.UpsertDeviceFct(newRow); } catch{}
-        // 简易飞书 note（若配置 webhook）：不阻塞
         try
         {
             var wh = AppConfig.Instance.AggWebhookUrl;

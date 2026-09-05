@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 对比两个目录下同名 xlsx 的「长相」是否一致（v2.9.3 xlsx 写出器去重的回归验收）。
 
@@ -19,11 +17,9 @@ import xml.etree.ElementTree as ET
 
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 
-
 def norm(s):
     """忽略无意义空白差异"""
     return re.sub(r'\s+', ' ', (s or '')).strip()
-
 
 def sheets_of(z):
     """[(name, part)]，按 workbook 顺序"""
@@ -36,7 +32,6 @@ def sheets_of(z):
         tgt = rid2tgt.get(rid, 'worksheets/sheet%d.xml' % (i + 1))
         out.append((sh.get('name'), 'xl/' + tgt.lstrip('/')))
     return out
-
 
 def parse_sheet(xml):
     root = ET.fromstring(xml)
@@ -54,14 +49,12 @@ def parse_sheet(xml):
             t = c.find(NS + 'is/' + NS + 't')
             val = norm(t.text) if t is not None else ''
         if val == '' and style == '0':
-            continue                      # 纯空占位单元格不参与比较
+            continue
         cells[ref] = (val, style)
     return cols, panes, merges, cells
 
-
 def cmp_file(a, b, name, diffs):
     with zipfile.ZipFile(a) as za, zipfile.ZipFile(b) as zb:
-        # 1) styles.xml
         sa, sb = za.read('xl/styles.xml').decode('utf-8'), zb.read('xl/styles.xml').decode('utf-8')
         if sa != sb:
             diffs.append('%s: styles.xml 不一致（调色板变了！）长度 %d -> %d' % (name, len(sa), len(sb)))
@@ -69,7 +62,6 @@ def cmp_file(a, b, name, diffs):
                 ca, cb = sa.count('<' + tag), sb.count('<' + tag)
                 if ca != cb:
                     diffs.append('    <%s> 个数 %d -> %d' % (tag, ca, cb))
-        # 6) 表名与顺序
         la, lb = sheets_of(za), sheets_of(zb)
         if [x[0] for x in la] != [x[0] for x in lb]:
             diffs.append('%s: 工作表名/顺序不一致 %s -> %s' % (name, [x[0] for x in la], [x[0] for x in lb]))
@@ -83,7 +75,6 @@ def cmp_file(a, b, name, diffs):
                 diffs.append('%s[%s]: 冻结行不一致 %s -> %s' % (name, sn, pna, pnb))
             if ma != mb:
                 diffs.append('%s[%s]: 合并单元格不一致 %s -> %s' % (name, sn, ma, mb))
-            # 5) 单元格
             keys = set(cla) | set(clb)
             bad = 0
             for k in sorted(keys, key=lambda r: (int(re.sub(r'\D', '', r) or 0), r)):
@@ -95,7 +86,6 @@ def cmp_file(a, b, name, diffs):
                     diffs.append('%s[%s]!%s: (值,样式) %s -> %s' % (name, sn, k, va, vb))
             if bad > 8:
                 diffs.append('%s[%s]: 另有 %d 处单元格差异未列出' % (name, sn, bad - 8))
-
 
 def main():
     old, new = sys.argv[1], sys.argv[2]
@@ -122,7 +112,6 @@ def main():
         return 1
     print('四张表的调色板、列宽、冻结、合并、每个单元格的值与样式号 —— 全部一致。')
     return 0
-
 
 if __name__ == '__main__':
     sys.exit(main())

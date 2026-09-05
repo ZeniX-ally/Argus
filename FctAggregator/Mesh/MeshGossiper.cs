@@ -3,18 +3,6 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 对账器（P2P 去中心化核心组件之一）。
-///
-/// 职责：与原 AggWatcher 的"兜底全量重扫"同思路，但在去中心化下改为**节点间按需对账**——
-/// 定期（默认 30s）向每个 peer 拉取"各机台已同步到的最大 seq 摘要"（/api/mesh/summary），
-/// 与本地副本库比对，发现缺口（本机缺某机台的某段 seq）则拉取增量补推（/api/mesh/fetch）。
-///
-/// 这样即使实时广播因网络抖动丢事件、或新机台上线/老机台离线恢复，也能在下一个对账周期内
-/// 自动补齐全量副本，无需中心端、无需共享目录扫描。
-///
-/// 性能：摘要仅含 (machine, maxSeq) 小数据；增量拉取按缺口批量，O(peers×machines) 适配 ≤10 节点。
-/// </summary>
 public sealed class MeshGossiper
 {
     private const int DefaultIntervalSec = 30;
@@ -43,15 +31,10 @@ public sealed class MeshGossiper
         _currentIntervalSec = _intervalSec;
     }
 
-    /// <summary>v3.17.0 Lite-Infra 自适应间隔可观测：当前间隔秒（在线稳定60 / 缺口或刚恢复10）。</summary>
     public int CurrentIntervalSec => _currentIntervalSec;
-    /// <summary>自适应原因：init / stable / gap / recovered。</summary>
     public string AdaptiveReason => _adaptiveReason;
-    /// <summary>已执行对账轮次。</summary>
     public long GossipCount => Interlocked.Read(ref _gossipCount);
-    /// <summary>上次对账的缺口数。</summary>
     public long LastGapCount => Interlocked.Read(ref _lastGapCount);
-    /// <summary>上次对账时间。</summary>
     public string LastGossipAt => _lastGossipAt;
 
     public void Start()
@@ -78,18 +61,14 @@ public sealed class MeshGossiper
         {
             try { GossipOnce(); }
             catch (Exception ex) { Logger.Warning($"[Mesh对账] 周期异常: {ex.Message}"); }
-            // v3.17.0 Lite-Infra：自适应间隔（stable 60 / gap或刚恢复 10）
             int cur = _currentIntervalSec;
             for (int i = 0; i < cur && !_stopping; i++)
                 try { Thread.Sleep(1000); } catch { }
         }
     }
 
-    /// <summary>向每个 peer 拉摘要并对账补推缺口。
-    /// v3.17.0 Lite-Infra 自适应：在线稳定→60s、检测缺口/刚恢复→10s。</summary>
     private void GossipOnce()
     {
-        // 本机已知各机台在本副本库的 maxSeq（对账基准）
         var localMax = _db.MaxSeqPerMachine();
         bool anyGap = false;
         bool anyRecovered = false;
@@ -107,17 +86,15 @@ public sealed class MeshGossiper
             foreach (var (machine, peerMax) in summary)
             {
                 long local = localMax.TryGetValue(machine, out var v) ? v : 0;
-                if (peerMax <= local) continue;     // peer 没比我多，跳过
+                if (peerMax <= local) continue;
                 anyGap = true;
                 gapCount++;
-                // 向 peer 拉取 (local, peerMax] 区间的该机台 FAIL 增量
                 PullAndStore(peer, machine, local, peerMax);
             }
         }
         Interlocked.Increment(ref _gossipCount);
         Interlocked.Exchange(ref _lastGapCount, gapCount);
         _lastGossipAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        // 自适应间隔决策：缺口或刚恢复→10s 紧绷；否则检查是否全部在线稳定→60s；否则保持当前或回落 30
         bool allReachable;
         lock (_reachLock) allReachable = _peers.Length > 0 && _peers.All(p => _peerReachable.TryGetValue(p, out var r) && r);
         if (anyGap || anyRecovered)
@@ -133,7 +110,6 @@ public sealed class MeshGossiper
         }
         else
         {
-            // 部分离线但无缺口：保持紧绷 10s（防离线期间缺口漏检）
             if (!allReachable)
             {
                 _currentIntervalSec = TightIntervalSec;
@@ -145,13 +121,6 @@ public sealed class MeshGossiper
                 _adaptiveReason = "stable";
             }
         }
-    }
-
-    /// <summary>测试/观测用：强制设置自适应状态（供自检）。</summary>
-    internal void SetAdaptiveForTest(int intervalSec, string reason)
-    {
-        _currentIntervalSec = intervalSec;
-        _adaptiveReason = reason;
     }
 
     private Dictionary<string, long>? PullSummary(string peer)
@@ -191,8 +160,6 @@ public sealed class MeshGossiper
             var txt = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             using var doc = JsonDocument.Parse(txt);
             if (!doc.RootElement.TryGetProperty("events", out var arr)) return;
-            // v3.5.3：先解析后整批单事务入库（InsertBatch）。对账补推常一次拉几百上千条缺口，
-            // 逐条提交会把 WAL fsync 放大成吞吐瓶颈；幂等键保证重拉不重复。
             int parsed = 0;
             var rows = new List<AggFailRow>();
             foreach (var e in arr.EnumerateArray())
@@ -216,7 +183,6 @@ public sealed class MeshGossiper
 
     private AggFailRow ParseRemoteFail(string json)
     {
-        // 与 MeshReceiver.ParseFailJson 同格式
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         long seq = root.TryGetProperty("seq", out var ps) && ps.TryGetInt64(out var s) ? s : 0;
@@ -228,7 +194,7 @@ public sealed class MeshGossiper
             row.Sn = Str(data, "sn"); row.Result = Str(data, "result");
             row.XmlPath = Str(data, "xml_path"); row.FailReason = Str(data, "fail_reason");
             row.Tester = Str(data, "tester"); row.PanelStatus = Str(data, "panel_status");
-            row.FixtureId = Str(data, "fixture_id");   // v3.22.0 规格01：老版本对端不带该字段 → 空串（前缀回退）
+            row.FixtureId = Str(data, "fixture_id");
             row.BatchTimestamp = Str(data, "batch_timestamp");
             row.HasFailItems = Num(data, "has_fail_items") != 0;
             row.FileSize = Num(data, "file_size");

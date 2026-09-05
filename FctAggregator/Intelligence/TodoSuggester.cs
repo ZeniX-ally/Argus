@@ -1,6 +1,5 @@
 namespace FctAggregator;
 
-/// <summary>域7 待办智能建议（v3.19.0 A/C）：机台/型号上下文 + 优先级 + 去重建议。</summary>
 public static class TodoSuggester
 {
     public sealed class SuggestItem
@@ -13,13 +12,9 @@ public static class TodoSuggester
         public int DurationDays;
         public string Priority = "";
         public string Reason = "";
-        /// <summary>校准后分值（规格 05 S4：未注入 factorOf 时 = 原始分）。</summary>
         public int CalibratedScore;
     }
 
-    /// <summary>
-    /// 待办智能建议（规格 05 S4：factorOf 注入自学习校准因子——有因子时按校准分排序，无则保持原 failCount 排序）。
-    /// </summary>
     public static List<SuggestItem> Suggest(AggDatabase db, int scanDays=30, Func<string, double>? factorOf = null)
     {
         var list = new List<SuggestItem>();
@@ -43,7 +38,6 @@ public static class TodoSuggester
                 });
             }
         } catch{}
-        // 校准因子参与排序（规格 §3.3：仅影响排序）；无 factorOf 时与 v3.23.3 行为一致
         return factorOf == null
             ? list.OrderByDescending(x=> x.FailCount).ToList()
             : list.OrderByDescending(x=> x.CalibratedScore).ThenByDescending(x=> x.FailCount).ToList();

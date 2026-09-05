@@ -3,10 +3,8 @@ using System.Text;
 
 namespace FctTdmsViewer;
 
-/// <summary>导出为 CSV（UTF-8 BOM，Excel 可直接打开）。</summary>
 public static class Exporter
 {
-    /// <summary>导出选中通道：第一列为时间/索引，其后每通道一列。长度不齐时以最长为准，短的留空。</summary>
     public static string ExportChannels(TdmsDoc doc, List<ChannelInfo> chans, string path)
     {
         var cols = new List<(string header, double[] data)>();
@@ -43,7 +41,6 @@ public static class Exporter
         return path;
     }
 
-    /// <summary>导出整个文件的结构清单（组/通道/类型/点数/统计）。</summary>
     public static string ExportSummary(TdmsDoc doc, string path)
     {
         var sb = new StringBuilder();

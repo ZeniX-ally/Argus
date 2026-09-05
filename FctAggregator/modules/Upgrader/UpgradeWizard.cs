@@ -5,26 +5,14 @@ using System.Text.RegularExpressions;
 
 namespace FctAggregator.modules.Upgrader;
 
-/// <summary>
-/// Argus 图形化升级向导（v3.22.1 重写）：GUI 壳 + deploy_update.ps1 部署引擎。
-///
-/// ⚠ 不在 C# 里重写部署逻辑——演练/停进程/备份/config 合并/SHA256 校验/回滚
-/// 全部复用 tools/deploy_update.ps1（与命令行升级同一条引擎路径，行为完全一致）：
-///   1. 选包（或自动发现 Argus-v*-update.zip）→ 解包校验（ValidateStage）；
-///   2. 演练：跑 deploy_update.ps1（无 -Execute，只出计划不改文件）；
-///   3. 确认后 -Execute -NoStart -Target 本目录 真正部署；
-///   4. 完成后可一键退出并启动新版；回滚命令显示在日志里。
-/// 自身 PID 通过 -ExcludePid 传给脚本——向导本身就是 Argus.exe，不加排除会被
-/// 部署引擎当"运行中程序"停掉（自杀）。
-/// </summary>
 public partial class UpgradeWizard : Form
 {
-    private int _phase;               // 0=选包 1=演练完成待执行 2=部署完成
+    private int _phase;
     private bool _launchAfterClose;
-    private string _stage = "";       // 包解压临时目录
-    private string _deployScript = "";// 实际使用的 deploy_update.ps1
-    private string _backupDir = "";   // 从部署输出解析的备份目录（回滚命令用）
-    private string _lastOutput = "";  // 最近一次脚本完整输出
+    private string _stage = "";
+    private string _deployScript = "";
+    private string _backupDir = "";
+    private string _lastOutput = "";
 
     private Label lblTitle = null!, lblStep = null!;
     private Button btnBrowse = null!, btnNext = null!, btnCancel = null!;
@@ -98,7 +86,6 @@ public partial class UpgradeWizard : Form
         lstLog.TopIndex = lstLog.Items.Count - 1;
     }
 
-    /// <summary>启动时自动发现程序目录（及上级）里版本最高的 Argus-v*-update.zip 并预填。</summary>
     private void AutoSuggestPackage()
     {
         try
@@ -161,7 +148,6 @@ public partial class UpgradeWizard : Form
         }
     }
 
-    /// <summary>阶段 0：解包校验 + 定位部署脚本 + 演练（只出计划，不改任何文件）。</summary>
     private async Task PrepareAndDryRun()
     {
         Log("⏳ 解压升级包...");
@@ -202,7 +188,6 @@ public partial class UpgradeWizard : Form
         lblStep.Text = "步骤 3：确认执行（失败可按日志中的回滚命令恢复）";
     }
 
-    /// <summary>阶段 1：真正执行部署（-Execute，脚本自身做停进程/备份/合并/校验）。</summary>
     private async Task ExecuteUpgrade()
     {
         if (MessageBox.Show(
@@ -243,7 +228,6 @@ public partial class UpgradeWizard : Form
         lblStep.Text = "步骤 4：完成";
     }
 
-    /// <summary>调用 deploy_update.ps1。-Target 固定本程序目录；-NoStart 由向导自己负责启动（避免互斥体冲突误报）。</summary>
     private async Task<(int Code, string Output)> RunDeployScript(bool execute)
     {
         var psi = new ProcessStartInfo
@@ -284,9 +268,6 @@ public partial class UpgradeWizard : Form
         try { Directory.Delete(_stage, recursive: true); } catch { }
     }
 
-    // ===== 供自检复用的纯逻辑（无 UI 依赖）=====
-
-    /// <summary>解包后的包结构校验：必须有 Argus.exe；禁 data\、logs\、*.db（防污染现场数据）。Version = 包内 exe 的 FileVersion。</summary>
     public static (bool Ok, string Version, string Error) ValidateStage(string stageDir)
     {
         var exe = Path.Combine(stageDir, "Argus.exe");
@@ -303,7 +284,6 @@ public partial class UpgradeWizard : Form
         return (true, ver, "");
     }
 
-    /// <summary>定位部署引擎脚本：安装目录 tools\ 优先 → 安装目录 → 包内（官方 v3.22.1+ 更新包自带）。</summary>
     public static string? FindDeployScript(string baseDir, string stageDir)
     {
         foreach (var cand in new[]
@@ -325,7 +305,6 @@ public partial class UpgradeWizard : Form
             var exe = Path.Combine(AppConfig.BaseDir, "Argus.exe");
             var bat = Path.Combine(AppConfig.BaseDir, "启动.bat");
             var target = File.Exists(bat) ? bat : exe;
-            // 延迟启动：等本进程退出释放单实例互斥体，否则新版会被单实例机制拦截
             _ = Task.Run(async () =>
             {
                 try { await Task.Delay(2500); Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); }
@@ -335,10 +314,8 @@ public partial class UpgradeWizard : Form
     }
 }
 
-/// <summary>upgrade 子命令入口。</summary>
 public static class UpgradeEntry
 {
-    /// <summary>向导版本标记（与 csproj 主版本同步即可，仅用于窗口标题/日志）。</summary>
     public const string WizardVersion = "3.22.1";
 
     public static int Run()

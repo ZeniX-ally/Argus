@@ -2,11 +2,6 @@ using System.Text;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 维修记录导出: CSV(UTF-8 BOM) 和 零依赖 XLSX(标准 OOXML)。
-/// 列: ID/故障项目/设备型号/设备SN/故障描述/严重度/状态/维修人/维修措施/备注/创建时间/更新时间。
-/// 状态与严重度的中文名统一取自 MaintenanceMeta(单一来源), 不在此处重复定义字典。
-/// </summary>
 public static class MaintenanceExporter
 {
     private static readonly string[] Headers =
@@ -31,7 +26,6 @@ public static class MaintenanceExporter
         m.UpdatedAt,
     };
 
-    // ==================== CSV ====================
     public static void ExportCsv(string path, IEnumerable<MaintenanceRecord> records)
     {
         var sb = new StringBuilder();
@@ -44,10 +38,6 @@ public static class MaintenanceExporter
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
     }
 
-    /// <summary>
-    /// CSV 字段转义。⚠ CWE-1236 公式注入防护: Excel/WPS 会把 = + - @ 开头的单元格当公式执行,
-    /// 维修措施/备注/故障描述是自由文本(可能来自 XML 或手工录入), 首字符命中时加单引号前缀。
-    /// </summary>
     private static string Esc(string? v)
     {
         v ??= "";
@@ -59,22 +49,6 @@ public static class MaintenanceExporter
         return v;
     }
 
-
-
-
-
-    // 样式 0=普通(左对齐,边框), 1=表头(白粗,蓝底,居中,边框)
-    /// <summary>
-    /// 导出 xlsx。v2.9.3：打包外壳改用共享的 <see cref="FctShared.Xlsx"/>
-    /// （原来这里自己写了一遍 zip/Content_Types/sheet XML，与三个工具重复），
-    /// 样式与列宽仍是本导出自己的。
-    ///
-    /// ⚠ 与 v2.9.2 的**唯一**长相差异：<c>FreezeRows = 1</c>（冻结表头）是 v2.9.3 新增的，
-    /// 旧版没有冻结窗格。12 列多行滚动时看不见表头，属改进，故保留；
-    /// 2026-07-31 用 <c>tools\xlsx_check.ps1 -Compare</c> 做过新旧逐单元格对比，
-    /// 除此一处外调色板 / 列宽 / 每个单元格的值与样式号完全一致。
-    /// 另外三个导出口（分发 / FAIL 排行 / 取数）比对结果是**一字节不差**。
-    /// </summary>
     public static void ExportXlsx(string path, IEnumerable<MaintenanceRecord> records)
     {
         const int S_TEXT = 0, S_HEADER = 1;
@@ -93,7 +67,6 @@ public static class MaintenanceExporter
             var row = new List<FctShared.Xlsx.Cell>();
             for (int c = 0; c < vals.Length; c++)
             {
-                // ID 列写成数值，其余写文本（与合并前一致）
                 if (c == 0 && int.TryParse(vals[c], out var num))
                     row.Add(FctShared.Xlsx.N(num, S_TEXT));
                 else
@@ -132,10 +105,5 @@ public static class MaintenanceExporter
         "<alignment horizontal=\"center\" vertical=\"center\"/></xf>" +
         "</cellXfs>" +
         "</styleSheet>";
-
-
-
-
-
 
 }

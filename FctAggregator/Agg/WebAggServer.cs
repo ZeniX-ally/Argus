@@ -1,89 +1,45 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 聚合端纯 Web 服务（Phase 3 新增：聚合端 Web 模式）。
-///
-/// 机台上跑 `Argus.exe agg --web`（无窗体常驻），本服务同时承载：
-///   1. 机台推送入口（v3.8.0 对齐：唯一入口为 POST /api/mesh/fail、/api/mesh/heartbeat；
-///      POST / 按 body type 分发，兼容遗留 AgentPusher）；
-///   2. 浏览器看板（GET）：机台状态卡片、FAIL 明细表、XML 报告下载、CSV 导出、健康检查。
-///
-/// 路由表：
-///   GET  /                    看板页（v3.8.0：优先服务 public/ 新 SPA，缺失回退内嵌旧看板）
-///   GET  /legacy              旧内嵌单页看板（v3.8.0 起从 / 移出，保留给老客户端/新 SPA 管理页链接）
-///   GET  /public/*            模块化 SPA 静态资源（v3.8.0）
-///   GET  /api/machines        机台状态列表 JSON（AggMachineStatus 数组）
-///   GET  /api/fails?limit&machine  FAIL 明细 JSON（AggFailRow 数组；limit 默认 200，上限 1000）
-///   GET  /api/fails/count      FAIL 总数（分页用）
-///   GET  /api/file?id=|path=  XML 报告下载（白名单校验；id= 场景本地缺失时回退跨机拉取）
-///   GET  /api/list?path=      目录浏览：resultsRoot 白名单内子目录列表（见 <see cref="ResolveDir"/>）
-///   GET  /api/export.csv?limit&machine  FAIL 明细 CSV（UTF-8 BOM + CWE-1236 公式注入防护）
-///   GET  /api/xmlview?id=     在线 XML 报告（服务端渲染 HTML，等效本地查看器）
-///   GET  /api/health          {"ok":true}（部署排查用）
-///   GET  /api/stats           良率日统计（v3.8.0 P1 D1，yld_daily）
-///   GET  /api/todos           全局待办池（跨机台，v3.5.0）
-///   GET/POST /api/settings    设置读取/保存（管理后台）
-///   POST /api/login | GET /api/status /api/audit /api/users  （v3.8.0 P1 D3 权限/审计）
-///   POST /api/mesh/fail|heartbeat|event  节点入站（fail/heartbeat=推送；event=全局待办）
-///   GET  /api/mesh/summary|fetch|peers|xml   节点间对账 / 邻居视图 / 跨机 XML 拉取
-///   POST /                    按 body 顶层 type 分发（fail/heartbeat；遗留 AgentPusher 兼容）
-///   其他路径 404；方法不符 405；POST body 超 1MB 413；根路径 type 不明 / 非法 JSON 400。
-///
-/// 响应策略：fail/heartbeat 处理一律回 200（回调异常也回 200 —— 机台端不因聚合端
-/// 逻辑错误重推，重复风险由 (machine, seq) 幂等兜底）；协议错误回 4xx。
-///
-/// JSON 序列化坑：AggFailRow / AggMachineStatus 都是 public **字段**（非属性），
-/// System.Text.Json 默认不序列化字段，必须 <see cref="JsonOpts"/> 显式 IncludeFields。
-/// </summary>
 public class WebAggServer : IDisposable
 {
-    private const int MaxBodyBytes = 1024 * 1024;   // POST body 上限 1MB，超限 413
+    private const int MaxBodyBytes = 1024 * 1024;
     private const int ReadChunk = 16384;
-    private const int DefaultLimit = 200;           // /api/fails 与 /api/export.csv 默认行数
-    private const int MaxLimit = 1000;              // limit 参数上限
+    private const int DefaultLimit = 200;
+    private const int MaxLimit = 1000;
     private const string ForbiddenText = "拒绝访问：文件不在允许目录内";
     private const string ForbiddenDirText = "拒绝访问：目录不在允许范围内";
 
-    /// <summary>字段型模型类序列化必须 IncludeFields（AggFailRow/AggMachineStatus 都是 public 字段）。
-    /// 命名保持默认（PascalCase 原字段名），页面 JS 按字段名取。</summary>
     private static readonly JsonSerializerOptions JsonOpts = new() { IncludeFields = true };
 
-    /// <summary>日志白名单文件（{BaseDir}/logs/app.log）：始终允许下载，部署排查用。</summary>
     private static readonly string LogFileFullPath =
         Path.GetFullPath(Path.Combine(AppConfig.BaseDir, "logs", "app.log"));
 
-    /// <summary>跨机台 XML 落盘目录（{BaseDir}/data/agg_xml）：聚合端收到的随事件上送 XML，
-    /// 与 resultsRoot 一并列入白名单放行（下载走本地文件，不依赖机台路径）。</summary>
     private static readonly string AggXmlRoot =
         Path.GetFullPath(Path.Combine(AppConfig.BaseDir, "data", "agg_xml"));
 
     private readonly int _port;
-    /// <summary>遗留中心监听（v3.5.0 前）；去中心化下为 null，改用 <see cref="_mesh"/>。</summary>
 #pragma warning disable CS0618
     private readonly AggWatcher? _watcher;
 #pragma warning restore CS0618
-    /// <summary>P2P 节点（v3.5.0 去中心化）：入站接收/对账/Gossiper 均经此。非 null 时优先于 _watcher。</summary>
     private readonly MeshNode? _mesh;
     private readonly AggDatabase _db;
     private readonly string _resultsRoot;
     private readonly string _shareRoot;
-    private string _token;   // 共享 token（agg_token）；空串 = 不启用鉴权。设置页可热更新
+    private string _token;
 
     private readonly object _lock = new();
     private HttpListener? _listener;
     private Thread? _acceptThread;
     private long _receivedCount;
-    private DateTime _startedAt;   // 服务启动时间（看板页脚健康展示，v3.4.11）
+    private DateTime _startedAt;
 
-    /// <summary>极简路由管线：路由注册与分发（精确/通配、404/405、命中计数），替代原 Handle() 大 switch。</summary>
     private readonly RoutePipeline _pipeline = new();
 
-    /// <summary>构造（遗留中心模式，v3.5.0 前）：watcher=聚合监听器，db=聚合库，resultsRoot=XML 白名单根，shareRoot=共享目录。</summary>
 #pragma warning disable CS0618
     public WebAggServer(int port, AggWatcher? watcher, AggDatabase db, string resultsRoot, string shareRoot, string token = "")
     {
@@ -95,33 +51,22 @@ public class WebAggServer : IDisposable
         _token = token ?? "";
         if (_token.Length > 0) Logger.Info($"[Web 服务] 已启用 agg_token 鉴权（看板需 ?token= 访问，推送需 X-Agg-Token 头）");
         else Logger.Warning("[Web 服务] agg_token 未配置，当前为未鉴权模式（任意客户端可访问），请在设置页配置token");
-        RegisterRoutes();   // 路由注册放基础构造：遗留中心与去中心化（MeshNode 构造链式走此）共用同一路由表
+        RegisterRoutes();
     }
 #pragma warning restore CS0618
 
-    /// <summary>构造（v3.5.0 去中心化）：mesh=P2P 节点（入站接收/peer 视图/对账），db=本地副本库。
-    /// 看板与 mesh 入站共同一 HttpListener 端口，单端口服务。</summary>
     public WebAggServer(int port, MeshNode mesh, AggDatabase db, string resultsRoot, string shareRoot, string token = "")
-#pragma warning disable CS0618   // 链式复用旧构造（遗留中心模式）
+#pragma warning disable CS0618
         : this(port, (AggWatcher?)null, db, resultsRoot, shareRoot, token)
 #pragma warning restore CS0618
     {
         _mesh = mesh;
-        // 安全加固（H-1）：/api/mesh/xml 的本地读取必须过文件白名单，
-        // 否则推送方可伪造 data.xml_path 借本服务读任意文件（跨机 HTTP 拉取不受影响）
         mesh.Receiver.LocalReadValidator = path => ResolveFile(path, out _) == 200;
     }
 
-    /// <summary>
-    /// 注册全部路由：与原 Handle() 大 switch 全量一一对应（含 switch 之前的 /public/* 静态分支），一个端点不能漏。
-    /// 每次命中先 CountHit()（保持「命中即计数」原行为），再调对应 ServeXxx；handler 均为同步 void 方法，
-    /// 包装返回 Task.CompletedTask。注册点放基础构造（遗留中心）：MeshNode 构造链式走此构造，
-    /// 生产（去中心化）与 selftest（遗留构造）共用同一份路由表，行为一致。
-    /// </summary>
     private void RegisterRoutes()
     {
         _pipeline.Add("GET", "/", ctx => { CountHit(); ServeDashboard(ctx); return Task.CompletedTask; });
-        // v3.8.0 对齐：旧内嵌单页看板移到 /legacy（根路径优先服务 public/ SPA）
         _pipeline.Add("GET", "/legacy", ctx => { CountHit(); ServeLegacyDashboard(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/", ctx => { CountHit(); ServePush(ctx, null); return Task.CompletedTask; });
 
@@ -129,22 +74,17 @@ public class WebAggServer : IDisposable
 
         _pipeline.Add("GET", "/api/settings", ctx => { CountHit(); ServeSettings(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/settings", ctx => { CountHit(); ServeSettingsSave(ctx); return Task.CompletedTask; });
-        // 域3 配置智能化（v3.19.0）：校验/推荐/回滚
         _pipeline.Add("GET", "/api/config/validate", ctx => { CountHit(); ServeConfigValidate(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/config/recommend", ctx => { CountHit(); ServeConfigRecommend(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/config/rollback", ctx => { CountHit(); ServeConfigRollback(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/config/backups", ctx => { CountHit(); ServeConfigBackups(ctx); return Task.CompletedTask; });
-        // 域4 设备智能化（v3.19.0）：预测/巡检/变更
         _pipeline.Add("GET", "/api/devices/predict", ctx => { CountHit(); ServeDevicesPredict(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/devices/inspect", ctx => { CountHit(); ServeDevicesInspect(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fct/changes", ctx => { CountHit(); ServeFctChanges(ctx); return Task.CompletedTask; });
-        // 域7 维修/待办智能（v3.19.0）：优先级/流转
         _pipeline.Add("GET", "/api/todos/suggest", ctx => { CountHit(); ServeTodoSuggest(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/maintenance/advise", ctx => { CountHit(); ServeMaintenanceAdvise(ctx); return Task.CompletedTask; });
-        // 域8 UI 智能：高亮/布局
         _pipeline.Add("GET", "/api/highlights", ctx => { CountHit(); ServeHighlights(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/layout/suggest", ctx => { CountHit(); ServeLayoutSuggest(ctx); return Task.CompletedTask; });
-        // 域9 告警智能：预测/自愈
         _pipeline.Add("GET", "/api/alerts/predict", ctx => { CountHit(); ServeAlertsPredict(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/alerts/heal", ctx => { CountHit(); ServeAlertsHeal(ctx); return Task.CompletedTask; });
 
@@ -155,38 +95,25 @@ public class WebAggServer : IDisposable
         _pipeline.Add("GET", "/api/list", ctx => { CountHit(); ServeList(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/export.csv", ctx => { CountHit(); ServeCsv(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/xmlview", ctx => { CountHit(); ServeXmlView(ctx); return Task.CompletedTask; });
-        // v3.8.0 P1 D1：良率日统计（yld_daily，心跳携带），总纲 L1 的 /api/stats
         _pipeline.Add("GET", "/api/stats", ctx => { CountHit(); ServeStats(ctx); return Task.CompletedTask; });
 
-        // v3.20.0 规格 02：预测准确率对账（rule/machine/days 可选过滤）
         _pipeline.Add("GET", "/api/predict/accuracy", ctx => { CountHit(); ServePredictAccuracy(ctx); return Task.CompletedTask; });
 
-        // v3.21.0 规格 03：季节性分解（新 region — viewer 读分解结果 / admin 热改开关，其余 region 一律禁改）
         _pipeline.Add("GET", "/api/yield/decompose", ctx => { CountHit(); ServeYieldDecompose(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/yield/decompose/config", ctx => { CountHit(); ServeYieldDecomposeConfigGet(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/yield/decompose/config", ctx => { CountHit(); ServeYieldDecomposeConfig(ctx); return Task.CompletedTask; });
-        // v3.21.1 P0 规格 01：良率归因（按 model/category 分组 fail_count + yield%）
-        // 路由模板 {machine} 不被 RoutePipeline 支持（仅精确 + /* 通配）→ 用尾部通配注册，machine 由 handler 自行解析
         _pipeline.Add("GET", "/api/yield/attribution/*", ctx => { CountHit(); ServeYieldAttribution(ctx); return Task.CompletedTask; });
 
-        // ===== v3.22.0 规格04 设备健康综合分（新 region，旧 region 禁改）=====
         _pipeline.Add("GET", "/api/devices/health", ctx => { CountHit(); ServeDeviceHealth(ctx); return Task.CompletedTask; });
 
-        // ===== v3.8.0 P1 D3：权限（users 三角色）+ 审计 + 状态 =====
-        // /api/login 在 Handle 层豁免 agg_token 校验（未登录也能到达），其余路由照常
-        // （async handler 直接返回其 Task，避免 CS4014 未等待警告）
         _pipeline.Add("POST", "/api/login", ctx => { CountHit(); return ServeLogin(ctx); });
         _pipeline.Add("GET", "/api/status", ctx => { CountHit(); ServeStatus(ctx); return Task.CompletedTask; });
-        // v3.10.0 P1-1（架构方案 P1-A）：指标（吞吐/积压/失败/队列/503），脚本与看板拉取
         _pipeline.Add("GET", "/api/metrics", ctx => { CountHit(); ServeMetrics(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/audit", ctx => { CountHit(); ServeAudit(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/users", ctx => { CountHit(); return ServeUsers(ctx); });
         _pipeline.Add("POST", "/api/users", ctx => { CountHit(); return ServeUsers(ctx); });
         _pipeline.Add("DELETE", "/api/users", ctx => { CountHit(); return ServeUsers(ctx); });
 
-        // ===== 去中心化 P2P 入站 / 查询端点 =====
-        // v3.8.0 对齐：/api/mesh/fail|heartbeat 是**唯一**推送入口（旧 /api/fail|/api/heartbeat 已删，
-        // 二者在 mesh 模式本就同处理）；POST / 保留兼容遗留 AgentPusher（按 body type 分发）。
         _pipeline.Add("POST", "/api/mesh/fail", ctx => { CountHit(); ServeMeshPush(ctx, "fail"); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/mesh/heartbeat", ctx => { CountHit(); ServeMeshPush(ctx, "heartbeat"); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/mesh/event", ctx => { CountHit(); ServeMeshEvent(ctx); return Task.CompletedTask; });
@@ -194,20 +121,11 @@ public class WebAggServer : IDisposable
         _pipeline.Add("GET", "/api/mesh/fetch", ctx => { CountHit(); ServeMeshFetch(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/mesh/peers", ctx => { CountHit(); ServeMeshPeers(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/mesh/xml", ctx => { CountHit(); ServeMeshXml(ctx); return Task.CompletedTask; });
-        // v3.5.0 旧版 GET /api/todos（跨机同步视图）已迁移至 /api/todos/sync，保留兼容但主路径让给 P5 维修待办
         _pipeline.Add("GET", "/api/todos/sync", ctx => { CountHit(); ServeTodos(ctx); return Task.CompletedTask; });
 
-        // ===== Agent A: P4 源机检索（2026-08-28）=====
-        // POST /api/mesh/query      聚合端扇出：并发查各机台 test_records 全量（含 PASS），结果聚合缓存 5 分钟，零膨胀
-        // POST /api/mesh/query/local 本机执行：仅查本机 test_records（供扇出调用，防递归）
-        // 安全：Handle 层 IsAuthenticated 已统一校验 agg_token/users；解析层 DTD Prohibit + LocalReadValidator 保持
-        // B/C 代理请勿在此 region 内增改——如需新增请另起 region
         _pipeline.Add("POST", "/api/mesh/query", ctx => { CountHit(); return ServeMeshQuery(ctx); });
         _pipeline.Add("POST", "/api/mesh/query/local", ctx => { CountHit(); return ServeMeshQueryLocal(ctx); });
 
-        // ===== Agent B: P5 维修/待办全功能（2026-08-28）=====
-        // 维修看板 4 列状态机 + 待办 + 人员 + 导出，全部服务端化，口径复用同一 C# 逻辑（MaintenanceMeta/TodoGrouping 等）。
-        // A/C 代理请勿在此 region 内增改——如需新增请另起 region 或协调
         _pipeline.Add("GET", "/api/maintenance", ctx => { CountHit(); ServeMaintenanceList(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/maintenance", ctx => { CountHit(); return ServeMaintenanceCreate(ctx); });
         _pipeline.Add("PATCH", "/api/maintenance", ctx => { CountHit(); return ServeMaintenanceUpdate(ctx); });
@@ -224,30 +142,23 @@ public class WebAggServer : IDisposable
         _pipeline.Add("POST", "/api/resolvers/rename", ctx => { CountHit(); return ServeResolversRename(ctx); });
         _pipeline.Add("GET", "/api/export/maintenance", ctx => { CountHit(); ServeExportMaintenance(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/export.maintenance", ctx => { CountHit(); ServeExportMaintenance(ctx); return Task.CompletedTask; });
-        // 兼容旧路径别名（部分前端可能用 /api/maintenance/export）
         _pipeline.Add("GET", "/api/maintenance/export", ctx => { CountHit(); ServeExportMaintenance(ctx); return Task.CompletedTask; });
 
         #region Agent C: P6 设备监控 + P2-A 服务化 + P7 数据拉取雏形（2026-08-28）— 单一 region，A/B 禁改
-        // 协调：本 region 集中 Agent C 全部路由；新增请在此 region 内增改，避免与 A/B 的 P4/P5 region 冲突（见顶部注释）。
-        // P6 设备上报（机台→聚合）
         _pipeline.Add("POST", "/api/mesh/info", ctx => { CountHit(); ServeMeshInfo(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/mesh/fctini", ctx => { CountHit(); ServeMeshFctIni(ctx); return Task.CompletedTask; });
-        // P6 设备查看（聚合→看板，5s 缓存）
         _pipeline.Add("GET", "/api/devices", ctx => { CountHit(); ServeDevices(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/devices/*", ctx => { CountHit(); ServeDeviceWildcard(ctx); return Task.CompletedTask; });
-        // P7 数据拉取/报告中心雏形（异步思想 + 趋势/分布）
         _pipeline.Add("POST", "/api/fetch", ctx => { CountHit(); return ServeFetchCreate(ctx); });
         _pipeline.Add("GET", "/api/fetch/jobs", ctx => { CountHit(); ServeFetchJobs(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fetch/status", ctx => { CountHit(); ServeFetchStatus(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/trends", ctx => { CountHit(); ServeTrends(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/distribution", ctx => { CountHit(); ServeDistribution(ctx); return Task.CompletedTask; });
-        // 兼容旧路径：/api/mesh/fetch 已有，去中心化对账用；/api/trends 等无 mesh 前缀亦可直达
         _pipeline.Add("GET", "/api/mesh/trends", ctx => { CountHit(); ServeTrends(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/mesh/distribution", ctx => { CountHit(); ServeDistribution(ctx); return Task.CompletedTask; });
         #endregion
 
         #region Lite-Fetch: 数据拉取完整 + 报告中心 + 程序日志路由（2026-08-28）— 单一 region，A/B/C 禁改
-        // 约束：零第三方、单 exe、手写 OOXML、统一 CSV 注入防护与 BOM、按机台/时间段/型号筛选、进度可轮询、下载、报告摘要归档对比、日志登记时间轴参数diff
         _pipeline.Add("GET", "/api/fetch/download", ctx => { CountHit(); ServeFetchDownload(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/fetch/progress", ctx => { CountHit(); ServeFetchProgress(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/heatmap", ctx => { CountHit(); ServeHeatmap(ctx); return Task.CompletedTask; });
@@ -262,14 +173,11 @@ public class WebAggServer : IDisposable
         _pipeline.Add("GET", "/api/proc-log/diff", ctx => { CountHit(); ServeProcLogDiff(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/proc-log/detail", ctx => { CountHit(); ServeProcLogDetail(ctx); return Task.CompletedTask; });
         _pipeline.Add("DELETE", "/api/proc-log", ctx => { CountHit(); var idStr = ctx.Request.QueryString["id"] ?? ""; if (long.TryParse(idStr, out var did) && _db.DeleteProcLog(did)) RespondText(ctx, 200, "ok"); else RespondText(ctx, 404, "not found"); return Task.CompletedTask; });
-        // 兼容别名
         _pipeline.Add("GET", "/api/proc_log", ctx => { CountHit(); ServeProcLogList(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/proc_log/timeline", ctx => { CountHit(); ServeProcLogTimeline(ctx); return Task.CompletedTask; });
         #endregion
 
         #region Lite-Settings: 剩余前端设置与体验层（2026-08-28）— 单一 region，A/B/C 禁改
-        // 本 region 集中 Lite 全部路由：用户“我的”布局/收藏、全局搜索、当前身份
-        // 约束：零第三方、黑白红令牌、前后端双写、viewer可读/engineer写/admin管用户
         _pipeline.Add("GET", "/api/users/me", ctx => { CountHit(); return ServeUsersMe(ctx); });
         _pipeline.Add("GET", "/api/users/me/layout", ctx => { CountHit(); return ServeUsersMeLayoutGet(ctx); });
         _pipeline.Add("PATCH", "/api/users/me/layout", ctx => { CountHit(); return ServeUsersMeLayoutPatch(ctx); });
@@ -283,8 +191,6 @@ public class WebAggServer : IDisposable
         #endregion
 
         #region Lite-Infra: MeshPusher并发+ Gossiper自适应 + 告警规则中心 + 多机台对比（2026-08-28）— 单一 region，A/B/C/Lite-Fetch/Lite-Settings 禁改
-        // 约束：原生 HTTP 直连，零第三方，单写者；MeshPusher per-peer 并发仍共享队列，(machine,seq)幂等；Gossiper 自适应 60/10 可观测；
-        // 告警规则统一配置（device_alert_* + yield_alert_*）前端展示；overview 对比态基于已有 /api/distribution & /api/trends
         _pipeline.Add("GET", "/api/alerts/rules", ctx => { CountHit(); ServeAlertRules(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/alerts/history", ctx => { CountHit(); ServeAlertHistory(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/gossiper/status", ctx => { CountHit(); ServeGossiperStatus(ctx); return Task.CompletedTask; });
@@ -293,18 +199,11 @@ public class WebAggServer : IDisposable
         #endregion
 
         #region Lite-Ops: 告警规则热更新（2026-08-28）— 单一 region，A/B/C/Lite-Fetch/Lite-Settings/Lite-Infra 禁改
-        // v3.17.0 留的尾巴：改告警阈值要重启聚合服务（产线重启=中断采集）。
-        // 约束：只改阈值类字段（device_alert_* + yield_alert_*）；AggAlertService 每轮轮询重新读
-        // AppConfig.Instance，故改内存单例 + 原子写 config.json 即热生效，无需重启；
-        // 阈值封顶校验防误配（disk 0~100000GB / cpu 0~100% / offline 0~10080min / yield 0~100%）；
-        // admin 专属（改全局告警策略=高危操作）+ 审计落库；config 向后兼容（旧配置无 enabled 字段亦正确）。
         _pipeline.Add("PATCH", "/api/alerts/rules", ctx => { CountHit(); ServeAlertRulesPatch(ctx); return Task.CompletedTask; });
         _pipeline.Add("PUT", "/api/alerts/rules", ctx => { CountHit(); ServeAlertRulesPatch(ctx); return Task.CompletedTask; });
         _pipeline.Add("POST", "/api/alerts/rules", ctx => { CountHit(); ServeAlertRulesPatch(ctx); return Task.CompletedTask; });
         #endregion
 
-        // 原写在 switch 之前的 /public/* 静态分支并入 pipeline（通配匹配保持原 IgnoreCase 语义）；
-        // handler 内部重新归一化 path 后传给 ServePublicFile（与旧时代码等价）
         _pipeline.Add("GET", "/public/*", ctx =>
         {
             CountHit();
@@ -316,21 +215,15 @@ public class WebAggServer : IDisposable
         });
     }
 
-    /// <summary>HttpListener 是否成功开启（Start 失败时 false，CLI 据此打印警告）。</summary>
     public bool Listening
     {
         get { lock (_lock) return _listener != null && _listener.IsListening; }
     }
 
-    /// <summary>收到的有效请求数（路由命中且方法正确的请求才计数，404/405 不计）。</summary>
     public long ReceivedCount => Interlocked.Read(ref _receivedCount);
 
-    /// <summary>设置被修改且已落盘时触发（AggCenterForm/Program 订阅后重启 HttpIngest/AggAlertService 热生效）。</summary>
     public event Action? SettingsChanged;
 
-    /// <summary>启动监听：后台线程 accept；失败只记 ERROR 日志不抛异常。
-    /// 前缀三档回退：http://+:port/（全网卡）→ http://0.0.0.0:port/ → http://127.0.0.1:port/
-    /// （无 URL ACL 权限时的本机兜底）。</summary>
     public void Start()
     {
         lock (_lock)
@@ -338,8 +231,8 @@ public class WebAggServer : IDisposable
             if (_listener != null) return;
             var attempts = new[]
             {
-                $"http://+:{_port}/",      // 全网卡（含回环），浏览器可经机台 IP 访问
-                $"http://127.0.0.1:{_port}/", // 无监听权限时的本机兜底
+                $"http://+:{_port}/",
+                $"http://127.0.0.1:{_port}/",
             };
             foreach (var prefix in attempts)
             {
@@ -367,7 +260,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>停止监听并 Join 后台线程（幂等；Stop 后不再收新请求，在途请求正常收尾）。</summary>
     public void Stop()
     {
         lock (_lock)
@@ -393,29 +285,21 @@ public class WebAggServer : IDisposable
         try { Stop(); } catch { }
     }
 
-    // ==================== accept 循环 ====================
-
-    /// <summary>并发处理上限（M-5 加固）：超出直接 503 断连，防慢速连接耗尽线程池拖垮看板/推送。
-    /// 64 对产线 7~10 台机台 + 几个浏览器绰绰有余。</summary>
     private static readonly SemaphoreSlim ConcurrencyGate = new(64, 64);
-    // v3.10.0 P1-1 观测：并发超限被 503 断连的累计次数
     private static long _rejected503;
 
-    /// <summary>并发超限 503 累计数（/api/metrics 观测）。</summary>
     public static long Rejected503Count => Interlocked.Read(ref _rejected503);
 
-    /// <summary>阻塞 GetContext + 每请求 Task.Run 处理（accept 循环绝不被单个慢请求阻塞）；
-    /// 并发超限时立即回 503 并断开（不进处理队列）。</summary>
     private void AcceptLoop()
     {
         while (true)
         {
             HttpListenerContext ctx;
             try { ctx = _listener!.GetContext(); }
-            catch { break; }   // 监听器被 Stop/Close：GetContext 抛异常，正常退出
+            catch { break; }
             if (!ConcurrencyGate.Wait(0))
             {
-                Interlocked.Increment(ref _rejected503);   // v3.10.0 P1-1 观测
+                Interlocked.Increment(ref _rejected503);
                 try
                 {
                     ctx.Response.StatusCode = 503;
@@ -433,19 +317,12 @@ public class WebAggServer : IDisposable
         }
     }
 
-    // ==================== 单请求处理 ====================
-
     private void Handle(HttpListenerContext ctx)
     {
         try
         {
             using var resp = ctx.Response;
 
-            // 鉴权（配置 agg_token 或存在 users 后生效）：POST 推送校验 X-Agg-Token 头；
-            // GET 看板/API 校验头 / ?token= / Cookie 任一。agg_token 与 users.token 任一匹配即通过
-            // （v3.8.0 P1 D3：users 三角色通道与旧 agg_token 通道并存），不匹配一律 403。
-            // 未配置 agg_token 且无用户 = 宽松模式（保持 v3.5.x 未鉴权向后兼容）。
-            // /api/login 豁免：未登录用户必须能到达登录端点（登录后拿 token 再走常规鉴权）。
             var absPath = ctx.Request.Url?.AbsolutePath ?? "";
             var loginExempt = absPath.Equals("/api/login", StringComparison.OrdinalIgnoreCase);
             var staticExempt = absPath.Equals("/", StringComparison.OrdinalIgnoreCase)
@@ -457,15 +334,8 @@ public class WebAggServer : IDisposable
                 resp.StatusCode = 403;
                 return;
             }
-            // 认证通过：下发/续期 HttpOnly Cookie（值=当前携带的 token，用户 token 登录不会拿到 agg_token 提权）
-            // ⚠ v3.10.0 bugfix：鉴权态（配置了 agg_token **或** users 表非空）都要下发 Cookie——
-            // 否则浏览器页面内 js/css 等静态资源请求不带 ?token= 参数，只靠 Cookie 续命；
-            // 只按 agg_token 下发会在「agg_token 未配置 + 用户已建」时前端白屏（页面 200 但资源全 403）。
             if (_token.Length > 0 || _db.ListUsers().Count > 0) IssueTokenCookie(resp, ExtractToken(ctx));
 
-            // 路由分发交给极简 pipeline（RoutePipeline）：归一化 path → 先精确后通配匹配 →
-            // 未命中 404、方法不符 405、命中调 handler（命中前仍先 CountHit()）——与原 Handle() 大
-            // switch 语义完全一致；原 switch 之前的 /public/* 静态分支已并入 pipeline 注册（见 RegisterRoutes()）。
             _pipeline.Handle(ctx);
         }
         catch (Exception ex)
@@ -477,12 +347,6 @@ public class WebAggServer : IDisposable
 
     private void CountHit() => Interlocked.Increment(ref _receivedCount);
 
-    /// <summary>
-    /// public/ 静态资源服务（v3.8.0 演示 / 前端模块化基础，纯新增）。
-    /// 只读（仅 GET）；路径穿越防护：解析后必须仍位于 publicRoot 之内（reparse point 组件同样拒绝）；
-    /// 默认入口 /public/ → public/index.html；MIME 白名单：html/css/js/json/svg/png/ico/txt。
-    /// 静态页本身不再单独鉴权（配 agg_token 后整服务统一 403），页面内 API 请求仍走各自鉴权。
-    /// </summary>
     private void ServePublicFile(HttpListenerContext ctx, string path)
     {
         try
@@ -490,7 +354,6 @@ public class WebAggServer : IDisposable
             var publicRoot = Path.GetFullPath(Path.Combine(AppConfig.BaseDir, "public"));
             var rel = path.Substring("/public".Length).TrimStart('/', '\\');
             if (rel.Length == 0) rel = "index.html";
-            // 目录访问（如 /public/demo/）→ 落到该目录的 index.html
             var full = Path.GetFullPath(Path.Combine(publicRoot, rel));
             if (Directory.Exists(full))
             {
@@ -522,9 +385,6 @@ public class WebAggServer : IDisposable
             };
             ctx.Response.ContentType = mime;
             ctx.Response.AddHeader("X-Content-Type-Options", "nosniff");
-            // v3.10.0：静态资源统一 no-cache（前端迭代期，静态服务每次读盘即时生效；
-            // 此前仅 HTML no-cache、CSS/JS 走 5 分钟缓存，改 JS 后浏览器旧缓存导致白屏难排查）。
-            // 产线浏览器本地有磁盘缓存也可接受——服务端每次返回最新，代价只是多几次 304 级校验。
             ctx.Response.Headers["Cache-Control"] = "no-cache";
             ctx.Response.StatusCode = 200;
             using (var fs = File.OpenRead(full))
@@ -532,7 +392,7 @@ public class WebAggServer : IDisposable
                 ctx.Response.ContentLength64 = fs.Length;
                 fs.CopyTo(ctx.Response.OutputStream);
             }
-            ctx.Response.OutputStream.Close();   // HttpListener 必须显式关闭输出流，客户端才能收到完整 body
+            ctx.Response.OutputStream.Close();
         }
         catch (Exception ex)
         {
@@ -541,37 +401,23 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>鉴权用 Cookie 名（M-3 加固：token 不再依赖 URL 逐跳传递）。</summary>
     internal const string TokenCookieName = "agg_token";
 
-    /// <summary>从请求提取令牌：header X-Agg-Token / query token / Cookie 三路（与 Authorized 同源）。</summary>
     private static string ExtractToken(HttpListenerContext ctx)
     {
         var got = ctx.Request.Headers[HttpIngest.TokenHeader];
-        if (string.IsNullOrEmpty(got)) got = ctx.Request.QueryString["token"] ?? ""; // 仅浏览器看板临时用，生产请用Header
+        if (string.IsNullOrEmpty(got)) got = ctx.Request.QueryString["token"] ?? "";
         if (string.IsNullOrEmpty(got))
         {
-            // Cookie 兜底（服务端在首次 ?token= 认证成功后下发 HttpOnly Cookie，
-            // 之后翻页/下载链接无需再把 token 拼进 URL —— 不进浏览器历史/代理日志）
             var ck = ctx.Request.Cookies[TokenCookieName];
             if (ck != null) got = ck.Value ?? "";
         }
         return got ?? "";
     }
 
-    /// <summary>鉴权检查：header X-Agg-Token / query token / Cookie 三路任一匹配即通过
-    /// （聚合端未配置 token 时永不调用本方法）。比较用固定时间（L-1 防时序侧信道）。</summary>
-    private bool Authorized(HttpListenerContext ctx)
-        => FixedTimeEquals(ExtractToken(ctx), _token);
-
-    /// <summary>
-    /// 整服务鉴权（v3.8.0 P1 D3 扩展）：agg_token 或 users.token 任一匹配即通过；
-    /// 未配置 agg_token 且无用户 = 宽松模式放行（保持 v3.5.x 未鉴权向后兼容）。
-    /// 路由层再按 <see cref="RequireRole"/> 做角色分级（写/管理接口）。
-    /// </summary>
     private bool IsAuthenticated(HttpListenerContext ctx)
     {
-        if (_token.Length == 0 && _db.ListUsers().Count == 0) return true;   // 宽松模式
+        if (_token.Length == 0 && _db.ListUsers().Count == 0) return true;
         var got = ExtractToken(ctx);
         if (!string.IsNullOrEmpty(got))
         {
@@ -581,13 +427,6 @@ public class WebAggServer : IDisposable
         return false;
     }
 
-    /// <summary>
-    /// 解析请求身份与角色（v3.8.0 P1 D3）：
-    /// ① token 匹配 agg_token → (admin, "agg_token")，兼容现有机台推送与旧链接；
-    /// ② token 匹配 users.token → 该用户 (role, name)；
-    /// ③ 未配置 agg_token 且 users 表为空 → 宽松模式 (admin, "anonymous")（保持未鉴权向后兼容）；
-    /// ④ 其余 → (null, null) 未授权（403）。
-    /// </summary>
     private (string? role, string? who) ResolveRole(HttpListenerContext ctx)
     {
         var got = ExtractToken(ctx);
@@ -601,7 +440,6 @@ public class WebAggServer : IDisposable
         return (null, null);
     }
 
-    /// <summary>角色分级：viewer &lt; engineer &lt; admin。未知角色按 0（拒绝）。</summary>
     private static int RoleLevel(string role) => role switch
     {
         "viewer" => 1,
@@ -610,7 +448,6 @@ public class WebAggServer : IDisposable
         _ => 0,
     };
 
-    /// <summary>要求至少 minRole（viewer/engineer/admin）。不满足返回 403 并 false（调用方应立即 return）。</summary>
     private bool RequireRole(HttpListenerContext ctx, string minRole)
     {
         var (role, _) = ResolveRole(ctx);
@@ -623,7 +460,6 @@ public class WebAggServer : IDisposable
         return true;
     }
 
-    /// <summary>常数时间字符串比较：先比长度（长度本身不泄密——token 定长 32hex），再按位异或累积。</summary>
     private static bool FixedTimeEquals(string? a, string b)
     {
         if (string.IsNullOrEmpty(a)) return false;
@@ -635,10 +471,6 @@ public class WebAggServer : IDisposable
         return diff == 0;
     }
 
-    /// <summary>认证通过后向浏览器下发 token Cookie（HttpOnly+SameSite=Strict；同站 fetch/链接自动携带）。
-    /// 值=当前请求携带的 token（v3.8.0 P1 D3：用户 token 登录不下发 agg_token，防止匿名提权为 admin）。
-    /// 仅 GET 场景需要；失败静默（无 Cookie 能力客户端仍可用 header/?token= 访问）。
-    /// ⚠ System.Net.Cookie 无 SameSite 属性（那是 ASP.NET 的 HttpCookie），手工拼 Set-Cookie 头。</summary>
     private void IssueTokenCookie(HttpListenerResponse resp, string tokenValue)
     {
         if (string.IsNullOrEmpty(tokenValue)) return;
@@ -646,10 +478,6 @@ public class WebAggServer : IDisposable
         catch { }
     }
 
-    // ==================== GET 路由 ====================
-
-    /// <summary>看板首页（v3.8.0 对齐）：public/ 模块化 SPA 存在时根路径 302 跳过去（保 ?token= 参数）；
-    /// public/ 缺失（如 selftest 环境 / 精简部署）回退内嵌旧看板，保证任何环境根路径可用。</summary>
     private void ServeDashboard(HttpListenerContext ctx)
     {
         var spaIndex = Path.Combine(AppConfig.BaseDir, "public", "index.html");
@@ -668,15 +496,12 @@ public class WebAggServer : IDisposable
         ServeLegacyDashboard(ctx);
     }
 
-    /// <summary>旧内嵌单页看板（v3.8.0 起在 /legacy）：深色主题、看板|文件|设置三页签，占位符替换展示路径。</summary>
     private void ServeLegacyDashboard(HttpListenerContext ctx)
     {
         var page = DashboardHtml
             .Replace("%%SHARE_ROOT%%", WebUtility.HtmlEncode(_shareRoot))
             .Replace("%%DB_PATH%%", WebUtility.HtmlEncode(_db.DbPath))
             .Replace("%%RESULTS_ROOT%%", WebUtility.HtmlEncode(_resultsRoot))
-            // JS 字符串上下文：反斜杠/引号必须转义，否则 "C:\Results" 里的 \R 会被 JS 当转义符吃掉；
-            // `<` 与 `/` 一并转义，防 `</script><script>…` 跳出脚本上下文（存储型 XSS 防御纵深）
             .Replace("%%RESULTS_ROOT_JS%%", (_resultsRoot ?? "")
                 .Replace("\\", "\\\\").Replace("\"", "\\\"")
                 .Replace("<", "\\u003c").Replace("/", "\\u002f"));
@@ -685,7 +510,6 @@ public class WebAggServer : IDisposable
 
     private void ServeHealth(HttpListenerContext ctx)
     {
-        // 服务健康：部署排查 + 看板页脚展示（v3.4.11 连通性加固）
         var uptime = _startedAt == default ? 0 : (long)(DateTime.Now - _startedAt).TotalSeconds;
         var payload = new Dictionary<string, object>
         {
@@ -696,31 +520,20 @@ public class WebAggServer : IDisposable
         Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts));
     }
 
-    /// <summary>
-    /// 在线 XML 报告查看（v3.8.0 MVP）：GET /api/xmlview?id=&lt;聚合库id&gt; →
-    /// 按 failId 取报告内容（本机白名单或跨机 HTTP，见 <see cref="MeshReceiver.FetchXmlForFail"/>）
-    /// → <see cref="XmlParser.ParseReportText"/> 解析 → <see cref="XmlReportHtml.Render"/> 渲染
-    /// 等效本地查看器的 HTML 页面。鉴权已由 Handle 统一处理。
-    /// v3.12.0 扩展（P4 源机检索联动）：支持 ?path=（任意机台任意产品，含 PASS）+ 可选 ?machine= 提示源机；
-    /// 路径受 LocalReadValidator + DTD Prohibit 双重守护，跨机时并发扇出仍走 HttpClient + agg_token。
-    /// </summary>
     private void ServeXmlView(HttpListenerContext ctx)
     {
         try
         {
             var q = ctx.Request.QueryString;
-            // P4 扩展：?path= 分支（任意产品，含 PASS）—— 与 ?id= 分支同等渲染口径
             var pathParam = q["path"];
             if (!string.IsNullOrEmpty(pathParam))
             {
                 var machineHint = q["machine"] ?? "";
                 string? xml2 = null;
-                // 本机白名单直读（D-T-L 验证同 /api/file）
                 if (ResolveFile(pathParam, out _) == 200 && File.Exists(pathParam))
                 {
                     try { xml2 = File.ReadAllText(pathParam, Encoding.UTF8); } catch { }
                 }
-                // 跨机拉取（源机 /api/file?path=，带 agg_token，peer 侧同样白名单校验）
                 if (string.IsNullOrEmpty(xml2) && _mesh != null)
                     xml2 = FetchRemoteXmlByPath(machineHint, pathParam);
                 if (string.IsNullOrEmpty(xml2))
@@ -744,13 +557,11 @@ public class WebAggServer : IDisposable
             string? xml = null;
             if (_mesh != null)
             {
-                // 去中心化：本机白名单直读，或跨机 HTTP 从源机拉取
                 xml = _mesh.Receiver.FetchXmlForFail(id);
             }
             else
             {
 #pragma warning disable CS0618
-                // 遗留中心模式：本地白名单读 xml_path（ResolveFile 校验同 /api/file）
                 if (!string.IsNullOrEmpty(row.XmlPath) && ResolveFile(row.XmlPath, out _) == 200 && File.Exists(row.XmlPath))
                     xml = File.ReadAllText(row.XmlPath, Encoding.UTF8);
 #pragma warning restore CS0618
@@ -773,18 +584,11 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>
-    /// 跨机按路径拉取 XML（P4）：并发尝试各 peer 的 GET /api/file?path=（带 agg_token），
-    /// 命中即返回文本；machineHint 非空时优先该机台对应 URL（若可映射），否则轮询全部。
-    /// 供 /api/xmlview?path= 的跨机分支使用（与 FetchXmlForFail 的 id 分支互补）。
-    /// </summary>
     private string? FetchRemoteXmlByPath(string machineHint, string path)
     {
         if (_mesh == null) return null;
         var urls = _mesh.PeerUrls;
         if (urls.Length == 0) return null;
-        // 若有 machineHint，尝试把提示机台的 URL 放最前（通过已知的 PeerStatuses 映射 machine->url？暂用轮询，首个成功即回）
-        // 简化：直接轮询全部，带 2s 超时
         foreach (var peer in urls)
         {
             try
@@ -804,8 +608,6 @@ public class WebAggServer : IDisposable
         return null;
     }
 
-    /// <summary>设置读取：返回聚合端当前配置（管理后台「设置」页填充用）。
-    /// 只读聚合相关字段；密码类字段（token）**不回显**，只给布尔「是否已配置」。</summary>
     private void ServeSettings(HttpListenerContext ctx)
     {
         try
@@ -813,13 +615,11 @@ public class WebAggServer : IDisposable
             var cfg = AppConfig.Instance;
             var payload = new Dictionary<string, object?>
             {
-                // v3.8.0 端口对齐：headless（agg --web）实际监听 mesh_port（默认 8081），
-                // 设置页必须暴露真实监听端口 _port；旧 agg_http_port 仅遗留中心模式（HttpIngest）用，不再展示
                 ["mesh_port"] = _port,
                 ["agg_token_set"] = cfg.AggToken.Length > 0,
-                ["agg_token"] = "",                        // 不回显，避免明文泄漏；留空表示不修改
+                ["agg_token"] = "",
                 ["agg_webhook_set"] = cfg.AggWebhookUrl.Length > 0,
-                ["agg_webhook_url"] = cfg.AggWebhookUrl,   // webhook 是飞书群的地址，非密钥，回显便于改
+                ["agg_webhook_url"] = cfg.AggWebhookUrl,
                 ["agg_summary_minutes"] = cfg.AggSummaryMinutes,
                 ["agg_share_root"] = cfg.AggShareRoot,
                 ["agg_transport"] = cfg.AggTransport,
@@ -835,9 +635,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>设置保存：更新 config.json（原子写）+ 热生效（token 立即更新）。
-    /// 端口/transport/结果目录这类需要重建监听的字段，返回提示「重启聚合服务生效」。
-    /// 返回 JSON：{"ok":true,"restart":bool,"msg":"..."}。</summary>
     private void ServeSettingsSave(HttpListenerContext ctx)
     {
         string body;
@@ -845,7 +642,7 @@ public class WebAggServer : IDisposable
         catch (BodyTooLargeException)
         {
             ctx.Response.StatusCode = 413;
-            ctx.Response.KeepAlive = false;   // 立即断开：客户端可能仍在发大 body，不排空避免挂起
+            ctx.Response.KeepAlive = false;
             return;
         }
 
@@ -872,8 +669,6 @@ public class WebAggServer : IDisposable
                 && !string.Equals(pw.GetString() ?? "", cfg.AggWebhookUrl, StringComparison.Ordinal))
             {
                 var hook = (pw.GetString() ?? "").Trim();
-                // L-5 加固：只允许 https（http 会明文泄露 webhook 密钥，且可被当内网 SSRF 跳板）；
-                // 空串=清除配置。非法值拒绝保存（400），与 FeishuNotifier 发送端策略同源。
                 if (hook.Length > 0 && !hook.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 {
                     ctx.Response.StatusCode = 400;
@@ -915,12 +710,10 @@ public class WebAggServer : IDisposable
                 return;
             }
 
-            // 热生效：token 立即更新（本服务鉴权）；其余字段通知订阅方（AggCenterForm/Program 重启相关组件）
             bool needRestart = changed.Contains("mesh_port") || changed.Contains("agg_transport");
             if (changed.Contains("agg_token")) _token = cfg.AggToken;
             try { SettingsChanged?.Invoke(); } catch (Exception ex) { Logger.Warning($"[Web 服务] 设置变更回调异常: {ex.Message}"); }
 
-            // v3.8.0 P1 D3：设置修改写审计（who/when/what）
             try { var (_, who) = ResolveRole(ctx); _db.LogAudit(who ?? "?", "settings.save", string.Join(",", changed)); }
             catch (Exception ex) { Logger.Warning($"[Web 服务] 审计写入失败: {ex.Message}"); }
 
@@ -942,7 +735,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    // ===== 域3 配置智能化 — 校验/推荐/回滚 API（v3.19.0） =====
     private void ServeConfigValidate(HttpListenerContext ctx)
     {
         try
@@ -988,14 +780,12 @@ public class WebAggServer : IDisposable
             Respond(ctx, ok?200:404, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(ok? "{\"ok\":true}":"{\"ok\":false,\"msg\":\"not found\"}"));
         } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
     }
-    // ===== 域4 设备智能化 — 预测/巡检/变更 API（v3.19.0） =====
     private void ServeDevicesPredict(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
         try
         {
             var preds = DevicePredictor.Predict(_db, 7);
-            // 可选落库（避免每次重复写，限制频率可忽略）
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, predicts = preds }, JsonOpts));
         } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
     }
@@ -1021,7 +811,6 @@ public class WebAggServer : IDisposable
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, changes = dto }, JsonOpts));
         } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
     }
-    // ===== 域7 维修/待办智能 — 建议/流转 API（v3.19.0） =====
     private void ServeTodoSuggest(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -1084,7 +873,6 @@ public class WebAggServer : IDisposable
         if (!RequireRole(ctx, "viewer")) return;
         try{
             var preds = AlertPredictor.Predict(_db);
-            // 落库一次（避免重复写，限制频率）
             try{ AlertPredictor.LogPredictions(_db, preds); } catch{}
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok=true, predicts=preds }, JsonOpts));
         } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
@@ -1103,7 +891,6 @@ public class WebAggServer : IDisposable
         } catch(Exception ex){ RespondText(ctx, 500, ex.Message); }
     }
 
-    /// <summary>机台状态列表：v3.5.0 去中心化下取 MeshReceiver peer 视图（含自身）；旧中心模式取 watcher 缓存。</summary>
     private void ServeMachines(HttpListenerContext ctx)
     {
         try
@@ -1125,11 +912,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>
-    /// 良率日统计 JSON（v3.8.0 P1 D1，总纲 L1 /api/stats）：
-    /// ?machine= 按机台过滤（空=全部）；?from= / ?to= 日期窗口（yyyyMMdd）；?max= 行数上限。
-    /// 每行含 Yield=pass/total*100（total=0 记 100.0），口径与机台本地看板一致（FetchDailyStats 同源）。
-    /// </summary>
     private void ServeStats(HttpListenerContext ctx)
     {
         try
@@ -1159,11 +941,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>
-    /// 预测准确率对账（v3.20.0 规格 02）：GET /api/predict/accuracy?days=30&rule=yield&machine=FCT3
-    /// 返回 ReconcileSummary JSON（summary/per_machine/threshold_tuning）。
-    /// viewer 角色可读；阈值推荐只读不写，应用由 /api/config/recommend/apply（v3.20.1）承担。
-    /// </summary>
     private void ServePredictAccuracy(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -1174,15 +951,12 @@ public class WebAggServer : IDisposable
             if (int.TryParse(q["days"], out var d) && d > 0) days = Math.Min(d, 180);
             var force = string.Equals(q["force"], "1", StringComparison.Ordinal);
 
-            // 实时触发一次对账（自检 + 现场"立即看"用；dashboard 拉取走缓存节奏时省去）
-            // 用 force=1 显式触发；否则仅在 hour 与 cron_hour 匹配时跑（节流）
             var cfg = AppConfig.Instance;
             if (force || DateTime.Now.Hour == cfg.PredictReconcileCronHour)
             {
-                try { PredictAccuracyReconciler.RunOnce(_db, cfg); } catch { /* RunOnce 内部已 try */ }
+                try { PredictAccuracyReconciler.RunOnce(_db, cfg); } catch {  }
             }
 
-            // 拉对账数据汇总（窗口 = days；与 PredictAccuracyReconciler.BuildSummary 用的是 PredictReconcileHorizonDays*2 = 28d，等价于 days 默认 30）
             var summary = new PredictAccuracyReconciler.ReconcileSummary
             {
                 WindowDays = days,
@@ -1218,7 +992,6 @@ public class WebAggServer : IDisposable
                     MissStreak = streak,
                 });
             }
-            // 阈值推荐（仅 tune 开启）
             if (cfg.PredictTuneEnabled)
             {
                 RecommendThresholdTuning(summary, cfg);
@@ -1234,7 +1007,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>yield 阈值推荐（rule=yield 专用；cpu/disk/offline 阈值暂不动）。</summary>
     private static void RecommendThresholdTuning(PredictAccuracyReconciler.ReconcileSummary summary, AppConfig cfg)
     {
         if (!summary.Summary.TryGetValue("yield", out var stat)) return;
@@ -1262,13 +1034,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    // ==================== v3.21.0 规格 03：季节性分解实现（单一新 region，A/B/C/Lite-* 禁改）====================
-
-    /// <summary>
-    /// 季节性分解结果（v3.21.0 规格 03）：GET /api/yield/decompose?machine=&amp;mode=&amp;days=
-    /// mode 缺省取 cfg.YieldSeasonalityMode；days 默认 cfg.YieldSeasonalityDays，上限 90。
-    /// viewer 可读。返回 DecompositionResult（Trend/Seasonal/Residual/Sigma/Anomalies，PascalCase）。
-    /// </summary>
     private void ServeYieldDecompose(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -1293,17 +1058,12 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>
-    /// 良率归因查询（v3.21.1 P0 规格 01）：GET /api/yield/attribution/{machine} → 按 model/category 分组的 fail_count + yield%。
-    /// viewer 可读，返回 top N 型号贡献度。
-    /// </summary>
     private void ServeYieldAttribution(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
         try
         {
             var path = ctx.Request.Url?.AbsolutePath ?? "";
-            // 解析/machine 路径参数
             string machine = "";
             var parts = path.Split('/');
             for (int i = 0; i < parts.Length - 1; i++)
@@ -1314,16 +1074,15 @@ public class WebAggServer : IDisposable
                     break;
                 }
             }
-            
+
             if (string.IsNullOrEmpty(machine)) { RespondText(ctx, 400, "machine parameter required"); return; }
-            
+
             int daysBack = 7;
             if (int.TryParse(ctx.Request.QueryString["days"], out var d) && d >= 1)
                 daysBack = Math.Min(d, 90);
-            
-            // 调用智能分析器
+
             var breakdown = YieldAttributor.AnalyzeModel(_db, machine, daysBack);
-            
+
             var resp = new
             {
                 machine,
@@ -1342,7 +1101,7 @@ public class WebAggServer : IDisposable
                     contribution = Math.Round(x.Contribution, 1)
                 })
             };
-            
+
             Respond(ctx, 200, "application/json; charset=utf-8",
                 JsonSerializer.SerializeToUtf8Bytes(resp, JsonOpts));
         }
@@ -1355,11 +1114,6 @@ public class WebAggServer : IDisposable
 
     #region v3.22.0 规格04：设备健康综合分（单一 region，A/B/C/Lite-* 禁改）
 
-    /// <summary>
-    /// 设备健康综合分（v3.22.0 规格04）：GET /api/devices/health → 每机台 0..100 综合分 +
-    /// 4 子项（cpu/disk/memory/offline）raw/score/weight/trend + top_concern + 建议。
-    /// viewer 可读；health_score_enabled=false 时仍可查询（score 算法独立于高亮开关）。
-    /// </summary>
     private void ServeDeviceHealth(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -1399,8 +1153,6 @@ public class WebAggServer : IDisposable
 
     #endregion
 
-    /// <summary>季节性开关状态读取（v3.21.0 规格 03）：GET /api/yield/decompose/config → {enabled, mode}。
-    /// viewer 可读（SPA 开关回显用；改走 POST）。</summary>
     private void ServeYieldDecomposeConfigGet(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -1417,12 +1169,6 @@ public class WebAggServer : IDisposable
             JsonSerializer.SerializeToUtf8Bytes(resp, JsonOpts));
     }
 
-    /// <summary>
-    /// 季节性开关热更新（v3.21.0 规格 03）：POST /api/yield/decompose/config {enabled, mode?}
-    /// admin 专属，写 audit_log（yield.seasonality.save）；改内存单例 + cfg.Save() 原子落盘，
-    /// AlertPredictor 每轮轮询重读 Instance 即热生效（与 Lite-Ops 告警规则热更新同机制）。
-    /// mode 非法返回 400。
-    /// </summary>
     private void ServeYieldDecomposeConfig(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "admin")) return;
@@ -1431,7 +1177,7 @@ public class WebAggServer : IDisposable
         catch (BodyTooLargeException)
         {
             ctx.Response.StatusCode = 413;
-            ctx.Response.KeepAlive = false;   // 立即断开：客户端可能仍在发大 body，不排空避免挂起
+            ctx.Response.KeepAlive = false;
             return;
         }
         try
@@ -1468,7 +1214,6 @@ public class WebAggServer : IDisposable
                 RespondText(ctx, 500, "配置保存失败（看日志）");
                 return;
             }
-            // v3.8.0 P1 D3：配置修改写审计（who/when/what）
             try { var (_, who) = ResolveRole(ctx); _db.LogAudit(who ?? "?", "yield.seasonality.save", string.Join(",", changed)); }
             catch (Exception ex) { Logger.Warning($"[Web 服务] 审计写入失败: {ex.Message}"); }
             var resp = new Dictionary<string, object?>
@@ -1494,13 +1239,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    // ==================== v3.8.0 P1 D3：登录 / 状态 / 审计 / 用户管理 ====================
-
-    /// <summary>
-    /// 登录（v3.8.0 P1 D3）：POST JSON {name, password} → 校验 users 表 →
-    /// 返回 {ok, name, role, token}（token=该用户静态令牌，前端存 localStorage 后随
-    /// ?token=/X-Agg-Token 携带访问）。密码错误统一 401（不泄露用户是否存在）。成功写审计。
-    /// </summary>
     private async Task ServeLogin(HttpListenerContext ctx)
     {
         try
@@ -1525,10 +1263,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 登录失败: {ex.Message}"); RespondText(ctx, 500, "login failed"); }
     }
 
-    /// <summary>
-    /// 服务状态（v3.8.0 P1，总纲 L1 /api/status）：健康 + 版本 + 机台在线数 + FAIL 总数 +
-    /// 今日 yld_daily 汇总（total/pass/良率）+ 鉴权模式 + 当前请求身份角色。
-    /// </summary>
     private void ServeStatus(HttpListenerContext ctx)
     {
         try
@@ -1560,11 +1294,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 状态查询失败: {ex.Message}"); RespondText(ctx, 500, "status failed"); }
     }
 
-    /// <summary>
-    /// 指标 JSON（v3.10.0 P1-1，架构方案 P1-A）：web 请求/503 拒绝、db 入库行数、
-    /// receiver 组提交/接收/幂等忽略、pusher 队列/丢弃/发送成功失败、peer 状态。
-    /// 数据全部来自既有 Interlocked 计数器，零额外开销；供脚本轮询与看板排障。
-    /// </summary>
     private void ServeMetrics(HttpListenerContext ctx)
     {
         try
@@ -1574,7 +1303,6 @@ public class WebAggServer : IDisposable
             var gossip = _mesh?.Gossiper;
             var uptime = _startedAt == default ? 0 : (long)(DateTime.Now - _startedAt).TotalSeconds;
             object? peers = _mesh?.PeerStatuses;
-            // v3.17.0 Lite-Infra：per-peer 失败率 + gossiper 自适应间隔可观测
             object? perPeer = null;
             try { perPeer = pusher?.GetPerPeerMetrics(); } catch { }
             object? gossiper = null;
@@ -1613,7 +1341,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 指标查询失败: {ex.Message}"); RespondText(ctx, 500, "metrics failed"); }
     }
 
-    /// <summary>审计查询（v3.8.0 P1 D3，admin）：GET /api/audit?limit= → 最近审计记录（who/when/what）。</summary>
     private void ServeAudit(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "admin")) return;
@@ -1626,11 +1353,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 审计查询失败: {ex.Message}"); RespondText(ctx, 500, "audit failed"); }
     }
 
-    /// <summary>
-    /// 用户管理（v3.8.0 P1 D3，admin）：
-    /// GET → 用户列表（不含 pwd_hash）；POST {name,password,role} → 创建/更新（返回含新 token）；
-    /// DELETE ?name= → 删除。全程写审计。
-    /// </summary>
     private async Task ServeUsers(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "admin")) return;
@@ -1682,8 +1404,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 用户管理失败: {ex.Message}"); RespondText(ctx, 500, "users failed"); }
     }
 
-    /// <summary>FAIL 明细 JSON：limit 默认 200 上限 1000；machine 可选（空=全部机台）；
-    /// offset 分页；keyword 对 SN/型号/失败原因模糊搜索。</summary>
     private void ServeFails(HttpListenerContext ctx)
     {
         try
@@ -1703,8 +1423,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>FAIL 总数 JSON（分页用）：可选 machine/q 过滤，与 /api/fails 同条件。
-    /// v3.5.3 走 5s 缓存计数（FailCountCached）：COUNT(*) 不再每页全表打一遍，读写分离后读路径也不持全局锁。</summary>
     private void ServeFailsCount(HttpListenerContext ctx)
     {
         try
@@ -1723,7 +1441,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>FAIL 明细 CSV 导出：UTF-8 BOM（Excel 打开不乱码）+ 表头固定 8 列 + 公式注入防护。</summary>
     private void ServeCsv(HttpListenerContext ctx)
     {
         try
@@ -1736,7 +1453,7 @@ public class WebAggServer : IDisposable
             {
                 sb.Append(string.Join(",", new[]
                 {
-                    Esc(string.IsNullOrEmpty(r.Ts) ? r.IngestTs : r.Ts),   // 时间：机台推送时间，缺省回落入库时间
+                    Esc(string.IsNullOrEmpty(r.Ts) ? r.IngestTs : r.Ts),
                     Esc(r.Machine), Esc(r.Model), Esc(r.Sn), Esc(r.TestDate),
                     Esc(r.FailReason), Esc(r.Tester), Esc(r.Result),
                 }));
@@ -1744,15 +1461,12 @@ public class WebAggServer : IDisposable
             }
             ctx.Response.Headers["Content-Disposition"] =
                 $"attachment; filename=\"fails_{DateTime.Now:yyyyMMdd_HHmmss}.csv\"";
-            // UTF-8 BOM：Encoding.GetBytes 不含 preamble，必须手动拼 EF BB BF（Excel 识别编码用）
             var enc = new UTF8Encoding(true);
             var preamble = enc.GetPreamble();
             var content = enc.GetBytes(sb.ToString());
             var bytes = new byte[preamble.Length + content.Length];
             preamble.CopyTo(bytes, 0);
             content.CopyTo(bytes, preamble.Length);
-            // v3.8.0 P1 D3：导出写审计（先审计后响应 —— 响应返回时审计必须已落库，
-            // 否则客户端收到 200 后立刻查审计会因竞态看到空）
             try { var (_, who) = ResolveRole(ctx); _db.LogAudit(who ?? "?", "export.csv", $"{rows.Count} rows machine={machine}"); }
             catch (Exception ex) { Logger.Warning($"[Web 服务] 审计写入失败: {ex.Message}"); }
             Respond(ctx, 200, "text/csv; charset=utf-8", bytes);
@@ -1764,7 +1478,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>XML 报告下载：?id= 查库取 xml_path 与 ?path= 直接传参两条入口共用白名单校验。</summary>
     private void ServeFile(HttpListenerContext ctx)
     {
         var q = ctx.Request.QueryString;
@@ -1808,8 +1521,6 @@ public class WebAggServer : IDisposable
         if (status == 400) { RespondText(ctx, 400, "参数错误：文件路径非法"); return; }
         if (status == 403)
         {
-            // v3.8.0 对齐：id= 场景本地白名单未命中（记录可能是源机路径）→ mesh 回退跨机拉取；
-            // path= 是任意用户输入，保持严格白名单不回退。
             if (TryServeRemoteXml(ctx, idStr)) return;
             RespondText(ctx, 403, ForbiddenText);
             return;
@@ -1820,21 +1531,16 @@ public class WebAggServer : IDisposable
         catch (Exception ex)
         {
             Logger.Warning($"[Web 服务] 读取报告文件失败 {full}: {ex.Message}");
-            // v3.8.0 对齐：本地文件不可用（源机数据，本机只是占位路径）→ mesh 回退跨机拉取
             if (TryServeRemoteXml(ctx, idStr)) return;
             RespondText(ctx, 500, "读取文件失败");
             return;
         }
 
-        // Content-Disposition inline + RFC 5987 UTF-8 文件名（中文文件名经浏览器正确解码）
         ctx.Response.Headers["Content-Disposition"] =
             $"inline; filename*=UTF-8''{Uri.EscapeDataString(Path.GetFileName(full!))}";
         Respond(ctx, 200, ContentTypeFor(full!), data);
     }
 
-    /// <summary>mesh 模式回退：/api/file?id= 本地文件不可用时从源机实时拉取（与 /api/mesh/xml 同一逻辑）。
-    /// 仅 id= 场景允许（记录源确定）；跨机拉取由源机自校验白名单，本机拉取仍走 LocalReadValidator，
-    /// 无安全回退。成功写出响应返回 true，否则 false（调用方按原路径处理）。</summary>
     private bool TryServeRemoteXml(HttpListenerContext ctx, string? idStr)
     {
         if (_mesh == null || string.IsNullOrEmpty(idStr) || !long.TryParse(idStr, out var fid)) return false;
@@ -1849,12 +1555,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 跨机拉取 XML 失败 id={fid}: {ex.Message}"); return false; }
     }
 
-    /// <summary>
-    /// 目录浏览：?path= 为空列出 resultsRoot 本身；否则列出该目录（相对路径按 resultsRoot 解析）。
-    /// 白名单规则见 <see cref="ResolveDir"/>；只列直接子项（不递归），目录在前文件在后，
-    /// 各自按名称排序（StringComparer.OrdinalIgnoreCase）。每项带完整 Path，
-    /// 前端可直接回传 /api/list（进目录）或 /api/file（下载）。
-    /// </summary>
     private void ServeList(HttpListenerContext ctx)
     {
         var pathParam = ctx.Request.QueryString["path"] ?? "";
@@ -1869,7 +1569,6 @@ public class WebAggServer : IDisposable
         try
         {
             entries = new List<ListEntry>();
-            // 目录 + 文件分开枚举各自排序，保证「目录在前文件在后」的语义
             var dirs = Directory.EnumerateDirectories(full!)
                 .OrderBy(d => d, StringComparer.OrdinalIgnoreCase);
             var files = Directory.EnumerateFiles(full!)
@@ -1881,7 +1580,7 @@ public class WebAggServer : IDisposable
                 {
                     Name = di.Name,
                     IsDir = true,
-                    Size = 0,                                        // 目录大小不给（免去递归统计）
+                    Size = 0,
                     Modified = di.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"),
                     Path = di.FullName,
                 });
@@ -1910,7 +1609,6 @@ public class WebAggServer : IDisposable
             JsonSerializer.SerializeToUtf8Bytes(entries, JsonOpts));
     }
 
-    /// <summary>目录浏览列表项（/api/list 用）：public 属性，默认序列化即可（IncludeFields 不影响属性）。</summary>
     private sealed class ListEntry
     {
         public string Name { get; set; } = "";
@@ -1920,7 +1618,6 @@ public class WebAggServer : IDisposable
         public string Path { get; set; } = "";
     }
 
-    /// <summary>limit/machine 参数解析：limit 默认 200，非法/<=0 回落默认，>1000 截断；machine 空串转 null。</summary>
     private static (int limit, string? machine) ReadLimitMachine(HttpListenerContext ctx)
     {
         var q = ctx.Request.QueryString;
@@ -1930,18 +1627,14 @@ public class WebAggServer : IDisposable
         return (limit, machine.Length == 0 ? null : machine);
     }
 
-    // ==================== POST 路由（机台推送） ====================
-
-    /// <summary>机台推送：显式路径（forcedType 非空）或根路径按 body type 分发。
-    /// 一律回 200（回调异常也 200），协议错误回 4xx。</summary>
     private void ServePush(HttpListenerContext ctx, string? forcedType)
     {
         string body;
         try { body = ReadBody(ctx.Request); }
         catch (BodyTooLargeException)
         {
-            ctx.Response.StatusCode = 413;   // body 超 1MB
-            ctx.Response.KeepAlive = false;  // 立即断开，不排空大 body
+            ctx.Response.StatusCode = 413;
+            ctx.Response.KeepAlive = false;
             return;
         }
 
@@ -1962,7 +1655,7 @@ public class WebAggServer : IDisposable
 
         if (type == null)
         {
-            ctx.Response.StatusCode = 400;   // 根路径但缺 type = 机台发错内容
+            ctx.Response.StatusCode = 400;
             return;
         }
 
@@ -1970,7 +1663,6 @@ public class WebAggServer : IDisposable
         {
             if (_mesh != null)
             {
-                // v3.5.0 去中心化：经 MeshReceiver 入站（幂等入库到本地副本库）
                 if (string.Equals(type, "fail", StringComparison.OrdinalIgnoreCase)) _mesh.Receiver.HandleFail(body);
                 else if (string.Equals(type, "heartbeat", StringComparison.OrdinalIgnoreCase)) _mesh.Receiver.HandleHeartbeat(body);
                 else { ctx.Response.StatusCode = 400; return; }
@@ -1985,29 +1677,22 @@ public class WebAggServer : IDisposable
         }
         catch (AggIngestException ex)
         {
-            // 数据库写入失败：回 500 —— 机台端断线补偿队列收到非 2xx 自动重推
             Logger.Error($"[Web 服务] fail 入库失败 machine={ex.Machine} seq={ex.Seq}: {ex.Message}");
             ctx.Response.StatusCode = 500;
             return;
         }
         catch (Exception ex)
         {
-            // 聚合端逻辑错误绝不回 4xx/5xx：机台端不重推，重复风险交给 (machine, seq) 幂等兜底
             Logger.Warning($"[Web 服务] 推送回调异常（仍回 200）: {ex.Message}");
         }
         ctx.Response.StatusCode = 200;
     }
 
-    // ==================== v3.5.0 去中心化 P2P 端点 ====================
-
-    /// <summary>邻居推来的 fail/heartbeat（v3.8.0 对齐后为**唯一**推送入口；与遗留中心模式共用
-    /// <see cref="ServePush"/> 的 _mesh/_watcher 双分支，故不判 _mesh 为 null —— 遗留构造（watcher）下同样可用）。</summary>
     private void ServeMeshPush(HttpListenerContext ctx, string forcedType)
     {
         ServePush(ctx, forcedType);
     }
 
-    /// <summary>邻居广播来的非 FAIL 事件（如全局待办变更）→ TodoSync 合并。</summary>
     private void ServeMeshEvent(HttpListenerContext ctx)
     {
         if (_mesh == null) { ctx.Response.StatusCode = 404; return; }
@@ -2024,7 +1709,6 @@ public class WebAggServer : IDisposable
         ctx.Response.StatusCode = 200;
     }
 
-    /// <summary>Gossiper 对账：返回各机台在本副本库的最大 seq（machine→max_seq）。</summary>
     private void ServeMeshSummary(HttpListenerContext ctx)
     {
         if (_mesh == null) { ctx.Response.StatusCode = 404; return; }
@@ -2034,7 +1718,6 @@ public class WebAggServer : IDisposable
         Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts));
     }
 
-    /// <summary>Gossiper 对账：按 (machine, from, to] 区间返回该机台 FAIL 增量（供邻居补推）。</summary>
     private void ServeMeshFetch(HttpListenerContext ctx)
     {
         if (_mesh == null) { ctx.Response.StatusCode = 404; return; }
@@ -2046,7 +1729,6 @@ public class WebAggServer : IDisposable
         if (string.IsNullOrEmpty(machine) || to <= from) { ctx.Response.StatusCode = 400; return; }
         try
         {
-            // 取本库该机台 (from, to] 区间的 fail 事件，原样序列化回邻居
             var rows = _db.QueryFailsByMachineSeqRange(machine, from, to);
             var events = rows.Select(r => SerializeFailRow(r)).ToList();
             var payload = new Dictionary<string, object> { ["events"] = events };
@@ -2059,7 +1741,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>peer 拓扑视图（含自身）：供看板展示全产线机台在线状态与 FAIL 统计。</summary>
     private void ServeMeshPeers(HttpListenerContext ctx)
     {
         if (_mesh == null) { ctx.Response.StatusCode = 404; return; }
@@ -2072,7 +1753,6 @@ public class WebAggServer : IDisposable
         Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts));
     }
 
-    /// <summary>按需拉取 XML 报告（轻量化：默认不冗余存储，点开时从源机/本地拉取）。</summary>
     private void ServeMeshXml(HttpListenerContext ctx)
     {
         if (_mesh == null) { ctx.Response.StatusCode = 404; return; }
@@ -2083,7 +1763,6 @@ public class WebAggServer : IDisposable
         Respond(ctx, 200, "application/xml; charset=utf-8", Encoding.UTF8.GetBytes(xml));
     }
 
-    /// <summary>全局待办池视图：跨机同步的待办 owner/state（供看板「全产线待办」页）。</summary>
     private void ServeTodos(HttpListenerContext ctx)
     {
         if (_mesh == null) { ctx.Response.StatusCode = 404; return; }
@@ -2098,12 +1777,6 @@ public class WebAggServer : IDisposable
 
     #region Agent A: P4 源机检索（2026-08-28）— POST /api/mesh/query 扇出 + local 本机查询
 
-    /// <summary>
-    /// 本机查询（POST /api/mesh/query/local）：仅查本机 Database test_records 全量（含 PASS），
-    /// 有 sn/test_date/result 索引，3000 行内 &lt;100ms。返回 {ok, machine, results[], total}。
-    /// 不扇出、不缓存，专供聚合端扇出调用（防递归）。
-    /// 同步实现（阻塞），因 RoutePipeline 为 fire-and-forget（不 await），异步会导致响应未写完即被 Handle 释放。
-    /// </summary>
     private Task ServeMeshQueryLocal(HttpListenerContext ctx)
     {
         if (_mesh == null)
@@ -2137,13 +1810,6 @@ public class WebAggServer : IDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// 聚合查询（POST /api/mesh/query）：并发查各机台 test_records 全量（含 PASS），结果聚合缓存 5 分钟，聚合端零膨胀。
-    /// 流程：缓存键命中 → 直接返回；未命中 → 本机 QueryLocal + 并发 POST 各 peer /api/mesh/query/local（2.5s 超时，带 agg_token）→ 合并去重
-    /// → 按 test_date 倒序 → Skip/Take 分页 → 序列化 + 写入缓存 → 返回 {ok, cached, total, results[], peers[]}。
-    /// 并发模型：Task.WhenAll + Semaphore(64 已全局限流)，单机慢不拖累其他机台；结果 zero-copy 聚合，不写 AggDatabase。
-    /// 同步阻塞实现：RoutePipeline 不 await（fire-and-forget），异步会导致空响应；此处用 GetAwaiter().GetResult() 阻塞至完成再返回。
-    /// </summary>
     private Task ServeMeshQuery(HttpListenerContext ctx)
     {
         if (_mesh == null)
@@ -2167,15 +1833,12 @@ public class WebAggServer : IDisposable
         var cacheKey = MeshQueryService.CacheKey(req);
         if (MeshQueryService.TryGetCached(cacheKey, out var cachedJson))
         {
-            // 缓存命中：把 cached 标记翻为 true 后返回（字符串替换避免二次序列化开销）
             var hitJson = cachedJson.Replace("\"cached\":false", "\"cached\":true");
-            // 若缓存体未含 cached 字段（旧版本），注入 header 提示
             if (hitJson == cachedJson) ctx.Response.Headers["X-Cache"] = "HIT";
             Respond(ctx, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(hitJson));
             return Task.CompletedTask;
         }
 
-        // 未命中：扇出查询
         try
         {
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -2188,8 +1851,6 @@ public class WebAggServer : IDisposable
         var peerHits = new ConcurrentBag<MeshQueryService.PeerHit>();
         peerHits.Add(new MeshQueryService.PeerHit { Machine = _mesh.LocalMachine, Online = true, Count = localItems.Count });
 
-        // 需要并发的 peer 数（按 req.Machine 过滤时，仍扇出全部但结果阶段再过滤——保证离线提示完整）
-        // 同步阻塞：每 peer 任务内部用 GetAwaiter().GetResult()，外层 WhenAll 亦阻塞，避免 fire-and-forget 空响应
         var fanoutTasks = peerUrls.Select(peer => Task.Run(() =>
         {
             var hit = new MeshQueryService.PeerHit { Machine = peer, Online = false, Count = 0 };
@@ -2232,7 +1893,6 @@ public class WebAggServer : IDisposable
                                 BatchTimestamp = el.TryGetProperty("BatchTimestamp", out var vbt) ? vbt.GetString() ?? "" : "",
                                 Tester = el.TryGetProperty("Tester", out var vte) ? vte.GetString() ?? "" : "",
                             };
-                            // 兼容小写字段（System.Text.Json 默认 PascalCase 序列化）
                             if (string.IsNullOrEmpty(it.Machine))
                                 it.Machine = el.TryGetProperty("machine", out var vm2) ? vm2.GetString() ?? peer : peer;
                             list.Add(it);
@@ -2242,7 +1902,6 @@ public class WebAggServer : IDisposable
                 }
                 hit.Online = true;
                 hit.Count = list.Count;
-                // 推断 machine 名：取结果首条的 Machine，若空则用 peer URL
                 if (list.Count > 0 && !string.IsNullOrEmpty(list[0].Machine) && list[0].Machine != peer)
                     hit.Machine = list[0].Machine;
                 else hit.Machine = peer;
@@ -2266,7 +1925,6 @@ public class WebAggServer : IDisposable
         var merged = new List<MeshQueryService.QueryItem>(localItems);
         foreach (var lst in peerResults) merged.AddRange(lst);
 
-        // 若请求指定 machine，则过滤仅该机台（大小写不敏感，支持子串匹配以兼容 URL 场景）
         if (!string.IsNullOrWhiteSpace(req.Machine))
         {
             var want = req.Machine!.Trim();
@@ -2331,14 +1989,6 @@ public class WebAggServer : IDisposable
 
     #region Agent B: P5 维修/待办全功能（2026-08-28）— 维修看板服务端化
 
-    // ==================== 维修看板 API ====================
-
-    /// <summary>
-    /// GET /api/maintenance — 维修记录列表（服务端化，复用 MaintenanceMeta 状态机 legacy 兼容）。
-    /// Query: ?status=（空=全部、unknown/open/in_progress/resolved，closed/investigating 自动归并）、limit、q=关键词（fail_item/fail_reason/resolver 模糊）。
-    /// 权限：viewer 可读（IsAuthenticated 已前置，viewer 仅需过鉴权；未配置时宽松）。
-    /// 返回：MaintenanceRecord[]（按 updated_at 倒序，已分页截断为 limit）。
-    /// </summary>
     private void ServeMaintenanceList(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -2351,12 +2001,10 @@ public class WebAggServer : IDisposable
             if (int.TryParse(q["limit"], out var l) && l > 0) limit = Math.Min(l, 2000);
             var kw = (q["q"] ?? q["keyword"] ?? "").Trim();
             List<MaintenanceRecord> rows;
-            // 取全部后按关键词二次过滤（keep DB query simple + 兼容大小写不敏感 LIKE）
             if (string.IsNullOrEmpty(status))
                 rows = _db.ListMaintenance("", limit + 200);
             else
                 rows = _db.ListMaintenance(status, limit + 200);
-            // legacy closed/investigating 已在 Normalize 归并，但历史库仍可能存 investigating，需额外合并
             if (status == "open")
             {
                 var inv = _db.ListMaintenance("investigating", 200);
@@ -2383,10 +2031,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 查询维修记录失败: {ex.Message}"); RespondText(ctx, 500, "query maintenance failed"); }
     }
 
-    /// <summary>
-    /// GET /api/maintenance/counts — 各状态真实总数（不受 list LIMIT 影响），用于列头徽章。
-    /// 复用 CountMaintenanceByStatus + Normalize 归并 legacy，返回 {open, in_progress, resolved, unknown, total}。
-    /// </summary>
     private void ServeMaintenanceCounts(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -2399,7 +2043,6 @@ public class WebAggServer : IDisposable
                 var k = MaintenanceMeta.Normalize(kv.Key);
                 norm[k] = norm.GetValueOrDefault(k) + kv.Value;
             }
-            // 确保 4 列都有值（0 补齐）
             foreach (var def in MaintenanceMeta.Statuses)
                 if (!norm.ContainsKey(def.Key)) norm[def.Key] = 0;
             var total = norm.Values.Sum();
@@ -2417,13 +2060,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 维修计数失败: {ex.Message}"); RespondText(ctx, 500, "counts failed"); }
     }
 
-    /// <summary>
-    /// POST /api/maintenance — 新建维修记录（单条或批量）。
-    /// Body: 单条 {fail_item*, fail_reason, severity, status, resolver, resolution, notes, created_at, station_id,...}
-    /// 或批量 {items: [string...], merge:bool, fail_reason, severity, status, resolver, resolution, notes}
-    /// 逻辑：复用 MaintenanceForm.BatchResults 的 merge 规则（" / " 连接）。
-    /// 权限：engineer+。
-    /// </summary>
     private Task ServeMaintenanceCreate(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "engineer")) return Task.CompletedTask;
@@ -2435,7 +2071,6 @@ public class WebAggServer : IDisposable
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
             var (_, who) = ResolveRole(ctx);
-            // 批量分支：{items:[...], merge:true/false}
             if (root.TryGetProperty("items", out var itemsEl) && itemsEl.ValueKind == JsonValueKind.Array)
             {
                 var items = new List<string>();
@@ -2447,7 +2082,6 @@ public class WebAggServer : IDisposable
                 }
                 if (items.Count == 0) { RespondText(ctx, 400, "items empty"); return Task.CompletedTask; }
                 bool merge = root.TryGetProperty("merge", out var m) && m.ValueKind == JsonValueKind.True;
-                // 公共字段
                 var rec = ParseMaintenanceRecord(root, who);
                 var results = new List<int>();
                 if (merge)
@@ -2455,9 +2089,7 @@ public class WebAggServer : IDisposable
                     rec.FailItem = string.Join(" / ", items);
                     var id = _db.CreateMaintenance(rec);
                     results.Add(id);
-                    // 多人自动登记
                     foreach (var n in ResolverUtil.Split(rec.Resolver)) try { _db.AddResolver(n); } catch { }
-                    // 推送（如有状态）
                     if (!string.IsNullOrEmpty(rec.Status)) NotifyMaintenancePush(rec, "", rec.Status);
                     _db.LogAudit(who ?? "?", "maintenance.create.merge", rec.FailItem);
                 }
@@ -2478,7 +2110,6 @@ public class WebAggServer : IDisposable
                 Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, ids = results }, JsonOpts));
                 return Task.CompletedTask;
             }
-            // 单条分支
             var single = ParseMaintenanceRecord(root, who);
             if (string.IsNullOrWhiteSpace(single.FailItem)) { RespondText(ctx, 400, "fail_item required"); return Task.CompletedTask; }
             single.Status = MaintenanceMeta.Normalize(single.Status);
@@ -2515,7 +2146,6 @@ public class WebAggServer : IDisposable
         if (string.IsNullOrEmpty(rec.StationId) && root.TryGetProperty("machine", out var vm) && vm.ValueKind == JsonValueKind.String) rec.StationId = vm.GetString() ?? "";
         rec.Resolver = ResolverUtil.Normalize(rec.Resolver);
         if (!string.IsNullOrEmpty(rec.Severity)) rec.Severity = MaintenanceMeta.SeverityKeyOf(MaintenanceMeta.SeverityZhOf(rec.Severity)) == rec.Severity ? rec.Severity : MaintenanceMeta.SeverityKeyOf(rec.Severity);
-        // severity key 规范化：若传入中文则转 key，若传入 key 则保留，否则默认 major
         if (rec.Severity != "critical" && rec.Severity != "major" && rec.Severity != "minor")
         {
             var zh = MaintenanceMeta.SeverityZhOf(rec.Severity);
@@ -2526,11 +2156,6 @@ public class WebAggServer : IDisposable
         return rec;
     }
 
-    /// <summary>
-    /// PATCH/PUT /api/maintenance — 全字段更新（编辑表单 / 拖拽改状态弹全字段确认）。
-    /// Body 必须含 id，其余字段与 POST 同。状态变更会触发飞书推送（复用 FeishuNotifier）。
-    /// 权限：engineer+。
-    /// </summary>
     private Task ServeMaintenanceUpdate(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "engineer")) return Task.CompletedTask;
@@ -2548,9 +2173,7 @@ public class WebAggServer : IDisposable
             var existing = _db.GetMaintenance(id);
             if (existing == null) { RespondText(ctx, 404, "not found"); return Task.CompletedTask; }
             var fromStatus = existing.Status;
-            // 取请求字段覆盖现有（空串不覆盖除外，fail_item 必填则覆盖）
             string G(string k) => root.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
-            // 为兼容前端大小写，遍历属性名时不敏感
             string GetAny(params string[] keys) { foreach (var k in keys) { var v = G(k); if (v != "") return v; } return ""; }
             var updated = existing.Clone();
             var fi = GetAny("fail_item", "failItem"); if (fi != "") updated.FailItem = fi;
@@ -2563,7 +2186,6 @@ public class WebAggServer : IDisposable
             var em = GetAny("equipment_model", "equipmentModel"); if (em != "" || root.TryGetProperty("equipment_model", out _) || root.TryGetProperty("equipmentModel", out _)) updated.EquipmentModel = em;
             var es = GetAny("equipment_sn", "equipmentSn"); if (es != "" || root.TryGetProperty("equipment_sn", out _) || root.TryGetProperty("equipmentSn", out _)) updated.EquipmentSn = es;
             var ca = GetAny("created_at", "createdAt", "date"); if (ca != "") updated.CreatedAt = ca;
-            // 规范化
             if (!string.IsNullOrEmpty(updated.Severity) && updated.Severity != "critical" && updated.Severity != "major" && updated.Severity != "minor")
                 updated.Severity = MaintenanceMeta.SeverityKeyOf(MaintenanceMeta.SeverityZhOf(updated.Severity));
             updated.Status = MaintenanceMeta.Normalize(updated.Status);
@@ -2571,8 +2193,6 @@ public class WebAggServer : IDisposable
             if (!_db.UpdateMaintenance(updated)) { RespondText(ctx, 500, "update failed"); return Task.CompletedTask; }
             var (_, who) = ResolveRole(ctx);
             _db.LogAudit(who ?? "?", "maintenance.update", $"#{id} {fromStatus}->{updated.Status}");
-            // 推送已在 UpdateMaintenance 触发事件，此处额外确保（事件内也会推，但 headless 需显式）
-            // 事件已通过 AggDatabase.MaintenanceStatusChanged 触发，若 HeadlessService 未订阅则此处补推
             if (!string.Equals(fromStatus, updated.Status, StringComparison.OrdinalIgnoreCase))
                 NotifyMaintenancePush(updated, fromStatus, updated.Status);
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, id }, JsonOpts));
@@ -2592,7 +2212,6 @@ public class WebAggServer : IDisposable
             int.TryParse(q["id"], out id);
             if (id <= 0)
             {
-                // 尝试从 body 取
                 try
                 {
                     var body = ReadBody(ctx.Request);
@@ -2610,7 +2229,6 @@ public class WebAggServer : IDisposable
             if (!_db.DeleteMaintenance(id)) { RespondText(ctx, 500, "delete failed"); return; }
             var (_, who) = ResolveRole(ctx);
             _db.LogAudit(who ?? "?", "maintenance.delete", $"#{id} {rec.FailItem}");
-            // 删除后若真实 FAIL 仍存在，其待办会随后通过 SyncTodoItems/前端提示回待办列（语义保留，自动）
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true }, JsonOpts));
         }
         catch (Exception ex) { Logger.Warning($"[Web 服务] 删除维修失败: {ex.Message}"); RespondText(ctx, 500, "delete failed"); }
@@ -2630,13 +2248,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] 飞书推送异常: {ex.Message}"); }
     }
 
-    // ==================== 待办 API ====================
-
-    /// <summary>
-    /// GET /api/todos — 待办视图（合并大项、优先级 20/5、次数、合并变体 tooltip 数据）。
-    /// Query: from=yyyyMMdd/to=yyyyMMdd（区间，空=全部永久）、limit。
-    /// 逻辑复用 AggDatabase.ListTodoView（同 Database 口径）。
-    /// </summary>
     private void ServeTodoList(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -2648,10 +2259,8 @@ public class WebAggServer : IDisposable
             if (!string.IsNullOrWhiteSpace(q["to"])) { if (DateTime.TryParseExact(q["to"]!.Trim(), "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out var td)) to = td; else if (DateTime.TryParse(q["to"]!.Trim(), out var td2)) to = td2.Date; }
             int limit = 300;
             if (int.TryParse(q["limit"], out var l) && l > 0) limit = Math.Min(l, 1000);
-            // 若未传区间参数，则不限区间（全部永久保留），对应前端「全部」选项
             var hasRange = !string.IsNullOrWhiteSpace(q["from"]) || !string.IsNullOrWhiteSpace(q["to"]);
             if (!hasRange) { from = null; to = null; }
-            // 同步最新 FAIL 到 todo（轻量幂等，与 MaintenanceBoard 行为一致）
             try { _db.SyncTodoItems(AppConfig.Instance.TodoScanDays); } catch { }
             var list = _db.ListTodoView(from, to, limit);
             var payload = list.Select(t => new
@@ -2671,16 +2280,10 @@ public class WebAggServer : IDisposable
     private async Task ServeTodoCreate(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "engineer")) return;
-        // 预留：当前待办由 SyncTodoItems 自动登记，不提供手动创建；返回 405 提示
         RespondText(ctx, 405, "todos are auto-synced from fails; use POST /api/todos/ack to confirm");
         await Task.CompletedTask;
     }
 
-    /// <summary>
-    /// POST /api/todos/ack — 确认待办（拖出待办列=确认，弹全字段确认）。
-    /// Body: {todoId, station_id, fail_item, fail_reason, severity, status, resolver, resolution, notes, created_at}
-    /// 逻辑复用 Database.AcknowledgeTodo（状态变更会推飞书）。
-    /// </summary>
     private Task ServeTodoAck(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "engineer")) return Task.CompletedTask;
@@ -2747,8 +2350,6 @@ public class WebAggServer : IDisposable
         }
         catch (Exception ex) { Logger.Warning($"[Web 服务] 删除待办失败: {ex.Message}"); RespondText(ctx, 500, "delete failed"); }
     }
-
-    // ==================== 维修人员 API ====================
 
     private void ServeResolvers(HttpListenerContext ctx)
     {
@@ -2831,13 +2432,6 @@ public class WebAggServer : IDisposable
         return Task.CompletedTask;
     }
 
-    // ==================== 导出 ====================
-
-    /// <summary>
-    /// GET /api/export/maintenance — 12 列 xlsx/csv 导出，复用 MaintenanceExporter，CSV 注入防护 CWE-1236。
-    /// Query: format=csv|xlsx（默认 xlsx）、status、q。
-    /// 权限：viewer 可导出（与 FAIL 导出同级），但写 audit。
-    /// </summary>
     private void ServeExportMaintenance(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -2858,7 +2452,6 @@ public class WebAggServer : IDisposable
             _db.LogAudit(who ?? "?", "export.maintenance", $"{list.Count} rows format={fmt} status={status}");
             if (fmt == "csv")
             {
-                // 复用 MaintenanceExporter.ExportCsv 的逻辑但直接走内存（同样 CWE-1236 防护与 BOM）
                 var tmp = Path.Combine(Path.GetTempPath(), $"maint_{Guid.NewGuid():N}.csv");
                 try
                 {
@@ -2889,14 +2482,12 @@ public class WebAggServer : IDisposable
 
     #region Agent C: P6 设备监控 + P7 数据拉取雏形（2026-08-28）— 路由实现
 
-    // ---- 设备缓存（GET /api/devices 5s 缓存，同 FailCountCached 模式）----
     private readonly object _deviceCacheLock = new();
     private DateTime _deviceCacheAt = DateTime.MinValue;
     private byte[]? _deviceCacheBytes;
 
     private void InvalidateDeviceCache() { lock (_deviceCacheLock) { _deviceCacheAt = DateTime.MinValue; _deviceCacheBytes = null; } }
 
-    // ---- POST /api/mesh/info（机台→聚合，L1 全量）----
     private void ServeMeshInfo(HttpListenerContext ctx)
     {
         if (_mesh == null) { ctx.Response.StatusCode = 404; return; }
@@ -2919,7 +2510,6 @@ public class WebAggServer : IDisposable
         ctx.Response.StatusCode = 200;
     }
 
-    // ---- GET /api/devices（总览，5s 缓存，viewer 可读）----
     private void ServeDevices(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -2938,10 +2528,8 @@ public class WebAggServer : IDisposable
             }
             var infos = _db.ListDeviceInfos();
             var fcts = _db.ListDeviceFcts().ToDictionary(x => x.Machine, StringComparer.OrdinalIgnoreCase);
-            // 融合在线状态（PeerView 的 LastSeen 判定）+ FCT 型号概要
             var peers = _mesh?.PeerStatuses ?? new List<PeerStatusDto>();
             var onlineMap = peers.ToDictionary(p => p.Machine, p => p.Online, StringComparer.OrdinalIgnoreCase);
-            // 若 device_info 缺失但 peer 存在，补一条占位（显示“未采集”）
             foreach (var p in peers)
             {
                 if (!infos.Any(x => string.Equals(x.Machine, p.Machine, StringComparison.OrdinalIgnoreCase)))
@@ -2991,26 +2579,22 @@ public class WebAggServer : IDisposable
         return (DateTime.Now - dt).TotalSeconds <= 90;
     }
 
-    // ---- GET /api/devices/*（详情 / 采样 / fct）----
     private void ServeDeviceWildcard(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
         var raw = ctx.Request.Url?.AbsolutePath ?? "";
         var path = raw.Length > 1 ? raw.TrimEnd('/') : raw;
-        // path = /api/devices/{machine}[ /samples | /fct ]
         var rel = path.Substring("/api/devices".Length).Trim('/');
         if (string.IsNullOrEmpty(rel)) { ServeDevices(ctx); return; }
         var parts = rel.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var machine = parts[0];
         if (parts.Length == 1)
         {
-            // 详情
             try
             {
                 var info = _db.GetDeviceInfo(machine);
                 if (info == null)
                 {
-                    // 尝试从 peer 视图补占位
                     var peers = _mesh?.PeerStatuses ?? new List<PeerStatusDto>();
                     var p = peers.FirstOrDefault(x => string.Equals(x.Machine, machine, StringComparison.OrdinalIgnoreCase));
                     if (p == null) { RespondText(ctx, 404, "device not found"); return; }
@@ -3018,7 +2602,6 @@ public class WebAggServer : IDisposable
                 }
                 else
                 {
-                    // 在线动态计算
                     var peers = _mesh?.PeerStatuses ?? new List<PeerStatusDto>();
                     var om = peers.FirstOrDefault(x => string.Equals(x.Machine, machine, StringComparison.OrdinalIgnoreCase));
                     info.Online = om != null ? om.Online : IsDeviceOnline(info.LastSeen);
@@ -3077,7 +2660,6 @@ public class WebAggServer : IDisposable
         RespondText(ctx, 404, "not found");
     }
 
-    // ---- P7 完整：POST /api/fetch（真实 xlsx/zip 异步导出，含趋势/分布/热力，支持按机台/时间段/型号筛选，进度可轮询，完成后下载）----
     private async Task ServeFetchCreate(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -3086,7 +2668,6 @@ public class WebAggServer : IDisposable
         catch (BodyTooLargeException) { ctx.Response.StatusCode = 413; ctx.Response.KeepAlive = false; return; }
         try
         {
-            // 完整导出：按机台/时间段/型号筛选，真实 xlsx/zip（含趋势/分布/热力），零第三方手写 OOXML
             var job = FetcherService.CreateExport(_db, body);
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, job_id = job.Id, status = job.Status, progress = job.Progress }, JsonOpts));
         }
@@ -3155,12 +2736,6 @@ public class WebAggServer : IDisposable
     #endregion
 
     #region Lite-Fetch: 数据拉取完整服务端化 + 报告中心 + 程序日志（2026-08-28）— 单一 region，A/B/C 禁改
-    // 约束：零第三方、黑白红令牌、统一 CSV 注入防护与 BOM、单 exe、手写 OOXML 经 FctShared.Xlsx，
-    // 包含趋势/分布/热力数据、按机台/时间段/型号筛选、进度可轮询、完成后下载；报告检索预览摘要归档版本对比；proc_change_log 登记/时间轴/参数 diff。
-
-    // ---- POST /api/fetch（完整导出，覆盖雏形：真实 xlsx/zip，含趋势/分布/热力）----
-    // 注册已在 Agent C region（POST /api/fetch → ServeFetchCreate 雏形），此处增强：若请求带 format=zip/csv 或 pack=true 则走完整导出
-    // 为避免重复注册，完整导出通过同一 handler 内分支（见 ServeFetchCreate 增强）；此处仅补充新路由
 
     private void ServeFetchDownload(HttpListenerContext ctx)
     {
@@ -3171,7 +2746,6 @@ public class WebAggServer : IDisposable
         if (job == null) { RespondText(ctx, 404, "job not found"); return; }
         if (job.Status != "done" || string.IsNullOrEmpty(job.FilePath) || !File.Exists(job.FilePath))
         {
-            // 未完成时返回状态而非文件（避免 404 误导轮询）
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = false, status = job.Status, progress = job.Progress, error = job.Error ?? "" }, JsonOpts));
             return;
         }
@@ -3181,7 +2755,6 @@ public class WebAggServer : IDisposable
             var ext = Path.GetExtension(job.FilePath).ToLowerInvariant();
             var mime = ext == ".zip" ? "application/zip" : ext == ".csv" ? "text/csv; charset=utf-8" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
             ctx.Response.Headers["Content-Disposition"] = $"attachment; filename=\"{Uri.EscapeDataString(job.FileName ?? Path.GetFileName(job.FilePath))}\"";
-            // 审计：导出下载
             try { var (_, who) = ResolveRole(ctx); _db.LogAudit(who ?? "?", "fetch.download", $"job={job.Id} file={job.FileName}"); } catch { }
             Respond(ctx, 200, mime, data);
         }
@@ -3213,8 +2786,6 @@ public class WebAggServer : IDisposable
         }
         catch (Exception ex) { Logger.Warning($"[Web 服务] heatmap 失败: {ex.Message}"); RespondText(ctx, 500, "heatmap failed"); }
     }
-
-    // ---- 报告中心：摘要/归档/版本对比 ----
 
     private void ServeReportSummary(HttpListenerContext ctx)
     {
@@ -3314,7 +2885,6 @@ public class WebAggServer : IDisposable
             var result = G("result");
             var note = G("note");
             var idStr = G("id");
-            // 若提供 id，则从 agg_records 取元数据
             if (!string.IsNullOrEmpty(idStr) && long.TryParse(idStr, out var fid))
             {
                 var row = _db.GetFailById(fid);
@@ -3324,7 +2894,6 @@ public class WebAggServer : IDisposable
                 }
             }
             if (string.IsNullOrWhiteSpace(xmlPath)) { RespondText(ctx, 400, "xml_path or id required"); return Task.CompletedTask; }
-            // 白名单校验或跨机拉取摘要
             string? xml = null;
             if (ResolveFile(xmlPath, out _) == 200 && File.Exists(xmlPath)) xml = File.ReadAllText(xmlPath);
             else if (_mesh != null) xml = FetchRemoteXmlByPath(machine ?? "", xmlPath);
@@ -3338,7 +2907,6 @@ public class WebAggServer : IDisposable
                 }
                 catch { }
             }
-            // 落盘归档副本（data/report_archive/{machine}/{sn}_{id}.xml）
             string archivedPath = "";
             try
             {
@@ -3395,7 +2963,6 @@ public class WebAggServer : IDisposable
             var d1 = XmlParser.ParseReportText(xml1);
             var d2 = XmlParser.ParseReportText(xml2);
             if (d1.Error || d2.Error) { RespondText(ctx, 500, "parse failed"); return; }
-            // 对比 BATCH/PANEL/DUT/TEST 明细，保持与 XmlReportHtml 口径一致
             var diff = new
             {
                 ok = true,
@@ -3437,8 +3004,6 @@ public class WebAggServer : IDisposable
         return list;
     }
 
-    // ---- 程序日志：登记/时间轴/参数 diff ----
-
     private Task ServeProcLogCreate(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "engineer")) return Task.CompletedTask;
@@ -3454,7 +3019,6 @@ public class WebAggServer : IDisposable
             var version = G("version");
             if (string.IsNullOrWhiteSpace(version)) { RespondText(ctx, 400, "version required"); return Task.CompletedTask; }
             var changedAt = G("changed_at") != "" ? G("changed_at") : (G("changedAt") != "" ? G("changedAt") : DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-            // 允许 yyyyMMdd 或 yyyy-MM-dd 归一化为 yyyy-MM-dd HH:mm:ss
             if (changedAt.Length == 8 && DateTime.TryParseExact(changedAt, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out var dt8)) changedAt = dt8.ToString("yyyy-MM-dd HH:mm:ss");
             else if (DateTime.TryParse(changedAt, out var dtp)) changedAt = dtp.ToString("yyyy-MM-dd HH:mm:ss");
             var changedBy = G("changed_by") != "" ? G("changed_by") : (G("changedBy") != "" ? G("changedBy") : who ?? "");
@@ -3509,7 +3073,6 @@ public class WebAggServer : IDisposable
             int limit = 50; if (int.TryParse(q["limit"], out var l) && l > 0) limit = Math.Min(l, 200);
             int offset = 0; if (int.TryParse(q["offset"], out var o) && o >= 0) offset = o;
             var list = _db.QueryProcTimeline(machine, limit, offset);
-            // 时间轴按 changed_at 分组已由 SQL 倒序保证，前端直接渲染
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(list.Select(e => new { id = e.Id, version = e.Version, changed_at = e.ChangedAt, changed_by = e.ChangedBy, content = e.Content, scope_machines = e.ScopeMachines, params_snapshot = e.ParamsSnapshot, related_reports = e.RelatedReports }), JsonOpts));
         }
         catch (Exception ex) { Logger.Warning($"[Web 服务] proc-log timeline 失败: {ex.Message}"); RespondText(ctx, 500, "timeline failed"); }
@@ -3544,8 +3107,6 @@ public class WebAggServer : IDisposable
     #endregion
 
     #region Lite-Settings: 剩余前端设置与体验层实现（2026-08-28）— 单一 region，A/B/C 禁改
-    // 约束：黑白红零依赖、token 透传、viewer 可读、layout/favorites 前端 localStorage+后端双写、
-    // 全局搜索空格分词跨 FAIL/维修/设备/良率聚合、跳转 hash 联动下钻、权限显隐后端已 403 前端再隐藏。
 
     private Task ServeUsersMe(HttpListenerContext ctx)
     {
@@ -3558,14 +3119,12 @@ public class WebAggServer : IDisposable
         {
             var (role, who) = ResolveRole(ctx);
             if (role == null) { RespondText(ctx, 403, "forbidden"); return Task.CompletedTask; }
-            // agg_token 匿名管理身份：无 users 行，返回 agg_token 特殊标记
             if (string.Equals(who, "agg_token", StringComparison.OrdinalIgnoreCase))
             {
                 var payload = new { ok = true, name = "agg_token", role = "admin", token = _token, layout = (string?)null, favorites = (string?)null, isAggToken = true };
                 Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts));
                 return Task.CompletedTask;
             }
-            // 宽松模式 anonymous
             if (string.Equals(who, "anonymous", StringComparison.OrdinalIgnoreCase))
             {
                 var anon = new { ok = true, name = "anonymous", role = "admin", token = "", layout = (string?)null, favorites = (string?)null, isAnonymous = true };
@@ -3610,7 +3169,6 @@ public class WebAggServer : IDisposable
             var (role, who) = ResolveRole(ctx);
             if (string.Equals(who, "agg_token", StringComparison.OrdinalIgnoreCase) || string.Equals(who, "anonymous", StringComparison.OrdinalIgnoreCase))
             {
-                // agg_token/anonymous 无 users 行：回 200 但不持久化（前端仅 localStorage）
                 Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, saved = false, note = "agg_token/anonymous no user row, only localStorage" }, JsonOpts));
                 return Task.CompletedTask;
             }
@@ -3633,7 +3191,6 @@ public class WebAggServer : IDisposable
                 }
                 catch { layoutVal = body; }
             }
-            // 大小限制 64KB 防滥用
             if (layoutVal != null && layoutVal.Length > 64 * 1024) { RespondText(ctx, 413, "layout too large"); return Task.CompletedTask; }
             var ok = _db.SetUserLayout(who ?? "", layoutVal);
             if (!ok) { RespondText(ctx, 404, "user not found"); return Task.CompletedTask; }
@@ -3721,7 +3278,6 @@ public class WebAggServer : IDisposable
             if (q.Length > 200) q = q.Substring(0, 200);
             var tokens = q.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                           .Select(t => t.Trim().ToLowerInvariant()).Where(t => t.Length > 0).Distinct().ToArray();
-            // FAIL
             var fails = new List<object>();
             try
             {
@@ -3735,7 +3291,6 @@ public class WebAggServer : IDisposable
                     fails.Add(new { type = "fail", id = r.Id, title = r.FailReason ?? r.Sn ?? $"FAIL #{r.Id}", subtitle = $"{r.Machine} · {r.Sn} · {r.Model}", ts = r.IngestTs ?? r.Ts, link = $"#/fails?q={Uri.EscapeDataString(q)}&id={r.Id}" });
             }
             catch { }
-            // 维修
             var maints = new List<object>();
             try
             {
@@ -3749,7 +3304,6 @@ public class WebAggServer : IDisposable
                     maints.Add(new { type = "maintenance", id = r.Id, title = r.FailItem, subtitle = $"{r.Status} · {r.Resolver} · {r.StationId}", ts = r.UpdatedAt, link = $"#/maintenance?q={Uri.EscapeDataString(q)}&id={r.Id}" });
             }
             catch { }
-            // 设备
             var devs = new List<object>();
             try
             {
@@ -3763,7 +3317,6 @@ public class WebAggServer : IDisposable
                     devs.Add(new { type = "device", id = d.Machine, title = d.Machine, subtitle = $"{d.Hostname} {d.Ip} {(d.Online ? "在线" : "离线")}", ts = d.LastSeen, link = $"#/devices?q={Uri.EscapeDataString(q)}&machine={Uri.EscapeDataString(d.Machine)}" });
             }
             catch { }
-            // 良率
             var yields = new List<object>();
             try
             {
@@ -3782,7 +3335,6 @@ public class WebAggServer : IDisposable
             catch { }
             var allResults = new List<object>();
             allResults.AddRange(fails); allResults.AddRange(maints); allResults.AddRange(devs); allResults.AddRange(yields);
-            // 按相关度：命中 token 数已过滤全包含，次按类型稳定排序不额外加权
             var payload = new { ok = true, q, tokens, counts = new { fails = fails.Count, maintenance = maints.Count, devices = devs.Count, yields = yields.Count }, total = allResults.Count, results = new { fails, maintenance = maints, devices = devs, yields }, flat = allResults.Take(20).ToList() };
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(payload, JsonOpts));
         }
@@ -3793,7 +3345,6 @@ public class WebAggServer : IDisposable
 
     #region Lite-Infra: 告警规则中心 + Gossiper自适应 + 多机台对比实现（2026-08-28）— 单一 region，A/B/C 禁改
 
-    /// <summary>告警规则中心：统一返回 disk/cpu/offline/yield 四规则阈值与开关（config.json 可配，device_alert_* 已扩展到 yield_alert_*）。viewer 可读。</summary>
     private void ServeAlertRules(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -3805,7 +3356,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] alert rules 失败: {ex.Message}"); RespondText(ctx, 500, "rules failed"); }
     }
 
-    /// <summary>告警历史：查询 alert_history（yield/disk/cpu/offline），支持 ?machine=&rule=&limit=&offset=。</summary>
     private void ServeAlertHistory(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -3823,7 +3373,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] alert history 失败: {ex.Message}"); RespondText(ctx, 500, "history failed"); }
     }
 
-    /// <summary>Gossiper 自适应状态可观测：当前间隔、原因、轮次、缺口。</summary>
     private void ServeGossiperStatus(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -3844,7 +3393,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] gossiper status 失败: {ex.Message}"); RespondText(ctx, 500, "gossiper failed"); }
     }
 
-    /// <summary>多机台趋势对比：在 /api/trends 基础上支持多机台并发对比（?machines=FCT1,FCT2&days=7），无需大改，复用 ReportService.GetTrend。</summary>
     private void ServeCompareTrends(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -3855,7 +3403,6 @@ public class WebAggServer : IDisposable
             int days = 7; if (int.TryParse(q["days"], out var d) && d > 0) days = Math.Clamp(d, 1, 30);
             if (string.IsNullOrEmpty(machinesParam))
             {
-                // 单机或全量：直接透传 ReportService.GetTrend
                 var m = (q["machine"] ?? "").Trim(); if (m == "") m = null;
                 var data = ReportService.GetTrend(_db, m, days);
                 Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, days, machines = m == null ? Array.Empty<string>() : new[] { m }, trends = new Dictionary<string, object> { ["all"] = data } }, JsonOpts));
@@ -3872,7 +3419,6 @@ public class WebAggServer : IDisposable
         catch (Exception ex) { Logger.Warning($"[Web 服务] compare trends 失败: {ex.Message}"); RespondText(ctx, 500, "compare trends failed"); }
     }
 
-    /// <summary>多机台分布对比：在 /api/distribution 基础上支持多机台（?machines=FCT1,FCT2&field=fail_reason&limit=10）。</summary>
     private void ServeCompareDistribution(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "viewer")) return;
@@ -3904,13 +3450,6 @@ public class WebAggServer : IDisposable
 
     #region Lite-Ops: 告警规则热更新实现（2026-08-28）— 单一 region，A/B/C/Lite-Fetch/Lite-Settings/Lite-Infra 禁改
 
-    /// <summary>告警规则热更新：PATCH/PUT/POST /api/alerts/rules，admin 专属。
-    /// 只改告警阈值字段（device_alert_disk_free_gb / device_alert_cpu_pct / device_alert_offline_minutes /
-    /// yield_alert_yield_pct / yield_alert_enabled），改完原子写 config.json 并**立即热生效** ——
-    /// AggAlertService 每轮轮询都重新读 AppConfig.Instance，所以不必重启聚合服务（重启会中断采集）。
-    /// Body（各规则可选，只传要改的）：
-    /// {disk:{enabled,threshold_gb}, cpu:{enabled,threshold_pct}, offline:{enabled,threshold_minutes}, yield:{enabled,threshold_pct}}
-    /// 响应：{ok, changed:[字段名], rules:&lt;更新后快照&gt;}，前端可直接用 rules 回显。</summary>
     private void ServeAlertRulesPatch(HttpListenerContext ctx)
     {
         if (!RequireRole(ctx, "admin")) return;
@@ -3919,7 +3458,7 @@ public class WebAggServer : IDisposable
         catch (BodyTooLargeException)
         {
             ctx.Response.StatusCode = 413;
-            ctx.Response.KeepAlive = false;   // 立即断开：客户端可能仍在发大 body，不排空避免挂起
+            ctx.Response.KeepAlive = false;
             return;
         }
 
@@ -3929,11 +3468,6 @@ public class WebAggServer : IDisposable
             var root = doc.RootElement;
             var cfg = AppConfig.Instance;
             var changed = new List<string>();
-
-            // 语义约定（沿用 v3.17.0 config 口径，不新增字段、旧配置缺省可运行）：
-            //   阈值 0 == 关闭（disk/cpu/offline 沿用此语义）；enabled=false → 阈值写 0；
-            //   enabled=true 但阈值缺失/非正 → 回落出厂默认，免得"开了开关却还是关的"。
-            //   yield 另有独立布尔 yield_alert_enabled（阈值保留，便于再次开启时不用重填）。
 
             if (root.TryGetProperty("disk", out var dEl) && dEl.ValueKind == JsonValueKind.Object)
             {
@@ -3954,7 +3488,6 @@ public class WebAggServer : IDisposable
             {
                 bool on = ReadRuleEnabled(oEl, cfg.DeviceAlertOfflineMinutes > 0);
                 double v = on ? ReadRuleThreshold(oEl, cfg.DeviceAlertOfflineMinutes, 5) : 0;
-                // 上限 7 天：再大就失去"设备失联要尽快知道"的意义，且通常是误填
                 if (v < 0 || v > 10080) { RespondText(ctx, 400, "offline 阈值需在 0~10080 分钟（0=关闭）"); return; }
                 var iv = (int)Math.Round(v);
                 if (iv != cfg.DeviceAlertOfflineMinutes) { cfg.DeviceAlertOfflineMinutes = iv; changed.Add("device_alert_offline_minutes"); }
@@ -3962,7 +3495,6 @@ public class WebAggServer : IDisposable
             if (root.TryGetProperty("yield", out var yEl) && yEl.ValueKind == JsonValueKind.Object)
             {
                 bool on = ReadRuleEnabled(yEl, cfg.YieldAlertEnabled && cfg.YieldAlertYieldPct > 0);
-                // yield 的开关是独立布尔（阈值保留），与 disk/cpu/offline 的「0=关闭」口径并存但各自自洽
                 if (on != cfg.YieldAlertEnabled) { cfg.YieldAlertEnabled = on; changed.Add("yield_alert_enabled"); }
                 if (on)
                 {
@@ -3985,11 +3517,8 @@ public class WebAggServer : IDisposable
                 return;
             }
 
-            // 热生效：无需重建任何组件（AggAlertService 每轮重新读 AppConfig.Instance）；
-            // 仍发一次设置变更通知，让 GUI/告警服务若持有派生状态可即时对齐。
             try { SettingsChanged?.Invoke(); } catch (Exception ex) { Logger.Warning($"[Web 服务] 告警规则变更回调异常: {ex.Message}"); }
 
-            // 改全局告警策略属高危操作，必须留痕（与 settings.save 同级）
             try { var (_, who) = ResolveRole(ctx); _db.LogAudit(who ?? "?", "alerts.rules.save", string.Join(",", changed)); }
             catch (Exception ex) { Logger.Warning($"[Web 服务] 审计写入失败: {ex.Message}"); }
 
@@ -4014,8 +3543,6 @@ public class WebAggServer : IDisposable
         }
     }
 
-    /// <summary>读规则子对象的 enabled 字段；缺失时回落到「当前阈值 &gt; 0」这一既有语义 ——
-    /// 老 config.json 里没有 enabled 字段，只翻阈值也必须能正常工作（向后兼容）。</summary>
     private static bool ReadRuleEnabled(JsonElement el, bool fallback)
     {
         if (el.TryGetProperty("enabled", out var e))
@@ -4026,8 +3553,6 @@ public class WebAggServer : IDisposable
         return fallback;
     }
 
-    /// <summary>读规则子对象的 threshold* 字段（四种命名都认，前端不必关心单位后缀）；
-    /// 缺失或非正数时回落到出厂默认 —— 覆盖「只把开关打开、没填阈值」这一常见操作。</summary>
     private static double ReadRuleThreshold(JsonElement el, double current, double factoryDefault)
     {
         foreach (var name in new[] { "threshold_gb", "threshold_pct", "threshold_minutes", "threshold" })
@@ -4040,7 +3565,6 @@ public class WebAggServer : IDisposable
 
     #endregion
 
-    /// <summary>把一条 AggFailRow 序列化为 MeshPusher 同格式的 fail 事件 JSON 字符串（供 Gossiper 增量拉取）。</summary>
     private static string SerializeFailRow(AggFailRow row)
     {
         var data = new Dictionary<string, object?>
@@ -4052,7 +3576,7 @@ public class WebAggServer : IDisposable
             ["has_fail_items"] = row.HasFailItems ? 1 : 0, ["file_size"] = row.FileSize,
             ["xml_available"] = 1,
         };
-        if (!string.IsNullOrEmpty(row.FixtureId)) data["fixture_id"] = row.FixtureId;   // v3.22.0 规格01：Gossiper 增量拉取同格式带治具 ID
+        if (!string.IsNullOrEmpty(row.FixtureId)) data["fixture_id"] = row.FixtureId;
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["machine"] = row.Machine, ["type"] = "fail", ["seq"] = row.Seq,
@@ -4060,17 +3584,6 @@ public class WebAggServer : IDisposable
         });
     }
 
-    // ==================== 文件白名单（安全重点） ====================
-
-    /// <summary>
-    /// 文件白名单校验（?id= 查出的 xml_path 与 ?path= 直接传参共用）。
-    /// 规则：
-    ///   1. Path.GetFullPath 归一化（Windows 大小写不敏感、分隔符统一）；
-    ///   2. 必须位于 resultsRoot 内（root 加尾分隔符后 StartsWith 比较，防 /root2 前缀误伤）；
-    ///   3. 路径上任何目录组件不得是 reparse point（junction/symlink，M-6：防根内链接逃逸）；
-    ///   4. 文件必须真实存在；
-    ///   5. 例外白名单：{BaseDir}/logs/app.log 始终放行（resultsRoot 为空时唯一可用）。
-    /// 返回：200=放行（out 完整路径），400=路径非法，403=不在白名单或文件不存在。</summary>
     private int ResolveFile(string path, out string? full)
     {
         full = null;
@@ -4081,23 +3594,21 @@ public class WebAggServer : IDisposable
             return 400;
         }
 
-        // 日志白名单：聚合服务日志始终可下载（部署排查用）
         if (string.Equals(full, LogFileFullPath, StringComparison.OrdinalIgnoreCase))
             return File.Exists(full) ? 200 : 403;
 
-        // 跨机台 XML 目录放行（data/agg_xml/{machine}/{seq}.xml）
         if (full.StartsWith(AggXmlRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
                 StringComparison.OrdinalIgnoreCase))
             return File.Exists(full) ? 200 : 403;
 
-        if (string.IsNullOrEmpty(_resultsRoot)) return 403;   // 未配置白名单根：拒绝全部
+        if (string.IsNullOrEmpty(_resultsRoot)) return 403;
 
         string root;
         try { root = Path.GetFullPath(_resultsRoot); }
         catch { return 400; }
         var rootSep = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
         if (!full.StartsWith(rootSep, StringComparison.OrdinalIgnoreCase)) return 403;
-        if (HasReparseComponent(full, root))   // M-6：junction/symlink 不放行
+        if (HasReparseComponent(full, root))
         {
             Logger.Warning($"[Web 服务] 拒绝含链接(reparse point)的路径: {full}");
             return 403;
@@ -4106,9 +3617,6 @@ public class WebAggServer : IDisposable
         return 200;
     }
 
-    /// <summary>检查 root→full 路径上是否存在 reparse point 目录组件
-    /// （GetFullPath 只做词法归一化，不解析 junction；SMB 扫描根里被塞一个指向 C:\ 的
-    /// junction 时，仅靠前缀比较会被合法放行而逃逸根目录）。root 自身不检查。</summary>
     private static bool HasReparseComponent(string full, string root)
     {
         try
@@ -4119,27 +3627,20 @@ public class WebAggServer : IDisposable
             foreach (var part in rel.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
             {
                 cur = Path.Combine(cur, part);
-                var attr = File.GetAttributes(cur);   // 不存在时抛异常 → 视为无链接（后续存在性检查兜底）
+                var attr = File.GetAttributes(cur);
                 if ((attr & FileAttributes.ReparsePoint) != 0) return true;
             }
             return false;
         }
         catch
         {
-            return false;   // 组件不存在/无权限：交给既有的 Exists 检查处理
+            return false;
         }
     }
 
-    /// <summary>
-    /// 目录白名单校验（/api/list 用）。与 <see cref="ResolveFile"/> 同思路，区别：
-    ///   1. 相对路径先按 resultsRoot 解析（/api/list?path=sub 等价于 resultsRoot\sub）；
-    ///   2. 根目录本身放行（path 为空或指向 resultsRoot 自己）；
-    ///   3. 目标是**目录**才算数：不存在/是文件 → 404（前端据此提示）。
-    /// 返回：200=放行（out 完整目录路径），400=路径非法，403=不在白名单，404=目录不存在。</summary>
     private int ResolveDir(string path, out string? full)
     {
         full = null;
-        // 相对路径（如 "20260812"、"sub/dir"）一律按 resultsRoot 解析，不依赖服务进程工作目录
         string target;
         try { target = !string.IsNullOrEmpty(path) && !Path.IsPathRooted(path) ? Path.Combine(_resultsRoot, path) : path; }
         catch { return 400; }
@@ -4150,23 +3651,21 @@ public class WebAggServer : IDisposable
             return 400;
         }
 
-        if (string.IsNullOrEmpty(_resultsRoot)) return 403;   // 未配置白名单根：拒绝全部
+        if (string.IsNullOrEmpty(_resultsRoot)) return 403;
 
         string root;
         try { root = Path.GetFullPath(_resultsRoot); }
         catch { return 400; }
-        // 根目录本身放行（path 为空时 full == root），其余必须位于根下
         if (!string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
         {
             var rootSep = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
             if (!full.StartsWith(rootSep, StringComparison.OrdinalIgnoreCase)) return 403;
-            if (HasReparseComponent(full, root)) return 403;   // M-6：junction/symlink 不放行
+            if (HasReparseComponent(full, root)) return 403;
         }
         if (!Directory.Exists(full)) return 404;
         return 200;
     }
 
-    /// <summary>按扩展名给 Content-Type：.xml→application/xml；文本类→text/plain；其余八进制流。</summary>
     private static string ContentTypeFor(string path)
     {
         return Path.GetExtension(path).ToLowerInvariant() switch
@@ -4177,11 +3676,6 @@ public class WebAggServer : IDisposable
         };
     }
 
-    /// <summary>
-    /// CSV 字段转义。⚠ CWE-1236 公式注入防护：Excel/WPS 会把 = + - @ 开头（或 \t \r 前导）
-    /// 的单元格当公式执行，FAIL 明细字段来自机台 XML/JSON 自由文本，首字符命中时加单引号前缀；
-    /// 含逗号/引号/换行的字段双引号包裹、内部双引号翻倍。
-    /// </summary>
     private static string Esc(string? v)
     {
         v ??= "";
@@ -4193,14 +3687,12 @@ public class WebAggServer : IDisposable
         return v;
     }
 
-    // ==================== 通用 ====================
-
     private static void Respond(HttpListenerContext ctx, int status, string contentType, byte[] body)
     {
         var resp = ctx.Response;
         resp.StatusCode = status;
         resp.ContentType = contentType;
-        resp.Headers["X-Content-Type-Options"] = "nosniff";   // L-7：防 MIME 嗅探（/api/file 可输出用户可控内容）
+        resp.Headers["X-Content-Type-Options"] = "nosniff";
         resp.ContentLength64 = body.Length;
         if (body.Length > 0) resp.OutputStream.Write(body, 0, body.Length);
     }
@@ -4231,9 +3723,6 @@ public class WebAggServer : IDisposable
         return Encoding.UTF8.GetString(ms.ToArray());
     }
 
-    /// <summary>排空请求体剩余字节（超限/413 场景调用，保证 HttpListener 能正常发响应）。
-    /// M-5 加固：最多再读 MaxDrainBytes（8MB），读不完就放弃——调用方已 KeepAlive=false 断连，
-    /// 不给「声明 Content-Length: 10GB 再慢慢滴灌」的 DoS 留口子。</summary>
     private static void DrainBody(HttpListenerRequest req)
     {
         try
@@ -4242,23 +3731,13 @@ public class WebAggServer : IDisposable
             long drained = 0;
             while (drained < MaxDrainBytes && req.InputStream.Read(buf, 0, buf.Length) > 0) drained += buf.Length;
         }
-        catch { /* 连接已断则忽略 */ }
+        catch {  }
     }
 
     private const long MaxDrainBytes = 8 * 1024 * 1024;
 
     private sealed class BodyTooLargeException : Exception { }
 
-    // ==================== 内嵌看板页 ====================
-
-    /// <summary>
-    /// 看板首页 HTML：内嵌常量，无任何外部资源（内联 CSS+JS），可直接用浏览器打开。
-    /// %%SHARE_ROOT%% / %%DB_PATH%% / %%RESULTS_ROOT%%（HTML 展示）/ %%RESULTS_ROOT_JS%%（JS 字符串）
-    /// 四个占位符在响应时替换（转义后展示）。
-    /// 顶部「看板 | 文件」两个页签 JS 切换：看板页 fetch /api/machines + /api/fails 渲染，
-    /// 3s 自动刷新（可关）；文件页 fetch /api/list 渲染目录列表（面包屑导航、目录点击进入、
-    /// 文件点击新窗口下载）。全部动态文本经 esc() 转义防 XSS。
-    /// </summary>
     private const string DashboardHtml = """
 <!DOCTYPE html>
 <html lang="zh-CN">

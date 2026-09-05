@@ -3,10 +3,6 @@ using System.Text.Json;
 
 namespace FctTdmsViewer;
 
-/// <summary>
-/// 导出结构快照(JSON)，用于与其他实现(如 Python npTDMS)交叉核对完整性。
-/// 不只比组数，而是逐组逐通道比对名称、点数、类型 —— 数量对得上不代表没错漏。
-/// </summary>
 public static class JsonDumper
 {
     public static string Dump(TdmsDoc doc, string path)
@@ -38,7 +34,6 @@ public static class JsonDumper
         return path;
     }
 
-    /// <summary>把 .NET 类型名映射成 numpy 风格，便于与 Python 输出直接比对。</summary>
     private static string MapDtype(Type? t)
     {
         if (t == null) return "None";

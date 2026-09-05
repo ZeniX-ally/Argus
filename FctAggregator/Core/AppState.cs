@@ -1,26 +1,21 @@
 namespace FctAggregator;
 
-/// <summary>全局共享状态(统计/进度/机台等), 供 GUI 读取。线程安全。</summary>
 public static class AppState
 {
     private static readonly object _lock = new();
 
     public static string StationId = "";
-    public static string Status = "idle";          // idle/running/error
+    public static string Status = "idle";
     public static int ModelsCount = 0;
     public static bool WebhookConfigured = false;
     public static bool HistoricalScanComplete = false;
 
-    // 扫描进度
-    public static string ScanPhase = "idle";       // idle/scanning/parsing/done
+    public static string ScanPhase = "idle";
     public static int ScanTotal = 0;
     public static int ScanParsed = 0;
 
-    // 累计统计
     public static int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount, XmlCount;
-    // 今日统计（v3.1.0.3：主页改为今日为主、累计为辅）
     public static int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
-    // 当月统计（v3.24.1：主页工业大屏「当月综合良率」）
     public static int MonthPass, MonthFail, MonthInterrupted, MonthProductCount;
 
     public static void SetStatus(string s) { lock (_lock) Status = s; }
@@ -42,11 +37,10 @@ public static class AppState
 
     public static void IncParseError() { lock (_lock) ParseError++; }
 
-    /// <summary>用数据库统计 + 磁盘文件数刷新全局统计。</summary>
     public static void RefreshStats(Database db, string stationId, string resultsRoot)
     {
         var g = db.FetchGlobalStats(stationId);
-        var today = DateTime.Now.ToString("yyyyMMdd");   // 目录日期格式
+        var today = DateTime.Now.ToString("yyyyMMdd");
         var d = db.FetchDailyStats(stationId, today);
         var month = db.FetchMonthlyStats(stationId, DateTime.Now.ToString("yyyyMM"));
         var xmlOnDisk = CountDiskXml(resultsRoot);
@@ -62,7 +56,6 @@ public static class AppState
         }
     }
 
-    /// <summary>磁盘上 results_root 下的 xml 文件总数(含debug)。</summary>
     public static int CountDiskXml(string resultsRoot)
     {
         try
@@ -102,6 +95,5 @@ public class StatsSnapshot
     public int MonthPass, MonthFail, MonthInterrupted, MonthProductCount;
     public double YieldRate => Pass + Fail > 0 ? Pass * 100.0 / (Pass + Fail) : 0.0;
     public double TodayYield => TodayPass + TodayFail > 0 ? TodayPass * 100.0 / (TodayPass + TodayFail) : 0.0;
-    /// <summary>当月综合良率（主页工业大屏口径，中断不计分母）。</summary>
     public double MonthYield => MonthPass + MonthFail > 0 ? MonthPass * 100.0 / (MonthPass + MonthFail) : 0.0;
 }

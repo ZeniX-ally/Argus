@@ -90,7 +90,6 @@ public sealed class MainForm : Form
 		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 20));
 		root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-		// Row 0: Results 根目录
 		AddLab(root, "Results 根目录", 0, 0);
 		_txtResults.Dock = DockStyle.Fill;
 		_txtResults.Text = _cfg.ResultsRoot;
@@ -98,7 +97,6 @@ public sealed class MainForm : Form
 		root.SetRow(_txtResults, 0);
 		AddBrowse(root, 2, 0, _txtResults);
 
-		// Row 1: TDMS 根目录
 		AddLab(root, "TDMS 根目录", 0, 1);
 		_txtTdms.Dock = DockStyle.Fill;
 		_txtTdms.Text = _cfg.TdmsRoot;
@@ -106,7 +104,6 @@ public sealed class MainForm : Form
 		root.SetRow(_txtTdms, 1);
 		AddBrowse(root, 2, 1, _txtTdms);
 
-		// Row 2: 输出目录
 		AddLab(root, "输出目录", 0, 2);
 		_txtOut.Dock = DockStyle.Fill;
 		_txtOut.Text = _cfg.ResolveOutputDir(Program.ExeDir);
@@ -114,7 +111,6 @@ public sealed class MainForm : Form
 		root.SetRow(_txtOut, 2);
 		AddBrowse(root, 2, 2, _txtOut);
 
-		// Row 3: 日期区间 + 选项 + 按钮
 		AddLab(root, "日期区间", 0, 3);
 		_dtStart.Format = DateTimePickerFormat.Custom;
 		_dtStart.CustomFormat = "yyyy-MM-dd";
@@ -147,7 +143,6 @@ public sealed class MainForm : Form
 		root.SetColumn(_chkOnline, 6);
 		root.SetRow(_chkOnline, 3);
 
-		// Buttons row (row 4)
 		root.RowCount = 5;
 		root.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.InputHeight + Theme.InputGap));
 		root.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.ActionBtnHeight + Theme.InputGap));

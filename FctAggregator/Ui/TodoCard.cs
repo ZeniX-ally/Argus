@@ -2,27 +2,10 @@ using System.Drawing.Drawing2D;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 「待办」列里的**未确认不良**卡片（v2.6.0 起一张卡 = 一个**合并后的大项**）。
-///
-/// 数据来自 `todo_items` 登记表（<see cref="Database.ListTodoView"/>）：
-///   · **只扫近一个月**的不良入库（`todo_scan_days`），避免一次灌进几千张卡
-///   · **同类测试项自动合并**（`6.1.1.1 5V_Rail` / `6.1.1.2 5V_Rail` / `..._CH1/CH2` → 一张卡）
-///   · **一旦登记就永久保留**：哪怕不良早已滑出扫描窗口，卡片仍在，直到被处理/删除
-///   · **按 fail 次数排序**并标注优先级（高/中/低），列顶就是最该先修的
-///
-/// 交互：
-///   · 双击 = 确认问题（弹全字段框，建维修记录，留在「待办」列）
-///   · 拖到其它列 = 确认问题并直接置为该列状态
-///   · 右键 = 确认 / 确认并置为某状态 / 删除
-///
-/// v3.3.0：待办卡支持右键删除（此前策略是不可忽略/不可删除）。
-/// </summary>
 public sealed class TodoCard : BoardCardBase
 {
     public TodoItem Item { get; }
 
-    /// <summary>待办卡片永远属于「待办」列。</summary>
     public override string ColumnKey => MaintenanceMeta.DefaultStatus;
 
     private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F, FontStyle.Bold);
@@ -35,12 +18,10 @@ public sealed class TodoCard : BoardCardBase
     public TodoCard(TodoItem item)
     {
         Item = item;
-        // 高度随内容变：合并了多项时多留两行列出原始测试项（卡上也要看得到合并了什么）
         Height = 88 + VariantLineCount * 16;
         Tip.SetToolTip(this, BuildTooltip());
     }
 
-    /// <summary>卡上最多列几行原始项（0/1/2）。</summary>
     private int VariantLineCount =>
         Item.VariantCount <= 1 ? 0 : Math.Min(2, Item.Variants.Count);
 
@@ -74,7 +55,6 @@ public sealed class TodoCard : BoardCardBase
 
         using (var path = MaintenanceDraw.Rounded(r, 5))
         {
-            // 黑白红：中性浅灰底 + 主红虚线框（待办 = 需要行动的卡片）；v3.23.0 走令牌（暗黑适配）
             using (var bg = new SolidBrush(Hover ? Theme.RowHover : Theme.ToolAltRow))
                 g.FillPath(bg, path);
             using var pen = new Pen(Hover ? Accent : Theme.Danger, Hover ? 1.4f : 1f)
@@ -82,14 +62,12 @@ public sealed class TodoCard : BoardCardBase
             g.DrawPath(pen, path);
         }
 
-        // 左侧色条 = 优先级（高红 / 中橙 / 低灰）
         var prioColor = TodoGrouping.PriorityColorOf(Item.SortCount);
         using (var bar = new SolidBrush(prioColor))
             g.FillRectangle(bar, new Rectangle(1, 4, 4, Height - 9));
 
         const int left = 12;
 
-        // ---- 第 1 行: 大项名 + 右上角「未确认」 ----
         const int tagW = 54;
         TextRenderer.DrawText(g, Item.Title, TitleFont,
             new Rectangle(left, 6, Math.Max(20, Width - left - tagW - 10), 18),
@@ -102,7 +80,6 @@ public sealed class TodoCard : BoardCardBase
         TextRenderer.DrawText(g, "未确认", TagFont, tag, Color.White,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 
-        // ---- 第 2 行: 优先级徽章 + 次数 + 合并数 ----
         var prio = $"优先级 {Item.PriorityZh}";
         var pw = TextRenderer.MeasureText(prio, TagFont).Width + 12;
         var pr = new Rectangle(left, 28, pw, 16);
@@ -119,7 +96,6 @@ public sealed class TodoCard : BoardCardBase
             new Rectangle(pr.Right + 6, 28, Math.Max(20, Width - pr.Right - 14), 16),
             Color.FromArgb(200, 16, 46), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-        // ---- 第 3 行: 合并信息 / 型号 · 机台 ----
         var merged = Item.VariantCount > 1 ? $"已合并 {Item.VariantCount} 个同类项 · " : "";
         var model = string.IsNullOrWhiteSpace(Item.Model) ? "—" : Item.Model;
         var station = string.IsNullOrWhiteSpace(Item.StationId) ? "—" : Item.StationId;
@@ -127,13 +103,11 @@ public sealed class TodoCard : BoardCardBase
             new Rectangle(left, 48, Math.Max(20, Width - left - 8), 16),
             Color.FromArgb(89, 89, 89), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-        // ---- 合并的 fail 项（卡上直接列前两项，剩下的用 +N 提示，完整清单看单击预览）----
         int y = 64;
         int lines = VariantLineCount;
         for (int i = 0; i < lines; i++)
         {
             var text = "· " + Item.Variants[i];
-            // 最后一行带上“还有几项”
             if (i == lines - 1 && Item.VariantCount > lines)
                 text += $"   +{Item.VariantCount - lines} 项";
             TextRenderer.DrawText(g, text, MetaFont,
@@ -142,7 +116,6 @@ public sealed class TodoCard : BoardCardBase
             y += 16;
         }
 
-        // ---- 最后一行: 最近出现 + 操作提示 ----
         TextRenderer.DrawText(g, $"最近 {ShortTime(Item.LastSeen)}", MetaFont,
             new Rectangle(left, y + 2, Math.Max(20, Width - left - 96), 16),
             Color.FromArgb(140, 140, 140), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
@@ -151,7 +124,6 @@ public sealed class TodoCard : BoardCardBase
             Color.FromArgb(200, 16, 46), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
     }
 
-    /// <summary>预览弹窗用的内容（与卡片同一份数据，避免两处写法走歧）。</summary>
     public (string title, string subtitle, List<(string, string)> rows, string footer) BuildPreview()
     {
         var rows = new List<(string, string)>
@@ -174,10 +146,6 @@ public sealed class TodoCard : BoardCardBase
     }
 }
 
-// ==================================================================
-//  待办时间区间选择
-// ==================================================================
-/// <summary>待办时间区间的预设与自定义。</summary>
 public sealed class TodoRange
 {
     public string Label { get; }
@@ -191,7 +159,6 @@ public sealed class TodoRange
 
     public override string ToString() => Label;
 
-    /// <summary>下拉里的预设项（最后一项是「自定义…」占位）。</summary>
     public static TodoRange[] Presets(int defaultDays) => new[]
     {
         OfDays("近 7 天", 7),
@@ -205,7 +172,6 @@ public sealed class TodoRange
         new(label, DateTime.Today.AddDays(-Math.Max(0, days - 1)), DateTime.Today);
 }
 
-/// <summary>自定义时间区间对话框（两个日期选择器）。</summary>
 public class TodoRangeForm : Form
 {
     public DateTime From => _from.Value.Date;

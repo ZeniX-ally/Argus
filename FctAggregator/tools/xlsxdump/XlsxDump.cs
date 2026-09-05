@@ -1,20 +1,5 @@
 using FctAggregator;
 
-/// <summary>
-/// xlsx 目视核对工具（配套 v2.9.3「xlsx 写出器 4 份 → 1 份」的验收）。
-///
-/// 拿同一份 fixture，把各个导出口各导一次真实 xlsx。
-/// 本工程刻意**只调用高层导出入口**（不碰 Cell/Sheet/Xlsx），
-/// 这样同一份源码在 v2.9.2（去重前）的代码上也能编译，可做新旧逐字节对比。
-///
-/// 用法：
-///   XlsxDump &lt;输出目录&gt; &lt;fixture目录&gt; [维修记录db]
-///     fixture 目录须含 Results\ 与 "TDMS Log"\（由 tools\xlsx_check.ps1 准备）
-///     db 省略或不存在时跳过维修记录那张表
-///
-/// ⚠ v3.0.0：数据分发已拆成独立程序，它的「金银板 SN 台账」不再在这里核对，
-/// 改由 FctDistributor 自己的自检负责。本工具现在盯 3 个导出口。
-/// </summary>
 public static class XlsxDump
 {
     public static int Main(string[] args)
@@ -45,7 +30,6 @@ public static class XlsxDump
         Console.WriteLine($"[XlsxDump] 输出 -> {outDir}");
         Console.WriteLine($"[XlsxDump] fixture -> {fx}");
 
-        // ---------- 1) FAIL 排行报表 ----------
         Step("1 FAIL排行报表", () =>
         {
             var recs = FctFailRanker.XmlScanner.Scan(results, start, end);
@@ -55,7 +39,6 @@ public static class XlsxDump
             Console.Write($"{recs.Count} 条记录 / {ranks.Count} 个不良项 -> ");
         });
 
-        // ---------- 2) 取数打包：捞取清单 ----------
         Step("2 取数清单", () =>
         {
             var cfg = new FctFetcher.Config
@@ -74,7 +57,6 @@ public static class XlsxDump
             Console.Write($"{recs.Count} 条 -> ");
         });
 
-        // ---------- 3) 维修记录 ----------
         if (db.Length > 0 && File.Exists(db))
         {
             Step("3 维修记录", () =>
@@ -96,14 +78,9 @@ public static class XlsxDump
         return fail == 0 ? 0 : 1;
     }
 
-    /// <summary>
-    /// 给目视核对用的维修记录种子数据（v3.18.5 仓库同步时原定义遗失，2026-09-01 补回）。
-    /// 仅当表为空时插入，避免污染实库；覆盖三种严重度与三种状态，让导出的
-    /// 颜色/状态列有东西可看。
-    /// </summary>
     static void SeedMaintenance(Database d)
     {
-        if (d.ListMaintenance("", 1).Count > 0) return;   // 已有数据（如实库）不种
+        if (d.ListMaintenance("", 1).Count > 0) return;
         var rows = new[]
         {
             new MaintenanceRecord { StationId = "FCT1", EquipmentModel = "E3002624", EquipmentSn = "SN0001",

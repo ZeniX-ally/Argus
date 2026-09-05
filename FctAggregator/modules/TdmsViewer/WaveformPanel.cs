@@ -2,28 +2,19 @@ using System.Drawing.Drawing2D;
 
 namespace FctTdmsViewer;
 
-/// <summary>
-/// 波形绘制面板（GDI+ 自绘，零额外依赖）。
-///
-/// 不用 System.Windows.Forms.DataVisualization.Charting —— 那是 .NET Framework 专有，
-/// .NET 8 里不可用；也不想为一张折线图引入 ScottPlot 之类的依赖。
-///
-/// 支持：多通道叠加、自动缩放、网格与坐标标签、鼠标十字线读值、滚轮缩放 X、拖拽平移。
-/// </summary>
 public sealed class WaveformPanel : Panel
 {
     public sealed class Series
     {
         public string Name = "";
         public double[] Data = Array.Empty<double>();
-        public double Increment;      // 秒/点；0 表示按索引
+        public double Increment;
         public Color Color;
     }
 
     private readonly List<Series> _series = new();
     private static readonly Color[] Palette =
     {
-        // 黑白红通道色环：墨黑/主红交替 + 灰阶，8 通道仍可分辨
         Color.FromArgb(20, 20, 20), Color.FromArgb(200, 16, 46),
         Color.FromArgb(120, 120, 120), Color.FromArgb(143, 11, 32),
         Color.FromArgb(179, 179, 179), Color.FromArgb(89, 89, 89),
@@ -32,7 +23,7 @@ public sealed class WaveformPanel : Panel
 
     private const int PadL = 68, PadR = 14, PadT = 14, PadB = 40;
 
-    private double _x0, _x1;               // 当前 X 视窗（索引单位）
+    private double _x0, _x1;
     private Point? _mouse;
     private Point? _dragStart;
     private double _dragX0, _dragX1;
@@ -141,7 +132,6 @@ public sealed class WaveformPanel : Panel
             return;
         }
 
-        // Y 范围（取所有可见系列）
         double ymin = double.MaxValue, ymax = double.MinValue;
         foreach (var s in _series)
         {
@@ -164,7 +154,6 @@ public sealed class WaveformPanel : Panel
         using var gridPen = new Pen(Color.FromArgb(232, 232, 232));
         using var font = new Font("Consolas", 8F);
 
-        // 网格 + Y 标签
         for (int i = 0; i <= 5; i++)
         {
             int y = plot.Bottom - i * plot.Height / 5;
@@ -174,7 +163,6 @@ public sealed class WaveformPanel : Panel
                 new Rectangle(0, y - 8, PadL - 6, 16), Color.DimGray,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
         }
-        // 网格 + X 标签
         double inc = _series[0].Increment;
         for (int i = 0; i <= 6; i++)
         {
@@ -188,7 +176,6 @@ public sealed class WaveformPanel : Panel
         }
         g.DrawRectangle(axisPen, plot);
 
-        // 折线
         foreach (var s in _series)
         {
             if (s.Data.Length < 1) continue;
@@ -196,7 +183,6 @@ public sealed class WaveformPanel : Panel
             var pts = new List<PointF>();
             int a = Math.Max(0, (int)Math.Floor(_x0));
             int b = Math.Min(s.Data.Length - 1, (int)Math.Ceiling(_x1));
-            // 点数远超像素时按列抽样，避免绘制上万个点
             int stride = Math.Max(1, (b - a + 1) / Math.Max(1, plot.Width));
             for (int i = a; i <= b; i += stride)
             {
@@ -210,7 +196,6 @@ public sealed class WaveformPanel : Panel
                 g.DrawLines(pen, pts.ToArray());
         }
 
-        // 图例
         using var lf = new Font("微软雅黑", 8.5F);
         int ly = plot.Top + 4;
         foreach (var s in _series)
@@ -222,7 +207,6 @@ public sealed class WaveformPanel : Panel
             if (ly > plot.Bottom - 16) break;
         }
 
-        // 十字线 + 读值
         if (_mouse.HasValue && plot.Contains(_mouse.Value))
         {
             int mx = _mouse.Value.X;

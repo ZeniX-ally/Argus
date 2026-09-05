@@ -4,7 +4,6 @@ namespace FctAggregator;
 
 public partial class AggDatabase
 {
-    // ===== fct_change_log =====
     public void InsertFctChange(string machine, string detail, string hash)
     {
         if(string.IsNullOrWhiteSpace(machine)) return;
@@ -23,7 +22,6 @@ public partial class AggDatabase
         return list;
     }
 
-    // ===== device_predict_log =====
     public void InsertDevicePredictLog(string machine, string metric, string level, double predicted, int? daysToExhaust, string detail)
     {
         if(string.IsNullOrWhiteSpace(machine)) return;

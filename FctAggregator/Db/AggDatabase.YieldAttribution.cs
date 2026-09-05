@@ -2,26 +2,18 @@ using System.Globalization;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 规格 01 良率归因查询层（v3.21.1 P0）：按型号/治具/批次分解 fail_count + yield。
-/// </summary>
 public partial class AggDatabase
 {
-    /// <summary>
-    /// 良率归因分解：返回各 model/category 维度的详细统计。
-    /// 数据源：agg_records（FAIL 记录）。
-    /// </summary>
     public List<YieldBreakdownItem> DecomposeByModel(string machine, DateTime startDate, DateTime endDate, int maxRows = 20)
     {
         var result = new List<YieldBreakdownItem>();
-        
+
         try
         {
             using var conn = OpenReader();
-            
-            // SQL: 按 model/category 分组统计 fail_count + total + pass
+
             var sql = @"
-                SELECT 
+                SELECT
                     model,
                     category,
                     COUNT(*) as total,
@@ -36,14 +28,14 @@ public partial class AggDatabase
                 GROUP BY model, category
                 ORDER BY fail DESC
                 LIMIT @maxRows";
-            
+
             using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Parameters.AddWithValue("@machine", machine);
             cmd.Parameters.AddWithValue("@startDate", startDate.ToString("yyyyMMdd"));
             cmd.Parameters.AddWithValue("@endDate", endDate.ToString("yyyyMMdd"));
             cmd.Parameters.AddWithValue("@maxRows", maxRows);
-            
+
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
@@ -53,11 +45,11 @@ public partial class AggDatabase
                 var pass = reader.GetInt64(3);
                 var fail = reader.GetInt64(4);
                 var interrupted = reader.GetInt64(5);
-                
+
                 if (total == 0) continue;
-                
+
                 var yield = Math.Round((double)pass / total * 100, 2);
-                
+
                 result.Add(new YieldBreakdownItem
                 {
                     Model = model,
@@ -70,8 +62,7 @@ public partial class AggDatabase
                     Rank = result.Count + 1
                 });
             }
-            
-            // 修复：先收集完再算贡献度（原版引用尚未赋值的 maxFailCount，恒为 0 且有除零风险）
+
             var maxFail = result.Count > 0 ? result.Max(x => x.Fail) : 0;
             if (maxFail > 0)
                 foreach (var it in result)
@@ -81,13 +72,10 @@ public partial class AggDatabase
         {
             Logger.Error($"[YieldAttribution] DecomposeByModel failed: {ex.Message}");
         }
-        
+
         return result;
     }
-    
-    /// <summary>
-    /// 良率归因分解：按治具维度统计（v3.22.0 升级：优先真 FIXTURE_ID，NULL/空回落 fail_reason 前缀 —— 老数据口径不变）。
-    /// </summary>
+
     public List<YieldBreakdownItem> DecomposeByFixture(string machine, DateTime startDate, DateTime endDate, int maxRows = 20)
     {
         var result = new List<YieldBreakdownItem>();
@@ -96,7 +84,6 @@ public partial class AggDatabase
         {
             using var conn = OpenReader();
 
-            // SQL: 优先 fixture_id 列（v12 迁移新增），NULL/空串回落 fail_reason 首词前缀（v3.21.1 旧口径）
             var sql = @"
                 SELECT
                     fkey as model,
@@ -118,23 +105,23 @@ public partial class AggDatabase
                 GROUP BY fkey
                 ORDER BY fail DESC
                 LIMIT @maxRows";
-            
+
             using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Parameters.AddWithValue("@machine", machine);
             cmd.Parameters.AddWithValue("@startDate", startDate.ToString("yyyyMMdd"));
             cmd.Parameters.AddWithValue("@endDate", endDate.ToString("yyyyMMdd"));
             cmd.Parameters.AddWithValue("@maxRows", maxRows);
-            
+
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
                 var fixtureName = reader.GetString(0);
                 var total = reader.GetInt64(2);
                 var fail = reader.GetInt64(4);
-                
+
                 if (total == 0) continue;
-                
+
                 result.Add(new YieldBreakdownItem
                 {
                     Model = fixtureName,
@@ -146,8 +133,7 @@ public partial class AggDatabase
                     Rank = result.Count + 1
                 });
             }
-            
-            // fixture 分解全为 FAIL 记录：贡献度 = 单项 fail / 总 fail
+
             var totalFail = result.Sum(x => x.Fail);
             if (totalFail > 0)
                 foreach (var it in result)
@@ -157,35 +143,32 @@ public partial class AggDatabase
         {
             Logger.Error($"[YieldAttribution] DecomposeByFixture failed: {ex.Message}");
         }
-        
+
         return result;
     }
-    
-    /// <summary>
-    /// 获取最近 X 天的总 fail_count（用于贡献度计算分母）。
-    /// </summary>
+
     public long GetRecentFailCount(string machine, int daysBack = 7)
     {
         var count = 0L;
         var startDate = DateTime.Today.AddDays(-daysBack);
         var endDate = DateTime.Today;
-        
+
         try
         {
             using var conn = OpenReader();
-            
-            var sql = @"SELECT COUNT(*) FROM agg_records 
-                       WHERE machine = @machine 
-                         AND test_date >= @startDate 
-                         AND test_date <= @endDate 
+
+            var sql = @"SELECT COUNT(*) FROM agg_records
+                       WHERE machine = @machine
+                         AND test_date >= @startDate
+                         AND test_date <= @endDate
                          AND result='FAIL'";
-            
+
             using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Parameters.AddWithValue("@machine", machine);
             cmd.Parameters.AddWithValue("@startDate", startDate.ToString("yyyyMMdd"));
             cmd.Parameters.AddWithValue("@endDate", endDate.ToString("yyyyMMdd"));
-            
+
             var result = cmd.ExecuteScalar();
             if (result != null && long.TryParse(result.ToString(), out var parsed))
                 count = parsed;
@@ -194,21 +177,21 @@ public partial class AggDatabase
         {
             Logger.Error($"[YieldAttribution] GetRecentFailCount failed: {ex.Message}");
         }
-        
+
         return count;
     }
-    
+
 }
 
 public class YieldBreakdownItem
 {
-    public string Model = "";           // 型号名称或 fixture_id
-    public string Category = "";        // model 或 fixture
+    public string Model = "";
+    public string Category = "";
     public long Total;
     public long Pass;
     public long Fail;
     public long Interrupted;
-    public double YieldPct;             // 良率百分比
-    public double Contribution;         // 贡献度百分比（相对于最大失败项）
-    public int Rank;                    // 排名 1-N
+    public double YieldPct;
+    public double Contribution;
+    public int Rank;
 }

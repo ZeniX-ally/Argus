@@ -3,29 +3,20 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 源机检索服务（P4 D5）：POST /api/mesh/query 并发查各机台 test_records 全量（含 PASS），结果聚合缓存 5 分钟，聚合端零膨胀。
-/// 架构：聚合端收到查询 → 本机 Database.QueryTestRecords + 并发 POST 到各在线机台的 /api/mesh/query/local
-/// （各机台只查本地 test_records，有 sn/test_date 索引，3000 行内 <100ms）。结果汇总后内存缓存 5min，
-/// 缓存键 = 查询条件规范化 JSON；命中缓存直接返回，不再碰各机台。
-/// 安全：沿用 IsAuthenticated（agg_token/users），LocalReadValidator 仍守护本机文件读取；本服务只做查询与 XML 热点缓存，不复制 PASS 索引。
-/// </summary>
 public sealed class MeshQueryService
 {
-    /// <summary>查询请求（全部字段可选，大小写不敏感）。</summary>
     public sealed class QueryRequest
     {
         public string? Machine { get; set; }
         public string? Sn { get; set; }
         public string? Model { get; set; }
-        public string? Result { get; set; }   // PASS / FAIL / null=全部
-        public string? DateFrom { get; set; } // yyyyMMdd 或 yyyy-MM-dd
+        public string? Result { get; set; }
+        public string? DateFrom { get; set; }
         public string? DateTo { get; set; }
         public int Limit { get; set; } = 100;
         public int Offset { get; set; } = 0;
     }
 
-    /// <summary>单条命中（来自任意机台的 test_records）。</summary>
     public sealed class QueryItem
     {
         public string Machine { get; set; } = "";
@@ -41,7 +32,6 @@ public sealed class MeshQueryService
         public string Tester { get; set; } = "";
     }
 
-    /// <summary>聚合响应。</summary>
     public sealed class QueryResponse
     {
         public bool Ok { get; set; } = true;
@@ -59,15 +49,11 @@ public sealed class MeshQueryService
         public string? Error { get; set; }
     }
 
-    // ===== 缓存 5 分钟 =====
-    // v3.22.0：LRUCache 接线（Infra/LRUCache.cs）——容量 + TTL 双淘汰替代手写 ConcurrentDictionary 兜底，
-    // 语义不变：键 = CacheKey 归一化串，值 = JSON 原文，TTL 300s，容量 256（超限挤掉最久未用）。
     private static readonly LRUCache<string, string> _cache =
         new(256, TimeSpan.FromSeconds(CacheTtlSec));
 
-    public const int CacheTtlSec = 300; // 5 分钟
+    public const int CacheTtlSec = 300;
 
-    /// <summary>生成缓存键：各字段归一化后拼 JSON（大小写不敏感、空格去重）。</summary>
     public static string CacheKey(QueryRequest req)
     {
         var m = (req.Machine ?? "").Trim().ToLowerInvariant();
@@ -97,13 +83,11 @@ public sealed class MeshQueryService
 
     public static int CacheCount => _cache.Count;
 
-    /// <summary>本地查询：直接读本机 Database test_records（全量含 PASS）。</summary>
     public static List<QueryItem> QueryLocal(Database db, string localMachine, QueryRequest req)
     {
         return db.QueryTestRecords(localMachine, req);
     }
 
-    /// <summary>解析 QueryRequest 的 JSON（容错：大小写不敏感、缺省给默认值）。</summary>
     public static QueryRequest ParseRequest(string json)
     {
         var req = new QueryRequest();

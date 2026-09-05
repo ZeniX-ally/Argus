@@ -1,20 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!--
-    xlsx 目视核对工具（v2.9.3 xlsx 写出器去重后的验收用）。
-
-    干什么：拿同一份 fixture 数据，把四个导出口各导一次真实 xlsx，
-            供人眼确认配色 / 列宽 / 冻结行 / 合并单元格与去重前一致。
-      1) FAIL 排行报表                  FctFailRanker.XlsxExporter
-      2) 取数打包 - 捞取清单            FctFetcher.Exporter
-      3) 维修记录                      FctAggregator.MaintenanceExporter
-      （v3.0.0：数据分发的金银板 SN 台账已随分发器独立，改由 FctDistributor 自检负责）
-
-    为什么用通配 Include：本工程要能在**旧版本代码**（v2.9.2，去重前，没有 Xlsx.cs）
-    上原样编译，好做新旧对比。所以不写死文件清单。
-
-    用法：dotnet run 本工程，参数为 <输出目录> <fixture目录> [维修记录db]
-  -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -23,26 +8,20 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>FctAggregator.XlsxDump</RootNamespace>
     <AssemblyName>XlsxDump</AssemblyName>
-    <!-- 五个模块各有 Main，靠这个消歧（同主工程约定） -->
     <StartupObject>XlsxDump</StartupObject>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <NoWarn>$(NoWarn);CS0618;CS0612;CS8981</NoWarn>
-    <!-- 依赖锁定：还原时生成 packages.lock.json，保证可复现构建 -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="XlsxDump.cs" />
-    <!-- 2026-09-01 主源码分组到子目录：递归通配全量引入，排除构建产物与工程目录（obj 防父工程 AssemblyInfo CS0579）。
-         旧版本 tag 检出时连带旧 csproj，原 ..\..\*.cs 通配照常工作，新旧对比诉求不受影响 -->
     <Compile Include="..\..\**\*.cs" Exclude="..\..\bin\**;..\..\obj\**;..\..\selftest\**;..\..\tools\**" />
     <EmbeddedResource Include="..\..\app_icon.ico" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
-    <!-- CVE-2025-6965/70873 修复:8.0.x 传递依赖仍是 SQLitePCLRaw 2.1.6(SQLite 3.41.2,低于修复线 3.50.2),
-         显式覆盖到 2.1.12(自带 SQLite 3.53.3) -->
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
     <PackageReference Include="TDMSReader" Version="3.1.0" />

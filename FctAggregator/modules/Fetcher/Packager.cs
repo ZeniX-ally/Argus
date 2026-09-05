@@ -2,17 +2,6 @@ using System.IO.Compression;
 
 namespace FctFetcher;
 
-/// <summary>
-/// 打包器：把命中的文件按类型分入 xml / csv / tdms 三个文件夹，再压成一个 zip。
-///
-/// 结构（zip 内）:
-///   xml\   *.xml
-///   csv\   *.csv
-///   tdms\  *.tdms
-///   fetch_{起}-{止}.xlsx      捞取清单（一并带上，便于整包交付）
-///
-/// zip 名按日期: {起}-{止}.zip；单日则 {日期}.zip
-/// </summary>
 public static class Packager
 {
     public sealed class Result
@@ -28,9 +17,6 @@ public static class Packager
             ? $"{start:yyyyMMdd}"
             : $"{start:yyyyMMdd}-{end:yyyyMMdd}";
 
-    /// <summary>
-    /// 复制并打包。stageDir 为中间目录，打包后按 keepStage 决定是否保留。
-    /// </summary>
     public static Result Pack(List<Record> recs, string outDir, DateTime start, DateTime end,
                              string? xlsxPath, bool keepStage, Action<string>? log = null)
     {
@@ -59,7 +45,6 @@ public static class Packager
             }
         }
 
-        // 清单一并放进包里
         if (!string.IsNullOrEmpty(xlsxPath) && File.Exists(xlsxPath))
             Copy(xlsxPath, stage, log);
 
@@ -81,7 +66,6 @@ public static class Packager
         return res;
     }
 
-    /// <summary>同名文件加 _2/_3 后缀，避免互相覆盖。</summary>
     private static bool Copy(string src, string dstDir, Action<string>? log)
     {
         try

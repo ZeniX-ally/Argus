@@ -2,7 +2,6 @@ using NationalInstruments.Tdms;
 
 namespace FctTdmsViewer;
 
-/// <summary>一个通道的元信息（不含数据，构造代价低）。</summary>
 public sealed class ChannelInfo
 {
     public string GroupName = "";
@@ -13,7 +12,6 @@ public sealed class ChannelInfo
     public IDictionary<string, object> Properties = new Dictionary<string, object>();
 
     public string TypeName => DataType?.Name ?? "?";
-    /// <summary>能否画成波形（数值类型才行）。</summary>
     public bool Numeric => DataType != null && TdmsDoc.IsNumeric(DataType);
     public override string ToString() => Name;
 }
@@ -25,16 +23,10 @@ public sealed class GroupInfo
     public List<ChannelInfo> Channels = new();
     public long SampleCount => Channels.Count > 0 ? Channels[0].Count : 0;
 
-    /// <summary>文件中的物理顺序（TDMS 写入顺序）。</summary>
     public int FileIndex;
 
-    /// <summary>
-    /// 从组名开头解析出的测试项编号，如 "8.11 Resolver Test" -> [8, 11]。
-    /// 用于自然排序 —— 按字符串排会得出 8.11 &lt; 8.2 的错误结果。
-    /// </summary>
     public int[] Number = Array.Empty<int>();
 
-    /// <summary>排序后的显示序号（1 起）。</summary>
     public int Seq;
 
     public string NumberText => Number.Length == 0 ? "" : string.Join(".", Number);
@@ -42,16 +34,6 @@ public sealed class GroupInfo
     public override string ToString() => Name;
 }
 
-/// <summary>
-/// TDMS 文档封装。
-///
-/// 基于 TDMSReader 3.1.0（纯 C#、无依赖、.NETStandard2.0）。
-/// 该库的解析结果已与 Python npTDMS 1.10.0 交叉核对一致
-/// （17 组 / 各组采样点数 / RES_v_ResAng 的 n·min·max·mean 逐位吻合）。
-///
-/// 打开时只读元信息（用 Channel.DataCount，不载入数据），
-/// 数据按需惰性读取并缓存，避免大文件一次性吃满内存。
-/// </summary>
 public sealed class TdmsDoc : IDisposable
 {
     private NationalInstruments.Tdms.File? _file;
@@ -102,10 +84,6 @@ public sealed class TdmsDoc : IDisposable
         return doc;
     }
 
-    /// <summary>
-    /// 提取组名开头的点分编号："8.11 Resolver Test" -> [8,11]，"6.1 Power Test" -> [6,1]。
-    /// 开头无数字则返回空数组（排到末尾）。
-    /// </summary>
     public static int[] ParseLeadingNumber(string name)
     {
         var s = name.TrimStart();
@@ -130,9 +108,7 @@ public sealed class TdmsDoc : IDisposable
 
     public enum GroupOrder
     {
-        /// <summary>按测试项编号自然排序（6.1 &lt; 7.2 &lt; 8.2 &lt; 8.10 &lt; 8.11）。</summary>
         ByNumber,
-        /// <summary>文件物理顺序（TDMS 写入顺序）。</summary>
         FileOrder,
     }
 
@@ -149,7 +125,6 @@ public sealed class TdmsDoc : IDisposable
         {
             Groups.Sort((a, b) =>
             {
-                // 无编号的排最后
                 if (a.Number.Length == 0 && b.Number.Length > 0) return 1;
                 if (b.Number.Length == 0 && a.Number.Length > 0) return -1;
                 int n = Math.Min(a.Number.Length, b.Number.Length);
@@ -160,7 +135,6 @@ public sealed class TdmsDoc : IDisposable
                 }
                 int c2 = a.Number.Length.CompareTo(b.Number.Length);
                 if (c2 != 0) return c2;
-                // 编号相同（如 8.20 ASC..._1 / _2）时按名称，再按文件顺序兜底
                 int c3 = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
                 return c3 != 0 ? c3 : a.FileIndex.CompareTo(b.FileIndex);
             });
@@ -177,7 +151,6 @@ public sealed class TdmsDoc : IDisposable
 
     public static bool IsNumeric(Type t) => NumericTypes.Contains(t);
 
-    /// <summary>读取通道数据并统一转 double（便于绘图与统计）。非数值类型返回空数组。</summary>
     public double[] GetData(ChannelInfo ci)
     {
         var key = ci.GroupName + "\u0000" + ci.Name;
@@ -211,7 +184,6 @@ public sealed class TdmsDoc : IDisposable
         return result;
     }
 
-    /// <summary>非数值通道（字符串/时间）取原始文本，用于表格展示。</summary>
     public string[] GetText(ChannelInfo ci)
     {
         var ch = FindChannel(ci);
@@ -237,7 +209,6 @@ public sealed class TdmsDoc : IDisposable
         return null;
     }
 
-    /// <summary>采样间隔（秒）。取通道属性 wf_increment，缺省 0 表示按索引显示 X 轴。</summary>
     public static double GetIncrement(ChannelInfo ci)
     {
         if (ci.Properties.TryGetValue("wf_increment", out var v))

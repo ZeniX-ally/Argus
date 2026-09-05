@@ -2,16 +2,8 @@ using Microsoft.Data.Sqlite;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 聚合库维修/待办扩展（P5 服务端化，Agent B）。
-/// 与机台本地 Database 的同名表同构、同逻辑、同口径——
-/// 状态机复用 MaintenanceMeta.Normalize/ZhOf，合并复用 TodoGrouping.KeyOf/TitleOf，
-/// 导出复用 MaintenanceExporter，CSV 注入防护 CWE-1236 同款（'=+-@ 前缀转义）。
-/// 前端不重写合并/状态机逻辑，服务端为唯一口径来源。
-/// </summary>
 public partial class AggDatabase
 {
-    /// <summary>维修记录状态变更事件（与 Database 同契约）：参数=(记录, 旧状态, 新状态)。订阅后可推飞书（FeishuNotifier）。</summary>
     public event Action<MaintenanceRecord, string, string>? MaintenanceStatusChanged;
 
     private void NotifyStatusChanged(MaintenanceRecord rec, string from, string to)
@@ -20,8 +12,6 @@ public partial class AggDatabase
         try { MaintenanceStatusChanged?.Invoke(rec, from, to); }
         catch (Exception ex) { Logger.Warning($"状态变更回调异常: {ex.Message}"); }
     }
-
-    // ==================== maintenance_records ====================
 
     public int CreateMaintenance(MaintenanceRecord m)
     {
@@ -229,8 +219,6 @@ public partial class AggDatabase
         return affected > 0;
     }
 
-    // ==================== resolvers ====================
-
     public List<string> RosterResolvers()
     {
         var list = new List<string>();
@@ -360,8 +348,6 @@ public partial class AggDatabase
         return n;
     }
 
-    // ==================== todo_items / dismissed_todos ====================
-
     private const string TodoWatermarkKey = "todo_sync_last_id";
     public const int TodoViewLimit = 300;
 
@@ -407,10 +393,6 @@ public partial class AggDatabase
         cmd.ExecuteNonQuery();
     }
 
-    /// <summary>
-    /// 同步 agg_records FAIL 到 todo_items（聚合端版本，逻辑与 Database.SyncTodoItems 同源）。
-    /// 仅聚合端使用：基于 agg_records 而非 test_records。
-    /// </summary>
     public int SyncTodoItems(int scanDays = 30)
     {
         if (scanDays < 1) scanDays = 1;
@@ -745,7 +727,6 @@ public partial class AggDatabase
         return GetTodoItem(Convert.ToInt32(v));
     }
 
-    // fail item sources for "从FAIL建单" UI — de-duplicated already in API layer, but provide raw sources
     public List<FailItemSource> FailItemSources(string stationId = "", int days = 0, int limit = 2000)
     {
         using var conn = OpenReader();

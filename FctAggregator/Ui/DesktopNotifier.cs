@@ -2,27 +2,12 @@ using System.Text;
 
 namespace FctAggregator;
 
-/// <summary>
-/// Windows 原生桌面提示（不良报警）。
-///
-/// 实现方式：托盘 <see cref="NotifyIcon"/> + BalloonTip。
-/// Win10/11 下这就是系统通知中心里的原生 Toast（会进「通知」列表、跟随勿扰模式），
-/// 而且**不需要**引 UWP 包、也不用注册 AUMID —— 车间里的机台不装额外依赖最稳。
-///
-/// 使用约定：
-///   · <see cref="Init"/> 必须在 UI 线程（MainForm 构造里）调用一次，内部记住 UI 同步上下文
-///   · <see cref="NotifyFail"/> 可从任意后台线程调用（Engine 的文件监控线程）
-///   · 高频不良会被合并：<see cref="MinIntervalSeconds"/> 秒内只弹一次，期间的条数汇总成一条
-/// </summary>
 public static class DesktopNotifier
 {
-    /// <summary>总开关（config.json: desktop_notify）。</summary>
     public static bool Enabled { get; set; } = true;
 
-    /// <summary>两次弹窗的最小间隔秒数，期间的不良合并成一条汇总提示。</summary>
     public static int MinIntervalSeconds { get; set; } = 15;
 
-    /// <summary>用户点了通知（或双击托盘图标）—— MainForm 用它把窗口拉到前台并切到待办看板。</summary>
     public static event Action? Activated;
 
     private static NotifyIcon? _icon;
@@ -33,7 +18,6 @@ public static class DesktopNotifier
     private static DateTime _lastShown = DateTime.MinValue;
     private static bool _inited;
 
-    /// <summary>在 UI 线程调用一次。失败(极老系统/无桌面会话)只记日志，不影响主流程。</summary>
     public static void Init()
     {
         if (_inited) return;
@@ -41,8 +25,6 @@ public static class DesktopNotifier
         _ui = SynchronizationContext.Current;
         try
         {
-            // v2.9.4: 托盘要 16×16；原来读 BaseDir 下的文件，而发布包里根本没有那个文件，
-            // 于是一直退成系统灰图标。现在统一走 AppIcon（嵌入资源优先）。
             var ico = AppIcon.Load(16);
 
             _icon = new NotifyIcon
@@ -62,7 +44,6 @@ public static class DesktopNotifier
             menu.Items.Add(toggle);
             _icon.ContextMenuStrip = menu;
 
-            // 1 秒心跳: 到点了才把积压的不良汇总弹出去(节流)
             _timer = new System.Windows.Forms.Timer { Interval = 1000 };
             _timer.Tick += (_, _) => Flush();
             _timer.Start();
@@ -76,7 +57,6 @@ public static class DesktopNotifier
         }
     }
 
-    /// <summary>报一条不良。线程安全，可从后台线程调用。</summary>
     public static void NotifyFail(TestRecord rec)
     {
         var item = FirstFailItem(rec);
@@ -87,18 +67,15 @@ public static class DesktopNotifier
         Enqueue(sb.ToString());
     }
 
-    /// <summary>自定义一条提示（调试页测试用）。</summary>
     public static void NotifyRaw(string text) => Enqueue(text);
 
     private static void Enqueue(string text)
     {
         if (!Enabled) return;
         lock (Gate) _queue.Add(text);
-        // UI 线程上的 timer 会在下一拍统一弹出; 没有 UI 上下文时兜底直接试一次
         if (_ui == null) Flush();
     }
 
-    /// <summary>UI 线程：到间隔就把积压的合并弹出。</summary>
     private static void Flush()
     {
         if (_icon == null) return;
@@ -128,14 +105,12 @@ public static class DesktopNotifier
 
         try
         {
-            // BalloonTip 文本上限 ~255 字符，超了 Windows 会直接不显示
             if (body.Length > 220) body = body[..220] + "…";
             _icon.ShowBalloonTip(8000, title, body, ToolTipIcon.Warning);
         }
         catch (Exception ex) { Logger.Warning($"桌面提示弹出失败: {ex.Message}"); }
     }
 
-    /// <summary>取一条有代表性的故障项文本。</summary>
     private static string FirstFailItem(TestRecord rec)
     {
         if (rec.FailedTests.Count > 0)

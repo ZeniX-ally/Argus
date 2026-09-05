@@ -2,22 +2,10 @@ using System.Globalization;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 预测准确率对账器（v3.20.0 规格 02）：把 alert_predict_log / device_predict_log 的预测
-/// 与后来实际值对账，落 predict_accuracy_log；同时按"近 30 天命中率"产出阈值推荐。
-///
-/// 设计要点：
-/// - 对账只读算 + 单写者写锁（与现有 Mesh 推送串行，不阻塞入库）；
-/// - 阈值推荐**只写不应用**——避免现场被自动改阈值后懵；
-/// - 每次 RunOnce 增量对账（predict_table+predict_id UNIQUE 去重），整批 < 1s；
-/// - DbMaintenance.RunNow 每日凌晨顺带调用，与 checkpoint/VACUUM/backup 同锁内串行。
-/// </summary>
 public static class PredictAccuracyReconciler
 {
-    /// <summary>默认对账窗口（天）——与 config 一致但允许覆写。</summary>
     public const int DefaultHorizonDays = 14;
 
-    /// <summary>对账 + 统计 + 推荐。返回本次新对账条数（不含历史已对账的）。</summary>
     public static ReconcileSummary Reconcile(AggDatabase db, AppConfig cfg)
     {
         if (cfg.PredictReconcileEnabled == false)
@@ -38,7 +26,6 @@ public static class PredictAccuracyReconciler
         return BuildSummary(db, cfg, newEmpty: false);
     }
 
-    /// <summary>后台入口，由 DbMaintenance.RunNow 顺带调用；返回本次新对账条数。</summary>
     public static int RunOnce(AggDatabase db, AppConfig cfg)
     {
         if (cfg.PredictReconcileEnabled == false) return 0;
@@ -56,15 +43,12 @@ public static class PredictAccuracyReconciler
         return reconciled;
     }
 
-    // ==================== 对账：alert_predict_log（yield）====================
-
     private static int ReconcileAlertPredicts(AggDatabase db, AppConfig cfg)
     {
         var horizon = Math.Max(1, cfg.PredictReconcileHorizonDays);
         var since = DateTime.Now.AddDays(-horizon).ToString("yyyy-MM-dd HH:mm:ss");
-        var upto = DateTime.Now.AddDays(-1).ToString("yyyy-MM-dd HH:mm:ss");   // 至少 1 天前的预测才能对账
+        var upto = DateTime.Now.AddDays(-1).ToString("yyyy-MM-dd HH:mm:ss");
 
-        // 取窗口内的 alert 预测，按时间升序便于边界检查
         var rows = QueryAlertPredictsRange(db, since, upto);
         var count = 0;
         foreach (var p in rows)
@@ -74,7 +58,7 @@ public static class PredictAccuracyReconciler
 
             if (!TryParseTs(p.ts, out var predictedAt)) continue;
             var actual = LookupYieldActual(db, p.machine, predictedAt);
-            if (actual == null) continue;   // 还不够数据，跳过
+            if (actual == null) continue;
 
             var (hit, leadDays) = ClassifyYieldHit(actual, p, cfg);
             db.UpsertPredictAccuracy(new AggDatabase.AccuracyRow
@@ -96,8 +80,6 @@ public static class PredictAccuracyReconciler
         return count;
     }
 
-    // ==================== 对账：device_predict_log（cpu/disk/offline）====================
-
     private static int ReconcileDevicePredicts(AggDatabase db, AppConfig cfg)
     {
         var horizon = Math.Max(1, cfg.PredictReconcileHorizonDays);
@@ -113,7 +95,6 @@ public static class PredictAccuracyReconciler
 
             if (!TryParseTs(p.ts, out var predictedAt)) continue;
 
-            // 归一：device_predict_log.metric 就是 rule（cpu/disk/offline）
             var rule = p.metric;
             (bool hit, double leadDays, double? actual, string note)? result = rule switch
             {
@@ -143,9 +124,6 @@ public static class PredictAccuracyReconciler
         return count;
     }
 
-    // ==================== 实际值查找 ====================
-
-    /// <summary>一个"实际值"快照（查 yld_daily / device_samples 得到，供 Classify*Hit 判定）。</summary>
     public sealed class ActualValuePublic
     {
         public double Value;
@@ -155,7 +133,6 @@ public static class PredictAccuracyReconciler
 
     private static ActualValuePublic? LookupYieldActual(AggDatabase db, string machine, DateTime predictedAt)
     {
-        // 预测 1 天后的实际 yld_daily（yld_daily.test_date 是 yyyyMMdd）
         var target = predictedAt.AddDays(1).ToString("yyyyMMdd");
         var row = db.QueryDailyStats(machine, target, target, maxRows: 1).FirstOrDefault();
         if (row == null || row.Total <= 0) return null;
@@ -170,7 +147,6 @@ public static class PredictAccuracyReconciler
 
     private static ActualValuePublic? LookupCpuActual(AggDatabase db, string machine, DateTime predictedAt)
     {
-        // 预测时刻 + 1 天的 cpu_usage（取 ≤ 该时刻的最新 sample）
         var cutoff = predictedAt.AddDays(1).ToString("yyyy-MM-dd HH:mm:ss");
         var samples = db.QueryDeviceSamples(machine, 1, fromTs: null, toTs: cutoff);
         if (samples.Count == 0) return null;
@@ -187,14 +163,10 @@ public static class PredictAccuracyReconciler
         return new ActualValuePublic { Value = s.DiskFreeGb, EventTs = TryParseExact(s.Ts) ?? predictedAt.AddDays(1) };
     }
 
-    // ==================== hit 判定（公开以方便单测）====================
-
     public static (bool Hit, double LeadDays) ClassifyYieldHit(ActualValuePublic actual,
         (long id, string ts, string machine, string rule, string level, double current, double predicted, string detail) predict,
         AppConfig cfg)
     {
-        // yield hit：预测 "会跌破阈值" 且 实际真的跌破
-        // yield miss：预测 "会跌破阈值" 但 实际没跌破
         var threshold = cfg.YieldAlertYieldPct;
         var predicted_will_break = predict.predicted < threshold;
         var actually_broke = actual.Value < threshold;
@@ -219,7 +191,6 @@ public static class PredictAccuracyReconciler
 
     public static (bool Hit, double LeadDays) ClassifyCpuHit(ActualValuePublic actual, double predicted)
     {
-        // cpu hit：预测 cpu≥95（critical/warn 阈值）且实际确实 ≥95
         var hit = actual.Value >= 95.0;
         var lead = (actual.EventTs - DateTime.Now.AddDays(-1)).TotalDays;
         return (hit, Math.Round(lead, 2));
@@ -227,7 +198,6 @@ public static class PredictAccuracyReconciler
 
     public static (bool Hit, double LeadDays) ClassifyDiskHit(ActualValuePublic actual, double predicted)
     {
-        // disk hit：预测耗尽 ±3 天内，actual disk_free ≤ 5GB 视为"真快耗尽"
         var hit = actual.Value <= 5.0;
         var lead = 0.0;
         return (hit, lead);
@@ -238,7 +208,6 @@ public static class PredictAccuracyReconciler
             (long id, string ts, string machine, string metric, string level, double predicted, int? days, string detail) predict,
             DateTime predictedAt)
     {
-        // offline hit：预测会离线，24h 内 last_seen > 90s
         var info = db.GetDeviceInfo(predict.machine);
         if (info == null || string.IsNullOrEmpty(info.LastSeen)) return (false, 0, null, "no device_info");
         if (!TryParseTs(info.LastSeen, out var lastDt)) return (false, 0, null, "bad last_seen");
@@ -246,8 +215,6 @@ public static class PredictAccuracyReconciler
         var hit = gap > 90;
         return (hit, Math.Round((DateTime.Now - predictedAt).TotalDays, 2), gap, $"gap={gap:0}s");
     }
-
-    // ==================== 统计与推荐 ====================
 
     private static ReconcileSummary BuildSummary(AggDatabase db, AppConfig cfg, bool newEmpty)
     {
@@ -264,7 +231,6 @@ public static class PredictAccuracyReconciler
             };
         }
 
-        // per-machine：近 30 天内每台每规则的命中率 + miss_streak
         var recent = db.QueryPredictAccuracy(days: 30, limit: 5000);
         var byKey = recent.GroupBy(r => (r.Machine, r.Rule));
         foreach (var g in byKey)
@@ -283,7 +249,6 @@ public static class PredictAccuracyReconciler
             });
         }
 
-        // 阈值推荐（仅 tune 开启）
         if (cfg.PredictTuneEnabled && !newEmpty)
         {
             BuildThresholdTuning(summary, cfg);
@@ -295,19 +260,15 @@ public static class PredictAccuracyReconciler
 
     private static void BuildThresholdTuning(ReconcileSummary summary, AppConfig cfg)
     {
-        // yield 是 "跌破阈值告警"：阈值 ↑ → 更严（更少触发）。
-        // accuracy 太低（误报多）→ 阈值 ↑；accuracy 太高（漏报多）→ 阈值 ↓。
         RecommendYield(summary, cfg);
-        // cpu/disk/offline 的阈值先不动（v3.20.0 只演示 yield）
     }
 
     private static void RecommendYield(ReconcileSummary summary, AppConfig cfg)
     {
         if (!summary.Summary.TryGetValue("yield", out var stat)) return;
         var current = cfg.YieldAlertYieldPct;
-        if (stat.Total < cfg.PredictTuneMinSamples) return;   // 冷启动保护
+        if (stat.Total < cfg.PredictTuneMinSamples) return;
 
-        // accuracy 太低 → 阈值 +5%（更难跌破 → 告警少）
         if (stat.Accuracy < 0.30 && current < 99.0)
         {
             var rec = Math.Min(99.0, current + 5.0);
@@ -319,7 +280,6 @@ public static class PredictAccuracyReconciler
                 Reason = $"命中率 {stat.Accuracy:P0} < 30%（{stat.Total} 样本），放宽阈值减少误报",
             });
         }
-        // accuracy 太高 + 样本足够 → 阈值 -5%（更紧 → 漏报减少）
         else if (stat.Accuracy > 0.85 && stat.Total >= cfg.PredictTuneMinSamples && current > 50.0)
         {
             var rec = Math.Max(50.0, current - 5.0);
@@ -332,8 +292,6 @@ public static class PredictAccuracyReconciler
             });
         }
     }
-
-    // ==================== 工具：SQL 包装（避开编译器不知道的字段类型）====================
 
     private static List<(long id, string ts, string machine, string rule, string level, double current, double predicted, string detail)>
         QueryAlertPredictsRange(AggDatabase db, string since, string upto)
@@ -414,10 +372,8 @@ public static class PredictAccuracyReconciler
     {
         "cpu" => cfg.DeviceAlertCpuPct,
         "offline" => cfg.DeviceAlertOfflineMinutes,
-        _ => 0.0,    // disk 没阈值
+        _ => 0.0,
     };
-
-    // ==================== DTO ====================
 
     public sealed class ReconcileSummary
     {

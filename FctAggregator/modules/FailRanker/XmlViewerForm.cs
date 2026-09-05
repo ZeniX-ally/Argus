@@ -5,16 +5,11 @@ using FctAggregator;
 
 namespace FctFailRanker;
 
-/// <summary>
-/// XML 测试报告查看器 - 深色仪表盘风格。
-/// 顶部 SN 标题栏 + 状态徽章、KPI 统计卡、信息网格、自绘测试项表格。
-/// </summary>
 public class XmlViewerForm : Form
 {
     private const string IgnoredHint = "不计入不良";
     private static readonly string[] IgnoredFailSteps = { "Get Unit Information", "UUT Status Err" };
 
-    // ---- 配色 (统一 Theme 令牌) ----
     private static readonly Color CBg        = Theme.Surface;
     private static readonly Color CCard      = Theme.Surface;
     private static readonly Color CCardLine  = Theme.Border;
@@ -51,19 +46,15 @@ public class XmlViewerForm : Form
         BuildBody();
         BuildFooter();
 
-        // 修正停靠 z-order: Fill(body) 必须最后填充
-        //   停靠按 index 高->低 依次占位, Fill 应最后占 => body 置于最低 index(0)
         Controls.SetChildIndex(_body, 0);
     }
 
-    // ========================= 顶部标题栏 =========================
     private void BuildHeader()
     {
         bool pass = _data.PanelStatus.Equals("Passed", StringComparison.OrdinalIgnoreCase);
         var header = new Panel { Dock = DockStyle.Top, Height = 104, BackColor = Color.White };
         header.Paint += (_, e) =>
         {
-            // 底部强调色细线
             using var pen = new Pen(pass ? CGreen : CRed, 3);
             e.Graphics.DrawLine(pen, 0, header.Height - 2, header.Width, header.Height - 2);
         };
@@ -82,12 +73,11 @@ public class XmlViewerForm : Form
             Height = 30, AutoEllipsis = true,
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             TextAlign = ContentAlignment.MiddleLeft,
-            Width = ClientSize.Width - 28 - 132 - 40,   // 预留右侧徽章区域
+            Width = ClientSize.Width - 28 - 132 - 40,
         };
         header.Controls.Add(lblKicker);
         header.Controls.Add(lblSn);
 
-        // SN 可右键复制
         var snMenu = new ContextMenuStrip();
         snMenu.Items.Add("复制 SN", null, (_, _) => TrySetClipboard(_data.Sn));
         snMenu.Items.Add("复制文件名", null, (_, _) => TrySetClipboard(Path.GetFileName(_path)));
@@ -95,7 +85,6 @@ public class XmlViewerForm : Form
         lblSn.ContextMenuStrip = snMenu;
         lblSn.Cursor = Cursors.IBeam;
 
-        // 状态徽章(右上, 自绘圆角)
         var badge = new Panel
         {
             Width = 132, Height = 44, Top = 30,
@@ -112,7 +101,6 @@ public class XmlViewerForm : Form
             using var pen = new Pen(badgeColor, 1.6f);
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(pen, path);
-            // 圆点
             using var dot = new SolidBrush(badgeColor);
             e.Graphics.FillEllipse(dot, 16, badge.Height / 2 - 5, 10, 10);
             TextRenderer.DrawText(e.Graphics, badgeText, new Font(Theme.Body.FontFamily, 12F, FontStyle.Bold),
@@ -120,23 +108,20 @@ public class XmlViewerForm : Form
                 TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
         };
         header.Controls.Add(badge);
-        // 初始定位 + 随 header 尺寸变化重定位(右对齐), 避免初始 width 为 0 导致徽章被遮
         void PlaceBadge() => badge.Left = Math.Max(header.ClientSize.Width - badge.Width - 28, lblSn.Right + 12);
         header.SizeChanged += (_, _) => PlaceBadge();
 
         Controls.Add(header);
-        PlaceBadge();   // header 已入 Controls 且完成停靠布局, 此时 Width 才准确
+        PlaceBadge();
     }
 
     private Panel _body = null!;
 
-    // ========================= 主体 =========================
     private void BuildBody()
     {
         var body = new Panel { Dock = DockStyle.Fill, BackColor = CBg, Padding = new Padding(24, 18, 24, 8) };
         _body = body;
 
-        // ---- KPI 卡片行 ----
         var kpi = new Panel { Dock = DockStyle.Top, Height = 84, BackColor = CBg };
         int totalTests = _data.Tests.Count;
         int failed = _data.FailCount;
@@ -152,7 +137,6 @@ public class XmlViewerForm : Form
         kpi.Controls.Add(BuildKpiRow(cards));
         body.Controls.Add(kpi);
 
-        // ---- 表格标题 + 表格 ----
         var lvHost = new Panel { Dock = DockStyle.Fill, BackColor = CBg, Padding = new Padding(0, 10, 0, 0) };
         var lblTable = new Label
         {
@@ -170,20 +154,15 @@ public class XmlViewerForm : Form
         lvHost.Controls.Add(_report);
         lvHost.Controls.Add(lblHint);
         lvHost.Controls.Add(lblTable);
-        // 自上而下: 标题, 提示, 报告文本(Fill) => 标题 index 最高
         lvHost.Controls.SetChildIndex(lblTable, 2);
         lvHost.Controls.SetChildIndex(lblHint, 1);
         lvHost.Controls.SetChildIndex(_report, 0);
         body.Controls.Add(lvHost);
 
-        // ---- 信息网格(放中间, KPI 下方) ----
         var infoHost = new Panel { Dock = DockStyle.Top, Height = 120, BackColor = CBg, Padding = new Padding(0, 10, 0, 6) };
         infoHost.Controls.Add(BuildInfoGrid());
         body.Controls.Add(infoHost);
 
-        // Dock 布局: 停靠按 z-order 逆序占位(index 最高者最先停靠)。
-        // 期望自上而下: KPI, 信息, 表格(Fill)
-        //   => KPI 索引最高, 信息居中, Fill 最低
         body.Controls.SetChildIndex(kpi, 2);
         body.Controls.SetChildIndex(infoHost, 1);
         body.Controls.SetChildIndex(lvHost, 0);
@@ -213,13 +192,10 @@ public class XmlViewerForm : Form
                 using var path = RoundRect(r, 8);
                 using var pen = new Pen(CCardLine, 1);
                 e.Graphics.DrawPath(pen, path);
-                // 左侧强调竖条
                 using var bar = new SolidBrush(color);
                 e.Graphics.FillRectangle(bar, 0, 10, 4, p.Height - 20);
-                // 数值
                 TextRenderer.DrawText(e.Graphics, value, new Font(Theme.Body.FontFamily, 20F, FontStyle.Bold),
                     new Rectangle(18, 10, p.Width - 24, 40), color, TextFormatFlags.Left);
-                // 标签
                 TextRenderer.DrawText(e.Graphics, label, Theme.Body,
                     new Rectangle(18, 52, p.Width - 24, 22), CTextDim, TextFormatFlags.Left);
             };
@@ -241,7 +217,6 @@ public class XmlViewerForm : Form
             ("SN", _data.Sn),
         };
         var card = new Panel { Dock = DockStyle.Fill, BackColor = CCard };
-        // 信息卡右键可复制全部头部信息
         var infoMenu = new ContextMenuStrip();
         infoMenu.Items.Add("复制全部信息", null, (_, _) =>
         {
@@ -262,7 +237,7 @@ public class XmlViewerForm : Form
             int padx = 18, pady = 12;
             int cw = (p.Width - padx * 2) / cols;
             int ch = (p.Height - pady * 2) / rows;
-            if (ch < 44) ch = 44;   // 保证每行足够高, 避免标签与值重叠
+            if (ch < 44) ch = 44;
             var fk = Theme.Small;
             var fv = Theme.BodyBold;
             for (int i = 0; i < info.Length; i++)
@@ -280,7 +255,6 @@ public class XmlViewerForm : Form
         return card;
     }
 
-    // ========================= 自绘表格 =========================
     private RichTextBox BuildReport()
     {
         var rtb = new RichTextBox
@@ -294,9 +268,7 @@ public class XmlViewerForm : Form
             Cursor = Cursors.IBeam,
         };
 
-        // 列宽(按显示宽度: 中文=2, 其它=1), 用等宽字体对齐
         const int wIdx = 4, wName = 48, wVal = 12, wLo = 10, wHi = 10, wUnit = 6;
-        // 字符显示宽度: CJK / 全角 算 2, 其余算 1
         static int DispW(string s)
         {
             int w = 0;
@@ -304,14 +276,13 @@ public class XmlViewerForm : Form
             return w;
         }
         static bool IsWide(char c)
-            => (c >= 0x1100 && c <= 0x115F) ||     // 韩文字母
-               (c >= 0x2E80 && c <= 0xA4CF) ||     // CJK 及部首、日文等
-               (c >= 0xAC00 && c <= 0xD7A3) ||     // 韩文音节
-               (c >= 0xF900 && c <= 0xFAFF) ||     // CJK 兼容
-               (c >= 0xFE30 && c <= 0xFE4F) ||     // CJK 兼容形式
-               (c >= 0xFF00 && c <= 0xFF60) ||     // 全角 ASCII
-               (c >= 0xFFE0 && c <= 0xFFE6);       // 全角符号
-        // 按显示宽度截断
+            => (c >= 0x1100 && c <= 0x115F) ||
+               (c >= 0x2E80 && c <= 0xA4CF) ||
+               (c >= 0xAC00 && c <= 0xD7A3) ||
+               (c >= 0xF900 && c <= 0xFAFF) ||
+               (c >= 0xFE30 && c <= 0xFE4F) ||
+               (c >= 0xFF00 && c <= 0xFF60) ||
+               (c >= 0xFFE0 && c <= 0xFFE6);
         static string Clip(string s, int w)
         {
             if (DispW(s) <= w) return s;
@@ -320,7 +291,7 @@ public class XmlViewerForm : Form
             foreach (var ch in s)
             {
                 int cw = IsWide(ch) ? 2 : 1;
-                if (cur + cw > w - 1) break;   // 预留 1 位给省略号
+                if (cur + cw > w - 1) break;
                 sb.Append(ch); cur += cw;
             }
             sb.Append('…');
@@ -338,7 +309,6 @@ public class XmlViewerForm : Form
             => Col(a, wIdx) + Col(b, wName) + Col(c, wVal, true) + Col(d, wLo, true)
              + Col(e, wHi, true) + Col(f, wUnit, true) + "  " + g;
 
-        // 表头(不用粗体, 避免合成粗体宽度差异破坏对齐)
         AppendColored(rtb, Row("#", "测试项", "测量值", "下限", "上限", "单位", "状态") + "\n", CAccent, false);
         AppendColored(rtb, new string('─', wIdx + wName + wVal + wLo + wHi + wUnit + 12) + "\n", Color.FromArgb(170, 170, 170), false);
 
@@ -358,14 +328,13 @@ public class XmlViewerForm : Form
                 string.IsNullOrEmpty(t.Unit) ? "-" : t.Unit,
                 status) + "\n";
             Color fg = isFail ? (ignored ? CAmber : CRed) : CText;
-            AppendColored(rtb, line, fg, false);   // 不用粗体, 保证列对齐; 用颜色区分失败项
+            AppendColored(rtb, line, fg, false);
             idx++;
         }
 
         rtb.SelectionStart = 0;
         rtb.SelectionLength = 0;
 
-        // 右键菜单: 复制选中 / 全选 / 复制全部
         var menu = new ContextMenuStrip();
         menu.Items.Add("复制选中", null, (_, _) =>
         {
@@ -380,7 +349,6 @@ public class XmlViewerForm : Form
         return rtb;
     }
 
-    /// <summary>向 RichTextBox 追加一段带颜色/粗体的文字。</summary>
     private static void AppendColored(RichTextBox rtb, string text, Color color, bool bold)
     {
         int start = rtb.TextLength;
@@ -399,7 +367,6 @@ public class XmlViewerForm : Form
         catch { try { Clipboard.SetDataObject(text, true); } catch { } }
     }
 
-    // ========================= 底部工具条 =========================
     private void BuildFooter()
     {
         var footer = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Color.White };
@@ -446,7 +413,6 @@ public class XmlViewerForm : Form
         CancelButton = btnClose;
     }
 
-    // ========================= 辅助 =========================
     private static GraphicsPath RoundRect(Rectangle r, int radius)
     {
         int d = radius * 2;
@@ -527,7 +493,6 @@ public class XmlViewerForm : Form
             switch (reader.Name)
             {
                 case "BATCH":
-                    // BATCH@TIMESTAMP 只是 session 打开时间（可能早于实际测试数天），PANEL 分支会覆盖
                     d.Timestamp = TimeUtil.Normalize(reader.GetAttribute("TIMESTAMP") ?? "");
                     break;
                 case "FACTORY":
@@ -538,7 +503,6 @@ public class XmlViewerForm : Form
                     if (!panelSet)
                     {
                         d.PanelStatus = reader.GetAttribute("STATUS") ?? "";
-                        // v3.4.13：测试时间优先取 PANEL@TIMESTAMP（真实测试时间，与主程序记录一致）
                         var pt = reader.GetAttribute("TIMESTAMP") ?? "";
                         if (pt.Length > 0) d.Timestamp = TimeUtil.Normalize(pt);
                         panelSet = true;

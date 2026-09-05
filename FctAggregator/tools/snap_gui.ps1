@@ -1,12 +1,5 @@
 #requires -Version 7
-<#
-  GUI 截图：把完整包解压到临时目录、灌入一份真实数据库、启动、逐页截图。
-  用于人工/AI 核对布局（Ctrl+1..5 切页是主窗口内置快捷键）。
-
-  产物：<OutDir>\page1..5.png
-#>
 param(
-    # 路径自己推（仓库改名 G4_9-QA -> Argus 后，写死绝对路径会静静失效）
     [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.0.1.zip",
     [string]$SeedDb = "$PSScriptRoot\..\dist\data\fct.db",
     [string]$OutDir = "$PSScriptRoot\..\.snap"

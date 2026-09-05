@@ -3,15 +3,6 @@ using System.Text;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 更新提示弹窗（v3.6.0 更新器）。
-/// 展示版本号 + 版本特点（RELEASE.txt），提供「立即更新」/「稍后提醒」。
-///
-/// · 稍后提醒：把版本记入 app_meta.update_prompted_versions，本次不再弹（下次有更新的包再提示）。
-/// · 立即更新：调 <see cref="UpdateChecker.StageUpdate"/> 解压暂存 + 备份，
-///   然后提示「重启完成安装」并重启自身；重启后的新实例启动时
-///   <see cref="UpdateChecker.CommitPendingUpdate"/> 完成文件替换。
-/// </summary>
 public sealed class UpdatePromptForm : Form
 {
     private readonly UpdateInfo _info;
@@ -34,10 +25,6 @@ public sealed class UpdatePromptForm : Form
         BuildUi();
     }
 
-    /// <summary>
-    /// 检测到新包时调用：弹出提示（模态）。返回用户是否点了「立即更新」。
-    /// 无新包（或已提示过）时返回 false 且不弹窗。
-    /// </summary>
     public static bool ShowIfAvailable(Database db)
     {
         try
@@ -79,7 +66,6 @@ public sealed class UpdatePromptForm : Form
             AutoSize = true,
         };
 
-        // 版本特点：RELEASE.txt 对应版本段
         var notes = UpdateChecker.GetReleaseNotes(_info.Version);
         var notesBox = new GroupBox
         {
@@ -151,7 +137,6 @@ public sealed class UpdatePromptForm : Form
         }
     }
 
-    /// <summary>重启自身：带 --post-update 参数，新实例启动时完成提交（此时旧实例已退出）。</summary>
     private void RestartApp()
     {
         try

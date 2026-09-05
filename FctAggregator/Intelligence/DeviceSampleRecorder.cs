@@ -7,11 +7,6 @@ using System.Threading.Tasks;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 机台端设备资源自采样记录器 (规格 05 S2: 轻量后台采样，零额外 NuGet 依赖)。
-/// 采样指标: 系统 CPU 使用率 (GetSystemTimes P/Invoke), 系统物理内存使用率 (GlobalMemoryStatusEx P/Invoke), 磁盘剩余空间 (DriveInfo)。
-/// 采样周期 5min (默认), 写入本地 SQLite 表 device_samples_local, 每日维护保留 14 天。
-/// </summary>
 public sealed class DeviceSampleRecorder : IDisposable
 {
     private static DeviceSampleRecorder? _instance;
@@ -60,12 +55,11 @@ public sealed class DeviceSampleRecorder : IDisposable
         _worker.Start();
         Logger.Info("[自采样] 本机资源定时自采样已启动 (周期 300s, 表 device_samples_local)");
 
-        // 异步采集第一针，避免启动后 5 分钟库内无新记录
         Task.Run(() =>
         {
             try
             {
-                Thread.Sleep(2000); // 稍微停顿待系统平稳
+                Thread.Sleep(2000);
                 RecordOnce();
             }
             catch (Exception ex)
@@ -88,7 +82,6 @@ public sealed class DeviceSampleRecorder : IDisposable
     {
         while (!_stopping)
         {
-            // 睡眠 300 秒 (5 分钟)，允许优雅快速退出
             for (int i = 0; i < 300 && !_stopping; i++)
             {
                 Thread.Sleep(1000);
@@ -106,7 +99,6 @@ public sealed class DeviceSampleRecorder : IDisposable
         }
     }
 
-    /// <summary>执行单次采样并写入本地库。</summary>
     public (double Cpu, double MemPct, double DiskFreeGb)? RecordOnce()
     {
         try
@@ -129,8 +121,6 @@ public sealed class DeviceSampleRecorder : IDisposable
             return null;
         }
     }
-
-    // ==================== P/Invoke 系统级采样 (零 NuGet 第三方依赖) ====================
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FILETIME
@@ -161,7 +151,6 @@ public sealed class DeviceSampleRecorder : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
 
-    /// <summary>采集系统整体 CPU 使用率 (0.0~100.0%)。</summary>
     public double SampleSystemCpu()
     {
         if (!OperatingSystem.IsWindows()) return 0.0;
@@ -189,7 +178,6 @@ public sealed class DeviceSampleRecorder : IDisposable
                 long sysTotal = usrDiff + kerDiff;
                 if (sysTotal <= 0) return 0.0;
 
-                // kernelTime 已包含 idleTime: total = (sysTotal - idlDiff) / sysTotal
                 double cpu = (double)(sysTotal - idlDiff) * 100.0 / sysTotal;
 
                 _lastIdleTime = idleTime;
@@ -206,7 +194,6 @@ public sealed class DeviceSampleRecorder : IDisposable
         }
     }
 
-    /// <summary>采集系统物理内存使用百分比 (0.0~100.0%)。</summary>
     public static double SampleSystemMemoryPercent()
     {
         if (!OperatingSystem.IsWindows()) return 0.0;
@@ -220,7 +207,6 @@ public sealed class DeviceSampleRecorder : IDisposable
         }
         catch { }
 
-        // 回落到 GC/Process
         try
         {
             var gcInfo = GC.GetGCMemoryInfo();
@@ -235,7 +221,6 @@ public sealed class DeviceSampleRecorder : IDisposable
         return 0.0;
     }
 
-    /// <summary>采集安装目录所在磁盘的剩余空间 (GB)。</summary>
     public static double SampleDiskFreeGb()
     {
         try

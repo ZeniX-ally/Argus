@@ -8,8 +8,6 @@ import io, os, struct
 from PIL import Image
 
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets', 'icon')
-# 源 PNG 从项目内 assets/icon/ 取（2026-08-01：原先是 Downloads\all-icons 写死路径，改名/换机就失效）
-# 路径自己推（仓库目录 2026-07-31 从 G4_9-QA 改名成 Argus，写死绝对路径会静静失效）
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'app_icon.ico')
 
 sizes = [16, 32, 48, 64, 128, 256]
@@ -23,20 +21,19 @@ for s in sizes:
         raise SystemExit(f'{p} 实际尺寸 {im.size} 与文件名不符')
     frames.append((s, raw))
 
-# ---- ICONDIR ----
 out = bytearray()
-out += struct.pack('<HHH', 0, 1, len(frames))          # reserved, type=1(icon), count
+out += struct.pack('<HHH', 0, 1, len(frames))
 offset = 6 + 16 * len(frames)
 for s, raw in frames:
-    w = 0 if s >= 256 else s                            # 256 在格式里记作 0
+    w = 0 if s >= 256 else s
     out += struct.pack('<BBBBHHII',
-                       w, w,        # width, height
-                       0,           # 调色板颜色数（真彩=0）
-                       0,           # reserved
-                       1,           # planes
-                       32,          # bitCount
-                       len(raw),    # bytesInRes
-                       offset)      # imageOffset
+                       w, w,
+                       0,
+                       0,
+                       1,
+                       32,
+                       len(raw),
+                       offset)
     offset += len(raw)
 for _, raw in frames:
     out += raw
@@ -46,7 +43,6 @@ io.open(OUT, 'wb').write(bytes(out))
 print(f'\n写出 {OUT}')
 print(f'  {old} 字节 -> {len(out)} 字节，{len(frames)} 个尺寸')
 
-# ---- 回读校验 ----
 d = io.open(OUT, 'rb').read()
 res, typ, cnt = struct.unpack('<HHH', d[:6])
 assert res == 0 and typ == 1, '不是合法 ICO 头'

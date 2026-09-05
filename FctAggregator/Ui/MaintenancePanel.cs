@@ -1,14 +1,5 @@
 namespace FctAggregator;
 
-/// <summary>
-/// 维修记录页。两种视图:
-/// 看板(默认, 4 列可拖动改状态) / 列表(表格 + 状态筛选)。
-/// 功能: 新增 / 编辑 / 改状态 / 删除 / 导出 xlsx·csv。
-///
-/// v2.5.0：原来的「待办」独立页已取消 —— 未确认的不良直接长在看板的「待办」列里，
-/// 不用再切页就能看到/处理（参见 <see cref="TodoCard"/>）。
-/// v3.3.0：状态变更一律弹全字段编辑框（可记录详细原因）并触发飞书推送。
-/// </summary>
 public class MaintenancePanel : Panel
 {
     private const int ListLimit = 500;
@@ -24,7 +15,7 @@ public class MaintenancePanel : Panel
     private ComboBox _range = null!;
     private Label _rangeLabel = null!;
     private DateTime? _customFrom, _customTo;
-    private List<MaintenanceRecord> _current = new();   // 列表视图当前内容(供导出)
+    private List<MaintenanceRecord> _current = new();
 
     public MaintenancePanel(Engine engine)
     {
@@ -35,11 +26,9 @@ public class MaintenancePanel : Panel
 
     private void BuildUi()
     {
-        // 页标题由主窗口顶标统一显示（v2.8.0），面板内不再重复一个大标题
         Padding = new Padding(Theme.Gap);
         BackColor = Theme.Bg;
 
-        // ===== 顶部工具栏 =====
         var bar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top, Height = 42, Padding = new Padding(0, 4, 0, 4), BackColor = Theme.Bg,
@@ -64,7 +53,6 @@ public class MaintenancePanel : Panel
         _filter.SelectedIndexChanged += (_, _) => { if (_viewMode == "list") RefreshList(); };
         bar.Controls.Add(_filter);
 
-        // 待办时间区间（只影响看板「待办」列的显示范围，不删任何待办）
         _rangeLabel = new Label
         {
             Text = "待办区间:", AutoSize = true, Anchor = AnchorStyles.Left,
@@ -73,7 +61,7 @@ public class MaintenancePanel : Panel
         bar.Controls.Add(_rangeLabel);
         _range = new ComboBox { Width = 146, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 6, 4, 0) };
         _range.Items.AddRange(TodoRange.Presets(AppConfig.Instance.TodoScanDays).Cast<object>().ToArray());
-        _range.SelectedIndex = 1;                     // 默认「近 N 天」
+        _range.SelectedIndex = 1;
         _range.SelectedIndexChanged += (_, _) => ApplyTodoRange();
         bar.Controls.Add(_range);
 
@@ -81,7 +69,7 @@ public class MaintenancePanel : Panel
         {
             Text = "从FAIL选择故障", Width = 118, Height = 30,
             Margin = new Padding(12, 2, 4, 2),
-            BackColor = Color.FromArgb(20, 20, 20), ForeColor = Color.White,   // 黑白红：主操作=墨黑底白字
+            BackColor = Color.FromArgb(20, 20, 20), ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         btnFromFail.Click += (_, _) => NewFromFailItems();
@@ -97,13 +85,11 @@ public class MaintenancePanel : Panel
         btnExport.Click += (s, _) => ShowExportMenu(btnExport);
         bar.Controls.Add(btnExport);
 
-        // ===== 看板 =====
         _board = new MaintenanceBoard(_engine) { Dock = DockStyle.Fill, Visible = true };
         _board.EditRequested += EditRecord;
         _board.ContextRequested += (m, anchor, at) => BuildRecordMenu(m).Show(anchor, at);
         _board.Changed += () => { if (_viewMode == "list") RefreshList(); };
 
-        // ===== 列表 =====
         _listHost = new Panel { Dock = DockStyle.Fill, Visible = false };
         _list = new ListView
         {
@@ -128,7 +114,6 @@ public class MaintenancePanel : Panel
 
     private string _viewMode = "board";
 
-    // ==================== 视图切换 ====================
     private void SetViewMode(string mode)
     {
         if (_viewMode == mode) return;
@@ -139,16 +124,14 @@ public class MaintenancePanel : Panel
 
     private void ApplyViewMode()
     {
-        CardPreviewForm.CloseCurrent();      // 切视图先关预览，不让弹窗悬在那里
+        CardPreviewForm.CloseCurrent();
         _board.Visible = _viewMode == "board";
         _listHost.Visible = _viewMode == "list";
         if (_viewMode == "board") _board.BringToFront();
         else _listHost.BringToFront();
 
-        // 筛选下拉只对列表视图有意义
         _filter.Enabled = _viewMode == "list";
         _filterLabel.Enabled = _viewMode == "list";
-        // 待办区间只对看板视图有意义
         _range.Enabled = _viewMode == "board";
         _rangeLabel.Enabled = _viewMode == "board";
 
@@ -162,17 +145,14 @@ public class MaintenancePanel : Panel
         _btnList.FlatAppearance.BorderColor = Theme.Border;
     }
 
-    /// <summary>外部(MainForm 切页 / 新不良到达)调用的刷新入口。</summary>
     public void Refresh2()
     {
         if (_viewMode == "board") _board.Reload();
         else RefreshList();
     }
 
-    /// <summary>当前未确认不良数(看板已加载时才准)。</summary>
     public int PendingTodoCount => _board.PendingTodoCount;
 
-    /// <summary>应用待办时间区间选择（含“自定义…”弹框）。</summary>
     private void ApplyTodoRange()
     {
         if (_range.SelectedItem is not TodoRange r) return;
@@ -181,7 +161,7 @@ public class MaintenancePanel : Panel
             using var dlg = new TodoRangeForm(_customFrom, _customTo);
             if (dlg.ShowDialog(this) != DialogResult.OK)
             {
-                _range.SelectedIndex = 1;             // 取消 -> 回到默认区间
+                _range.SelectedIndex = 1;
                 return;
             }
             _customFrom = dlg.From;
@@ -203,7 +183,6 @@ public class MaintenancePanel : Panel
         try
         {
             var rows = _engine.Db.ListMaintenance(statusKey, ListLimit);
-            // 「已完成」筛选时把尚未迁移的 legacy 'closed' 一并纳入
             if (statusKey == MaintenanceMeta.DoneStatus)
             {
                 var legacy = _engine.Db.ListMaintenance(MaintenanceMeta.LegacyClosed, ListLimit);
@@ -231,7 +210,6 @@ public class MaintenancePanel : Panel
         finally { _list.EndUpdate(); }
     }
 
-    // ==================== 增 / 改 / 删 ====================
     private void NewRecord()
     {
         using var dlg = new MaintenanceForm(_engine.ResolvedStationId, null, null, ResolverCandidates(), _engine.Db);
@@ -249,10 +227,6 @@ public class MaintenancePanel : Panel
         }
     }
 
-    /// <summary>
-    /// 【从FAIL选故障项】：从 FAIL 记录里挑去重后的测试项作为维修依据，
-    /// 勾多个就一次建多条（也可在表单里选择合并为一条）。
-    /// </summary>
     private void NewFromFailItems()
     {
         List<string> items;
@@ -294,10 +268,9 @@ public class MaintenancePanel : Panel
                             MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
-    /// <summary>历史维修人候选（给表单下拉用，失败不影响主流程）。</summary>
     private List<string> ResolverCandidates()
     {
-        try { return _engine.Db.ListResolvers(); }        // 名单 ∪ 历史
+        try { return _engine.Db.ListResolvers(); }
         catch (Exception ex) { Logger.Warning($"读取维修人候选失败: {ex.Message}"); return new List<string>(); }
     }
 
@@ -337,10 +310,6 @@ public class MaintenancePanel : Panel
         BuildRecordMenu(m).Show(_list, e.Location);
     }
 
-    /// <summary>
-    /// 单条记录的右键菜单：编辑 / 标记为五个状态 / 删除。
-    /// **看板卡片与列表行共用这一份**（菜单内容只存在一处，不会两边走歧）。
-    /// </summary>
     private ContextMenuStrip BuildRecordMenu(MaintenanceRecord m)
     {
         var menu = new ContextMenuStrip { Font = Font };
@@ -371,7 +340,6 @@ public class MaintenancePanel : Panel
         return s.Length <= max ? s : s[..max] + "…";
     }
 
-    /// <summary>菜单「标记为 X」: 弹**全字段编辑框**(预置目标状态，可记录详细原因)，保存后触发推送。</summary>
     private void SetStatus(MaintenanceRecord m, string status)
     {
         var edited = m.Clone();
@@ -402,8 +370,6 @@ public class MaintenancePanel : Panel
 
     private void DeleteRecord(MaintenanceRecord m)
     {
-        // 记录可以删，但它背后的**真实不良删不掉** —— 删完会自动回到「待办」列，
-        // 提前说清楚，避免现场以为“删了就干净了”。（待办卡本身也支持右键删除，见 MaintenanceBoard）
         int failCount = 0;
         try { failCount = _engine.Db.CountFailRecords(m.FailItem, m.StationId); }
         catch (Exception ex) { Logger.Warning($"查故障项 FAIL 数失败: {ex.Message}"); }
@@ -429,8 +395,6 @@ public class MaintenancePanel : Panel
         }
     }
 
-    // ==================== 导出 ====================
-    /// <summary>弹出导出菜单: Excel / CSV。</summary>
     private void ShowExportMenu(Control anchor)
     {
         var menu = new ContextMenuStrip();
@@ -441,7 +405,6 @@ public class MaintenancePanel : Panel
 
     private void DoExport(bool xlsx)
     {
-        // 看板视图导出当前加载的全部记录; 列表视图导出当前筛选结果(语义与 v2.1.0 一致)
         var records = _viewMode == "board" ? _board.LoadedRecords() : _current;
         if (records.Count == 0)
         {
@@ -475,31 +438,19 @@ public class MaintenancePanel : Panel
     }
 }
 
-    /// <summary>
-    /// 新增 / 编辑维修记录的对话框。
-    ///
-    /// 三种用法：
-    ///   · `new MaintenanceForm(stationId, null, null, who)`        —— 手工新增一条
-    ///   · `new MaintenanceForm(stationId, rec,  null, who)`        —— 编辑（保留 Id）
-    ///   · `new MaintenanceForm(stationId, null, items, who)`       —— 从 FAIL 选来的 N 个故障项批量建单
-    ///   · `new MaintenanceForm(stationId, preset, null, who)`      —— 预填新增（preset.Id=0，如确认待办）
-    ///
-    /// v2.3.0 起：**设备型号 / 设备SN 不再录入**（DB 列保留，历史值不动）；
-    /// 维修人员改为可下拉选历史值，不用每次手敲。
-    /// </summary>
     public class MaintenanceForm : Form
     {
         public MaintenanceRecord Result { get; }
 
         private readonly bool _isEdit;
-        private readonly List<string> _batchItems;      // 批量模式下的故障项（>1 才算批量）
+        private readonly List<string> _batchItems;
         private readonly List<string> _resolverPool;
 
         private TextBox _failItem = null!, _reason = null!;
         private TextBox _resolution = null!, _notes = null!;
         private TextBox _batchView = null!;
         private ComboBox _severity = null!, _status = null!, _resolver = null!;
-        private readonly Database? _db;                 // 有它才能开【+ 人员】管理名单
+        private readonly Database? _db;
         private CheckBox _mergeOne = null!;
         private DateTimePicker _date = null!;
         private Control _resolverHost = null!;
@@ -513,16 +464,13 @@ public class MaintenancePanel : Panel
                                Database? db = null)
         {
             _db = db;
-            // Id>0 才算编辑模式；Id=0 的预填记录（如确认待办）按新增模式处理
             _isEdit = edit is { Id: > 0 };
             _batchItems = failItems?.Where(x => !string.IsNullOrWhiteSpace(x))
                                     .Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)
                                     .ToList() ?? new List<string>();
             _resolverPool = resolvers?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
 
-            // 编辑模式下操作副本, 用户点「取消」时不污染看板/列表里的原对象
             Result = edit?.Clone() ?? new MaintenanceRecord { StationId = stationId, Status = MaintenanceMeta.DefaultStatus };
-            // 预填记录已有机台号时保留（确认待办用不良来源机台），否则用当前机台
             if (!_isEdit && string.IsNullOrEmpty(Result.StationId)) Result.StationId = stationId;
             if (IsBatch) Result.FailItem = _batchItems[0];
 
@@ -542,7 +490,6 @@ public class MaintenancePanel : Panel
 
     private void BuildUi()
     {
-        // 行：0 日期 / 1 故障项目 / 2 故障描述 / 3 严重度 / 4 维修人 / 5 维修措施 / 6 状态 / 7 备注 [/ 8 合并]
         int rows = IsBatch ? 9 : 8;
         var layout = new TableLayoutPanel
         {
@@ -552,7 +499,6 @@ public class MaintenancePanel : Panel
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int i = 0; i < rows; i++)
         {
-            // 故障项目(批量时是只读列表) / 维修措施 / 备注 都是多行
             bool tall = (IsBatch && i == 1) || i == 5 || i == 7;
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, tall ? 68 : 34));
         }
@@ -573,7 +519,6 @@ public class MaintenancePanel : Panel
         _reason = new TextBox { Dock = DockStyle.Fill, Margin = m };
         _severity = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, Margin = m };
         _severity.Items.AddRange(MaintenanceMeta.SeverityOrderZh.Cast<object>().ToArray());
-        // 维修人：可选历史值、也可直接打新名字
         _resolver = new ComboBox
         {
             Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDown, Margin = m,
@@ -581,8 +526,6 @@ public class MaintenancePanel : Panel
             AutoCompleteSource = AutoCompleteSource.ListItems,
         };
         if (_resolverPool.Count > 0) _resolver.Items.AddRange(_resolverPool.Cast<object>().ToArray());
-        // 维修人一行 = 下拉 + 【+ 人员】按钮（按钮点开名单管理，回来自动刷新下拉）
-        // 维修人一行 = 可编辑下拉（单人快选/手敲）+ 【选择】多选 + 【+ 人员】名单管理
         var resolverHost = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0),
@@ -593,7 +536,7 @@ public class MaintenancePanel : Panel
         var btnPickWho = new Button
         {
             Dock = DockStyle.Fill, Text = "选择", Margin = new Padding(2, 5, 2, 5),
-            BackColor = Color.FromArgb(200, 16, 46), ForeColor = Color.White,   // 主红=选择动作
+            BackColor = Color.FromArgb(200, 16, 46), ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         btnPickWho.Click += (_, _) => PickResolvers();
@@ -680,17 +623,15 @@ public class MaintenancePanel : Panel
             _date.Value = dt;
     }
 
-    /// <summary>【选择】：多选维修人，结果回填成 `张三、李四`。</summary>
     private void PickResolvers()
     {
         if (_db == null) return;
         using var dlg = new ResolverPickerForm(_db, _resolver.Text);
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         ReloadResolverItems(dlg.Result);
-        _resolver.Text = dlg.Result;          // 多人时下拉里没有完全匹配项, 直接写文本
+        _resolver.Text = dlg.Result;
     }
 
-    /// <summary>打开维修人员名单管理；回来后刷新下拉并尽量保住当前输入。</summary>
     private void ManageResolvers()
     {
         if (_db == null) return;
@@ -711,7 +652,6 @@ public class MaintenancePanel : Panel
             _resolver.Items.Clear();
             _resolver.Items.AddRange(items.Cast<object>().ToArray());
             _resolver.EndUpdate();
-            // 名单里有刚才那个名字就选中它，否则保留原文本
             var hit = items.FirstOrDefault(x => string.Equals(x, keep, StringComparison.OrdinalIgnoreCase));
             if (hit != null) _resolver.SelectedItem = hit; else _resolver.Text = keep;
         }
@@ -728,9 +668,7 @@ public class MaintenancePanel : Panel
         if (!IsBatch) Result.FailItem = _failItem.Text.Trim();
         Result.FailReason = _reason.Text.Trim();
         Result.Severity = MaintenanceMeta.SeverityKeyOf(_severity.SelectedItem?.ToString());
-        // 多人统一规范化为 `张三、李四`（兼容手敲的 , ， / ; 等分隔符）
         Result.Resolver = ResolverUtil.Normalize(_resolver.Text);
-        // 手打的新名字自动进名单（**逐人**登记，不会把「张三、李四」整串当一个人）
         if (_db != null)
         {
             foreach (var who in ResolverUtil.Split(Result.Resolver))
@@ -748,11 +686,6 @@ public class MaintenancePanel : Panel
         Close();
     }
 
-    /// <summary>
-    /// 批量模式下要落库的记录集合：
-    /// 勾了「合并为一条」→ 1 条（故障项用 " / " 连接）；否则每个故障项一条。
-    /// 非批量模式返回单条 <see cref="Result"/>。
-    /// </summary>
     public List<MaintenanceRecord> BatchResults()
     {
         if (!IsBatch) return new List<MaintenanceRecord> { Result };

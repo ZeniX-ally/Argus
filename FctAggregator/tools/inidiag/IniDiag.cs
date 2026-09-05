@@ -1,9 +1,5 @@
 using FctAggregator;
 
-/// <summary>
-/// FCT.ini 读取诊断：直接调产品代码 <see cref="FctIni.Parse"/>，把结果全打出来。
-/// 界面上只会显示一句「未找到」，看不出是哪一步断的；这里能看到全过程。
-/// </summary>
 public static class IniDiag
 {
     public static int Main(string[] args)
@@ -14,7 +10,6 @@ public static class IniDiag
         if (args.Length > 0) path = args[0];
         else
         {
-            // 与主程序同一条路：config.json 的 fct_ini_path，空则用默认
             var cfg = AppConfig.Load();
             path = string.IsNullOrEmpty(cfg.FctIniPath) ? @"C:\FTS\Apps\PEU\Cfg\FCT.ini" : cfg.FctIniPath;
             Console.WriteLine($"config.json 的 fct_ini_path = \"{cfg.FctIniPath}\"");

@@ -3,19 +3,6 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 入站接收器（P2P 去中心化核心组件之一）。
-///
-/// 改造自原 AggWatcher 的 HTTP 入口（IngestFail/IngestHeartbeat）：接收邻居机台推来的
-/// fail / heartbeat JSON，幂等解析入库到**本地聚合副本库**（AggDatabase，全产线 FAIL 摘要）。
-///
-/// 与原 AggWatcher 的区别：
-/// - 不再有共享目录扫描 / FileSystemWatcher 监听（中心端职责已删除，轻量化）；
-/// - 路由由统一 HttpListener（WebAggServer）分发到本类的 Handle* 方法，单端口同时服务
-///   看板与 mesh 入站（见 WebAggServer 的 /api/mesh/* 路由）；
-/// - fail 事件默认带 xml_available 标记（源机有 XML），按需拉取（见 ServeXml），不再随推常驻 512KB；
-/// - 心跳既更新机台在线状态，也用于 Gossiper 对账（MachineState 语义收敛到本节点维护的 peer 视图）。
-/// </summary>
 public sealed class MeshReceiver
 {
     private readonly AggDatabase _db;
@@ -35,11 +22,6 @@ public sealed class MeshReceiver
         _localMachine = localMachine;
     }
 
-    /// <summary>邻居推来的 FAIL JSON（与 MeshPusher 同格式）→ 幂等入库。
-    /// 与原同上：seq/machine 缺失或非法则忽略；数据库写入失败抛 AggIngestException 由 HTTP 层回 5xx 触发重推。
-    /// v3.5.3 组提交：入库请求先进微批队列，由后台 flusher 按「50ms 窗口或满 100 条」合并进单个事务提交
-    /// （<see cref="AggDatabase.InsertBatch"/>）；本方法仍**阻塞到该行所在批次提交完成后才返回**，
-    /// 对外语义不变（返回即已落库），换来的是高峰期 N 条推送只付 1 次 WAL fsync。</summary>
     public void HandleFail(string json)
     {
         long seq;
@@ -69,10 +51,8 @@ public sealed class MeshReceiver
         }
     }
 
-    // ===== FAIL 组提交（v3.5.3）：微批合并事务，削平 WAL 写放大 =====
-
-    private const int IngestMaxDelayMs = 50;   // 攒批最长等待（延迟换吞吐）
-    private const int IngestBatchSize = 100;   // 单批最大条数
+    private const int IngestMaxDelayMs = 50;
+    private const int IngestBatchSize = 100;
 
     private sealed class PendingIngest
     {
@@ -86,19 +66,14 @@ public sealed class MeshReceiver
     private Thread? _ingestFlusher;
     private long _committedBatches;
     private long _committedRows;
-    // v3.10.0 P1-1 观测：FAIL 接收总数 / 幂等忽略数（(machine,seq) 重复）
     private long _receivedFails;
     private long _ignoredFails;
 
-    /// <summary>已完成的组提交批次数 / 已入库行数（观测用：/api/metrics 与自检断言组提交生效）。</summary>
     public long CommittedBatches => Interlocked.Read(ref _committedBatches);
     public long CommittedRows => Interlocked.Read(ref _committedRows);
-    /// <summary>FAIL 事件接收总数（含重复忽略）。</summary>
     public long ReceivedFails => Interlocked.Read(ref _receivedFails);
-    /// <summary>幂等忽略数（(machine,seq) 已存在）。</summary>
     public long IgnoredFails => Interlocked.Read(ref _ignoredFails);
 
-    /// <summary>入队并等待本行所在批次提交；返回 1=新插入，0=(machine,seq) 重复忽略。异常时整批一并抛回。</summary>
     private int EnqueueAndWaitCommit(AggFailRow row)
     {
         EnsureFlusherStarted();
@@ -132,7 +107,6 @@ public sealed class MeshReceiver
         }
     }
 
-    /// <summary>取走当前攒到的整批并单事务提交；直到队列清空才回到等待。异常时整批一并抛回各调用方。</summary>
     private void FlushPendingOnce()
     {
         while (true)
@@ -151,7 +125,6 @@ public sealed class MeshReceiver
                     b.Done.TrySetResult(b.Row.Id > 0 ? 1 : 0);
                 Interlocked.Increment(ref _committedBatches);
                 Interlocked.Add(ref _committedRows, batch.Count);
-                // v3.10.0 P1-1 观测：接收总数=批次行数；幂等忽略=重复行（Id 保持 0 的是 INSERT OR IGNORE 跳过）
                 Interlocked.Add(ref _receivedFails, batch.Count);
                 Interlocked.Add(ref _ignoredFails, batch.Count(b => b.Row.Id <= 0));
             }
@@ -164,14 +137,12 @@ public sealed class MeshReceiver
         }
     }
 
-    /// <summary>P6：处理设备全量信息上报 POST /api/mesh/info（L1 快照 + 趋势采样）。</summary>
     public void HandleInfo(string json)
     {
         try
         {
             var row = ParseDeviceInfo(json);
             if (string.IsNullOrEmpty(row.Machine)) { Logger.Warning("[Mesh接收] info 缺少 machine，忽略"); return; }
-            // 落库：单写者 WAL，走 AggDatabase 写锁
             try
             {
                 _db.UpsertDeviceInfo(row);
@@ -185,7 +156,6 @@ public sealed class MeshReceiver
                 });
             }
             catch (Exception ex) { Logger.Error($"[Mesh接收] device_info 落库失败 machine={row.Machine}: {ex.Message}"); }
-            // 在线视图也刷新（即使心跳未到，info 同样证明存活）
             bool changed = false;
             lock (_lock)
             {
@@ -205,7 +175,6 @@ public sealed class MeshReceiver
         catch (JsonException ex) { Logger.Warning($"[Mesh接收] info JSON 解析失败，忽略: {ex.Message}"); }
     }
 
-    /// <summary>P6：处理 FCT.ini 解析结果上报 POST /api/mesh/fctini。</summary>
     public void HandleFctIni(string json)
     {
         try
@@ -284,8 +253,6 @@ public sealed class MeshReceiver
         return r;
     }
 
-    /// <summary>邻居推来的心跳 JSON → 更新该 peer 在线视图（LastSeen=now，不依赖对端时钟）；
-    /// v3.8.0 起心跳携带今日统计（P1 D1），变化时幂等 upsert 到 yld_daily（良率数据底座）。</summary>
     public void HandleHeartbeat(string json)
     {
         try
@@ -300,7 +267,6 @@ public sealed class MeshReceiver
             if (root.TryGetProperty("last_seq", out var pl)) { if (pl.TryGetInt64(out var l)) lastSeq = l; }
             if (root.TryGetProperty("queued", out var pq)) { if (pq.TryGetInt32(out var q)) queued = q; }
 
-            // v3.8.0 P1 D1：解析今日统计（老机台不发这些字段 = 无统计，不写库，向后兼容）
             var todayStats = (present: false, date: "", total: 0, pass: 0, fail: 0, intr: 0, prod: 0);
             if (root.TryGetProperty("today", out var pt) && !string.IsNullOrEmpty(pt.GetString()))
             {
@@ -312,7 +278,6 @@ public sealed class MeshReceiver
                 if (root.TryGetProperty("today_interrupted", out var vi)) vi.TryGetInt32(out todayStats.intr);
                 if (root.TryGetProperty("today_products", out var vprod)) vprod.TryGetInt32(out todayStats.prod);
             }
-            // P6：心跳轻量系统状态（cpu/mem），向后兼容缺字段不写
             var light = (present: false, cpu: 0.0, memUsed: 0, memTotal: 0);
             if (root.TryGetProperty("system", out var sys) && sys.ValueKind == JsonValueKind.Object)
             {
@@ -345,7 +310,6 @@ public sealed class MeshReceiver
                     st.Online = online; changed = true;
                     if (online) FirePeerOnline(machine, st.LastSeen); else FirePeerOffline(machine, st.LastSeen);
                 }
-                // 统计值变化才标脏（30s 心跳不空写；同一日期滚动更新直到当天结束）
                 if (todayStats.present)
                 {
                     var cur = (todayStats.date, todayStats.total, todayStats.pass, todayStats.fail, todayStats.intr, todayStats.prod);
@@ -356,7 +320,6 @@ public sealed class MeshReceiver
                     }
                 }
             }
-            // 写库在锁外：UpsertDailyStats 内部有自己的写锁，避免 _lock 与写锁嵌套
             if (statsDirty && todayStats.present)
             {
                 try
@@ -366,7 +329,6 @@ public sealed class MeshReceiver
                 }
                 catch (Exception ex) { Logger.Error($"[Mesh接收] yld_daily upsert 失败: {ex.Message}"); }
             }
-            // P6：轻量系统状态落库（cpu/mem），缺字段不写；单写者 WAL，已有 device_info 行则更新轻量字段，否则创建占位
             if (light.present)
             {
                 try { _db.UpsertDeviceLight(machine, light.cpu, light.memUsed, light.memTotal); }
@@ -377,19 +339,10 @@ public sealed class MeshReceiver
         catch (JsonException ex) { Logger.Warning($"[Mesh接收] 心跳 JSON 解析失败，忽略: {ex.Message}"); }
     }
 
-    /// <summary>本机 xml_path 读取白名单校验器（安全加固）：非 null 时，本机分支读取前必须通过校验
-    /// （WebAggServer 注入 ResolveFile 白名单）。防止推送方伪造 data.xml_path（如 C:\Windows\...），
-    /// 借 /api/mesh/xml 把聚合机任意文件读出去。跨机 HTTP 拉取不受影响（源机自行校验）。</summary>
     public Func<string, bool>? LocalReadValidator { get; set; }
 
-    // ===== v3.10.0 P1-3 XML 报告容灾缓存 =====
-    // 聚合节点把"本机曾成功读到/跨机成功拉到的 XML"落盘缓存到 data/agg_xml/{machine}/{date}/{failId}.xml，
-    // 之后源机离线时看板仍能打开历史报告（方案 P1-3：拉取先查缓存）。
-
-    /// <summary>XML 容灾缓存根目录（相对 BaseDir 的 data/ 下）。</summary>
     public static string XmlCacheRoot => Path.Combine(AppConfig.BaseDir, "data", "agg_xml");
 
-    /// <summary>本 failId 的缓存路径；按 machine/date 分目录，date 优先取 test_date（目录日期口径）。</summary>
     private static string XmlCachePathFor(AggFailRow row, long failId)
     {
         var date = row.TestDate;
@@ -410,9 +363,6 @@ public sealed class MeshReceiver
         return r.Length == 0 ? "unknown" : r;
     }
 
-    /// <summary>供 WebAggServer 的 /api/mesh/xml 路由调用：从源机拉取 XML 报告（按需拉取，源机HTTP）。
-    /// 本地截图：本机自身的 FAIL 直接读本地文件；跨机则 HTTP GET 源机 /api/file?id=。
-    /// v3.10.0 P1-3 容灾：拉取成功即落盘缓存 data/agg_xml/，下次（含源机离线时）先查缓存。</summary>
     public string? FetchXmlForFail(long failId)
     {
         try
@@ -420,11 +370,9 @@ public sealed class MeshReceiver
             var row = _db.GetFailById(failId);
             if (row == null) return null;
             var cachePath = XmlCachePathFor(row, failId);
-            // 先查容灾缓存：源机离线也能打开历史报告
             if (File.Exists(cachePath))
                 return File.ReadAllText(cachePath, Encoding.UTF8);
             string? content = null;
-            // 本机数据：直接读本地 xml_path（⚠ 必须过白名单：xml_path 来自推送 JSON 自由字段）
             if (!string.IsNullOrEmpty(row.XmlPath) && File.Exists(row.XmlPath))
             {
                 var validator = LocalReadValidator;
@@ -435,7 +383,6 @@ public sealed class MeshReceiver
                 }
                 content = File.ReadAllText(row.XmlPath, Encoding.UTF8);
             }
-            // 跨机：HTTP 从源机拉（row.XmlPath 是源机路径，本机不存在）
             else if (!string.IsNullOrEmpty(row.Machine))
             {
                 foreach (var peer in EnumeratePeerUrls())
@@ -470,18 +417,15 @@ public sealed class MeshReceiver
 
     private IEnumerable<string> EnumeratePeerUrls()
     {
-        // 由外部注入的 peer URL 列表（构造后通过 SetPeerUrls 设置）
         lock (_lock) { foreach (var u in _peerUrls) yield return u; }
     }
     private List<string> _peerUrls = new();
     public void SetPeerUrls(IEnumerable<string> urls) { lock (_lock) { _peerUrls = urls.ToList(); } }
 
-    /// <summary>邻居机台列表视图（GET /api/mesh/peers 用）：在线状态 + 最近心跳 + FAIL 统计。</summary>
     public List<PeerStatusDto> GetPeerStatuses()
     {
         List<PeerView> snap; lock (_lock) snap = _peers.Values.ToList();
         var result = new List<PeerStatusDto>(snap.Count + 1);
-        // 本机也作为一条（聚合自身视角）
         if (!string.IsNullOrEmpty(_localMachine))
             result.Add(new PeerStatusDto { Machine = _localMachine, IsSelf = true, Online = true });
         foreach (var st in snap.OrderBy(x => x.Machine, StringComparer.OrdinalIgnoreCase))
@@ -495,7 +439,7 @@ public sealed class MeshReceiver
                     LastHeartbeat = st.LastHeartbeat,
                     LastSeq = st.LastSeq,
                     Queued = st.Queued,
-                    FailCount = _db.FailCountCached(st.Machine),   // 5s 缓存：看板轮询邻居状态高频调用，COUNT 不必次次直查
+                    FailCount = _db.FailCountCached(st.Machine),
                 });
             }
             catch (Exception ex) { Logger.Warning($"[Mesh接收] 查询邻居 {st.Machine} 状态失败: {ex.Message}"); }
@@ -543,11 +487,10 @@ public sealed class MeshReceiver
             row.FailReason = Str(data, "fail_reason");
             row.Tester = Str(data, "tester");
             row.PanelStatus = Str(data, "panel_status");
-            row.FixtureId = Str(data, "fixture_id");   // v3.22.0 规格01：老版本对端不带该字段 → 空串（前缀回退）
+            row.FixtureId = Str(data, "fixture_id");
             row.BatchTimestamp = Str(data, "batch_timestamp");
             row.HasFailItems = Num(data, "has_fail_items") != 0;
             row.FileSize = Num(data, "file_size");
-            // 轻量化：xml_available 标记代替常驻内容；如需内容，Web 看板点开时按需拉取
         }
         row.IngestTs = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         return row;
@@ -562,7 +505,6 @@ public sealed class MeshReceiver
     private void FirePeerOffline(string m, DateTime t) { try { PeerOffline?.Invoke(m, t); } catch { } }
     private void FirePeerOnline(string m, DateTime t) { try { PeerOnline?.Invoke(m, t); } catch { } }
 
-    /// <summary>peer 视图（在线判定基准：LastSeen 最后一次确认存活）。</summary>
     private sealed class PeerView
     {
         public string Machine = "";
@@ -571,12 +513,10 @@ public sealed class MeshReceiver
         public long LastSeq;
         public int Queued;
         public bool Online;
-        // v3.8.0 P1 D1：上次已落库的日统计快照（(date,total,pass,fail,intr,prod)），值未变不重复写
         public (string date, int total, int pass, int fail, int intr, int prod) LastStats;
     }
 }
 
-/// <summary>GET /api/mesh/peers 返回的邻居状态 DTO。</summary>
 public sealed class PeerStatusDto
 {
     public string Machine = "";

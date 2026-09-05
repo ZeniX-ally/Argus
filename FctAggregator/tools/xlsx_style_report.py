@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """把 xlsx 的 styles.xml 翻成人话，便于核对配色（我看不见 Excel，用这个描述给人对照）。
 
 用法: python xlsx_style_report.py <目录或xlsx...>
@@ -9,7 +7,6 @@ import xml.etree.ElementTree as ET
 
 NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 ALIGN = {'center': '居中', 'left': '左', 'right': '右', 'justify': '两端'}
-
 
 def txt_color(el):
     if el is None:
@@ -23,12 +20,10 @@ def txt_color(el):
         return '主题%s' % c.get('theme')
     return '默认'
 
-
 def kids(parent, tag):
     """取子元素列表（避免对 Element 直接做真值判断，3.14 会警告）"""
     el = parent.find(NS + tag)
     return list(el) if el is not None else []
-
 
 def report(path):
     with zipfile.ZipFile(path) as z:
@@ -88,7 +83,6 @@ def report(path):
                 fmts.get(nfid, '' if nfid == '0' else 'id' + nfid)))
         print()
 
-
 def main():
     args = sys.argv[1:] or ['.']
     files = []
@@ -100,7 +94,6 @@ def main():
             files.append(a)
     for f in files:
         report(f)
-
 
 if __name__ == '__main__':
     main()

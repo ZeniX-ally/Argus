@@ -1,6 +1,5 @@
 ﻿namespace FctAggregator;
 
-/// <summary>域3 配置智能化 — 推荐（v3.19.0）：基于历史与机台自动推荐阈值，仅建议不自动改。</summary>
 public static class ConfigAdvisor
 {
     public sealed class RecommendItem
@@ -16,7 +15,6 @@ public static class ConfigAdvisor
         var list = new List<RecommendItem>();
         try
         {
-            // 基于 yld_daily 近 30 天平均良率推荐 yield 阈值
             var rows = aggDb.QueryDailyStats();
             if (rows.Count > 0)
             {

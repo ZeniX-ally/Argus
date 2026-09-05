@@ -3,55 +3,29 @@ using System.Text;
 
 namespace FctShared;
 
-/// <summary>
-/// 共享的 OOXML (.xlsx) 写出器（v2.9.3）。
-///
-/// <b>为什么只共享"打包"不共享"样式"</b>：合并前有 4 份手写 xlsx 代码
-/// （数据分发 / 取数打包 / FAIL 排行 / 维修记录导出），重复的其实是**外壳**——
-/// zip 打包、`[Content_Types].xml`、`_rels`、`workbook.xml`、sheet XML 拼装、
-/// 字符转义、列宽、冻结行、合并单元格。
-/// 而 <c>styles.xml</c> 四家各不相同（分别是 7 / 4 / 17 / 3 种样式，配色也不一样），
-/// 硬统一意味着改几百处样式号、且报表长相会变。所以调色板由调用方以
-/// <see cref="Sheet"/>+<c>stylesXml</c> 形式传进来：**外观一字节不变，外壳只留一份**。
-///
-/// 用法：
-/// <code>
-/// var sh = new Xlsx.Sheet { Name = "明细", FreezeRows = 1 };
-/// sh.ColWidths.AddRange(new[] { 30.0, 12.0 });
-/// sh.Rows.Add(new List&lt;Xlsx.Cell&gt; { Xlsx.T("项目", MyStyles.S_HEADER), Xlsx.N(3.14, MyStyles.S_NUM) });
-/// Xlsx.Write(path, new[] { sh }, MyStyles.Xml);
-/// </code>
-/// </summary>
 public static class Xlsx
 {
-    /// <summary>一个单元格。<see cref="Number"/> 有值就写成数字，否则写文本（inlineStr）。</summary>
     public sealed class Cell
     {
         public string? Text;
         public double? Number;
         public int Style;
 
-        // 与各工具原有写法兼容（原来各自的 Cell.T / Cell.N 调用点不用改）
         public static Cell T(string? s, int style = 0) => new() { Text = s ?? "", Style = style };
         public static Cell N(double n, int style = 0) => new() { Number = n, Style = style };
         public static Cell Empty(int style = 0) => new() { Text = "", Style = style };
     }
 
-    /// <summary>一张表。行是"单元格列表"的列表；<see cref="Merges"/> 用 0 基坐标。</summary>
     public sealed class Sheet
     {
         public string Name = "Sheet1";
         public List<List<Cell>> Rows = new();
-        /// <summary>列宽（字符数）；不足的列用默认宽。</summary>
         public List<double> ColWidths = new();
-        /// <summary>冻结前 N 行（0 = 不冻结）。</summary>
         public int FreezeRows = 0;
-        /// <summary>合并单元格 (r1,c1,r2,c2)，0 基、含端点。</summary>
         public List<(int r1, int c1, int r2, int c2)> Merges = new();
 
         public void AddRow(params Cell[] cells) => Rows.Add(cells.ToList());
 
-        /// <summary>新建一行并返回它（与各工具原有的 <c>sheet.NewRow()</c> 写法兼容）。</summary>
         public List<Cell> NewRow()
         {
             var r = new List<Cell>();
@@ -64,7 +38,6 @@ public static class Xlsx
     public static Cell N(double n, int style = 0) => new() { Number = n, Style = style };
     public static Cell Empty(int style = 0) => new() { Text = "", Style = style };
 
-    /// <summary>写出 xlsx。<paramref name="stylesXml"/> 是完整的 <c>&lt;styleSheet&gt;</c> 部件内容。</summary>
     public static void Write(string path, IReadOnlyList<Sheet> sheets, string stylesXml)
     {
         if (sheets == null || sheets.Count == 0)
@@ -85,7 +58,6 @@ public static class Xlsx
             Add(zip, $"xl/worksheets/sheet{i + 1}.xml", SheetXml(sheets[i]));
     }
 
-    /// <summary>XML 文本转义（&amp; &lt; &gt; " ' 以及 XML 不允许的控制字符）。</summary>
     public static string Escape(string? s)
     {
         if (string.IsNullOrEmpty(s)) return "";
@@ -100,7 +72,6 @@ public static class Xlsx
                 case '"': sb.Append("&quot;"); break;
                 case '\'': sb.Append("&apos;"); break;
                 default:
-                    // XML 1.0 不允许的控制字符直接丢，否则 Excel 报"文件已损坏"
                     if (ch < 0x20 && ch != '\t' && ch != '\n' && ch != '\r') break;
                     sb.Append(ch);
                     break;
@@ -109,7 +80,6 @@ public static class Xlsx
         return sb.ToString();
     }
 
-    /// <summary>0 基列号 → Excel 列名（0→A, 26→AA）。</summary>
     public static string ColName(int index)
     {
         var sb = new StringBuilder();
@@ -123,7 +93,6 @@ public static class Xlsx
         return sb.ToString();
     }
 
-    /// <summary>工作表名合法化：去掉 Excel 不允许的字符并截到 31 字。</summary>
     public static string SafeSheetName(string? name)
     {
         var s = (name ?? "Sheet1").Trim();
@@ -131,8 +100,6 @@ public static class Xlsx
         if (s.Length == 0) s = "Sheet1";
         return s.Length > 31 ? s[..31] : s;
     }
-
-    // ==================== 部件拼装 ====================
 
     private static void Add(ZipArchive zip, string name, string content)
     {

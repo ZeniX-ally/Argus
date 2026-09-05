@@ -1,55 +1,28 @@
-﻿# ============================================================================
-# Argus 主程序发布脚本（2026-09-02：FctDistributor 已拆分独立仓库，本脚本只出主程序 3 包）
-#
-# 一键完成：构建主程序 -> 跑两个打包器 -> 统一归档纯净 zip 到 Releases\v{ver}\
-#  -> 生成 RELEASE.txt 发布清单（版本/日期/SHA256/内容说明/纯净校验）。
-#
-# 两个打包器各司其职（均已是纯净包，webhook 置空、不含 data/logs/db/pdb）：
-#   FctAggregator/tools/make_package.ps1        -> Argus-v{ver}.zip + Argus-v{ver}-update.zip
-#   FctAggregator/tools/make_package_agg.ps1    -> Argus-Agg-v{ver}.zip
-#
-# 分发器（FCT-Distributor）已拆分到独立仓库 e:/FctDistributor，用其自己的
-#   tools/make_package.ps1 发版，不再由本脚本管辖。
-#
-# 产物来源目录：
-#   主程序  bin\Release\net8.0-windows\   （dotnet build 标准输出）
-#   聚合包  FctAggregator\dist-agg\
-#
-# 用法：
-#   .\make_release.ps1                 # 一键构建 + 打包 + 归档（幂等，不删历史版本）
-#   .\make_release.ps1 -SkipBuild      # 跳过构建（已 build 过，只打包归档）
-#   .\make_release.ps1 -Version 3.5.3  # 强制归档目录版本（默认自动读 FctAggregator.csproj）
-# ============================================================================
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$SkipBuild,
     [string]$Version
 )
 $ErrorActionPreference = 'Stop'
-# PS 5.1 兼容：不用 ?? / ?: 等 7.x 语法
-# SSH/CI 无控制台时静默进度条
 $ProgressPreference = 'SilentlyContinue'
 
 $repo = (Resolve-Path "$PSScriptRoot\..").Path
 
 function Ok([string]$m)  { Write-Host "  [OK]   $m" -ForegroundColor Green }
 function Info([string]$m){ Write-Host "  [--]   $m" -ForegroundColor Gray }
-function Warn2([string]$m){ Write-Host "  [WARN] $m" -ForegroundColor Yellow }
 function Head([string]$t){ Write-Host ""; Write-Host ("=" * 66) -ForegroundColor Cyan; Write-Host "  $t" -ForegroundColor Cyan; Write-Host ("=" * 66) -ForegroundColor Cyan }
 
-# ---------- 版本号：自动读主程序 csproj，可 -Version 覆盖 ----------
 if (-not $Version) {
     $csproj = Join-Path $repo 'FctAggregator\FctAggregator.csproj'
     $Version = [regex]::Match((Get-Content $csproj -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
 }
 if (-not $Version) { throw '无法确定版本号：FctAggregator.csproj 没有 <Version>，请用 -Version 指定' }
 
-$outDir    = Join-Path $repo "Releases\v$Version"
+$outDir = Join-Path $repo "Releases\v$Version"
 
 Head "Argus 发布 v$Version"
 Info "归档目录: $outDir"
 
-# ---------- 1) 构建 ----------
 if (-not $SkipBuild) {
     Head "1. 构建工程（Release）"
     Push-Location (Join-Path $repo 'FctAggregator')
@@ -62,25 +35,19 @@ if (-not $SkipBuild) {
     Head "1. 构建（已跳过 -SkipBuild）"
 }
 
-# ---------- 2) 两个打包器 ----------
 Head "2. 运行打包器（生成纯净 zip）"
-# ⚠ 打包器均用 $ErrorActionPreference='Stop' + throw 表达失败：
-#   `&` 调用脚本失败会抛异常 -> 被本脚本外层 Stop 捕获中止，不依赖 $LASTEXITCODE。
 & (Join-Path $repo 'FctAggregator\tools\make_package.ps1') | Out-Host
 & (Join-Path $repo 'FctAggregator\tools\make_package_agg.ps1') | Out-Host
 Ok '两个打包器均完成'
 
-# ---------- 3) 收集 zip ----------
 Head "3. 收集并归档 zip"
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
 $candidates = @()
-# 主程序（bin\Release\net8.0-windows\）
 $aggBuild = Join-Path $repo 'FctAggregator\bin\Release\net8.0-windows'
 foreach ($n in @("Argus-v$Version.zip", "Argus-v$Version-update.zip")) {
     if (Test-Path (Join-Path $aggBuild $n)) { $candidates += Join-Path $aggBuild $n }
 }
-# 聚合包（dist-agg\）
 $aggPkg = Join-Path $repo 'FctAggregator\dist-agg'
 foreach ($n in @("Argus-Agg-v$Version.zip")) {
     if (Test-Path (Join-Path $aggPkg $n)) { $candidates += Join-Path $aggPkg $n }
@@ -96,7 +63,6 @@ foreach ($zip in $candidates) {
     Ok "归档: $name  ($([math]::Round((Get-Item $zip).Length/1KB)) KB)"
 }
 
-# ---------- 4) 纯净性最终校验（对归档 zip 逐一） ----------
 Head "4. 纯净性校验（不污染现有部署数据）"
 foreach ($zip in $archived) {
     $stage = Join-Path $env:TEMP ("rel_check_" + [guid]::NewGuid().ToString('N').Substring(0,8))
@@ -116,7 +82,6 @@ foreach ($zip in $archived) {
     }
 }
 
-# ---------- 5) RELEASE.txt 发布清单 ----------
 Head "5. 生成 RELEASE.txt"
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
 $sb = New-Object System.Text.StringBuilder

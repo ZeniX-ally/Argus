@@ -1,9 +1,8 @@
-using Cell = FctShared.Xlsx.Cell;    // v2.9.3: xlsx 外壳已抽到 FctShared.Xlsx
+using Cell = FctShared.Xlsx.Cell;
 using Sheet = FctShared.Xlsx.Sheet;
 
 namespace FctFetcher;
 
-/// <summary>输出捞取清单 xlsx：捞取清单 / 失败项明细 / 失败项排名。</summary>
 public static class Exporter
 {
     public static string Export(List<Record> recs, Config cfg, DateTime start, DateTime end,

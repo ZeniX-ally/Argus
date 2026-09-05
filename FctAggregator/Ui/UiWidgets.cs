@@ -2,11 +2,6 @@ using System.Drawing.Drawing2D;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 侧边导航的一项（v3.6.0 原生化：改用系统按钮外观，无自绘黑底/红条）。
-/// ⚠ 主窗体 v3.6.0 已改用顶部 TabControl，不再创建 <see cref="NavButton"/>；
-///   本类保留仅用于 selftest / 兼容遗留调用，外观归原生系统按钮。
-/// </summary>
 public sealed class NavButton : Control
 {
     public int PageIndex { get; }
@@ -19,7 +14,6 @@ public sealed class NavButton : Control
     }
 
     private int _badge;
-    /// <summary>右侧红色角标数字（0 = 不显示）。</summary>
     public int Badge
     {
         get => _badge;
@@ -60,11 +54,6 @@ public sealed class NavButton : Control
     }
 }
 
-/// <summary>
-/// KPI 卡片（原生）：标题 + 大数字 + 副说明。
-/// v3.6.0 回归系统原生：白底 + 系统描边，无圆角、无右侧状态圆点、无发光。
-/// 保留 <see cref="Set"/> 与构造签名（各面板调用不变），仅外观去监控风。
-/// </summary>
 public sealed class KpiCard : Control
 {
     private readonly Color _accent;
@@ -93,12 +82,10 @@ public sealed class KpiCard : Control
         var g = e.Graphics;
         Theme.DrawCard(g, ClientRectangle, null);
 
-        // 标题：灰文本，左上角
         TextRenderer.DrawText(g, Text, Theme.Small,
             new Rectangle(14, 8, Width - 24, 16), Theme.TextSub,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-        // 大数字：垂直居中
         var numFont = _big ? Theme.Number : Theme.NumberSmall;
         var subH = _sub.Length > 0 ? 18 : 0;
         var availTop = 28;
@@ -116,7 +103,6 @@ public sealed class KpiCard : Control
     }
 }
 
-/// <summary>顶栏右侧的状态胶囊条（自绘，一次画好几个）。</summary>
 public sealed class ChipBar : Control
 {
     private List<(string text, Color color)> _chips = new();
@@ -145,7 +131,6 @@ public sealed class ChipBar : Control
     {
         var g = e.Graphics;
         using (var b = new SolidBrush(BackColor)) g.FillRectangle(b, ClientRectangle);
-        // 从右往左排，保证最重要的（第一个）永远可见
         int x = Width - 4;
         var y = (Height - 22) / 2;
         for (int i = _chips.Count - 1; i >= 0; i--)
@@ -159,11 +144,6 @@ public sealed class ChipBar : Control
     }
 }
 
-/// <summary>
-/// 自绘标题栏（v3.0.1）：替换 Windows 系统标题栏，炭黑与侧栏一体（高级简约）。
-/// 左侧为拖拽区（拖动/双击最大化），右侧三个控制按钮（最小化 / 最大化还原 / 关闭）。
-/// 窗口边缘拖拽缩放由 MainForm.WndProc 的 WM_NCHITTEST 处理，本控件不管。
-/// </summary>
 public sealed class TitleBar : Control
 {
     private const int BtnW = 46;
@@ -171,7 +151,6 @@ public sealed class TitleBar : Control
     private Hit _hit = Hit.None;
     private bool _maximized;
 
-    /// <summary>窗口控制事件（由 MainForm 接线）。</summary>
     public event Action? MinimizeRequested;
     public event Action? MaximizeRequested;
     public event Action? CloseRequested;
@@ -185,7 +164,6 @@ public sealed class TitleBar : Control
         SetStyle(ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint, true);
     }
 
-    /// <summary>窗口最大化状态变化时调用（按钮图标 □ ↔ ❐）。</summary>
     public void SetMaximized(bool maximized)
     {
         if (_maximized != maximized) { _maximized = maximized; Invalidate(); }
@@ -218,7 +196,6 @@ public sealed class TitleBar : Control
             case Hit.Max: MaximizeRequested?.Invoke(); break;
             case Hit.Close: CloseRequested?.Invoke(); break;
             default:
-                // 空白区：交给系统开始窗口拖动（同时双击会自动切最大化）
                 if (e.Button == MouseButtons.Left)
                 {
                     var form = FindForm();
@@ -235,7 +212,7 @@ public sealed class TitleBar : Control
     protected override void OnMouseDoubleClick(MouseEventArgs e)
     {
         base.OnMouseDoubleClick(e);
-        if (HitAt(e.X) == Hit.None) MaximizeRequested?.Invoke();   // 空白区双击 = 最大化/还原
+        if (HitAt(e.X) == Hit.None) MaximizeRequested?.Invoke();
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -244,19 +221,14 @@ public sealed class TitleBar : Control
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         using (var b = new SolidBrush(Theme.NavBg)) g.FillRectangle(b, ClientRectangle);
 
-        // 三个控制按钮（从右到左：关闭 ✕ / 最大化 □ / 最小化 ─，与 HitAt 点击映射一致）
-        // ⚠ 用矢量绘制而非字体字形：─□✕ 是不同宽度的字形，渲染大小不一致；
-        //   矢量统一图标框（关闭 10×10 叉、最大化 12×10 矩形、最小化 12px 横线）。
         DrawBtn(g, 0, Hit.Close);
         DrawBtn(g, 1, Hit.Max);
         DrawBtn(g, 2, Hit.Min);
 
-        // 底部细分隔线（黑底上用暗线；浅色 Border 会显成白边）
         using var pen = new Pen(Theme.BorderDark);
         g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
     }
 
-    /// <summary>绘制一个控制按钮：hover 背景 + 统一尺寸的矢量图标。</summary>
     private void DrawBtn(Graphics g, int idx, Hit h)
     {
         var x = Width - BtnW * (idx + 1);
@@ -272,17 +244,17 @@ public sealed class TitleBar : Control
         int cy = r.Height / 2;
         switch (h)
         {
-            case Hit.Min:   // 最小化：一条 12px 横线
+            case Hit.Min:
                 g.DrawLine(pen, cx - 6, cy, cx + 6, cy);
                 break;
-            case Hit.Max when _maximized:   // 还原：两个错位小矩形
+            case Hit.Max when _maximized:
                 g.DrawRectangle(pen, cx - 7, cy - 3, 9, 8);
                 g.DrawRectangle(pen, cx - 3, cy - 7, 9, 8);
                 break;
-            case Hit.Max:   // 最大化：12×10 空心矩形
+            case Hit.Max:
                 g.DrawRectangle(pen, cx - 6, cy - 5, 12, 10);
                 break;
-            case Hit.Close:   // 关闭：10×10 叉
+            case Hit.Close:
                 g.DrawLine(pen, cx - 5, cy - 5, cx + 5, cy + 5);
                 g.DrawLine(pen, cx + 5, cy - 5, cx - 5, cy + 5);
                 break;
@@ -290,12 +262,10 @@ public sealed class TitleBar : Control
     }
 }
 
-/// <summary>Win32 P/Invoke（自绘标题栏用：拖动窗口 / 边缘缩放）。</summary>
 internal static class Win32
 {
     public const int WM_NCLBUTTONDOWN = 0xA1;
     public const int HTCAPTION = 0x2;
-    /// <summary>窗口从中心展开（开启动画「圆点放大成主页面」用）。</summary>
     public const int AW_CENTER = 0x0010;
     public const int AW_ACTIVATE = 0x00020000;
 
@@ -309,29 +279,14 @@ internal static class Win32
     public static extern bool AnimateWindow(IntPtr hWnd, int time, int flags);
 }
 
-/// <summary>
-/// 工具页宿主（v2.9.1）—— 把工具的 <see cref="Form"/> **内嵌**到主窗口内容区，
-/// 而不是弹一个独立窗口。
-///
-/// 做法是 WinForms 的者用法：<c>TopLevel = false</c> 之后 Form 就能当普通子控件用。
-/// 好处是四个工具的代码**一行不用改**（它们都是绝对坐标布局的大表单窗口，
-/// 改写成 UserControl 得重排上百个控件）。
-///
-/// 两个要点：
-///   · <b>惰加载</b>：第一次切到该页才构造，启动不被四个大窗口拖慢；
-///   · <b>AutoScroll</b>：工具自带 <c>MinimumSize</c>（最大的 1040×790），主窗口被拉小时
-///     靠滚动条兑，而不是把控件压死。
-/// </summary>
 public sealed class ToolHost : Panel
 {
     private readonly Func<Form> _factory;
     private readonly string _label;
     private Label? _error;
 
-    /// <summary>已内嵌的工具窗口（尚未初始化时为 null）。</summary>
     public Form? Embedded { get; private set; }
 
-    /// <summary>上次 Ensure 是否成功。</summary>
     public bool IsReady => Embedded != null && !Embedded.IsDisposed;
 
     public ToolHost(string label, Func<Form> factory)
@@ -344,12 +299,10 @@ public sealed class ToolHost : Panel
         Visible = false;
     }
 
-    /// <summary>确保工具已内嵌（首次切页时调）。失败时就地显示错误，不抛。</summary>
     public bool Ensure()
     {
         if (IsReady) { ActivateTool(); return true; }
 
-        // 工具自己把自己 Close() 掉了的情况：清掉残局重建
         if (Embedded != null) { try { Controls.Remove(Embedded); } catch { } Embedded = null; }
         if (_error != null) { Controls.Remove(_error); _error.Dispose(); _error = null; }
 
@@ -382,7 +335,6 @@ public sealed class ToolHost : Panel
         }
     }
 
-    /// <summary>工具页激活时调用：通知内嵌的 Form（可被覆盖监听）。</summary>
     public void ActivateTool()
     {
         if (Embedded != null) { try { Embedded.Visible = true; } catch { } }
@@ -394,19 +346,13 @@ public sealed class ToolHost : Panel
     }
 }
 
-/// <summary>
-/// 白卡片容器：标题栏 + 内容区（<see cref="Content"/>），面板里所有分区都用它。
-/// 子控件请加到 <see cref="Content"/> 上，不要直接加到本体（会盖住标题）。
-/// </summary>
 public sealed class SectionPanel : Panel
 {
-    /// <summary>内容区（已留好内边距）。</summary>
     public Panel Content { get; }
 
     private readonly int _titleHeight;
     private string _hint = "";
 
-    /// <summary>标题右侧的浅色补充说明。</summary>
     public string Hint
     {
         get => _hint;
@@ -431,7 +377,6 @@ public sealed class SectionPanel : Panel
         var head = new Panel { Dock = DockStyle.Top, Height = _titleHeight, BackColor = Theme.Surface };
         Controls.Add(Content);
         Controls.Add(head);
-        // 标题文字由本体 OnPaint 画（少一个控件句柄）
         head.Paint += (_, e) =>
         {
             if (string.IsNullOrEmpty(Text)) return;
@@ -450,19 +395,13 @@ public sealed class SectionPanel : Panel
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        // 外面留 Margin 的灰底 + 里面白圆角卡
         using (var b = new SolidBrush(Theme.Bg)) e.Graphics.FillRectangle(b, ClientRectangle);
         Theme.DrawCard(e.Graphics, ClientRectangle);
     }
 }
 
-/// <summary>
-/// 工具页基类（v3.18.0 C 计划）—— 所有内嵌工具页的 UserControl 基类。
-/// 提供统一生命周期 + 主题色自动应用 + 标准标题栏。
-/// </summary>
 public abstract class ToolPage : UserControl
 {
-    /// <summary>页面标题（显示在基类标题栏）。</summary>
     public string PageTitle { get; set; } = "";
 
     private Panel? _header;
@@ -508,16 +447,12 @@ public abstract class ToolPage : UserControl
         Controls.Add(_header);
     }
 
-    /// <summary>子类初始化（构建 UI），在 base.OnLoad 之后调用。</summary>
     protected virtual void OnInit() { }
 
-    /// <summary>页面被激活（切到该页时调用）。</summary>
     public virtual void OnActivated() { }
 
-    /// <summary>页面被停用（切走时调用）。</summary>
     public virtual void OnDeactivated() { }
 
-    /// <summary>释放时清理。</summary>
     protected override void Dispose(bool disposing)
     {
         if (disposing) OnDeactivated();

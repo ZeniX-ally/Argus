@@ -2,13 +2,11 @@ using Microsoft.Data.Sqlite;
 
 namespace FctAggregator;
 
-/// <summary>SQLite 数据库: 建表、去重入库、统计。partial（v3.5.0 全局待办池方法在文件末尾分部声明）。</summary>
 public sealed partial class Database
 {
     private readonly string _connString;
     private readonly string _dbPath;
 
-    /// <summary>维修记录状态变更事件：参数 = (记录, 旧状态key, 新状态key)。引擎订阅后推送飞书。</summary>
     public event Action<MaintenanceRecord, string, string>? MaintenanceStatusChanged;
 
     private void NotifyStatusChanged(MaintenanceRecord rec, string from, string to)
@@ -18,8 +16,6 @@ public sealed partial class Database
         catch (Exception ex) { Logger.Warning($"状态变更回调异常: {ex.Message}"); }
     }
 
-    /// <summary>test_records 成功写入事件：参数 = (记录, 数据库自增id)，仅含真正插入的行。
-    /// 聚合推送器订阅后推送事件文件；本事件回调异常不影响入库主流程。</summary>
     public event Action<List<(TestRecord Rec, long Id)>>? RecordsInserted;
 
     private void NotifyRecordsInserted(List<(TestRecord, long)> rows)
@@ -29,7 +25,6 @@ public sealed partial class Database
         catch (Exception ex) { Logger.Warning($"插入事件回调异常: {ex.Message}"); }
     }
 
-    /// <summary>当前活跃的本地数据库单例/主实例引用（供 Engine/DeviceSampleRecorder/DbMaintenance 访问，可选）。</summary>
     public static Database? Current { get; private set; }
 
     public Database(string dbPath)
@@ -48,8 +43,6 @@ public sealed partial class Database
     {
         var c = new SqliteConnection(_connString);
         c.Open();
-        // 多线程并发写（历史扫描 BatchInsert + 实时事件 Task.Run + SyncTodoItems）
-        // 默认 busy_timeout=0 会立刻锁失败; WAL 让读写不互斥, 写之间靠 busy 等待协调
         using var cmd = c.CreateCommand();
         cmd.CommandText = "PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;";
         cmd.ExecuteNonQuery();
@@ -86,10 +79,6 @@ public sealed partial class Database
             ";
             cmd.ExecuteNonQuery();
 
-            // v3.26.2 老库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列，
-            // 用 ALTER 补 fixture_id（新库已有该列，重复列错误忽略）。
-            // 断线补偿/续推从 test_records 回读重建 TestRecord，缺列会把 FixtureId 丢成 null，
-            // 聚合端归因只能回落 fail_reason 前缀 —— 补列后治具归因全链路保真。
             using (var cmdFix = conn.CreateCommand())
             {
                 cmdFix.CommandText = "ALTER TABLE test_records ADD COLUMN fixture_id TEXT;";
@@ -118,8 +107,6 @@ public sealed partial class Database
             ";
             cmd2.ExecuteNonQuery();
 
-            // v2.3.0: 维修人员名单。与历史记录里用过的名字共同组成下拉候选。
-            // 名字大小写不敏感唯一 -> 同一个人不会因大小写出两条
             using var cmd3 = conn.CreateCommand();
             cmd3.CommandText = @"
                 CREATE TABLE IF NOT EXISTS resolvers (
@@ -130,7 +117,6 @@ public sealed partial class Database
             ";
             cmd3.ExecuteNonQuery();
 
-            // 域名1 解析失败日志（v3.19.0）：记录解析器判定失败/异常的 xml，分类码用于排障。
             using var cmdErr = conn.CreateCommand();
             cmdErr.CommandText = @"
                 CREATE TABLE IF NOT EXISTS parse_failure_log (
@@ -144,7 +130,6 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_pf_code ON parse_failure_log(error_code);
             ";
             cmdErr.ExecuteNonQuery();
-            // 域2 DB 智能化（v3.19.0）：慢查询日志 + 健康巡检
             using var cmdSlow = conn.CreateCommand();
             cmdSlow.CommandText = @"
                 CREATE TABLE IF NOT EXISTS db_slow_log (
@@ -167,9 +152,6 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_health_ts ON db_health_log(ts);
             ";
             cmdHealth.ExecuteNonQuery();
-            // v2.4.0: 待办忽略名单。
-            // ⚠ v2.5.1 起**已停用**：待办来自真实不良，不允许忽略/删除，必须确认处理。
-            // 建表语句保留（仅为旧库兼容与回退到 v2.4/v2.5 时不报错），但**不再读也不再写**。
             using var cmd4 = conn.CreateCommand();
             cmd4.CommandText = @"
                 CREATE TABLE IF NOT EXISTS dismissed_todos (
@@ -183,12 +165,6 @@ public sealed partial class Database
             ";
             cmd4.ExecuteNonQuery();
 
-            // v2.6.0: 待办登记表（**永久保留**）。
-            // 与 v2.4/v2.5 的“实时聚合视图”不同：一旦被扫到就落库，
-            // 即使它的不良滑出了“近一个月”扫描窗口，待办仍在（除非被处理完）。
-            //   group_key : TodoGrouping.KeyOf() 归一化后的合并键（同类测试项合一张卡）
-            //   fail_count: 累计不良次数（靠 app_meta 里的水位线增量累加，不重复计）
-            //   state     : pending 未确认 / ack 已确认(有活跃维修记录) / resolved 已处理完
             using var cmd5 = conn.CreateCommand();
             cmd5.CommandText = @"
                 CREATE TABLE IF NOT EXISTS todo_items (
@@ -218,9 +194,6 @@ public sealed partial class Database
             ";
             cmd5.ExecuteNonQuery();
 
-            // v3.5.0 全局待办池：跨机同步状态/认领。以 (origin_machine, todo_id) 为全局键，
-            // 不改动既有 maintenance_records/todo_items 结构（兼容旧库与既有待办逻辑）。
-            // version 单调自增用于合并裁决（认领抢占 + last-write-wins）。
             using var cmd6 = conn.CreateCommand();
             cmd6.CommandText = @"
                 CREATE TABLE IF NOT EXISTS todo_sync_state (
@@ -235,7 +208,6 @@ public sealed partial class Database
             ";
             cmd6.ExecuteNonQuery();
 
-            // v3.24.0 (规格05 机台端自学习): device_samples_local 本机设备自采样表
             using var cmd7 = conn.CreateCommand();
             cmd7.CommandText = @"
                 CREATE TABLE IF NOT EXISTS device_samples_local (
@@ -252,12 +224,6 @@ public sealed partial class Database
         MigrateClosedStatus();
     }
 
-    /// <summary>
-    /// v2.2.0 迁移: 维修记录状态体系由 4 个合并为 5 个(新增 unknown/investigating,
-    /// 取消 closed)，把库里历史的 status='closed' 一次性改写为 'resolved'。
-    /// 幂等(无 closed 行时直接返回)。改写前先备份 db 文件；备份失败则跳过迁移
-    /// —— 此时 UI 仍能通过 MaintenanceMeta 的 legacy 映射把 closed 显示为「已完成」，不影响使用。
-    /// </summary>
     private void MigrateClosedStatus()
     {
         try
@@ -280,7 +246,6 @@ public sealed partial class Database
             using (var conn = Open())
             using (var cmd = conn.CreateCommand())
             {
-                // 只改 status, 不动 updated_at —— 保留记录真实的最后人工更新时间
                 cmd.CommandText = "UPDATE maintenance_records SET status='resolved' WHERE status='closed'";
                 var done = cmd.ExecuteNonQuery();
                 Logger.Info($"[迁移] {done} 条维修记录状态「已关闭」-> 「已完成」(v2.2.0 状态体系合并)");
@@ -292,7 +257,6 @@ public sealed partial class Database
         }
     }
 
-    /// <summary>迁移前备份 db 文件为 {db}.bak-yyyyMMdd。已存在同日备份则视为成功。</summary>
     private bool BackupDbFile()
     {
         try
@@ -304,17 +268,14 @@ public sealed partial class Database
                 Logger.Info($"[迁移] 已存在当日备份, 直接迁移: {Path.GetFileName(bak)}");
                 return true;
             }
-            // WAL 模式下未 checkpoint 的数据在 -wal 文件里, 先落盘再复制, 否则备份会缺数据
             using (var conn = Open())
             using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
                 cmd.ExecuteNonQuery();
             }
-            // 释放连接池持有的文件句柄, 确保 File.Copy 拿到完整快照
             SqliteConnection.ClearAllPools();
             File.Copy(_dbPath, bak);
-            // 域2 备份校验（v3.19.0）：生成 .sha256 便于自愈校验
             try
             {
                 using var sha = System.Security.Cryptography.SHA256.Create();
@@ -333,10 +294,6 @@ public sealed partial class Database
         }
     }
 
-    /// <summary>
-    /// 机台本地库每日备份（v3.10.0 P1-2）：checkpoint → 复制 {db}.bak-yyyyMMdd → 只留
-    /// <see cref="BackupKeepDays"/> 份。同日幂等。供每日调度（MainForm 定时器/后续服务化）调用。
-    /// </summary>
     public const int BackupKeepDays = 7;
     public string? BackupDaily()
     {
@@ -344,7 +301,7 @@ public sealed partial class Database
         {
             if (!File.Exists(_dbPath)) return null;
             var bak = $"{_dbPath}.bak-{DateTime.Now:yyyyMMdd}";
-            if (File.Exists(bak)) return null;   // 当日已备份
+            if (File.Exists(bak)) return null;
             using (var conn = Open())
             using (var cmd = conn.CreateCommand())
             {
@@ -372,14 +329,12 @@ public sealed partial class Database
         }
     }
 
-    /// <summary>已存在的 xml_path 集合(去重用)。</summary>
     public HashSet<string> GetExistingPaths(IEnumerable<string> paths)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var list = paths.ToList();
         if (list.Count == 0) return result;
         using var conn = Open();
-        // 分批 IN 查询
         const int batch = 500;
         for (int i = 0; i < list.Count; i += batch)
         {
@@ -395,10 +350,6 @@ public sealed partial class Database
         return result;
     }
 
-    /// <summary>批量插入(忽略重复 xml_path)。返回插入数。
-    /// 真正插入的行通过 <see cref="RecordsInserted"/> 通知(带自增 id，供聚合推送做 seq)。
-    /// v3.5.3：改用 INSERT ... RETURNING id（SQLite 3.35+，e_sqlite3 2.1.12 = 3.53.3），
-    /// 「插入 + 取自增 id」合并成一条语句，历史扫描大事务里每行省掉一次额外命令对象与往返。</summary>
     public int BatchInsert(IEnumerable<TestRecord> records)
     {
         var list = records.ToList();
@@ -446,7 +397,6 @@ public sealed partial class Database
             pHasFail.Value = rec.HasFailItems ? 1 : 0;
             pSize.Value = (object?)rec.FileSize ?? DBNull.Value;
             pFixture.Value = (object?)rec.FixtureId ?? DBNull.Value;
-            // RETURNING 只对真正插入的行出结果：OR IGNORE 跳过的行 reader 里没有行
             using var r = cmd.ExecuteReader();
             if (r.Read())
             {
@@ -460,7 +410,6 @@ public sealed partial class Database
     }
 
     public int InsertOne(TestRecord rec) => BatchInsert(new[] { rec });
-    /// <summary>记录一次解析失败（域名1，v3.19.0）。失败不影响采集主流程，仅留痕。</summary>
     public void LogParseFailure(string xmlPath, string errorCode, string skipReason, string stationId)
     {
         try
@@ -477,8 +426,6 @@ public sealed partial class Database
         catch (Exception ex) { Logger.Warning($"[解析失败日志] 写入失败: {ex.Message}"); }
     }
 
-
-    /// <summary>域2 慢查询日志（v3.19.0）：>500ms 记录到 db_slow_log，仅日志便于排障。</summary>
     public void LogSlowQuery(string sql, long ms)
     {
         if (ms < 500) return;
@@ -494,7 +441,6 @@ public sealed partial class Database
         catch { }
     }
 
-    /// <summary>域2 健康巡检日志（v3.19.0）。</summary>
     public void LogHealth(string checkType, string result)
     {
         try
@@ -509,7 +455,6 @@ public sealed partial class Database
         catch { }
     }
 
-    /// <summary>域2 一键健康巡检（v3.19.0）：PRAGMA integrity_check + 索引/冗余检查，落 db_health_log，返回结果串。</summary>
     public string RunHealthCheck()
     {
         string result = "ok";
@@ -532,7 +477,6 @@ public sealed partial class Database
         return result;
     }
 
-    /// <summary>域2 冷热分层归档（v3.19.0）：>warmDays 的 test_records 归档到 data/archive 并删除，todo/maintenance 永久保留。</summary>
     public int ArchiveColdData(int warmDays = 90)
     {
         if (warmDays <= 0) return 0;
@@ -550,7 +494,6 @@ public sealed partial class Database
             if (toArchive == 0) return 0;
             var archDir = Path.Combine(Path.GetDirectoryName(_dbPath) ?? ".", "archive");
             Directory.CreateDirectory(archDir);
-            // 简化：先落一个占位归档文件，记录 cutoff 与条数，便于审计；实际数据已在备份中可恢复
             var archFile = Path.Combine(archDir, $"test_records_before_{cutoff}.txt");
             File.WriteAllText(archFile, $"cutoff={cutoff} count={toArchive} at={DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             using (var conn = Open())
@@ -571,7 +514,6 @@ public sealed partial class Database
         }
     }
 
-    /// <summary>累计统计。</summary>
     public StatsData FetchGlobalStats(string stationId)
     {
         using var conn = Open();
@@ -600,10 +542,6 @@ public sealed partial class Database
         return s;
     }
 
-    /// <summary>今日统计(用 batch_timestamp 日期部分 = 传入 yyyy-MM-dd)。</summary>
-    /// <summary>今日统计。用 test_date(目录日期, 格式 yyyyMMdd)判断当日。
-    /// 目录日期 PASS/FAIL 都有且格式统一, 比 batch_timestamp(XML内部, 格式可能差异)可靠。
-    /// dateYmd 传入 yyyyMMdd。</summary>
     public StatsData FetchDailyStats(string stationId, string dateYmd)
     {
         using var conn = Open();
@@ -632,7 +570,6 @@ public sealed partial class Database
         return s;
     }
 
-    /// <summary>当月统计（主页工业大屏「当月综合良率」口径）：test_date 生产为 yyyyMMdd 8 位，6 位前缀即当月。</summary>
     public StatsData FetchMonthlyStats(string stationId, string dateYm)
     {
         using var conn = Open();
@@ -661,11 +598,6 @@ public sealed partial class Database
         return s;
     }
 
-    // ==================== 工业大屏看板接口 ====================
-
-    /// <summary>
-    /// 今日 24 小时逐小时产出与良率统计（0..23 时）。
-    /// </summary>
     public List<HourlyStatItem> FetchDailyHourlyStats(string stationId, string dateYmd)
     {
         var items = new List<HourlyStatItem>();
@@ -705,10 +637,6 @@ public sealed partial class Database
         return items;
     }
 
-    /// <summary>
-    /// 今日 Top N 故障项排行榜（测项名称、频次、占比、高发机台）。
-    /// 规格 05 S4：learn_fail_merge_enabled 开启时按 G49 字典/正则归并 key 聚合（仅展示层，数据层不动）。
-    /// </summary>
     public List<TopFailItem> FetchDailyTopFails(string stationId, string dateYmd, int limit = 5,
         bool? mergeOverride = null, string? mergeLevel = null)
     {
@@ -739,7 +667,6 @@ public sealed partial class Database
             var st = r.GetString(1).Trim();
             if (string.IsNullOrEmpty(rawReason)) rawReason = "未知测项错误";
 
-            // 一条记录可能包含换行或逗号分隔的多项失败
             var split = rawReason.Split(new[] { '\r', '\n', ';', '；' }, StringSplitOptions.RemoveEmptyEntries);
             if (split.Length == 0) split = new[] { rawReason };
 
@@ -793,9 +720,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>
-    /// 获取最近发生的 FAIL 实时警报流水。
-    /// </summary>
     public List<LiveFailAlert> FetchRecentFailAlerts(string stationId, int limit = 10)
     {
         using var conn = Open();
@@ -877,13 +801,10 @@ public sealed partial class Database
         return DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
     }
 
-    // ==================== 维修记录 ====================
     public int CreateMaintenance(MaintenanceRecord m)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        // created_at 允许手工指定(记录日期); updated_at 跟随同一取值,
-        // 否则录入往期日期时 updated_at 会是"现在", 看板按更新时间排序会把老记录顶到最前。
         cmd.CommandText = @"
             INSERT INTO maintenance_records
             (station_id, equipment_model, equipment_sn, fail_item, fail_reason, severity, status, resolver, resolution, notes, created_at, updated_at)
@@ -905,10 +826,6 @@ public sealed partial class Database
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
-    /// <summary>
-    /// 查询维修记录。statusFilter 为空表示全部。
-    /// 排序: 最后更新时间倒序(看板语义: 最近动过的置顶), updated_at 缺失时回落 created_at。
-    /// </summary>
     public List<MaintenanceRecord> ListMaintenance(string statusFilter = "", int limit = 500)
     {
         using var conn = Open();
@@ -945,10 +862,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>
-    /// 各状态的真实总数(不受列表 LIMIT 影响), 供看板列头徽章显示。
-    /// key 为原始入库值, 调用方需用 MaintenanceMeta.Normalize 归并 legacy 'closed'。
-    /// </summary>
     public Dictionary<string, int> CountMaintenanceByStatus()
     {
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -964,7 +877,6 @@ public sealed partial class Database
         return dict;
     }
 
-    /// <summary>只改状态(看板拖放用)。状态实际变化时触发 <see cref="MaintenanceStatusChanged"/>。</summary>
     public bool UpdateMaintenanceStatus(int id, string status)
     {
         string from;
@@ -974,7 +886,7 @@ public sealed partial class Database
             sel.CommandText = "SELECT status FROM maintenance_records WHERE id=@id";
             sel.Parameters.AddWithValue("@id", id);
             from = sel.ExecuteScalar() as string ?? "";
-            if (string.Equals(from, status, StringComparison.OrdinalIgnoreCase)) return true;   // 无变化不算失败
+            if (string.Equals(from, status, StringComparison.OrdinalIgnoreCase)) return true;
         }
         using (var conn = Open())
         {
@@ -989,11 +901,6 @@ public sealed partial class Database
         return true;
     }
 
-    /// <summary>
-    /// 全字段更新(编辑表单 / 拖到「已完成」时补填维修人与措施用)。
-    /// 含 created_at(编辑表单允许改「记录日期」); updated_at 置为当前时间。
-    /// 状态实际变化时触发 <see cref="MaintenanceStatusChanged"/>。
-    /// </summary>
     public bool UpdateMaintenance(MaintenanceRecord m)
     {
         string from;
@@ -1035,7 +942,6 @@ public sealed partial class Database
         return true;
     }
 
-    /// <summary>按 id 取单条维修记录；不存在返回 null。</summary>
     public MaintenanceRecord? GetMaintenance(int id)
     {
         using var conn = Open();
@@ -1064,17 +970,6 @@ public sealed partial class Database
         };
     }
 
-    /// <summary>
-    /// 删除维修记录，并**回收自增 id**。
-    ///
-    /// 建表用的是 `id INTEGER PRIMARY KEY AUTOINCREMENT`，SQLite 会把已用过的最大值
-    /// 记在 `sqlite_sequence` 里并**永不复用** —— 于是「就一条记录(id=1)，删了再新建变成 id=2」。
-    /// 维修记录的 id 是给人看的流水号(卡片右上角 #N、导出第一列)，不被其它表引用，
-    /// 所以删完把游标回抨到当前 MAX(id)：
-    ///   ① 删空了 -> 下次新建回到 1；
-    ///   ② 删的是最后一条 -> 下次新建接着用那个号；
-    ///   ③ 删的是中间那条 -> 不回填空号(避开与已导出报表上的旧 #N 撞车)。
-    /// </summary>
     public bool DeleteMaintenance(int id)
     {
         using var conn = Open();
@@ -1093,7 +988,6 @@ public sealed partial class Database
         {
             using var seq = conn.CreateCommand();
             seq.Transaction = tx;
-            // sqlite_sequence 里没这张表的行时(从未插入过) UPDATE 影响 0 行, 无害
             seq.CommandText = @"
                 UPDATE sqlite_sequence
                    SET seq = (SELECT COALESCE(MAX(id), 0) FROM maintenance_records)
@@ -1105,12 +999,8 @@ public sealed partial class Database
         return affected > 0;
     }
 
-    // ==================== 待办登记表（v2.6.0：扫描窗口 + 大项合并 + 永久保留） ====================
-
-    /// <summary>增量同步的水位线：已并入待办的 test_records 最大 id。</summary>
     private const string TodoWatermarkKey = "todo_sync_last_id";
 
-    /// <summary>待办卡上限（登记表可以很大，但一次只呈现最需要处理的这些）。</summary>
     public const int TodoViewLimit = 300;
 
     public string? GetMeta(string key)
@@ -1119,7 +1009,6 @@ public sealed partial class Database
         return GetMeta(conn, key);
     }
 
-    /// <summary>写入键值元数据（app_meta 表）。更新器/水位线等复用。</summary>
     public void SetMeta(string key, string value)
     {
         using var conn = Open();
@@ -1145,18 +1034,6 @@ public sealed partial class Database
         cmd.ExecuteNonQuery();
     }
 
-    /// <summary>
-    /// 把「近 <paramref name="scanDays"/> 天」内的新 FAIL 并入待办登记表。
-    ///
-    /// 三条关键规则：
-    ///   1. **只扫近 N 天**（默认 30）—— 老库里几年的历史不良不会一次性灌成几千张卡；
-    ///   2. **增量**：靠 `app_meta.todo_sync_last_id` 水位线，只处理 id 更大的行，次数不会重复累加；
-    ///   3. **永久保留**：登记过的待办行只改状态、**从不删除**，所以哪怕它的不良早已滑出扫描窗口，
-    ///      待办仍在（用户可以用时间区间去筛，但不会“到期消失”）。
-    ///
-    /// 同类测试项按 <see cref="TodoGrouping.KeyOf"/> 合并为一条（大项合并）。
-    /// 返回本次**新登记**的待办条数。
-    /// </summary>
     public int SyncTodoItems(int scanDays = 30)
     {
         if (scanDays < 1) scanDays = 1;
@@ -1176,11 +1053,9 @@ public sealed partial class Database
             maxId = Convert.ToInt64(c.ExecuteScalar() ?? 0L);
         }
 
-        // 分组累加：key = (group_key, station_id)
         var groups = new Dictionary<(string, string), TodoAgg>();
         if (maxId > watermark)
         {
-            // 被用户显式删除的 (大项, 机台) 永久不再登记（v3.3.0）
             var dismissed = new HashSet<(string, string)>();
             using (var dc = conn.CreateCommand())
             {
@@ -1202,17 +1077,15 @@ public sealed partial class Database
             using var r = c.ExecuteReader();
             while (r.Read())
             {
-                // 旧日期FAIL仍推进水位但不建待办，防迟到数据永久丢失（C-03 有效水位策略）
                 var testDate = r.IsDBNull(4) ? "" : r.GetString(4);
                 if (string.CompareOrdinal(testDate, cutoff) < 0) continue;
                 var item = r.IsDBNull(0) ? "" : r.GetString(0);
-                // 单条隔离：某一条异常格式的 fail_reason 不能拖垮整批待办登记（v3.3.0）
                 string key;
                 try { key = TodoGrouping.MergeKeyOf(item); }
                 catch (Exception ex) { Logger.Warning($"[待办] 合并键计算失败，跳过该项: {ex.Message} | {item}"); continue; }
                 if (key.Length == 0) continue;
                 var station = r.IsDBNull(1) ? "" : r.GetString(1);
-                if (dismissed.Contains((key, station))) continue;   // 已删除的待办不再复现
+                if (dismissed.Contains((key, station))) continue;
                 var model = r.IsDBNull(2) ? "" : r.GetString(2);
                 var ts = NormalizeTs(r.IsDBNull(3) ? "" : r.GetString(3));
 
@@ -1234,7 +1107,6 @@ public sealed partial class Database
         {
             foreach (var ((key, station), agg) in groups)
             {
-                // 已有则合并累加，没有则新建
                 string? oldVariants = null;
                 int id = 0;
                 using (var sel = conn.CreateCommand())
@@ -1256,7 +1128,7 @@ public sealed partial class Database
                     variants.AddRange(oldVariants.Split('\n', StringSplitOptions.RemoveEmptyEntries));
                 foreach (var v in agg.Variants)
                     if (!variants.Contains(v, StringComparer.OrdinalIgnoreCase)) variants.Add(v);
-                if (variants.Count > 40) variants = variants.Take(40).ToList();   // 防止无界膨胀
+                if (variants.Count > 40) variants = variants.Take(40).ToList();
                 var title = TodoGrouping.TitleOf(variants);
                 if (string.IsNullOrEmpty(title)) title = key;
 
@@ -1308,7 +1180,6 @@ public sealed partial class Database
                 }
             }
 
-            // 所有 id>watermark 的行已检查（旧日期已显式continue，不会误丢），水位可安全前移至 maxId
             effectiveWatermark = maxId;
             SetMeta(conn, TodoWatermarkKey, effectiveWatermark.ToString(), tx);
             tx.Commit();
@@ -1327,17 +1198,8 @@ public sealed partial class Database
         public readonly List<string> Variants = new();
     }
 
-    /// <summary>时间戳统一成 `yyyy-MM-dd HH:mm:ss`，否则字符串比较会因 `T` / 纯日期而错乱。
-    /// 委托 <see cref="TimeUtil.Normalize"/>（统一入口，支持 8/14/17 位数字与 ISO 带时区格式）。</summary>
     internal static string NormalizeTs(string ts) => TimeUtil.Normalize(ts);
 
-    /// <summary>
-    /// 状态对账（幂等，每次同步后跑）：
-    ///   · 关联的维修记录被删 → 回到 pending（**待办删不掉**）
-    ///   · 关联记录仍活跃      → ack（不在待办列显示）
-    ///   · 关联记录已完成      → resolved（记 resolved_at）
-    ///   · 已完成之后又出新不良 → 回到 pending（复发重现）
-    /// </summary>
     private static void ReconcileTodoStates(SqliteConnection conn)
     {
         using var cmd = conn.CreateCommand();
@@ -1376,19 +1238,10 @@ public sealed partial class Database
         cmd.ExecuteNonQuery();
     }
 
-    /// <summary>
-    /// 待办视图：未确认（pending）的待办项，**按 fail 次数倒序**（= 处理优先级）。
-    ///
-    /// <paramref name="from"/> / <paramref name="to"/> 给定时按时间区间筛：
-    /// 只保留「该区间内真实出现过不良」的项，且 <see cref="TodoItem.RangeCount"/> = 区间内次数
-    /// （区间统计现算，直接从 test_records 聚合，不依赖登记表）。
-    /// 两个都传 null = 不限区间，显示全部未处理的待办（永久保留的都在）。
-    /// </summary>
     public List<TodoItem> ListTodoView(DateTime? from = null, DateTime? to = null, int limit = TodoViewLimit)
     {
         using var conn = Open();
 
-        // 1) 登记表里所有未确认项
         var list = new List<TodoItem>();
         using (var cmd = conn.CreateCommand())
         {
@@ -1420,7 +1273,6 @@ public sealed partial class Database
         }
         if (list.Count == 0) return list;
 
-        // 2) 区间统计（可选）
         if (from != null || to != null)
         {
             var ranged = new Dictionary<(string, string), (int cnt, string first, string last)>();
@@ -1462,7 +1314,7 @@ public sealed partial class Database
             var kept = new List<TodoItem>();
             foreach (var it in list)
             {
-                if (!ranged.TryGetValue((it.GroupKey, it.StationId), out var v)) continue;  // 区间内没出现
+                if (!ranged.TryGetValue((it.GroupKey, it.StationId), out var v)) continue;
                 it.RangeCount = v.cnt;
                 it.RangeFirstSeen = v.first;
                 it.RangeLastSeen = v.last;
@@ -1475,7 +1327,6 @@ public sealed partial class Database
             foreach (var it in list) it.RangeCount = it.TotalCount;
         }
 
-        // 3) 按 fail 次数排优先级（区间模式下按区间内次数）
         list = list.OrderByDescending(x => x.SortCount)
                    .ThenByDescending(x => x.LastSeen, StringComparer.Ordinal)
                    .Take(limit)
@@ -1483,7 +1334,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>未确认待办条数（列头徽章用，比拉全表便宜）。</summary>
     public int CountPendingTodos()
     {
         using var conn = Open();
@@ -1492,11 +1342,6 @@ public sealed partial class Database
         return Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
     }
 
-    /// <summary>
-    /// ⚠ **已废弃（v2.5.1）**：待办来自真实不良，不得忽略/删除。
-    /// 保留方法仅为不破坏旧调用方的编译；写入仍会发生，但待办视图已不再读它，
-    /// 所以**调了也不会让待办消失**。新代码请勿使用。
-    /// </summary>
     [Obsolete("待办来自真实不良，不得忽略；待办视图已不再读 dismissed_todos。")]
     public void DismissTodo(string failItem, string stationId, string model)
     {
@@ -1511,16 +1356,6 @@ public sealed partial class Database
         cmd.ExecuteNonQuery();
     }
 
-    /// <summary>
-    /// 确认待办 → 用调用方填好的完整记录建维修记录并与待办行**双向关联**，返回维修记录 ID。
-    ///
-    /// 关联之后：
-    ///   · 待办行 state=ack，不再出现在待办列；
-    ///   · 记录被拖到「已完成」→ state=resolved；同故障项再出不良 → 自动回到 pending（复发）；
-    ///   · 记录被删 → 自动回到 pending。
-    ///
-    /// v3.3.0：确认即进入状态流（无 → 目标状态），**无论落到哪一列都触发状态变更推送**。
-    /// </summary>
     public int AcknowledgeTodo(int todoId, MaintenanceRecord rec)
     {
         TodoItem? todo = GetTodoItem(todoId);
@@ -1534,7 +1369,6 @@ public sealed partial class Database
 
         var id = CreateMaintenance(rec);
 
-        // 确认 = 从「未确认」进入状态流，等同状态变更，总是推送（含确认后落在「待办」列）
         rec.Id = id;
         NotifyStatusChanged(rec, "", rec.Status);
 
@@ -1551,7 +1385,6 @@ public sealed partial class Database
         return id;
     }
 
-    /// <summary>确认待办（轻量：只给维修人/严重度/状态，其余字段走默认）。保留给自检与旧调用方。</summary>
     public int AcknowledgeTodo(int todoId, string resolver, string severity, string status = "open")
     {
         TodoItem? todo = GetTodoItem(todoId);
@@ -1573,11 +1406,6 @@ public sealed partial class Database
         return AcknowledgeTodo(todoId, rec);
     }
 
-    /// <summary>
-    /// 删除一条待办（用户显式删除，v3.3.0 起支持）。
-    /// 行删除后该故障项不再出现在待办列；若它关联了维修记录，记录本身不受影响。
-    /// 删除会留下**永久标记**（dismissed_todos），此后同类新不良也不会再自动登记 —— 删除是永久的。
-    /// </summary>
     public bool DeleteTodo(int todoId)
     {
         using var conn = Open();
@@ -1598,7 +1426,6 @@ public sealed partial class Database
             del.Parameters.AddWithValue("@id", todoId);
             del.ExecuteNonQuery();
         }
-        // 永久标记：该 (大项, 机台) 不再自动登记新不良（含之后才出现的变体）
         if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(station))
         {
             using var ins = conn.CreateCommand();
@@ -1641,10 +1468,6 @@ public sealed partial class Database
         return it;
     }
 
-    /// <summary>
-    /// 每个原始测试项各自的真实不良次数（预览里逐项列次数用）。
-    /// 一次 IN 查询搞定，不循环发 SQL。
-    /// </summary>
     public Dictionary<string, int> CountFailByItems(IEnumerable<string> items, string stationId = "")
     {
         var list = items.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct().ToList();
@@ -1672,7 +1495,6 @@ public sealed partial class Database
         return result;
     }
 
-    /// <summary>根据维修记录反查关联的待办行（预览里拿权威的合并清单与次数）。</summary>
     public TodoItem? GetTodoByMaintenance(int maintenanceId)
     {
         using var conn = Open();
@@ -1684,9 +1506,6 @@ public sealed partial class Database
         return GetTodoItem(Convert.ToInt32(v));
     }
 
-    // ==================== 机台自学习：本地设备采样 (device_samples_local) ====================
-
-    /// <summary>写入单条本机设备自采样记录。</summary>
     public void InsertLocalDeviceSample(double cpuUsage, double memUsedPct, double diskFreeGb, string? ts = null)
     {
         using var conn = Open();
@@ -1701,7 +1520,6 @@ public sealed partial class Database
         cmd.ExecuteNonQuery();
     }
 
-    /// <summary>查询指定窗口内的本机设备自采样记录。</summary>
     public List<(string Ts, double Cpu, double Mem, double DiskFree)> GetLocalDeviceSamples(int days = 7)
     {
         var list = new List<(string, double, double, double)>();
@@ -1726,7 +1544,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>清理超过保留天数的历史本机设备采样。</summary>
     public int PurgeOldLocalDeviceSamples(int retentionDays = 14)
     {
         using var conn = Open();
@@ -1738,13 +1555,6 @@ public sealed partial class Database
         return cmd.ExecuteNonQuery();
     }
 
-    // ==================== 机台自学习：良率/产能基线源数据（规格 05 S3） ====================
-
-    /// <summary>
-    /// 取基线学习窗口内的 test_records 投影（id/日期/小时/型号/SN/结果）。
-    /// 小时提取与工业看板同源（文件名时间 → batch_timestamp → created_at）。
-    /// test_date 兼容两种落库格式：生产 yyyyMMdd（Processor 目录日期）与 yyyy-MM-dd。
-    /// </summary>
     public List<BaselineSourceRecord> FetchBaselineSourceRecords(int windowDays, DateTime? now = null)
     {
         var list = new List<BaselineSourceRecord>();
@@ -1772,7 +1582,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>当日全部 FAIL 的 fail_reason 明细（规格 05 S4 章节群挂源数据）。</summary>
     public List<string> FetchDayFailReasons(string dateYmd, DateTime? now = null)
     {
         var list = new List<string>();
@@ -1784,7 +1593,6 @@ public sealed partial class Database
             WHERE result='FAIL' AND (test_date = @d8 OR test_date = @dDash)";
         var d = (now ?? DateTime.Now).Date;
         var target = dateYmd.Length > 0 ? dateYmd : d.ToString("yyyy-MM-dd");
-        // 两种格式都试：按入参原样 + 互转格式
         var alt = target;
         if (DateTime.TryParseExact(target, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt1)) alt = dt1.ToString("yyyyMMdd");
         else if (DateTime.TryParseExact(target, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dt2)) alt = dt2.ToString("yyyy-MM-dd");
@@ -1799,7 +1607,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>按原始大项统计 dismissed_todos 显式删除记录数（规格 05 S4 权重校准源数据）。</summary>
     public Dictionary<string, int> CountDismissedByItem()
     {
         var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1816,10 +1623,6 @@ public sealed partial class Database
         return map;
     }
 
-    /// <summary>
-    /// 某故障项在 test_records 里还有多少条真实 FAIL。
-    /// 用于删维修记录时提醒用户：删了它这个故障项会重新回到「待办」列。
-    /// </summary>
     public int CountFailRecords(string failItem, string stationId)
     {
         if (string.IsNullOrWhiteSpace(failItem)) return 0;
@@ -1833,9 +1636,6 @@ public sealed partial class Database
         return Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
     }
 
-    // ==================== 维修人员名单 ====================
-
-    /// <summary>名单里的人（按名字排）。</summary>
     public List<string> RosterResolvers()
     {
         using var conn = Open();
@@ -1847,10 +1647,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>
-    /// 下拉候选 = **名单** ∪ **历史记录里用过的名字**（名单在前，大小写不敏感去重）。
-    /// 这样既能提前录班组名单，也不会丢掉已经录过的人。
-    /// </summary>
     public List<string> ListResolvers(int historyLimit = 30)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1862,7 +1658,6 @@ public sealed partial class Database
         return result;
     }
 
-    /// <summary>加人。已存在（不分大小写）或名字为空时返回 false。</summary>
     public bool AddResolver(string name)
     {
         name = (name ?? "").Trim();
@@ -1874,7 +1669,6 @@ public sealed partial class Database
         return cmd.ExecuteNonQuery() > 0;
     }
 
-    /// <summary>从名单里删人。**不动已有维修记录**（历史记录里的名字照旧）。</summary>
     public bool DeleteResolver(string name)
     {
         name = (name ?? "").Trim();
@@ -1886,10 +1680,6 @@ public sealed partial class Database
         return cmd.ExecuteNonQuery() > 0;
     }
 
-    /// <summary>
-    /// 改名。syncRecords=true 时把历史维修记录里的这个名字一并改掉（治错别字）。
-    /// 返回同步改动的记录数（不同步时为 0）。
-    /// </summary>
     public int RenameResolver(string oldName, string newName, bool syncRecords)
     {
         oldName = (oldName ?? "").Trim();
@@ -1902,7 +1692,6 @@ public sealed partial class Database
         using (var cmd = conn.CreateCommand())
         {
             cmd.Transaction = tx;
-            // 目标名已在名单里 -> 先删旧名，避开 UNIQUE 冲突
             cmd.CommandText = @"
                 DELETE FROM resolvers WHERE name = @old COLLATE NOCASE
                   AND EXISTS(SELECT 1 FROM resolvers WHERE name = @new COLLATE NOCASE);
@@ -1914,7 +1703,6 @@ public sealed partial class Database
         }
         if (syncRecords)
         {
-            // 一条记录可能有多人，不能整列赋值 —— 逐行拆开、只换那个人、再拼回去
             var todo = new List<(int Id, string NewValue)>();
             using (var q = conn.CreateCommand())
             {
@@ -1945,10 +1733,6 @@ public sealed partial class Database
         return synced;
     }
 
-    /// <summary>
-    /// 某个维修人在多少条维修记录里出现过（删人前提示用）。
-    /// **成员级比较** —— 不能用 LIKE，否则「张三」会误中「张三丰」。
-    /// </summary>
     public int CountRecordsByResolver(string name)
     {
         name = (name ?? "").Trim();
@@ -1965,11 +1749,6 @@ public sealed partial class Database
         return n;
     }
 
-    /// <summary>
-    /// 维修记录里用过的维修人（按使用次数倒序）。
-    /// 一条记录可能有**多人**（`张三、李四`），这里会拆开按**人**统计，
-    /// 否则候选里会出现「张三、李四」这种组合项。
-    /// </summary>
     public List<string> DistinctResolvers(int limit = 30)
     {
         using var conn = Open();
@@ -1988,10 +1767,6 @@ public sealed partial class Database
                     .Take(limit).Select(kv => kv.Key).ToList();
     }
 
-    /// <summary>
-    /// FAIL 记录的「可作为维修依据」的来源行 —— **不含 SN**（维修记录不再关心 SN）。
-    /// fail_reason 只是**首个**失败项；要拿全部失败项需要再解析 xml_path（由 UI 侧按需深扫）。
-    /// </summary>
     public List<FailItemSource> FailItemSources(string stationId = "", int days = 0, int limit = 2000)
     {
         using var conn = Open();
@@ -2024,7 +1799,6 @@ public sealed partial class Database
         return list;
     }
 
-    // ==================== Debug 查询 ====================
     public List<(string sn, string result, string model, string ts, string path)> RecentFails(int limit = 10)
     {
         using var conn = Open();
@@ -2044,7 +1818,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>聚合推送续推用：取 id 大于 afterId 的 FAIL 记录（按 id 升序，最多 limit 条）。</summary>
     public List<(TestRecord Rec, long Id)> FetchFailRecordsAfter(long afterId, int limit = 5000)
     {
         using var conn = Open();
@@ -2081,7 +1854,6 @@ public sealed partial class Database
         return list;
     }
 
-    /// <summary>查询所有 FAIL 记录(SN / 首个fail项 / 时间 / 路径)。</summary>
     public List<FailRecord> AllFails(string stationId = "")
     {
         using var conn = Open();
@@ -2129,7 +1901,6 @@ public sealed partial class Database
 public class StatsData
 {
     public int Pass, Fail, Interrupted, Invalid, ProductCount;
-    /// <summary>当日产品数（SN 去重，FetchDailyStats 专用，v3.1.0.3 主页改版）。</summary>
     public int TodayProductCount;
 }
 
@@ -2143,10 +1914,9 @@ public class FailRecord
     public string XmlPath = "";
 }
 
-/// <summary>一条 FAIL 记录里可用于「维修依据」的信息（**故意不含 SN**）。</summary>
 public class FailItemSource
 {
-    public string FirstFailItem = "";   // test_records.fail_reason（首个失败项）
+    public string FirstFailItem = "";
     public string Model = "";
     public string StationId = "";
     public string Timestamp = "";
@@ -2154,39 +1924,24 @@ public class FailItemSource
     public string XmlPath = "";
 }
 
-/// <summary>
-/// 一条待办（= `todo_items` 一行）。
-///
-/// 它不是单个测试项，而是**合并后的大项**：同类测试项（只差编号/通道/位号）
-/// 经 <see cref="TodoGrouping.KeyOf"/> 归一化后归为一条，<see cref="Variants"/> 里留着原始项名。
-/// </summary>
 public class TodoItem
 {
     public int Id;
-    /// <summary>合并键（归一化后的测试项）。</summary>
     public string GroupKey = "";
-    /// <summary>展示名（代表性测试项，已去步骤号）。</summary>
     public string Title = "";
     public string StationId = "";
     public string Model = "";
-    /// <summary>被合并的原始测试项名。</summary>
     public readonly List<string> Variants = new();
-    /// <summary>合并了多少个原始测试项。</summary>
     public int VariantCount = 1;
-    /// <summary>累计不良次数（永久累加，不因扫描窗口滑动而减少）。</summary>
     public int TotalCount;
-    /// <summary>当前选定时间区间内的不良次数（不限区间时等于累计）。</summary>
     public int RangeCount;
-    /// <summary>排优先级用的次数：有区间就用区间内次数，否则用累计。</summary>
     public int SortCount => RangeCount > 0 ? RangeCount : TotalCount;
     public string FirstSeen = "";
     public string LastSeen = "";
     public string RangeFirstSeen = "";
     public string RangeLastSeen = "";
-    /// <summary>pending 未确认 / ack 已确认 / resolved 已处理完。</summary>
     public string State = "pending";
 
-    /// <summary>优先级中文（按 fail 次数）。</summary>
     public string PriorityZh => TodoGrouping.PriorityZhOf(SortCount);
 }
 
@@ -2198,21 +1953,17 @@ public class MaintenanceRecord
     public string EquipmentSn = "";
     public string FailItem = "";
     public string FailReason = "";
-    public string Severity = "major";   // critical/major/minor
-    public string Status = "open";       // unknown/investigating/open/in_progress/resolved (legacy: closed)
+    public string Severity = "major";
+    public string Status = "open";
     public string Resolver = "";
     public string Resolution = "";
     public string Notes = "";
     public string CreatedAt = "";
     public string UpdatedAt = "";
 
-    /// <summary>浅拷贝，供编辑对话框「取消」时不污染原对象。</summary>
     public MaintenanceRecord Clone() => (MaintenanceRecord)MemberwiseClone();
 }
 
-// ==================== 全局待办池（v3.5.0 去中心化跨机同步） ====================
-
-/// <summary>跨机待办同步状态行（todo_sync_state 一行）。</summary>
 public sealed class TodoSyncRow
 {
     public string OriginMachine = "";
@@ -2225,7 +1976,6 @@ public sealed class TodoSyncRow
 
 public sealed partial class Database
 {
-    /// <summary>本地版号自增（每次本地变更 +1），供 <see cref="TodoSync"/> 生成广播事件版本。</summary>
     public long BumpTodoVersion(long todoId)
     {
         var key = $"todo_ver_{todoId}";
@@ -2240,15 +1990,12 @@ public sealed partial class Database
         return v;
     }
 
-    /// <summary>应用邻居广播来的待办事件：按 (origin_machine, todo_id) upsert，
-    /// version 更大才覆盖（last-write-wins）；相同版本时认领态优先（owner 非空的胜）。</summary>
     public void ApplyRemoteTodoEvent(TodoEvent ev)
     {
         try
         {
             using var conn = Open();
             using var tx = conn.BeginTransaction();
-            // 读当前本地版本
             long localVer = 0; string? localOwner = null;
             using (var sel = conn.CreateCommand())
             {
@@ -2263,7 +2010,6 @@ public sealed partial class Database
                     localOwner = r.IsDBNull(1) ? null : r.GetString(1);
                 }
             }
-            // 裁决：远端版本更高，或版本相同但本地未认领而远端已认领（认领抢占）
             bool accept = ev.Version > localVer ||
                           (ev.Version == localVer && string.IsNullOrEmpty(localOwner) && !string.IsNullOrEmpty(ev.Owner));
             if (!accept) { tx.Commit(); return; }
@@ -2289,18 +2035,12 @@ public sealed partial class Database
         catch (Exception ex) { Logger.Warning($"[待办同步] 应用远端事件失败: {ex.Message}"); }
     }
 
-    /// <summary>
-    /// 源机检索（P4 D5）：按 SN/型号/结果/日期过滤本地 test_records 全量（含 PASS）。
-    /// 索引覆盖：sn / test_date / result 均有索引（Init 建表），历时扫描不走全表。
-    /// 调用方（/api/mesh/query/local / 聚合扇出）应做参数化，防注入。
-    /// </summary>
     public List<MeshQueryService.QueryItem> QueryTestRecords(string localMachine, MeshQueryService.QueryRequest req)
     {
         var where = new List<string>();
         var ps = new List<(string name, object val)>();
         if (!string.IsNullOrWhiteSpace(req.Machine))
         {
-            // 本机只有自己的 station_id，过滤时按 station_id 精确匹配（大小写不敏感 LIKE 转 =）
             where.Add("station_id = @machine");
             ps.Add(("@machine", req.Machine!.Trim()));
         }
@@ -2370,7 +2110,6 @@ public sealed partial class Database
         return s;
     }
 
-    /// <summary>查询跨机待办同步状态（供看板展示全产线待办 owner/state）。</summary>
     public List<TodoSyncRow> GetTodoSyncStates()
     {
         var list = new List<TodoSyncRow>();
@@ -2411,11 +2150,9 @@ public class TopFailItem
     public int Count { get; set; }
     public double Ratio { get; set; }
     public string MainStation { get; set; } = "";
-    /// <summary>根因指向文案（规格 05 S4：learn_fail_merge_enabled 开启时按 G49 字典回填，未命中为空）。</summary>
     public string RootCauseHint { get; set; } = "";
 }
 
-/// <summary>基线学习源记录（规格 05 S3）：test_records 窗口投影，SN 去重在 SelfBaseline 内完成。</summary>
 public sealed record BaselineSourceRecord(long Id, string TestDate, int Hour, string Model, string Sn, string Result);
 
 public class LiveFailAlert

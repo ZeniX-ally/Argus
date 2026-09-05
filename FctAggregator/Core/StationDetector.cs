@@ -2,7 +2,6 @@ using System.Text.RegularExpressions;
 
 namespace FctAggregator;
 
-/// <summary>机台号(IP映射) + 型号识别。</summary>
 public static class StationDetector
 {
     private static readonly Dictionary<string, string> IpToStation = new()
@@ -38,7 +37,6 @@ public static class StationDetector
         return null;
     }
 
-    /// <summary>从 tester 字符串提取机台号 (含 FCTx)。</summary>
     public static string? ExtractStationFromTester(string? tester)
     {
         if (string.IsNullOrEmpty(tester)) return null;
@@ -49,10 +47,6 @@ public static class StationDetector
     }
 }
 
-/// <summary>
-/// 开机自启: 向"启动"文件夹放快捷方式(.lnk)。
-/// 不写注册表 Run 键(那是杀毒敏感的病毒驻留手法)。启动文件夹是正常软件常用方式。
-/// </summary>
 public static class AutoStart
 {
     private const string AppName = "Argus";
@@ -72,16 +66,15 @@ public static class AutoStart
     {
         try
         {
-            // 快捷方式指向: 若用 dotnet 运行则指向 dotnet.exe + dll 参数; 若直接 exe 则指向 exe
             string target, args, workDir = AppConfig.BaseDir;
             if (IsRunningAsDll)
             {
-                target = ExePath;          // dotnet.exe
+                target = ExePath;
                 args = $"\"{DllPath}\"";
             }
             else
             {
-                target = ExePath;          // 直接的 exe
+                target = ExePath;
                 args = "";
             }
             if (string.IsNullOrEmpty(target)) return false;
@@ -105,7 +98,7 @@ public static class AutoStart
     {
         try
         {
-            if (File.Exists(MarkerPath)) return;   // 非首次, 尊重用户设置
+            if (File.Exists(MarkerPath)) return;
             var ok = Enable();
             Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath)!);
             File.WriteAllText(MarkerPath, "1");
@@ -114,7 +107,6 @@ public static class AutoStart
         catch (Exception ex) { Logger.Error($"EnsureFirstRun 失败: {ex.Message}"); }
     }
 
-    /// <summary>用 WScript.Shell COM(晚绑定, 无需编译期引用)创建 .lnk 快捷方式。</summary>
     private static void CreateShortcut(string lnkPath, string targetPath, string arguments, string workingDir)
     {
         Type? shellType = Type.GetTypeFromProgID("WScript.Shell");

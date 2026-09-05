@@ -2,44 +2,34 @@ using System.Collections.Concurrent;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 后台引擎: 历史扫描 + 实时文件监控 + FAIL 推送。
-/// </summary>
 public class Engine
 {
     private readonly AppConfig _cfg;
     private readonly Database _db;
     private readonly string _stationId;
-    /// <summary>P2P 统一节点（v3.5.0 去中心化：取代原 AgentPusher 单向推送 + AggWatcher 中心接收）。</summary>
     private MeshNode _mesh;
     private TodoSync _todoSync;
     private readonly List<FileSystemWatcher> _watchers = new();
     private volatile bool _initialScanComplete = false;
     private CancellationTokenSource _cts = new();
 
-    // 未稳定文件重试：写入超时(WaitForStable 10s)不直接丢弃，延迟重试几轮再放弃（防大文件/慢盘实时路径永久漏数据）
     private const int MaxStableRetries = 3;
     private const int StableRetryDelayMs = 30000;
     private readonly ConcurrentQueue<(string Path, int Attempt, long DueAt)> _retryQueue = new();
     private Thread? _retryThread;
-    // 域1 A: 新测试项 pending_review 去重集（v3.19.0）
     private static readonly HashSet<string> _seenFailReasons = new(StringComparer.OrdinalIgnoreCase);
 
     public Database Db => _db;
     public string ResolvedStationId => _stationId;
     public AppConfig Config => _cfg;
-    /// <summary>P2P 推送端（兼容旧属性名；状态灯/调试面板读取）。</summary>
     public MeshPusher Pusher => _mesh.Pusher;
-    /// <summary>本机 P2P 节点（去中心化核心）。</summary>
     public MeshNode Mesh => _mesh;
-    /// <summary>聚合副本库（经 MeshNode 共享，HeadlessService 单写者复用）。</summary>
     public AggDatabase AggDb => _mesh.AggDb;
 
     public Engine(AppConfig cfg, AggDatabase? sharedAggDb = null)
     {
         _cfg = cfg;
 
-        // 解析机台号: config 优先, 否则 IP 识别
         var sid = cfg.StationId;
         if (string.IsNullOrEmpty(sid))
         {
@@ -53,15 +43,12 @@ public class Engine
         var dbFile = Path.Combine(dataDir, $"{(string.IsNullOrEmpty(sid) ? "fct" : sid)}.db");
         _db = new Database(dbFile);
 
-        // v3.5.0 去中心化：本机本地库即 FAIL 数据源；创建一个本地聚合副本库（全产线 FAIL 摘要）
-        // P2-A 头服务化：HeadlessService 传入共享 AggDatabase（单写者 WAL 单实例），避免双实例锁分离
         var aggDb = sharedAggDb ?? new AggDatabase(Path.Combine(dataDir, "mesh_agg.db"));
         _mesh = new MeshNode(cfg, _stationId, _db, aggDb, cfg.Peers);
-        _todoSync = _mesh.TodoSync;   // 待办池由 MeshNode 统一管理（避免重复订阅）
+        _todoSync = _mesh.TodoSync;
 
         _mesh.Start();
 
-        // 规格 05 S2: 机台端本地资源定时自采样 (由 learn_resource_sampling_enabled 控制)
         try { DeviceSampleRecorder.Instance.Start(); } catch { }
 
         AppState.StationId = sid;
@@ -73,15 +60,11 @@ public class Engine
         Logger.Info($"FCT.ini: {FctIni.AutoFindIni() ?? "未找到(设备状态页将显示诊断)"} | config={cfg.FctIniPath}");
         Logger.Info($"程序目录(BaseDir): {AppConfig.BaseDir}");
 
-        // 待办/维修状态变更 → 飞书推送（v3.2.0：卡片格式与 FAIL 告警一致）
-        // 订阅在构造期：所有改状态的路径（看板拖放/列表右键/编辑表单/补填）都经 Database 的
-        // UpdateMaintenance* 两个方法，事件在「状态真的变了」时才触发，天然去重。
         _db.MaintenanceStatusChanged += (rec, from, to) =>
         {
             try
             {
                 Logger.Info($"[飞书推送] 待办 #{rec.Id} 状态: {MaintenanceMeta.ZhOf(from)} -> {MaintenanceMeta.ZhOf(to)}");
-                // 状态变更发生在 UI 线程（拖放/菜单），网络 POST 放后台，避免卡界面
                 var url = _cfg.WebhookUrl;
                 Task.Run(() => FeishuNotifier.SendStatusChangeAlert(url, rec, from, to));
             }
@@ -106,11 +89,9 @@ public class Engine
         AppState.SetStatus("running");
         Logger.Info($"发现型号目录: {string.Join(", ", models)}");
 
-        // 未稳定文件重试后台线程（每 5s 检查一次到期项）
         _retryThread = new Thread(RetryLoop) { IsBackground = true, Name = "stable-retry" };
         _retryThread.Start();
 
-        // 挂载实时监控(每个 category/model 目录)
         foreach (var model in models)
             foreach (var cat in new[] { "Online", "Offline" })
             {
@@ -128,7 +109,6 @@ public class Engine
                 Logger.Info($"监控已启动: {dir}");
             }
 
-        // 后台历史扫描
         if (models.Count > 0 && !_cfg.SkipHistoricalScan)
             Task.Run(() => HistoricalScan(models, root));
         else
@@ -150,9 +130,6 @@ public class Engine
         _watchers.Clear();
     }
 
-    /// <summary>
-    /// 机台端 P2P 节点设置变更后重启（停旧建新，读最新 config，含 peers/mesh_port）。
-    /// </summary>
     public void RestartPusher()
     {
         try { _todoSync.Stop(); } catch { }
@@ -183,7 +160,6 @@ public class Engine
         return models.OrderBy(x => x).ToList();
     }
 
-    // ==================== 历史扫描(两阶段) ====================
     private void HistoricalScan(List<string> models, string root)
     {
         try
@@ -196,7 +172,6 @@ public class Engine
             }
             var processor = new Processor(_cfg, _stationId, Parsing.ParserRegistry.Instance, _db);
 
-            // 阶段一: 扫描收集所有文件
             AppState.SetScanProgress(phase: "scanning", total: 0, parsed: 0);
             var allFiles = new List<string>();
             foreach (var cat in new[] { "Online", "Offline" })
@@ -214,15 +189,12 @@ public class Engine
             AppState.SetScanProgress(total: allFiles.Count);
             Logger.Info($"[历史扫描][扫描阶段完成] 总文件={allFiles.Count}");
 
-            // 阶段二: 分批解析入库(逐条日志 + 实时刷新统计)
             AppState.SetScanProgress(phase: "parsing", total: allFiles.Count, parsed: 0);
-            const int batchSize = 100;   // 小批次, 统计/进度更新更频繁
+            const int batchSize = 100;
             int processed = 0, totalInserted = 0;
             for (int i = 0; i < allFiles.Count; i += batchSize)
             {
                 if (_cts.IsCancellationRequested) return;
-                // ⚠ 用 GetRange 而非 Skip(i).Take()：Skip 每次从头迭代是 O(i)，
-                // 百万级文件时总代价 O(n²)（曾拖慢历史扫描）；GetRange 是 O(batch)。
                 var take = Math.Min(batchSize, allFiles.Count - i);
                 var batch = allFiles.GetRange(i, take).Select(Path.GetFullPath).ToList();
                 var existing = _db.GetExistingPaths(batch);
@@ -233,7 +205,7 @@ public class Engine
                     if (existing.Contains(p))
                     {
                         processed++;
-                        continue; // 已入库, 跳过
+                        continue;
                     }
                     try
                     {
@@ -241,7 +213,6 @@ public class Engine
                         if (rec != null)
                         {
                             records.Add(rec);
-                            // 逐条"跑码"日志
                             Logger.Info($"[解析] {rec.Model} | {rec.Result} | {Path.GetFileName(p)}");
                         }
                     }
@@ -250,11 +221,9 @@ public class Engine
                 }
                 totalInserted += _db.BatchInsert(records);
                 AppState.SetScanProgress(parsed: processed);
-                // 每批刷新一次统计, 左侧计数随之增长
                 RefreshStats();
             }
             Logger.Info($"[历史扫描] 结束 | xml={allFiles.Count} | 插入={totalInserted}");
-            // 历史扫描完就把近 N 天的不良并入待办登记表（大项合并、永久保留）
             SyncTodos("历史扫描后");
         }
         catch (Exception ex)
@@ -273,10 +242,6 @@ public class Engine
 
     private void RefreshStats() => AppState.RefreshStats(_db, _stationId, _cfg.ResultsRoot);
 
-    /// <summary>
-    /// 把「近 <c>todo_scan_days</c> 天」的新不良并入待办登记表。
-    /// 增量(靠水位线)、按大项合并、登记后永久保留。失败不影响采集主流程。
-    /// </summary>
     private void SyncTodos(string tag)
     {
         try
@@ -287,7 +252,6 @@ public class Engine
         catch (Exception ex) { Logger.Warning($"[待办]{tag} 同步失败: {ex.Message}"); }
     }
 
-    // ==================== 实时监控 ====================
     private void OnFileCreated(object sender, FileSystemEventArgs e) => ScheduleProcess(e.FullPath);
     private void OnFileRenamed(object sender, RenamedEventArgs e) => ScheduleProcess(e.FullPath);
 
@@ -321,7 +285,6 @@ public class Engine
         var rec = processor.ParseAndClassify(path);
         if (rec == null) return;
 
-        // 域1 A: 新不良项 pending_review（v3.19.0，per-run 去重）
         if (rec.HasFailItems)
         {
             foreach (var ft in rec.FailedTests)
@@ -353,10 +316,8 @@ public class Engine
 
         RefreshStats();
 
-        // FAIL 推送 + 桌面提示(扫描中/UNKNOWN 不推)
         if (rec.Result == "FAIL")
         {
-            // 新不良立即并入待办登记表 —— 就算用户不开待办页也不会漏登记
             SyncTodos("实时");
             if (rec.StationId == "UNKNOWN")
                 Logger.Info($"[跳过推送-无机台号] FAIL / {rec.Model} / {rec.Sn}");
@@ -364,10 +325,8 @@ public class Engine
                 Logger.Info($"[跳过推送-扫描中] FAIL / {rec.Model} / {rec.Sn}");
             else
             {
-                // 先弹本机桌面提示（不依赖网络，就算 webhook 没配也能看到）
                 try { DesktopNotifier.NotifyFail(rec); }
                 catch (Exception ex) { Logger.Warning($"桌面提示失败: {ex.Message}"); }
-                // 飞书 POST 放后台：同步等待最坏 10s 超时 × 3 次重试 ≈ 30s+，FAIL 风暴时会把实时处理线程堵住
                 try
                 {
                     var url = _cfg.WebhookUrl;
@@ -386,15 +345,6 @@ public class Engine
         }
     }
 
-    /// <summary>
-    /// 等待文件大小稳定(避免读到写一半的文件)。
-    /// ⚠ 坑：首次采样(prev=-1)必然"不同"，所以"连续 <paramref name="stableChecks"/> 次相同"
-    /// 实际要采样 stableChecks+1 次 —— 旧实现稳定检查 2 次要 3 次采样(1.5s)，
-    /// 每个实时事件都白等 1.5s。修法：先做一次"基线"采样当 prev，再进入稳定计数。
-    /// </summary>
-    /// <summary>按文件大小自适应稳定检查次数（域名1 智能等待，v3.19.0）：
-    /// 小文件（&lt;100KB）写入快取 2 次、中文件（100KB~1MB）3 次、大文件（&gt;1MB）4 次，
-    /// 避免大文件/慢盘漏读。显式传入 stableChecks&gt;0 时以调用方为准。</summary>
     private bool WaitForStable(string path, int stableChecks = 0, int intervalMs = 500, int timeoutMs = 10000)
     {
         long prev;
@@ -403,7 +353,6 @@ public class Engine
 
         if (stableChecks <= 0)
             stableChecks = prev < (100 * 1024) ? 2 : (prev <= (1024 * 1024) ? 3 : 4);
-
 
         int same = 0;
         var start = Environment.TickCount64;
@@ -422,7 +371,6 @@ public class Engine
         return true;
     }
 
-    /// <summary>未稳定文件重试线程：每 5s 扫一遍到期项重新入处理队列。</summary>
     private void RetryLoop()
     {
         try

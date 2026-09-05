@@ -3,28 +3,21 @@ using System.Text.Json;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 聚合库程序调整日志 + 报告归档扩展（P7，Lite-Fetch，2026-08-28）。
-/// proc_change_log 登记/时间轴/参数 diff；report_archive 归档/版本对比留痕。
-/// 单写者 WAL，走既有 _writeLock；读短租连接；JSON 快照存 TEXT，diff 在查询时内存计算（零第三方）。
-/// </summary>
 public partial class AggDatabase
 {
-    /// <summary>程序调整日志条目。</summary>
     public sealed class ProcLogEntry
     {
         public long Id;
         public string Version = "";
-        public string ChangedAt = ""; // yyyy-MM-dd HH:mm:ss
+        public string ChangedAt = "";
         public string ChangedBy = "";
         public string Content = "";
-        public string ScopeMachines = ""; // JSON 数组字符串，如 ["FCT1","FCT2"]
-        public string ParamsSnapshot = ""; // JSON 对象字符串
-        public string RelatedReports = ""; // JSON 数组
+        public string ScopeMachines = "";
+        public string ParamsSnapshot = "";
+        public string RelatedReports = "";
         public string CreatedAt = "";
     }
 
-    /// <summary>报告归档条目。</summary>
     public sealed class ReportArchiveEntry
     {
         public long Id;
@@ -39,10 +32,9 @@ public partial class AggDatabase
         public string ArchivedAt = "";
         public string ArchivedBy = "";
         public string Note = "";
-        public string SummaryJson = ""; // 解析摘要 JSON
+        public string SummaryJson = "";
     }
 
-    /// <summary>参数 diff 结果（before/after 按 key 对比）。</summary>
     public sealed class ProcDiffResult
     {
         public List<string> Added = new();
@@ -51,14 +43,10 @@ public partial class AggDatabase
         public List<string> Unchanged = new();
     }
 
-    // ==================== proc_change_log ====================
-
-    /// <summary>创建一条程序变更日志。成功返回自增 Id。</summary>
     public long CreateProcLog(ProcLogEntry e)
     {
         if (string.IsNullOrWhiteSpace(e.Version)) throw new ArgumentException("version required");
         if (string.IsNullOrWhiteSpace(e.ChangedAt)) e.ChangedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        // 规范化 JSON：若非法则原样存，查询时容错
         if (!string.IsNullOrWhiteSpace(e.ScopeMachines)) e.ScopeMachines = NormalizeJson(e.ScopeMachines);
         if (!string.IsNullOrWhiteSpace(e.ParamsSnapshot)) e.ParamsSnapshot = NormalizeJson(e.ParamsSnapshot);
         if (!string.IsNullOrWhiteSpace(e.RelatedReports)) e.RelatedReports = NormalizeJson(e.RelatedReports);
@@ -112,7 +100,6 @@ public partial class AggDatabase
         if (!string.IsNullOrWhiteSpace(version)) { conds.Add("version = @v COLLATE NOCASE"); ps.Add(("@v", version!.Trim())); }
         if (!string.IsNullOrWhiteSpace(fromAt)) { conds.Add("changed_at >= @from"); ps.Add(("@from", fromAt!)); }
         if (!string.IsNullOrWhiteSpace(toAt)) { conds.Add("changed_at <= @to"); ps.Add(("@to", toAt!)); }
-        // machine 过滤：scope_machines JSON 数组含该机台名（LIKE 兜底，精确 JSON 解析在内存二次过滤）
         bool filterMachine = !string.IsNullOrWhiteSpace(machine);
         if (filterMachine) { conds.Add("scope_machines LIKE @m"); ps.Add(("@m", $"%{machine!.Trim()}%")); }
         if (conds.Count > 0) sql += " WHERE " + string.Join(" AND ", conds);
@@ -130,7 +117,6 @@ public partial class AggDatabase
             var e = ReadProcLog(r);
             if (filterMachine)
             {
-                // 二次精确过滤：JSON 数组含 machine 或 scope 为空视为全机台
                 try
                 {
                     if (!string.IsNullOrWhiteSpace(e.ScopeMachines))
@@ -145,14 +131,13 @@ public partial class AggDatabase
                         }
                     }
                 }
-                catch { /* 非法 JSON 则保留 LIKE 命中 */ }
+                catch {  }
             }
             list.Add(e);
         }
         return list;
     }
 
-    /// <summary>时间轴：按 changed_at 倒序，常用于前端时间线渲染。支持机台筛选与分页。</summary>
     public List<ProcLogEntry> QueryProcTimeline(string? machine = null, int limit = 50, int offset = 0)
         => ListProcLogs(machine, null, limit, offset);
 
@@ -168,7 +153,6 @@ public partial class AggDatabase
         }
     }
 
-    /// <summary>参数 diff：对比两条记录的 params_snapshot JSON（对象扁平化对比）。</summary>
     public ProcDiffResult DiffProcParams(long id1, long id2)
     {
         var a = GetProcLog(id1) ?? throw new InvalidOperationException($"proc_log {id1} not found");
@@ -176,7 +160,6 @@ public partial class AggDatabase
         return DiffJsonObjects(a.ParamsSnapshot, b.ParamsSnapshot);
     }
 
-    /// <summary>直接对两个 JSON 对象字符串做 diff（用于自检与 API）。</summary>
     public static ProcDiffResult DiffJsonObjects(string? beforeJson, string? afterJson)
     {
         var res = new ProcDiffResult();
@@ -234,8 +217,6 @@ public partial class AggDatabase
         RelatedReports = r.IsDBNull(7) ? "" : r.GetString(7),
         CreatedAt = r.IsDBNull(8) ? "" : r.GetString(8),
     };
-
-    // ==================== report_archive ====================
 
     public long ArchiveReport(ReportArchiveEntry e)
     {

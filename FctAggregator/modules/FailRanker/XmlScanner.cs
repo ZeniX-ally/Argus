@@ -3,20 +3,16 @@ using System.Xml;
 
 namespace FctFailRanker;
 
-/// <summary>
-/// 单个失败项: 名称 + 测量值 + 规格上下限
-/// </summary>
 public class FailItem
 {
     public string Name = "";
-    public string Value = "";       // 测量值
-    public string Lolim = "";       // 下限
-    public string Hilim = "";       // 上限
-    public string Unit = "";        // 单位
+    public string Value = "";
+    public string Lolim = "";
+    public string Hilim = "";
+    public string Unit = "";
 
     public override string ToString() => Name;
 
-    /// <summary>格式化为 "名称 (值, 下限~上限 单位)"</summary>
     public string ToDetail()
     {
         var parts = new List<string>();
@@ -28,38 +24,30 @@ public class FailItem
     }
 }
 
-/// <summary>
-/// 单个 XML 的解析结果。业务规则与主项目 Argus 保持一致:
-/// 分类看文件名前缀 P_/F_/O_; USER==debug 跳过; 失败项排除 "Get Unit Information" 和 "UUT Status Err"。
-/// </summary>
 public class XmlRecord
 {
     public string FilePath = "";
     public string Filename = "";
-    public string Category = "";     // Online / Offline
-    public string Model = "";        // 型号(SN 前 8 位)
-    public string TestDate = "";     // 目录日期 yyyyMMdd
+    public string Category = "";
+    public string Model = "";
+    public string TestDate = "";
     public string Sn = "";
-    public string Station = "";      // 机台 (TESTER)
-    public string User = "";         // FACTORY.USER
-    public string Timestamp = "";    // BATCH.TIMESTAMP
-    public string Result = "";       // PASS / FAIL / INTERRUPTED
+    public string Station = "";
+    public string User = "";
+    public string Timestamp = "";
+    public string Result = "";
     public bool IsDebug;
-    public List<FailItem> FailItems = new();   // 失败项(含名称/测量值/规格)
+    public List<FailItem> FailItems = new();
 }
 
 public static class XmlScanner
 {
-    // 不计入不良的失败项(包含匹配, 忽略大小写)。
-    // Get Unit Information: 获取单元信息失败, 不上传 MES;
-    // UUT Status Err: 被测单元状态错误(非产品真实不良)。
     private static readonly string[] IgnoredFailSteps =
     {
         "Get Unit Information",
         "UUT Status Err",
     };
 
-    /// <summary>判断该失败项是否属于应排除项(包含匹配, 忽略大小写)。</summary>
     private static bool IsIgnoredFailStep(string name)
     {
         foreach (var ig in IgnoredFailSteps)
@@ -67,14 +55,9 @@ public static class XmlScanner
         return false;
     }
 
-    // 型号目录校验: 与主项目 StationDetector.IsValidModel 一致 (E + 7位数字, 如 E3002781)
     private static readonly Regex ModelRe = new(@"^E\d{7}$", RegexOptions.Compiled);
     private static bool IsValidModel(string name) => ModelRe.IsMatch(name);
 
-    /// <summary>
-    /// 扫描目录, 返回落在 [start, end] (按目录日期) 内的所有 XML 记录。
-    /// end 为当天 23:59, 即含 end 当天。
-    /// </summary>
     public static List<XmlRecord> Scan(
         string resultsRoot, DateTime start, DateTime end,
         Action<string>? log = null, Action<int, int>? progress = null)
@@ -98,10 +81,8 @@ public static class XmlScanner
             var info = ParsePath(file);
             if (info == null) { skippedUnknown++; continue; }
 
-            // 型号目录校验: 与主项目 DiscoverModels 一致, 非 E+7位数字的目录不扫
             if (!IsValidModel(info.Model)) { skippedUnknown++; continue; }
 
-            // 目录日期过滤
             if (!TryParseDate(info.TestDate, out var d)) { skippedUnknown++; continue; }
             if (d < start.Date || d > end.Date) { skippedRange++; continue; }
 
@@ -125,7 +106,6 @@ public static class XmlScanner
 
     private static PathInfo? ParsePath(string path)
     {
-        // ...\{Online|Offline}\{型号}\{yyyyMMdd}\{文件名}
         var parts = path.Replace('\\', '/').Split('/');
         if (parts.Length < 4) return null;
 
@@ -143,7 +123,6 @@ public static class XmlScanner
             Filename = filename,
         };
 
-        // 文件名: 前缀_Fts_PEU_G49_机台_SN_时间_时间
         var stem = filename;
         if (stem.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) stem = stem[..^4];
         stem = stem.Replace("(debug)", "").Replace("(Debug)", "");
@@ -194,7 +173,6 @@ public static class XmlScanner
 
             if (isPass)
             {
-                // PASS: 轻量只读 USER 判 debug
                 while (reader.Read())
                 {
                     if (reader.NodeType != XmlNodeType.Element) continue;
@@ -211,7 +189,6 @@ public static class XmlScanner
             }
             else
             {
-                // F_ / O_: 深度解析, 收集失败项(排除忽略项)
                 while (reader.Read())
                 {
                     if (reader.NodeType != XmlNodeType.Element) continue;
@@ -245,7 +222,6 @@ public static class XmlScanner
                             break;
                     }
                 }
-                // O_ 有真 fail -> FAIL, 否则 INTERRUPTED; F_ 恒 FAIL
                 if (prefix == "F_") rec.Result = "FAIL";
                 else rec.Result = rec.FailItems.Count > 0 ? "FAIL" : "INTERRUPTED";
             }

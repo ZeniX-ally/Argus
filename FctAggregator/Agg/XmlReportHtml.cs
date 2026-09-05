@@ -2,20 +2,8 @@ using System.Text;
 
 namespace FctAggregator;
 
-/// <summary>
-/// 在线 XML 报告查看器（v3.8.0 MVP）：把 <see cref="XmlParser.ParseReportText"/> 解析出的报告数据
-/// 渲染成与本地查看器（FctFailRanker.XmlViewerForm，深色仪表盘）**等效**的 HTML。
-///
-/// 等效性约定（与本地一致）：
-/// - 状态徽章：PANEL@STATUS == Passed → PASS（墨黑），否则 FAIL（主红），空 → UNKNOWN；
-/// - KPI 四卡：测试项总数 / 失败(计入不良) / 排除项 / 通过项；
-/// - 排除规则：失败项含 "Get Unit Information" / "UUT Status Err" 计排除项（不标红）；
-/// - 测试时间：PANEL@TIMESTAMP 优先，回退 BATCH@TIMESTAMP（与 v3.4.13 主记录口径一致）；
-/// - 表格：# / 测试项 / 测量值 / 下限 / 上限 / 单位 / 状态。
-/// </summary>
 public static class XmlReportHtml
 {
-    /// <summary>不计入不良的失败步骤（与 XmlViewerForm.IgnoredFailSteps 同口径）。</summary>
     private static readonly string[] IgnoredFailSteps = { "Get Unit Information", "UUT Status Err" };
 
     private static bool IsIgnored(string name)
@@ -25,10 +13,6 @@ public static class XmlReportHtml
         return false;
     }
 
-    /// <summary>渲染完整 HTML 页面（零外部资源，黑白红主题）。</summary>
-    /// <param name="data">解析后的报告数据。</param>
-    /// <param name="fileName">报告文件名（信息网格展示）。</param>
-    /// <param name="rawUrl">「查看原始 XML」链接（null 则不显示该按钮）。</param>
     public static string Render(XmlParser.ReportData data, string fileName, string? rawUrl)
     {
         var pass = data.PanelStatus.Equals("Passed", StringComparison.OrdinalIgnoreCase);
@@ -75,12 +59,10 @@ public static class XmlReportHtml
         sb.AppendLine("@media(max-width:640px){.sn{padding-right:0}.badge{position:static;display:inline-block;margin-top:8px}}");
         sb.AppendLine("</style></head><body><div class=\"wrap\">");
 
-        // 头部：SN + 徽章
         sb.AppendLine("<div class=\"head\"><div class=\"kicker\">FCT 测试报告</div>");
         sb.AppendLine("<div class=\"sn\">" + Html(data.Sn.Length > 0 ? data.Sn : fileName) + "</div>");
         sb.AppendLine("<div class=\"badge " + badgeCls + "\">● " + Html(badge) + "</div></div>");
 
-        // KPI 四卡
         sb.AppendLine("<div class=\"kpis\">");
         sb.AppendLine(KpiCard("测试项总数", total.ToString(), "#C8102E"));
         sb.AppendLine(KpiCard("失败（计入不良）", failed.ToString(), failed > 0 ? "#C8102E" : "#141414"));
@@ -88,7 +70,6 @@ public static class XmlReportHtml
         sb.AppendLine(KpiCard("通过项", passed.ToString(), "#141414"));
         sb.AppendLine("</div>");
 
-        // 信息网格
         sb.AppendLine("<div class=\"card\"><div class=\"grid\">");
         sb.AppendLine(Info("机台 TESTER", data.Tester));
         sb.AppendLine(Info("操作模式", data.FactoryUser));
@@ -98,7 +79,6 @@ public static class XmlReportHtml
         sb.AppendLine(Info("SN", data.Sn));
         sb.AppendLine("</div></div>");
 
-        // 测试项表格
         sb.AppendLine("<div class=\"card\"><h2 style=\"font-size:14px;font-weight:500;margin:0 0 10px\">测试项明细</h2>");
         sb.AppendLine("<table><thead><tr><th>#</th><th>测试项</th><th>测量值</th><th>下限</th><th>上限</th><th>单位</th><th>状态</th></tr></thead><tbody>");
         int idx = 1;
@@ -117,7 +97,6 @@ public static class XmlReportHtml
         }
         sb.AppendLine("</tbody></table></div>");
 
-        // 底部工具条
         sb.AppendLine("<div class=\"bar\"><span>在线查看 · 口径与本地查看器一致</span>");
         if (!string.IsNullOrEmpty(rawUrl))
             sb.AppendLine("<a href=\"" + Html(rawUrl) + "\">查看原始 XML</a>");
