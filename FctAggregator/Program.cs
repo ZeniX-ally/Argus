@@ -64,6 +64,10 @@ static class Program
                 case "upgrade":
                     return FctAggregator.modules.Upgrader.UpgradeEntry.Run();
 
+                case "backfill":
+                    EnsureConsole();
+                    return BackfillTool.Run(rest);
+
                 case "agg":
                     if (rest.Any(a => a.Equals("--install", StringComparison.OrdinalIgnoreCase)))
                     {
@@ -347,6 +351,7 @@ FCT 工具套件 (Argus.exe)
   Argus.exe tdms [文件.tdms]   TDMS 波形查看（窗口）
   Argus.exe tdms --help        TDMS 工具的命令行用法
   Argus.exe fetch --help       取数打包工具的命令行用法
+  Argus.exe backfill [--days N]  存量 PASS 文件测量值补采（规格06，幂等可续跑）
   Argus.exe --help             本帮助
 
 四个工具也能在主程序左侧「工具箱」里直接点开。

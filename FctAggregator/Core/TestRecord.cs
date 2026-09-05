@@ -10,6 +10,17 @@ public class FailedTest
     public string Rule { get; set; } = "";
 }
 
+public class MeasurementRow
+{
+    public string TestName { get; set; } = "";
+    public double? Value { get; set; }
+    public string? ValueText { get; set; }
+    public double? Lolim { get; set; }
+    public double? Hilim { get; set; }
+    public string? Unit { get; set; }
+    public string? Rule { get; set; }
+}
+
 public class TestRecord
 {
     public string StationId { get; set; } = "";
@@ -26,5 +37,6 @@ public class TestRecord
     public string? BatchTimestamp { get; set; }
     public bool HasFailItems { get; set; }
     public List<FailedTest> FailedTests { get; set; } = new();
+    public List<MeasurementRow> Measurements { get; set; } = new();
     public long? FileSize { get; set; }
 }

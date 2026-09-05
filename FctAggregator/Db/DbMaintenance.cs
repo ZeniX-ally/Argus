@@ -124,5 +124,31 @@ public sealed class DbMaintenance
         {
             Logger.Warning($"[库维护] 自学习引擎执行失败（不影响运行）: {ex.Message}");
         }
+        try
+        {
+            var localDb = Database.Current;
+            if (localDb != null) AnalysisEngine.RunOnce(localDb, AppConfig.Instance);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] 分析引擎执行失败（不影响运行）: {ex.Message}");
+        }
+        try
+        {
+            var localDb = Database.Current;
+            if (localDb != null)
+            {
+                var retain = AppConfig.Instance.AnalyzeMeasureRetentionDays;
+                var purged = localDb.PurgeOldMeasurements(retain);
+                if (purged > 0) Logger.Info($"[库维护] 测量值清理: 删除 {purged} 条（保留 {retain} 天）");
+                var retainFi = AppConfig.Instance.AnalyzeFailItemRetentionDays;
+                var purgedFi = localDb.PurgeOldFailItems(retainFi);
+                if (purgedFi > 0) Logger.Info($"[库维护] 失败项明细清理: 删除 {purgedFi} 条（保留 {retainFi} 天）");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] 测量值清理失败: {ex.Message}");
+        }
     }
 }

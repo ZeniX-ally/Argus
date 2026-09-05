@@ -4964,6 +4964,394 @@ Argus 统一发布包  v{newer}
             Check(string.IsNullOrEmpty(AppConfig.FallbackWebhookUrl),
                 "飞书推送: FallbackWebhookUrl 已置空（开源版不携带任何硬编码凭据）");
         }
+
+        // ============ 规格06 多元深分析：PASS 测量值采集 / v14 存储 / 漂移+CPK / backfill ============
+        {
+            Console.WriteLine("\n【规格06】PASS 测量值采集（ParseMeasurements）…");
+            var savedStation = AppConfig.Instance.StationId;
+            var savedRoot = AppConfig.Instance.ResultsRoot;
+            var savedCollect = AppConfig.Instance.AnalyzeCollectPass;
+            var savedMaxKb = AppConfig.Instance.AnalyzeMaxFileKb;
+            var savedMaxTests = AppConfig.Instance.AnalyzeMaxTestsPerFile;
+            try
+            {
+                AppConfig.Instance.StationId = "FCT1";
+                AppConfig.Instance.ResultsRoot = Path.Combine(work, "a6res");
+                AppConfig.Instance.AnalyzeCollectPass = true;
+
+                string Test(string name, string? value, string? hi = null, string? lo = null, string? unit = null, string? rule = null)
+                {
+                    var s = $"<TEST NAME=\"{name}\" STATUS=\"Passed\"";
+                    if (value != null) s += $" VALUE=\"{value}\"";
+                    if (hi != null) s += $" HILIM=\"{hi}\"";
+                    if (lo != null) s += $" LOLIM=\"{lo}\"";
+                    if (unit != null) s += $" UNIT=\"{unit}\"";
+                    if (rule != null) s += $" RULE=\"{rule}\"";
+                    return s + "/>";
+                }
+                var passXml =
+                    "<FACTORY USER=\"op1\" TESTER=\"FCT-01\" FIXTURE_ID=\"FX01\">" +
+                    "<PANEL STATUS=\"Passed\"><DUT ID=\"E3002781A1\">" +
+                    Test("V_KL30", "13.52", "14.4", "10.8", "V", "LeGe") +
+                    Test("MODE_STR", "OK") +
+                    Test("NO_VAL", null) +
+                    "</DUT></PANEL></FACTORY>";
+
+                var parser = new FctAggregator.Parsing.DefaultResultParser(FctAggregator.Parsing.ParserRuleSet.Default, "FCT1");
+                var rows = parser.ParseMeasurements(passXml);
+                Check(rows.Count == 3, $"规格06: PASS 文件全 TEST 收录不限 Failed（实得 {rows.Count}）");
+                var r0 = rows[0];
+                Check(r0.Value.HasValue && Math.Abs(r0.Value.Value - 13.52) < 1e-9
+                      && r0.Hilim.HasValue && Math.Abs(r0.Hilim.Value - 14.4) < 1e-9
+                      && r0.Lolim.HasValue && Math.Abs(r0.Lolim.Value - 10.8) < 1e-9
+                      && r0.Unit == "V" && r0.Rule == "LeGe",
+                      "规格06: 数值测量行 value/上下限/单位/规则齐全");
+                Check(rows[1].Value == null && rows[1].ValueText == "OK",
+                      "规格06: 非数值 VALUE → value 空 + value_text 原串");
+                Check(rows[2].Value == null && rows[2].ValueText == null,
+                      "规格06: 无 VALUE 节点行保留（无值）");
+                var sci = parser.ParseMeasurements(
+                    "<FACTORY USER=\"op1\"><PANEL STATUS=\"Passed\"><DUT ID=\"D\">" +
+                    Test("SC", "1.3e1") + "</DUT></PANEL></FACTORY>");
+                Check(sci.Count == 1 && sci[0].Value.HasValue && Math.Abs(sci[0].Value!.Value - 13.0) < 1e-9,
+                      "规格06: 科学计数法 VALUE 正常解析");
+
+                AppConfig.Instance.AnalyzeCollectPass = false;
+                Check(parser.ParseMeasurements(passXml).Count == 0,
+                      "规格06: analyze_collect_pass=false 提取 no-op（开关可关回旧行为）");
+                AppConfig.Instance.AnalyzeCollectPass = true;
+
+                AppConfig.Instance.AnalyzeMaxFileKb = 1;
+                Check(parser.ParseMeasurements(passXml.PadRight(3000)).Count == 0,
+                      "规格06: 超大文件护栏（>max_file_kb）跳过提取");
+                AppConfig.Instance.AnalyzeMaxFileKb = savedMaxKb;
+
+                AppConfig.Instance.AnalyzeMaxTestsPerFile = 2;
+                Check(parser.ParseMeasurements(passXml).Count == 2,
+                      "规格06: 单文件测项上限截断（500 默认可调）");
+                AppConfig.Instance.AnalyzeMaxTestsPerFile = savedMaxTests;
+
+                Check(parser.ParseMeasurements("<broken").Count == 0,
+                      "规格06: 损坏 XML 提取安全空表不抛异常");
+
+                var a6res = Path.Combine(work, "a6res");
+                var passFile = Path.Combine(a6res, "Online", "E3002781", "20260905", "P_UNIT_SN001_20260905120000_0001.xml");
+                var failFile = Path.Combine(a6res, "Online", "E3002781", "20260905", "F_UNIT_SN002_20260905120100_0001.xml");
+                Directory.CreateDirectory(Path.GetDirectoryName(passFile)!);
+                File.WriteAllText(passFile, passXml);
+                File.WriteAllText(failFile, passXml);
+
+                var outp = parser.Parse(passFile, passXml);
+                Check(outp != null && outp.Result == "PASS" && outp.Measurements.Count == 3,
+                      $"规格06: Parse 集成 PASS 分支接线（实得 {outp?.Measurements.Count ?? -1} 行）");
+                var outpF = parser.Parse(failFile, passXml);
+                Check(outpF != null && outpF.Result == "FAIL" && outpF.Measurements.Count == 0,
+                      "规格06: FAIL 文件不采测量值（明细留待期2 fail_items）");
+
+                var proc = new Processor(AppConfig.Instance, "FCT1", FctAggregator.Parsing.ParserRegistry.Instance, null);
+                var recT = proc.ParseAndClassify(passFile);
+                Check(recT != null && recT.Measurements.Count == 3 && recT.Result == "PASS",
+                      "规格06: Processor 透传 Measurements 至 TestRecord");
+            }
+            finally
+            {
+                AppConfig.Instance.StationId = savedStation;
+                AppConfig.Instance.ResultsRoot = savedRoot;
+                AppConfig.Instance.AnalyzeCollectPass = savedCollect;
+                AppConfig.Instance.AnalyzeMaxFileKb = savedMaxKb;
+                AppConfig.Instance.AnalyzeMaxTestsPerFile = savedMaxTests;
+            }
+            Console.WriteLine("[规格06] 采集组完成");
+
+            Console.WriteLine("\n【规格06】存储层 test_measurements / fail_items …");
+            long RowCount(string dbPath, string table)
+            {
+                using var c = new SqliteConnection($"Data Source={dbPath}");
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = $"SELECT COUNT(*) FROM {table}";
+                return Convert.ToInt64(cmd.ExecuteScalar());
+            }
+            long IdOfRec(string dbPath, string xmlPath)
+            {
+                using var c = new SqliteConnection($"Data Source={dbPath}");
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = "SELECT id FROM test_records WHERE xml_path=@p";
+                cmd.Parameters.AddWithValue("@p", xmlPath);
+                var v = cmd.ExecuteScalar();
+                return v == null || v is DBNull ? -1 : Convert.ToInt64(v);
+            }
+
+            var dirA6 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_analysis_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dirA6);
+            var dbA6Path = Path.Combine(dirA6, "local.db");
+            var dbA6 = new Database(dbA6Path);
+            int seqA6 = 0;
+            TestRecord MP(string ts, (string name, double v, double? lo, double? hi)[] ms)
+            {
+                seqA6++;
+                return new TestRecord
+                {
+                    StationId = "FCT1", Model = "E3002781", Result = "PASS",
+                    TestDate = "20260905", BatchTimestamp = ts,
+                    XmlPath = $@"C:\t\a6_{seqA6}.xml",
+                    Measurements = ms.Select(m => new MeasurementRow
+                    {
+                        TestName = m.name, Value = m.v, Lolim = m.lo, Hilim = m.hi, Unit = "V",
+                    }).ToList(),
+                };
+            }
+
+            Check(RowCount(dbA6Path, "test_measurements") == 0, "规格06: test_measurements 表随 Init 创建（v14）");
+            Check(RowCount(dbA6Path, "fail_items") == 0, "规格06: fail_items 表预建（期2启用）");
+
+            var m1 = MP("2026-09-04 08:00:00", new[] { ("V_KL30", 13.5, (double?)10.8, (double?)14.4) });
+            dbA6.BatchInsert(new[] { m1 });
+            Check(RowCount(dbA6Path, "test_measurements") == 1, "规格06: BatchInsert 后测量值自动挂接入库");
+            var ridM1 = IdOfRec(dbA6Path, m1.XmlPath);
+            dbA6.BatchInsert(new[] { m1 });
+            dbA6.InsertMeasurementsFor(new List<(TestRecord, long)> { (m1, ridM1) });
+            Check(RowCount(dbA6Path, "test_measurements") == 1,
+                  "规格06: UNIQUE(record_id,test_name) 幂等（重复插入不重复落行）");
+
+            _ = new Database(dbA6Path);
+            Check(RowCount(dbA6Path, "test_measurements") == 1, "规格06: 老库重开 Init 幂等（CREATE IF NOT EXISTS），数据完好");
+
+            var mOld = MP("2026-01-01 00:00:00", new[] { ("T_OLD", 1.0, (double?)null, (double?)null) });
+            dbA6.BatchInsert(new[] { mOld });
+            Check(RowCount(dbA6Path, "test_measurements") == 2, "规格06: 旧 ts 测量行入库");
+            var purgedM = dbA6.PurgeOldMeasurements(30);
+            Check(purgedM >= 1 && RowCount(dbA6Path, "test_measurements") == 1,
+                  $"规格06: PurgeOldMeasurements 清旧留新（删 {purgedM}）");
+
+            var mS1 = MP("2026-09-04 09:00:00", new[] { ("T_STAT", 9.9, (double?)9.0, (double?)11.0) });
+            var mS2 = MP("2026-09-04 09:05:00", new[] { ("T_STAT", 10.0, (double?)9.0, (double?)11.0) });
+            var mS3 = MP("2026-09-04 09:10:00", new[] { ("T_STAT", 10.1, (double?)9.0, (double?)11.0) });
+            dbA6.BatchInsert(new[] { mS1, mS2, mS3 });
+            var stat = dbA6.AggregateMeasurementStats("2026-09-04", "2026-09-05");
+            Check(stat.Count == 2, $"规格06: 聚合按 (model,test_name) 分组（实得 {stat.Count} 组）");
+            var statT = stat.FirstOrDefault(s => s.TestName == "T_STAT");
+            Check(statT != null && statT.N == 3 && Math.Abs(statT.Mean - 10.0) < 1e-9,
+                  "规格06: 聚合统计 N/mean 正确");
+            var sT = statT!;
+            Check(Math.Abs(sT.Sigma - 0.1) < 1e-9
+                  && sT.Lolim.HasValue && Math.Abs(sT.Lolim.Value - 9.0) < 1e-9
+                  && sT.Hilim.HasValue && Math.Abs(sT.Hilim.Value - 11.0) < 1e-9,
+                  "规格06: 样本σ（n−1 修正）与限值聚合正确");
+            Console.WriteLine("[规格06] 存储组完成");
+
+            Console.WriteLine("\n【规格06】分析器 漂移 + CPK …");
+            var fixedNow = new DateTime(2026, 9, 5);
+            var b1 = MP("2026-09-04 08:00:00", new[]
+            {
+                ("T_DRIFT", 9.9, (double?)9.0, (double?)11.0),
+                ("T_MARGIN", 10.9, (double?)null, (double?)11.0),
+                ("T_CONST", 5.0, (double?)null, (double?)null),
+                ("T_ZERO", 1.0, (double?)null, (double?)null),
+                ("T_OK", 10.2, (double?)9.0, (double?)11.0),
+                ("T_NOLIM", 1.0, (double?)null, (double?)null),
+            });
+            var b2 = MP("2026-09-04 09:00:00", new[]
+            {
+                ("T_DRIFT", 10.1, (double?)9.0, (double?)11.0),
+                ("T_MARGIN", 10.9, (double?)null, (double?)11.0),
+                ("T_CONST", 5.0, (double?)null, (double?)null),
+                ("T_ZERO", 1.0, (double?)null, (double?)null),
+                ("T_OK", 9.8, (double?)9.0, (double?)11.0),
+                ("T_NOLIM", 1.2, (double?)null, (double?)null),
+            });
+            dbA6.BatchInsert(new[] { b1, b2 });
+            var todayRecs = new List<TestRecord>();
+            for (int i = 0; i < 3; i++)
+                todayRecs.Add(MP($"2026-09-05 0{i + 6}:00:00", new[]
+                {
+                    ("T_DRIFT", 10.5, (double?)9.0, (double?)11.0),
+                    ("T_MARGIN", 10.95, (double?)null, (double?)11.0),
+                    ("T_CONST", 5.0, (double?)null, (double?)null),
+                    ("T_ZERO", 1.0, (double?)null, (double?)null),
+                    ("T_OK", 10.0, (double?)9.0, (double?)11.0),
+                    ("T_NOLIM", 1.0, (double?)null, (double?)null),
+                }));
+            dbA6.BatchInsert(todayRecs);
+
+            var baseStats = dbA6.AggregateMeasurementStats("2026-09-04", "2026-09-05");
+            var todayStats = dbA6.AggregateMeasurementStats("2026-09-05", "2026-09-06");
+            var cfgC = new AppConfig { AnalyzeMinSamples = 2, AnalyzeDriftSigma = 3.0, AnalyzeDriftWarnRatio = 1.0, AnalyzeWindowDays = 7 };
+
+            var driftAlerts = DriftAnalyzer.Compute(baseStats, todayStats, cfgC);
+            var dDrift = driftAlerts.FirstOrDefault(a => a.TestName == "T_DRIFT");
+            Check(dDrift != null && dDrift.Kind == "drift" && Math.Abs(dDrift.Score - 3.54) < 0.05,
+                  $"规格06: 均值漂移触发（z 实得 {dDrift?.Score ?? -1}）");
+            Check(dDrift != null && Math.Abs(dDrift.ExpectedLow - (10.0 - 3 * 0.1414213562)) < 1e-3
+                  && Math.Abs(dDrift.ExpectedHigh - (10.0 + 3 * 0.1414213562)) < 1e-3,
+                  "规格06: 漂移预警附期望区间 mean±kσ");
+            Check(driftAlerts.All(a => a.TestName != "T_OK"),
+                  "规格06: 稳定测项不误报");
+            var cfgCold = new AppConfig { AnalyzeMinSamples = 10, AnalyzeDriftSigma = 3.0, AnalyzeDriftWarnRatio = 1.0 };
+            Check(DriftAnalyzer.Compute(baseStats, todayStats, cfgCold).Count == 0,
+                  "规格06: 基线样本不足（冷启动 < min_samples）不预警");
+            var shortToday = new List<MeasureStatsRow>
+            {
+                new() { Model = "E3002781", TestName = "T_DRIFT", N = 2, Mean = 10.5, Sigma = 0.1 },
+            };
+            Check(DriftAnalyzer.Compute(baseStats, shortToday, cfgC).Count == 0,
+                  "规格06: 今日样本不足（<3）不出预警");
+            var zeroBase = new List<MeasureStatsRow>
+            {
+                new() { Model = "M", TestName = "T_Z", N = 30, Mean = 10.0, Sigma = 0, Lolim = 9, Hilim = 11 },
+            };
+            var zeroToday = new List<MeasureStatsRow>
+            {
+                new() { Model = "M", TestName = "T_Z", N = 3, Mean = 10.5, Sigma = 0, Lolim = 9, Hilim = 11 },
+            };
+            var zeroAlerts = DriftAnalyzer.Compute(zeroBase, zeroToday, cfgC);
+            Check(zeroAlerts.Count == 1 && zeroAlerts[0].Kind == "drift",
+                  "规格06: σ 防零量程下限（1% 量程）使恒定值测项仍可检出漂移");
+            var noRangeBase = new List<MeasureStatsRow>
+            {
+                new() { Model = "M", TestName = "T_N", N = 30, Mean = 0, Sigma = 0 },
+            };
+            var noRangeToday = new List<MeasureStatsRow>
+            {
+                new() { Model = "M", TestName = "T_N", N = 3, Mean = 1.0, Sigma = 0 },
+            };
+            Check(DriftAnalyzer.Compute(noRangeBase, noRangeToday, cfgC).Count == 0,
+                  "规格06: 恒定值且无量程（σ_eff=0）安全跳过");
+            var dMargin = driftAlerts.FirstOrDefault(a => a.TestName == "T_MARGIN");
+            Check(dMargin != null && dMargin.Kind == "margin" && Math.Abs(dMargin.Score - 0.15) < 0.03,
+                  $"规格06: 逼近规格限预警（单边限伪量程回退 |mean|→σ_eff≈0.109，余量比实得 {dMargin?.Score ?? -1}）");
+            Check(driftAlerts.First().Kind == "drift" && driftAlerts.Last().Kind == "margin",
+                  "规格06: 预警排序 drift 优先于 margin");
+
+            var allStats = dbA6.AggregateMeasurementStats("2026-09-04", "2026-09-06");
+            var cpkItems = CpkAnalyzer.Compute(allStats);
+            var cpkOk = cpkItems.First(i => i.TestName == "T_OK");
+            Check(cpkOk.Level == "ok" && cpkOk.Cpk.HasValue && Math.Abs(cpkOk.Cpk.Value - 2.357) < 0.01,
+                  $"规格06: CPK 双边限计算（实得 {cpkOk.Cpk}）");
+            var cpkMargin = cpkItems.First(i => i.TestName == "T_MARGIN");
+            Check(cpkMargin.Level == "low" && cpkMargin.Lolim == null && cpkMargin.Cpk.HasValue,
+                  "规格06: 单边限（仅上限）CPK 判定");
+            Check(cpkItems.First(i => i.TestName == "T_DRIFT").Level == "low",
+                  "规格06: 低能力测项 Level=low 入清单");
+            var cpkConst = cpkItems.First(i => i.TestName == "T_CONST");
+            Check(cpkConst.Level == "constant" && !cpkConst.Cpk.HasValue,
+                  "规格06: σ=0 常数量测项记 constant 不参与能力评级");
+            Check(cpkItems.First(i => i.TestName == "T_ZERO").Level == "constant"
+                  && cpkItems.First(i => i.TestName == "T_NOLIM").Level == "no_limit",
+                  "规格06: 无限值/零方差测项分类正确");
+            Check(CpkAnalyzer.MarginRatio(0, null, null, 0) == double.MaxValue,
+                  "规格06: MarginRatio σ=0 安全返回 MaxValue");
+
+            var dbA6n = new Database(Path.Combine(dirA6, "noop.db"));
+            AnalysisEngine.RunOnce(dbA6n, new AppConfig { AnalyzeDriftEnabled = false, AnalyzeCpkEnabled = false }, fixedNow);
+            Check(dbA6n.GetMeta(AnalysisEngine.MetaDrift) == null && dbA6n.GetMeta(AnalysisEngine.MetaCpk) == null,
+                  "规格06: 分析开关显式全关 RunOnce no-op");
+            AnalysisEngine.RunOnce(dbA6, new AppConfig { AnalyzeDriftEnabled = true, AnalyzeCpkEnabled = true, AnalyzeMinSamples = 2, AnalyzeWindowDays = 7 }, fixedNow);
+            var driftState = AnalysisEngine.GetDriftState(dbA6);
+            var cpkState = AnalysisEngine.GetCpkState(dbA6);
+            Check(driftState != null && driftState.Date == "2026-09-05" && driftState.Alerts.Any(a => a.TestName == "T_DRIFT"),
+                  "规格06: RunOnce 落盘 app_meta 漂移快照且可读回");
+            Check(cpkState != null && cpkState.LowCount > 0 && cpkState.Items.Any(i => i.TestName == "T_DRIFT"),
+                  "规格06: RunOnce 落盘 CPK 快照含低能力项");
+            Check(cpkState != null && CpkState.FromJson(cpkState.ToJson())!.LowCount == cpkState.LowCount,
+                  "规格06: CpkState JSON 往返一致");
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dirA6, true); } catch { }
+            Console.WriteLine("[规格06] 分析器组完成");
+
+            Console.WriteLine("\n【规格06】backfill 回填 …");
+            var savedStationB = AppConfig.Instance.StationId;
+            var savedRootB = AppConfig.Instance.ResultsRoot;
+            var savedCollectB = AppConfig.Instance.AnalyzeCollectPass;
+            var dirB6 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_backfill_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dirB6);
+            try
+            {
+                AppConfig.Instance.StationId = "FCT1";
+                AppConfig.Instance.AnalyzeCollectPass = true;
+                var yest = DateTime.Now.Date.AddDays(-1);
+                var yestStr = yest.ToString("yyyyMMdd");
+                var todayStr = DateTime.Now.Date.ToString("yyyyMMdd");
+                var resRoot = Path.Combine(dirB6, "results");
+                var dbB6Path = Path.Combine(dirB6, "local.db");
+                var dbB6 = new Database(dbB6Path);
+
+                string MkXml(string sn, string ts) =>
+                    "<FACTORY USER=\"op1\" TESTER=\"FCT-01\">" +
+                    "<PANEL STATUS=\"Passed\"><DUT ID=\"E3002781A1\">" +
+                    $"<TEST NAME=\"V_KL30\" STATUS=\"Passed\" VALUE=\"13.5{sn.Length % 10}\" HILIM=\"14.4\" LOLIM=\"10.8\" UNIT=\"V\"/>" +
+                    "<TEST NAME=\"I_STANDBY\" STATUS=\"Passed\" VALUE=\"0.52\" HILIM=\"1.0\" LOLIM=\"0\" UNIT=\"A\"/>" +
+                    $"</DUT></PANEL><!-- {ts} --></FACTORY>";
+                var yestFile = Path.Combine(resRoot, "Online", "E3002781", yestStr, $"P_UNIT_{sn6(yestStr)}_0001.xml");
+                var todayFile = Path.Combine(resRoot, "Online", "E3002781", todayStr, $"P_UNIT_{sn6(todayStr)}_0002.xml");
+                static string sn6(string d) => "SN" + d[2..];
+                Directory.CreateDirectory(Path.GetDirectoryName(yestFile)!);
+                Directory.CreateDirectory(Path.GetDirectoryName(todayFile)!);
+                File.WriteAllText(yestFile, MkXml("SN" + yestStr[2..], yestStr));
+                File.WriteAllText(todayFile, MkXml("SN" + todayStr[2..], todayStr));
+                AppConfig.Instance.ResultsRoot = resRoot;
+
+                var preExist = new TestRecord
+                {
+                    StationId = "FCT1", Model = "E3002781", Result = "PASS",
+                    TestDate = yestStr, XmlPath = Path.GetFullPath(yestFile),
+                };
+                dbB6.BatchInsert(new[] { preExist });
+                Check(RowCount(dbB6Path, "test_measurements") == 0, "规格06: 存量记录初始无测量值");
+
+                int rc1 = BackfillTool.Run(Array.Empty<string>(), dbB6Path);
+                Check(rc1 == 0 && RowCount(dbB6Path, "test_records") == 2,
+                      $"规格06: backfill 首跑 exit 0 且新记录入库（实得 {RowCount(dbB6Path, "test_records")}）");
+                Check(RowCount(dbB6Path, "test_measurements") == 4,
+                      $"规格06: 新记录自动补测量 + 存量 PASS 补采（实得 {RowCount(dbB6Path, "test_measurements")}）");
+
+                int rc2 = BackfillTool.Run(Array.Empty<string>(), dbB6Path);
+                Check(rc2 == 0 && RowCount(dbB6Path, "test_records") == 2 && RowCount(dbB6Path, "test_measurements") == 4,
+                      "规格06: backfill 二跑幂等（xml_path UNIQUE + 测量 UNIQUE 双防线）");
+                Check(dbB6.GetMeta(BackfillTool.MetaWatermark) == DateTime.Now.Date.ToString("yyyy-MM-dd"),
+                      $"规格06: 水位落盘 backfill_last_day（实得 {dbB6.GetMeta(BackfillTool.MetaWatermark)}）");
+
+                var resD6 = Path.Combine(dirB6, "results_d6");
+                var d6File = Path.Combine(resD6, "Online", "E3002781", yestStr, "P_UNIT_D6_0001.xml");
+                Directory.CreateDirectory(Path.GetDirectoryName(d6File)!);
+                File.WriteAllText(d6File, MkXml("D6", yestStr));
+                AppConfig.Instance.ResultsRoot = resD6;
+                var dbD6Path = Path.Combine(dirB6, "d6.db");
+                _ = new Database(dbD6Path);
+                var d6rc = BackfillTool.Run(new[] { "--days", "1" }, dbD6Path);
+                AppConfig.Instance.ResultsRoot = resRoot;
+                Check(d6rc == 0 && RowCount(dbD6Path, "test_records") == 0,
+                      "规格06: --days 1 窗口过滤昨日目录");
+            }
+            finally
+            {
+                AppConfig.Instance.StationId = savedStationB;
+                AppConfig.Instance.ResultsRoot = savedRootB;
+                AppConfig.Instance.AnalyzeCollectPass = savedCollectB;
+            }
+
+            {
+                var dirB7 = Path.Combine(dirB6, "off");
+                Directory.CreateDirectory(dirB7);
+                var dbB7Path = Path.Combine(dirB7, "local.db");
+                new Database(dbB7Path);
+                AppConfig.Instance.AnalyzeCollectPass = false;
+                var rcOff = BackfillTool.Run(Array.Empty<string>(), dbB7Path);
+                AppConfig.Instance.AnalyzeCollectPass = savedCollectB;
+                Check(rcOff == 0 && RowCount(dbB7Path, "test_records") == 0,
+                      "规格06: collect_pass=false backfill 无动作 exit 0");
+                AppConfig.Instance.AnalyzeCollectPass = savedCollectB;
+
+                AppConfig.Instance.ResultsRoot = Path.Combine(dirB7, "no_such_root");
+                var rcNoRoot = BackfillTool.Run(Array.Empty<string>(), dbB7Path);
+                AppConfig.Instance.ResultsRoot = savedRootB;
+                Check(rcNoRoot == 1, "规格06: results_root 不存在 exit 1");
+            }
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dirB6, true); } catch { }
+            Console.WriteLine("[规格06] 回填组完成");
+        }
     }
 
     static HttpResponseMessage HttpPostWithToken(string url, string token, string json){

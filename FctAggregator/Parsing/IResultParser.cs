@@ -33,6 +33,7 @@ public class ParseOutput
     public string? BatchTimestamp;
     public bool HasFailItems;
     public List<FailedTest> FailedTests { get; set; } = new();
+    public List<FctAggregator.MeasurementRow> Measurements { get; set; } = new();
     public long? FileSize;
 }
 

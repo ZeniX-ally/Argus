@@ -43,6 +43,7 @@ public sealed class DefaultResultParser : IResultParser
         string? user = null, tester = null, panelStatus = null, batchTs = null, failReason = null, fixtureId = null;
         bool hasFail = false;
         var failedTests = new List<FailedTest>();
+        var measurements = new List<MeasurementRow>();
 
         if (isPass)
         {
@@ -51,6 +52,7 @@ public sealed class DefaultResultParser : IResultParser
                 return new ParseOutput { Skipped = true, SkipReason = "debug" };
             result = "PASS";
             panelStatus = "Passed";
+            measurements = ParseMeasurements(rawXml);
         }
         else
         {
@@ -116,6 +118,7 @@ public sealed class DefaultResultParser : IResultParser
             BatchTimestamp = batchTs,
             HasFailItems = hasFail,
             FailedTests = failedTests,
+            Measurements = measurements,
             FileSize = size,
         };
     }
@@ -198,6 +201,71 @@ public sealed class DefaultResultParser : IResultParser
             r.Error = true;
         }
         return r;
+    }
+
+    /// <summary>规格06：PASS 文件测量值单遍流式提取（TEST 全收不限 Failed，护栏可关）。</summary>
+    internal List<MeasurementRow> ParseMeasurements(string rawXml)
+    {
+        var rows = new List<MeasurementRow>();
+        var cfg = AppConfig.Instance;
+        if (!cfg.AnalyzeCollectPass) return rows;
+        if (rawXml.Length > (long)cfg.AnalyzeMaxFileKb * 1024)
+        {
+            Logger.Warning($"[分析采集] 文件超大({rawXml.Length / 1024}KB>{cfg.AnalyzeMaxFileKb}KB)跳过测量值提取");
+            return rows;
+        }
+        try
+        {
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                IgnoreComments = true,
+                IgnoreWhitespace = true,
+            };
+            using var sr = new StringReader(rawXml);
+            using var reader = XmlReader.Create(sr, settings);
+            while (reader.Read())
+            {
+                if (reader.NodeType != XmlNodeType.Element || reader.Name != "TEST") continue;
+                var name = reader.GetAttribute(_rules.AttrTestName);
+                if (string.IsNullOrEmpty(name)) continue;
+                if (rows.Count >= cfg.AnalyzeMaxTestsPerFile)
+                {
+                    Logger.Warning($"[分析采集] 单文件测项超上限({cfg.AnalyzeMaxTestsPerFile})截断: {name}");
+                    break;
+                }
+                var raw = reader.GetAttribute(_rules.AttrTestValue);
+                double? num = null;
+                if (!string.IsNullOrWhiteSpace(raw) &&
+                    double.TryParse(raw, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var d))
+                    num = d;
+                double? ParseLim(string attr)
+                {
+                    var s = reader.GetAttribute(attr);
+                    if (string.IsNullOrWhiteSpace(s)) return null;
+                    return double.TryParse(s, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var l) ? l : (double?)null;
+                }
+                rows.Add(new MeasurementRow
+                {
+                    TestName = name,
+                    Value = num,
+                    ValueText = num == null ? raw : null,
+                    Lolim = ParseLim(_rules.AttrTestLolim),
+                    Hilim = ParseLim(_rules.AttrTestHilim),
+                    Unit = reader.GetAttribute(_rules.AttrTestUnit),
+                    Rule = reader.GetAttribute(_rules.AttrTestRule),
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[分析采集] 测量值提取失败(不影响主解析): {ex.Message}");
+            rows.Clear();
+        }
+        return rows;
     }
 
     private string? ReadUserOnly(string rawXml)

@@ -67,6 +67,7 @@ public class Processor
             BatchTimestamp = outp.BatchTimestamp,
             HasFailItems = outp.HasFailItems,
             FailedTests = outp.FailedTests,
+            Measurements = outp.Measurements,
             FileSize = outp.FileSize,
         };
     }

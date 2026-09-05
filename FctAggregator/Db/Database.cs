@@ -220,6 +220,59 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_device_samples_local_ts ON device_samples_local(ts);
             ";
             cmd7.ExecuteNonQuery();
+
+            // 规格06 多元深分析：PASS 测量值 + 失败项明细（fail_items 期2启用，先建表）
+            using var cmd8 = conn.CreateCommand();
+            cmd8.CommandText = @"
+                CREATE TABLE IF NOT EXISTS test_measurements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_id INTEGER NOT NULL,
+                    xml_path TEXT NOT NULL,
+                    station_id TEXT,
+                    model TEXT,
+                    sn TEXT,
+                    test_date TEXT,
+                    ts TEXT,
+                    test_name TEXT NOT NULL,
+                    value REAL,
+                    value_text TEXT,
+                    lolim REAL,
+                    hilim REAL,
+                    unit TEXT,
+                    rule TEXT,
+                    UNIQUE(record_id, test_name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_tm_name_ts ON test_measurements(test_name, ts);
+                CREATE INDEX IF NOT EXISTS idx_tm_ts ON test_measurements(ts);
+
+                CREATE TABLE IF NOT EXISTS fail_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_id INTEGER NOT NULL,
+                    xml_path TEXT NOT NULL,
+                    station_id TEXT,
+                    model TEXT,
+                    sn TEXT,
+                    test_date TEXT,
+                    ts TEXT,
+                    fixture_id TEXT,
+                    tester TEXT,
+                    panel_status TEXT,
+                    hour INTEGER,
+                    test_name TEXT NOT NULL,
+                    value REAL,
+                    value_text TEXT,
+                    lolim REAL,
+                    hilim REAL,
+                    unit TEXT,
+                    rule TEXT,
+                    UNIQUE(record_id, test_name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_fi_name_ts ON fail_items(test_name, ts);
+                CREATE INDEX IF NOT EXISTS idx_fi_fixture_ts ON fail_items(fixture_id, ts);
+                CREATE INDEX IF NOT EXISTS idx_fi_tester_ts ON fail_items(tester, ts);
+                CREATE INDEX IF NOT EXISTS idx_fi_ts ON fail_items(ts);
+            ";
+            cmd8.ExecuteNonQuery();
         }
         MigrateClosedStatus();
     }
@@ -350,6 +403,30 @@ public sealed partial class Database
         return result;
     }
 
+    /// <summary>规格06：按 xml_path 批量查记录 id（可按 result 过滤），供回填补测量值用。</summary>
+    public Dictionary<string, long> GetRecordIdsByPaths(IEnumerable<string> paths, string? result = null)
+    {
+        var result1 = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var list = paths.ToList();
+        if (list.Count == 0) return result1;
+        using var conn = Open();
+        const int batch = 500;
+        for (int i = 0; i < list.Count; i += batch)
+        {
+            var chunk = list.Skip(i).Take(batch).ToList();
+            using var cmd = conn.CreateCommand();
+            var ph = string.Join(",", chunk.Select((_, j) => $"@p{j}"));
+            cmd.CommandText = $"SELECT id, xml_path FROM test_records WHERE xml_path IN ({ph})" +
+                              (string.IsNullOrEmpty(result) ? "" : " AND result = @res");
+            if (!string.IsNullOrEmpty(result)) cmd.Parameters.AddWithValue("@res", result);
+            for (int j = 0; j < chunk.Count; j++)
+                cmd.Parameters.AddWithValue($"@p{j}", chunk[j]);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) result1[r.GetString(1)] = r.GetInt64(0);
+        }
+        return result1;
+    }
+
     public int BatchInsert(IEnumerable<TestRecord> records)
     {
         var list = records.ToList();
@@ -406,7 +483,124 @@ public sealed partial class Database
         }
         tx.Commit();
         NotifyRecordsInserted(insertedRows);
+        InsertMeasurementsFor(insertedRows);
         return inserted;
+    }
+
+    /// <summary>规格06：PASS 测量值批量入库（独立事务，失败仅告警不回滚主记录）。</summary>
+    public void InsertMeasurementsFor(List<(TestRecord Rec, long Id)> rows)
+    {
+        var withM = rows.Where(r => r.Rec.Measurements.Count > 0).ToList();
+        if (withM.Count == 0) return;
+        try
+        {
+            using var conn = Open();
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+                INSERT OR IGNORE INTO test_measurements
+                (record_id, xml_path, station_id, model, sn, test_date, ts, test_name, value, value_text, lolim, hilim, unit, rule)
+                VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @name, @value, @vtext, @lolim, @hilim, @unit, @rule)";
+            var pRid = cmd.Parameters.Add("@rid", SqliteType.Integer);
+            var pPath = cmd.Parameters.Add("@path", SqliteType.Text);
+            var pStation = cmd.Parameters.Add("@station", SqliteType.Text);
+            var pModel = cmd.Parameters.Add("@model", SqliteType.Text);
+            var pSn = cmd.Parameters.Add("@sn", SqliteType.Text);
+            var pDate = cmd.Parameters.Add("@date", SqliteType.Text);
+            var pTs = cmd.Parameters.Add("@ts", SqliteType.Text);
+            var pName = cmd.Parameters.Add("@name", SqliteType.Text);
+            var pValue = cmd.Parameters.Add("@value", SqliteType.Real);
+            var pVText = cmd.Parameters.Add("@vtext", SqliteType.Text);
+            var pLo = cmd.Parameters.Add("@lolim", SqliteType.Real);
+            var pHi = cmd.Parameters.Add("@hilim", SqliteType.Real);
+            var pUnit = cmd.Parameters.Add("@unit", SqliteType.Text);
+            var pRule = cmd.Parameters.Add("@rule", SqliteType.Text);
+            foreach (var (rec, id) in withM)
+            {
+                var ts = (object?)rec.BatchTimestamp ?? DBNull.Value;
+                foreach (var m in rec.Measurements)
+                {
+                    pRid.Value = id;
+                    pPath.Value = rec.XmlPath;
+                    pStation.Value = (object?)rec.StationId ?? DBNull.Value;
+                    pModel.Value = (object?)rec.Model ?? DBNull.Value;
+                    pSn.Value = (object?)rec.Sn ?? DBNull.Value;
+                    pDate.Value = (object?)rec.TestDate ?? DBNull.Value;
+                    pTs.Value = ts;
+                    pName.Value = m.TestName;
+                    pValue.Value = (object?)m.Value ?? DBNull.Value;
+                    pVText.Value = (object?)m.ValueText ?? DBNull.Value;
+                    pLo.Value = (object?)m.Lolim ?? DBNull.Value;
+                    pHi.Value = (object?)m.Hilim ?? DBNull.Value;
+                    pUnit.Value = (object?)m.Unit ?? DBNull.Value;
+                    pRule.Value = (object?)m.Rule ?? DBNull.Value;
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            tx.Commit();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[分析采集] 测量值入库失败(不影响主记录): {ex.Message}");
+        }
+    }
+
+    public int PurgeOldMeasurements(int retentionDays = 30)
+    {
+        var cutoff = DateTime.Now.Date.AddDays(-Math.Max(1, retentionDays)).ToString("yyyy-MM-dd");
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM test_measurements WHERE COALESCE(ts,'') <> '' AND substr(COALESCE(ts,''),1,10) < @cutoff";
+        cmd.Parameters.AddWithValue("@cutoff", cutoff);
+        return cmd.ExecuteNonQuery();
+    }
+
+    public int PurgeOldFailItems(int retentionDays = 90)
+    {
+        var cutoff = DateTime.Now.Date.AddDays(-Math.Max(1, retentionDays)).ToString("yyyy-MM-dd");
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM fail_items WHERE COALESCE(ts,'') <> '' AND substr(COALESCE(ts,''),1,10) < @cutoff";
+        cmd.Parameters.AddWithValue("@cutoff", cutoff);
+        return cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>规格06：测量值按 (model, test_name) 聚合统计（ts 日期前缀区间，to 端不含）。</summary>
+    public List<MeasureStatsRow> AggregateMeasurementStats(string fromDay, string toDayExclusive)
+    {
+        var list = new List<MeasureStatsRow>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COALESCE(model,''), test_name, COUNT(*), AVG(value), AVG(value*value),
+                   MIN(lolim), MAX(hilim), MAX(unit)
+            FROM test_measurements
+            WHERE ts >= @from AND ts < @to AND value IS NOT NULL
+            GROUP BY COALESCE(model,''), test_name";
+        cmd.Parameters.AddWithValue("@from", fromDay);
+        cmd.Parameters.AddWithValue("@to", toDayExclusive);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            long n = r.GetInt64(2);
+            double mean = r.IsDBNull(3) ? 0 : r.GetDouble(3);
+            double meanSq = r.IsDBNull(4) ? 0 : r.GetDouble(4);
+            double popVar = Math.Max(0, meanSq - mean * mean);
+            double sampleVar = n > 1 ? popVar * n / (n - 1) : 0;
+            list.Add(new MeasureStatsRow
+            {
+                Model = r.GetString(0),
+                TestName = r.GetString(1),
+                N = (int)n,
+                Mean = mean,
+                Sigma = Math.Sqrt(sampleVar),
+                Lolim = r.IsDBNull(5) ? null : r.GetDouble(5),
+                Hilim = r.IsDBNull(6) ? null : r.GetDouble(6),
+                Unit = r.IsDBNull(7) ? null : r.GetString(7),
+            });
+        }
+        return list;
     }
 
     public int InsertOne(TestRecord rec) => BatchInsert(new[] { rec });

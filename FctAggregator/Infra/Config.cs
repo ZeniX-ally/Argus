@@ -76,6 +76,20 @@ public class AppConfig
     public int LearnGroupAlertMin { get; set; } = 3;
     public int LearnResourceRetentionDays { get; set; } = 14;
 
+    // 规格06 多元深分析（analyze_*）
+    public bool AnalyzeCollectPass { get; set; } = true;
+    public int AnalyzeMaxFileKb { get; set; } = 2048;
+    public int AnalyzeMaxTestsPerFile { get; set; } = 500;
+    public bool AnalyzeDriftEnabled { get; set; } = true;
+    public bool AnalyzeCpkEnabled { get; set; } = true;
+    public int AnalyzeWindowDays { get; set; } = 7;
+    public int AnalyzeMinSamples { get; set; } = 30;
+    public double AnalyzeDriftSigma { get; set; } = 3.0;
+    public double AnalyzeDriftWarnRatio { get; set; } = 1.0;
+    public int AnalyzeMeasureRetentionDays { get; set; } = 30;
+    public int AnalyzeFailItemRetentionDays { get; set; } = 90;
+    public bool AnalyzeTdmsEnabled { get; set; } = false;
+
     private static AppConfig? _instance;
     public const string FallbackWebhookUrl = "";
 
@@ -247,6 +261,18 @@ public class AppConfig
                 if (root.TryGetProperty("learn_baseline_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lbm) && lbm >= 1) cfg.LearnBaselineMinSamples = lbm;
                 if (root.TryGetProperty("learn_group_alert_min", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lga) && lga >= 1) cfg.LearnGroupAlertMin = lga;
                 if (root.TryGetProperty("learn_resource_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lrr) && lrr >= 1) cfg.LearnResourceRetentionDays = lrr;
+                if (root.TryGetProperty("analyze_collect_pass", out v)) cfg.AnalyzeCollectPass = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("analyze_max_file_kb", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var amf) && amf >= 1) cfg.AnalyzeMaxFileKb = amf;
+                if (root.TryGetProperty("analyze_max_tests_per_file", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var amt) && amt >= 1) cfg.AnalyzeMaxTestsPerFile = amt;
+                if (root.TryGetProperty("analyze_drift_enabled", out v)) cfg.AnalyzeDriftEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("analyze_cpk_enabled", out v)) cfg.AnalyzeCpkEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("analyze_window_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var awd) && awd >= 1) cfg.AnalyzeWindowDays = awd;
+                if (root.TryGetProperty("analyze_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var ams) && ams >= 1) cfg.AnalyzeMinSamples = ams;
+                if (root.TryGetProperty("analyze_drift_sigma", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var ads) && ads > 0) cfg.AnalyzeDriftSigma = ads;
+                if (root.TryGetProperty("analyze_drift_warn_ratio", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var awr) && awr > 0) cfg.AnalyzeDriftWarnRatio = awr;
+                if (root.TryGetProperty("analyze_measure_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var amr) && amr >= 1) cfg.AnalyzeMeasureRetentionDays = amr;
+                if (root.TryGetProperty("analyze_failitem_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var afi) && afi >= 1) cfg.AnalyzeFailItemRetentionDays = afi;
+                if (root.TryGetProperty("analyze_tdms_enabled", out v)) cfg.AnalyzeTdmsEnabled = v.ValueKind == JsonValueKind.True;
                 if (string.IsNullOrEmpty(cfg.AggToken))
                 {
                     Logger.Warning("[安全] agg_token 未配置，当前为未鉴权模式，建议在config.json配置随机token");
@@ -310,6 +336,10 @@ public class AppConfig
                     "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
                     "learn_baseline_sigma", "learn_baseline_min_samples", "learn_group_alert_min",
                     "learn_resource_retention_days",
+                    "analyze_collect_pass", "analyze_max_file_kb", "analyze_max_tests_per_file",
+                    "analyze_drift_enabled", "analyze_cpk_enabled", "analyze_window_days",
+                    "analyze_min_samples", "analyze_drift_sigma", "analyze_drift_warn_ratio",
+                    "analyze_measure_retention_days", "analyze_failitem_retention_days", "analyze_tdms_enabled",
                 };
                 foreach (var prop in doc.RootElement.EnumerateObject())
                 {
@@ -391,6 +421,18 @@ public class AppConfig
                 writer.WriteNumber("learn_baseline_min_samples", LearnBaselineMinSamples);
                 writer.WriteNumber("learn_group_alert_min", LearnGroupAlertMin);
                 writer.WriteNumber("learn_resource_retention_days", LearnResourceRetentionDays);
+                writer.WriteBoolean("analyze_collect_pass", AnalyzeCollectPass);
+                writer.WriteNumber("analyze_max_file_kb", AnalyzeMaxFileKb);
+                writer.WriteNumber("analyze_max_tests_per_file", AnalyzeMaxTestsPerFile);
+                writer.WriteBoolean("analyze_drift_enabled", AnalyzeDriftEnabled);
+                writer.WriteBoolean("analyze_cpk_enabled", AnalyzeCpkEnabled);
+                writer.WriteNumber("analyze_window_days", AnalyzeWindowDays);
+                writer.WriteNumber("analyze_min_samples", AnalyzeMinSamples);
+                writer.WriteNumber("analyze_drift_sigma", AnalyzeDriftSigma);
+                writer.WriteNumber("analyze_drift_warn_ratio", AnalyzeDriftWarnRatio);
+                writer.WriteNumber("analyze_measure_retention_days", AnalyzeMeasureRetentionDays);
+                writer.WriteNumber("analyze_failitem_retention_days", AnalyzeFailItemRetentionDays);
+                writer.WriteBoolean("analyze_tdms_enabled", AnalyzeTdmsEnabled);
                 writer.WriteEndObject();
             }
             var tmp = path + ".tmp";

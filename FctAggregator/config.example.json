@@ -54,6 +54,18 @@
     "learn_baseline_min_samples": 30,
     "learn_group_alert_min": 3,
     "learn_resource_retention_days": 14,
+    "analyze_collect_pass": true,
+    "analyze_max_file_kb": 2048,
+    "analyze_max_tests_per_file": 500,
+    "analyze_drift_enabled": true,
+    "analyze_cpk_enabled": true,
+    "analyze_window_days": 7,
+    "analyze_min_samples": 30,
+    "analyze_drift_sigma": 3.0,
+    "analyze_drift_warn_ratio": 1.0,
+    "analyze_measure_retention_days": 30,
+    "analyze_failitem_retention_days": 90,
+    "analyze_tdms_enabled": false,
     "peers": [
         "http://10.0.0.2:8081/",
         "http://10.0.0.3:8081/"
