@@ -77,6 +77,7 @@ public sealed partial class Database
                     batch_timestamp TEXT,
                     has_fail_items INTEGER,
                     file_size INTEGER,
+                    fixture_id TEXT,
                     created_at TEXT DEFAULT (datetime('now','localtime'))
                 );
                 CREATE INDEX IF NOT EXISTS idx_date ON test_records(test_date);
@@ -84,6 +85,17 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_result ON test_records(result);
             ";
             cmd.ExecuteNonQuery();
+
+            // v3.26.2 老库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列，
+            // 用 ALTER 补 fixture_id（新库已有该列，重复列错误忽略）。
+            // 断线补偿/续推从 test_records 回读重建 TestRecord，缺列会把 FixtureId 丢成 null，
+            // 聚合端归因只能回落 fail_reason 前缀 —— 补列后治具归因全链路保真。
+            using (var cmdFix = conn.CreateCommand())
+            {
+                cmdFix.CommandText = "ALTER TABLE test_records ADD COLUMN fixture_id TEXT;";
+                try { cmdFix.ExecuteNonQuery(); }
+                catch (SqliteException ex) when (ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase)) { }
+            }
 
             using var cmd2 = conn.CreateCommand();
             cmd2.CommandText = @"
@@ -400,9 +412,9 @@ public sealed partial class Database
         cmd.CommandText = @"
             INSERT OR IGNORE INTO test_records
             (station_id, model, category, test_date, sn, result, xml_path,
-             fail_reason, tester, panel_status, batch_timestamp, has_fail_items, file_size)
+             fail_reason, tester, panel_status, batch_timestamp, has_fail_items, file_size, fixture_id)
             VALUES (@station,@model,@cat,@date,@sn,@result,@path,
-                    @reason,@tester,@panel,@ts,@hasfail,@size)
+                    @reason,@tester,@panel,@ts,@hasfail,@size,@fixture)
             RETURNING id";
         var pStation = cmd.Parameters.Add("@station", SqliteType.Text);
         var pModel = cmd.Parameters.Add("@model", SqliteType.Text);
@@ -417,6 +429,7 @@ public sealed partial class Database
         var pTs = cmd.Parameters.Add("@ts", SqliteType.Text);
         var pHasFail = cmd.Parameters.Add("@hasfail", SqliteType.Integer);
         var pSize = cmd.Parameters.Add("@size", SqliteType.Integer);
+        var pFixture = cmd.Parameters.Add("@fixture", SqliteType.Text);
         foreach (var rec in list)
         {
             pStation.Value = rec.StationId;
@@ -432,6 +445,7 @@ public sealed partial class Database
             pTs.Value = (object?)rec.BatchTimestamp ?? DBNull.Value;
             pHasFail.Value = rec.HasFailItems ? 1 : 0;
             pSize.Value = (object?)rec.FileSize ?? DBNull.Value;
+            pFixture.Value = (object?)rec.FixtureId ?? DBNull.Value;
             // RETURNING 只对真正插入的行出结果：OR IGNORE 跳过的行 reader 里没有行
             using var r = cmd.ExecuteReader();
             if (r.Read())
@@ -2037,7 +2051,7 @@ public sealed partial class Database
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT id, station_id, model, category, test_date, sn, result, xml_path,
-                   fail_reason, tester, panel_status, batch_timestamp, has_fail_items, file_size
+                   fail_reason, tester, panel_status, batch_timestamp, has_fail_items, file_size, fixture_id
               FROM test_records WHERE result='FAIL' AND id > @a ORDER BY id ASC LIMIT @n";
         cmd.Parameters.AddWithValue("@a", afterId);
         cmd.Parameters.AddWithValue("@n", limit);
@@ -2060,6 +2074,7 @@ public sealed partial class Database
                 BatchTimestamp = r.IsDBNull(11) ? null : r.GetString(11),
                 HasFailItems = !r.IsDBNull(12) && r.GetInt32(12) != 0,
                 FileSize = r.IsDBNull(13) ? null : r.GetInt64(13),
+                FixtureId = r.IsDBNull(14) ? null : r.GetString(14),
             };
             list.Add((rec, r.GetInt64(0)));
         }

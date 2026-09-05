@@ -892,6 +892,31 @@ class SelfTest
             var delLegacy = legacyView.First();
             Check(ld.DeleteTodo(delLegacy.Id), "旧库上删除待办正常（自动补建 dismissed_todos 写永久标记）");
             Check(!ld.ListTodoView().Any(x => x.Id == delLegacy.Id), "删除后离开待办列");
+
+            // 6) v3.26.2 fixture_id 补列 + 续推回读保真：旧库打开后 ALTER 自动补列；
+            //    BatchInsert 写入 → FetchFailRecordsAfter（断线补偿/续推回读路径）FixtureId 不丢成 null
+            bool hasFixCol = false;
+            using (var c = new SqliteConnection($"Data Source={oldDb}"))
+            {
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = "PRAGMA table_info(test_records)";
+                using var r = cmd.ExecuteReader();
+                while (r.Read()) if (r.GetString(1) == "fixture_id") hasFixCol = true;
+            }
+            Check(hasFixCol, "旧库打开后自动补 test_records.fixture_id 列（v3.26.2）");
+            ld.BatchInsert(new[]
+            {
+                new TestRecord { StationId="FCT7", Model="E3002781", Category="Offline", TestDate="20260801",
+                                 Sn="SN-LG3", Result="FAIL", XmlPath="X:\\legacy3.xml", FailReason="KL30",
+                                 FixtureId="JIG-A01" },
+            });
+            var fixRoundtrip = ld.FetchFailRecordsAfter(0, 100).FirstOrDefault(x => x.Rec.Sn == "SN-LG3").Rec;
+            Check(fixRoundtrip?.FixtureId == "JIG-A01",
+                  $"续推回读 FetchFailRecordsAfter 保真 FixtureId（实得 {fixRoundtrip?.FixtureId ?? "null"}）");
+            var fixLegacy = ld.FetchFailRecordsAfter(0, 100).FirstOrDefault(x => x.Rec.Sn == "SN-LG1").Rec;
+            Check(fixLegacy != null && fixLegacy.FixtureId == null,
+                  "旧数据（无 fixture_id）回读为 null 不炸，聚合端回落 fail_reason 前缀归因");
         }
 
         // ---------- 五个状态各造几条 ----------
