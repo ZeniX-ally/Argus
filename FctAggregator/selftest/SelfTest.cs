@@ -7178,6 +7178,26 @@ Argus 统一发布包  v{newer}
             var alerts = FailReasonMerger.CheckSectionGroupAlert(groupSample, 3);
             Check(alerts.Count == 1, "6.1 电源轨 3 个不同信号成功触发章节群挂告警");
             Check(alerts[0].RootCauseHint.Contains("供电") || alerts[0].RootCauseHint.Contains("电源"), "章节群挂提示供电/电源系统性问题");
+
+            // 7. 规格复核 §2.3 补充族：KL30 双轨 / GD 状态数组 / 电源轨群
+            var kKl301 = FailReasonMerger.GetMergedKey("8.1.3.2 KL30_1(Power)", true, "signal");
+            var kKl302 = FailReasonMerger.GetMergedKey("8.1.3.2 KL30_2(Power)", true, "signal");
+            Check(kKl301 != kKl302, "S1: KL30_1 与 KL30_2 两轨独立不并");
+            Check(kKl301.Contains("KL30_1(RailFamily)"), "S1: KL30_1 归并入 KL30_1(RailFamily)");
+            Check(FailReasonMerger.GetMergedKey("8.1.3.2 KL30_FILT_1(Power)", true, "signal") == kKl301
+                  && FailReasonMerger.Parse("8.1.3.2 KL30_FILT_1(Power)").SignalBase == "KL30_FILT_1",
+                  "S1: KL30_FILT_1 与 KL30_1 同轨归并（保有基名）");
+            var kGd0 = FailReasonMerger.GetMergedKey("9.1.2 BSW_v_GD_Status1_0(XCP)", true, "signal");
+            var kGd5 = FailReasonMerger.GetMergedKey("9.1.2 BSW_v_GD_Status2_5(XCP)", true, "signal");
+            Check(kGd0 == kGd5 && kGd0.Contains("BSW_v_GD_Status"), "S1: GD 状态数组下标归一，同族归并");
+            Check(FailReasonMerger.GetMergedKey("9.1.3 FLTM_v_ErrStateInvOff1(XCP)", true, "signal")
+                    == FailReasonMerger.GetMergedKey("9.1.3 FLTM_v_ErrStateInvOff10(XCP)", true, "signal"),
+                  "S1: FLTM 错误状态数组同族归并");
+            Check(G49ProductDictionary.FindKnownSignal("P17V_LV_LS")?.FamilyName == "P17V_LV_LS", "S1: 字典含 P17V_LV_LS（独立轨族）");
+            Check(G49ProductDictionary.FindKnownSignal("P1.25V_LVD_Core")?.FamilyName == "P1.25V_LVD_Core", "S1: P1.25V_LVD_Core 独立轨族不并");
+            var kP12 = FailReasonMerger.GetMergedKey("6.1.2.1 P12V_FB_HS(DMM)", true, "signal");
+            var kP15 = FailReasonMerger.GetMergedKey("6.1.2.1 P15V_LVD_LS(DMM)", true, "signal");
+            Check(kP12 != kP15, "S1: 不同电源轨不并（P12V_FB_HS ≠ P15V_LVD_LS，保住诊断）");
         }
 
         // ==========================================

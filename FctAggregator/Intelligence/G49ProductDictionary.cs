@@ -105,6 +105,37 @@ public static class G49ProductDictionary
         Register("8.19", "DESAT_Injection", "DESAT_FaultInjection", "DESAT注入，排查退饱和驱动保护", FailSemanticType.Injection);
         Register("8.20", "ASC_Injection", "ASC_FaultInjection", "ASC注入，排查主动短路逻辑", FailSemanticType.Injection);
         Register("8.21", "SBC_Watchdog", "SBC_FaultInjection", "SBC注入，排查看门狗复位逻辑", FailSemanticType.Injection);
+
+        // 8. KL30 双轨 (spec §2.3)：两轨独立不并——1/2 号轨（含 FILT/HS/LS 变体）各自归同一轨族，
+        //    跨轨绝不合并，保住诊断信息（同一电源系统的独立防线）。
+        Register("8.1", "KL30_1", "KL30_1(RailFamily)", "先查KL30_1回路/防反接二极管及其工装", FailSemanticType.Measurement);
+        Register("8.1", "KL30_FILT_1", "KL30_1(RailFamily)", "先查KL30_1滤波回路/工装", FailSemanticType.Measurement);
+        Register("8.1", "KL30_LS_1", "KL30_1(RailFamily)", "先查KL30_1低边回路/工装", FailSemanticType.Measurement);
+        Register("8.1", "KL30_HS_1", "KL30_1(RailFamily)", "先查KL30_1高边回路/工装", FailSemanticType.Measurement);
+        Register("8.1", "KL30_2", "KL30_2(RailFamily)", "先查KL30_2回路/防反接二极管及其工装", FailSemanticType.Measurement);
+        Register("8.1", "KL30_FILT_2", "KL30_2(RailFamily)", "先查KL30_2滤波回路/工装", FailSemanticType.Measurement);
+        Register("8.1", "KL30_LS_2", "KL30_2(RailFamily)", "先查KL30_2低边回路/工装", FailSemanticType.Measurement);
+        Register("8.1", "KL30_HS_2", "KL30_2(RailFamily)", "先查KL30_2高边回路/工装", FailSemanticType.Measurement);
+
+        // 9. GD 状态数组 (spec §2.3, §9.1)：数组下标=相位映射，同族归并（指向同一驱动/状态链）。
+        for (int gd = 0; gd <= 5; gd++)
+        {
+            Register("9.1", $"BSW_v_GD_Status1_{gd}", "BSW_v_GD_Status(PhaseArray)", "先查栅极驱动状态/相位控制输出", FailSemanticType.Measurement);
+            Register("9.1", $"BSW_v_GD_Status2_{gd}", "BSW_v_GD_Status(PhaseArray)", "先查栅极驱动状态/相位控制输出", FailSemanticType.Measurement);
+        }
+        for (int fl = 1; fl <= 10; fl++)
+        {
+            Register("9.1", $"FLTM_v_ErrStateInvOff{fl}", "FLTM_v_ErrStateInvOff(ArrayFamily)", "先查IGBT逆变关闭错误状态链", FailSemanticType.Measurement);
+        }
+
+        // 10. 电源轨群补齐 (spec §2.3, §6.1)：各轨独立族（同章节多轨挂＝供电系统性由群挂聚合），不合并以保诊断。
+        Register("6.1", "P17V_LV_LS", "P17V_LV_LS", "先查17V电源轨/低边回路", FailSemanticType.Measurement);
+        Register("6.1", "P3V3_ANA", "P3V3_ANA", "先查3.3V模拟电源轨", FailSemanticType.Measurement);
+        Register("6.1", "P3V3_DIG", "P3V3_DIG", "先查3.3V数字电源轨", FailSemanticType.Measurement);
+        Register("6.1", "P3V3_STBY", "P3V3_STBY", "先查3.3V待机电源轨", FailSemanticType.Measurement);
+        Register("6.1", "P12V_FB_HS", "P12V_FB_HS", "先查12V回馈高边轨", FailSemanticType.Measurement);
+        Register("6.1", "P15V_LVD_LS", "P15V_LVD_LS", "先查15V低压低边轨", FailSemanticType.Measurement);
+        Register("6.1", "P1.25V_LVD_Core", "P1.25V_LVD_Core", "先查1.25V低压内核轨", FailSemanticType.Measurement);
     }
 
     private static void Register(string section, string signalName, string family, string hint, FailSemanticType type)
@@ -187,6 +218,54 @@ public static class G49ProductDictionary
                 Section = "8.7",
                 FamilyName = "IGBTTM_v_IgbtT(PhaseFamily)",
                 RootCauseHint = "先查NTC仿真电阻链(493.4Ω)",
+                SemanticType = FailSemanticType.Measurement
+            };
+        }
+        // KL30 双轨变体回落：先判 2 号轨（其下无 KL30_1 子串），再判 1 号轨，保证两轨独立不并。
+        if (signalName.Contains("KL30_FILT_2", StringComparison.OrdinalIgnoreCase)
+            || signalName.Contains("KL30_2", StringComparison.OrdinalIgnoreCase)
+            || signalName.Contains("KL30_HS_2", StringComparison.OrdinalIgnoreCase)
+            || signalName.Contains("KL30_LS_2", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SignalFamilyInfo
+            {
+                Section = "8.1",
+                FamilyName = "KL30_2(RailFamily)",
+                RootCauseHint = "先查KL30_2回路/防反接二极管及其工装",
+                SemanticType = FailSemanticType.Measurement
+            };
+        }
+        if (signalName.Contains("KL30_FILT_1", StringComparison.OrdinalIgnoreCase)
+            || signalName.Contains("KL30_1", StringComparison.OrdinalIgnoreCase)
+            || signalName.Contains("KL30_HS_1", StringComparison.OrdinalIgnoreCase)
+            || signalName.Contains("KL30_LS_1", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SignalFamilyInfo
+            {
+                Section = "8.1",
+                FamilyName = "KL30_1(RailFamily)",
+                RootCauseHint = "先查KL30_1回路/防反接二极管及其工装",
+                SemanticType = FailSemanticType.Measurement
+            };
+        }
+        // GD 状态 / FLTM 错误状态数组：下标=相位映射，同族归并（覆盖 [0] 方括号等变体写法）。
+        if (signalName.Contains("BSW_v_GD_Status", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SignalFamilyInfo
+            {
+                Section = "9.1",
+                FamilyName = "BSW_v_GD_Status(PhaseArray)",
+                RootCauseHint = "先查栅极驱动状态/相位控制输出",
+                SemanticType = FailSemanticType.Measurement
+            };
+        }
+        if (signalName.Contains("FLTM_v_ErrStateInvOff", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SignalFamilyInfo
+            {
+                Section = "9.1",
+                FamilyName = "FLTM_v_ErrStateInvOff(ArrayFamily)",
+                RootCauseHint = "先查IGBT逆变关闭错误状态链",
                 SemanticType = FailSemanticType.Measurement
             };
         }
