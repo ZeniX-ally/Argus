@@ -2461,6 +2461,14 @@ Argus 统一发布包  v{newer}
         catch { return 0; }
     }
 
+    // 读推送方正在覆写的文件（heartbeat.json 等）时可能撞上文件锁（IOException
+    // "being used by another process"），轮询场景须吞锁重试而非让断言崩溃。
+    static string? ReadTextSafe(string path)
+    {
+        try { return File.ReadAllText(path); }
+        catch (IOException) { return null; }
+    }
+
     static void RunAggPusherTests(string work)
     {
         var aggRoot = Path.Combine(work, "agg");
@@ -2610,8 +2618,9 @@ Argus 统一发布包  v{newer}
             }
             catch { return false; }
         }, 10000), $"心跳字段正确且 last_seq={idE}（最近已推送 seq）");
-        string hb1 = File.ReadAllText(hb);
-        Check(WaitUntil(() => File.Exists(hb) && File.ReadAllText(hb) != hb1, 10000), "心跳按周期持续覆盖更新");
+        string? hb1 = ReadTextSafe(hb);
+        Check(hb1 != null, "心跳文件内容可读（ReadTextSafe 吞文件锁）");
+        Check(WaitUntil(() => { var cur = ReadTextSafe(hb); return cur != null && cur != hb1; }, 10000), "心跳按周期持续覆盖更新");
         pE.Stop();
 
         var share6Bad = Path.Combine(aggRoot, "share6Bad");
