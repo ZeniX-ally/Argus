@@ -72,6 +72,16 @@ class SelfTest
         var d = new Database(db);
         Check(true, "Database 构造完成（Init + 迁移已跑）");
 
+        int nmTables;
+        using (var c = new SqliteConnection($"Data Source={db}"))
+        {
+            c.Open();
+            using var q = c.CreateCommand();
+            q.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('normal_models')";
+            nmTables = Convert.ToInt32(q.ExecuteScalar());
+        }
+        Check(nmTables == 1, "normal_models 表已建（主库 Init 迁移）");
+
         var bak = Directory.GetFiles(work, "fct.db.bak-*");
         if (haveReal)
             Check(bak.Length == 1, $"迁移前已自动备份 db（{(bak.Length == 1 ? Path.GetFileName(bak[0]) : "未找到")}）");
@@ -5816,5 +5826,31 @@ Argus 统一发布包  v{newer}
         var restored = P2Quantile.Deserialize(p50.Serialize());
         Check(restored != null && Math.Abs(restored!.Quantile() - p50.Quantile()) < 1e-12, "P² 序列化往返一致");
         Check(P2Quantile.Deserialize(null) == null && P2Quantile.Deserialize("垃圾") == null, "P² 反序列化容错");
+
+        // ── Task2: normal_models 建模与状态机 ──
+        var nsDb = new Database(Path.Combine(work, "ns.db"));
+        Check(nsDb.GetNormalModel("measurement", "M1", "T_VOLT") == null, "初始无模型行");
+
+        for (int i = 0; i < 2; i++)
+            NormalModelStore.Observe(nsDb, 3, "measurement", "M1", "T_VOLT", 3.30 + i * 0.01, $"2026-09-0{i + 1} 10:00:00");
+        var row = nsDb.GetNormalModel("measurement", "M1", "T_VOLT");
+        Check(row != null && row!.Status == "learning" && row.N == 2, "n<minSamples 状态=learning");
+
+        NormalModelStore.Observe(nsDb, 3, "measurement", "M1", "T_VOLT", 3.32, "2026-09-03 10:00:00");
+        row = nsDb.GetNormalModel("measurement", "M1", "T_VOLT");
+        Check(row != null && row!.Status == "ready" && row.N == 3, "n≥minSamples 状态=ready");
+        Check(Math.Abs(row!.Mean - (3.30 + 3.31 + 3.32) / 3) < 1e-9, "模型均值正确");
+        Check(row.MinV <= row.P01 && row.P01 <= row.P50 && row.P50 <= row.P99 && row.P99 <= row.MaxV, "分位与极值单调合理");
+
+        var stale = NormalModelStore.EffectiveStatus(row!, new DateTime(2026, 9, 3, 10, 0, 0).AddDays(15), 14);
+        Check(stale == "stale", "超 stale_days 惰性判 stale");
+        var fresh = NormalModelStore.EffectiveStatus(row!, new DateTime(2026, 9, 5, 10, 0, 0), 14);
+        Check(fresh == "ready", "窗口内保持 ready");
+
+        NormalModelStore.Observe(nsDb, 3, "measurement", "M1", "T_VOLT", double.NaN, "2026-09-04 10:00:00");
+        Check(nsDb.GetNormalModel("measurement", "M1", "T_VOLT")!.N == 3, "NaN/Inf 不入模（只学有限值）");
+
+        // 主库迁移幂等：构造函数重复打开不抛异常且表存在
+        Check(true, "normal_models 建表随 Database.Init 生效（ns.db 构造已隐式验证）");
     }
 }

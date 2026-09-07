@@ -304,6 +304,27 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_tf_channel_ts ON tdms_features(group_name, channel_name, ts);
             ";
             cmd9.ExecuteNonQuery();
+
+            // 正常态自学习底座：每 (source, model, signal_key) 一行增量模型（Welford+P² 状态持久化在 qstate）
+            using var cmd10 = conn.CreateCommand();
+            cmd10.CommandText = @"
+                CREATE TABLE IF NOT EXISTS normal_models (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    signal_key TEXT NOT NULL,
+                    n INTEGER NOT NULL,
+                    mean REAL, sigma REAL,
+                    p01 REAL, p50 REAL, p99 REAL,
+                    min_v REAL, max_v REAL,
+                    last_ts TEXT,
+                    status TEXT NOT NULL DEFAULT 'learning',
+                    qstate TEXT,
+                    UNIQUE(source, model, signal_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_nm_status ON normal_models(status);
+            ";
+            cmd10.ExecuteNonQuery();
         }
         MigrateClosedStatus();
     }
@@ -777,6 +798,58 @@ public sealed partial class Database
         cmd.CommandText = "SELECT COUNT(*), COUNT(DISTINCT record_id), COALESCE(MAX(ts),'') FROM tdms_features";
         using var r = cmd.ExecuteReader();
         return r.Read() ? (r.GetInt64(0), r.GetInt64(1), r.GetString(2)) : (0, 0, "");
+    }
+
+    /// <summary>正常态底座：upsert 单个模型行（qstate 为 Welford+P² 状态 JSON）。</summary>
+    public void UpsertNormalModel(NormalModelRow r)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO normal_models (source, model, signal_key, n, mean, sigma, p01, p50, p99, min_v, max_v, last_ts, status, qstate)
+            VALUES (@s, @m, @k, @n, @mean, @sigma, @p01, @p50, @p99, @minv, @maxv, @ts, @status, @qs)
+            ON CONFLICT(source, model, signal_key) DO UPDATE SET
+                n=@n, mean=@mean, sigma=@sigma, p01=@p01, p50=@p50, p99=@p99,
+                min_v=@minv, max_v=@maxv, last_ts=@ts, status=@status, qstate=@qs";
+        cmd.Parameters.AddWithValue("@s", r.Source);
+        cmd.Parameters.AddWithValue("@m", r.Model);
+        cmd.Parameters.AddWithValue("@k", r.SignalKey);
+        cmd.Parameters.AddWithValue("@n", r.N);
+        cmd.Parameters.AddWithValue("@mean", r.Mean);
+        cmd.Parameters.AddWithValue("@sigma", r.Sigma);
+        cmd.Parameters.AddWithValue("@p01", r.P01);
+        cmd.Parameters.AddWithValue("@p50", r.P50);
+        cmd.Parameters.AddWithValue("@p99", r.P99);
+        cmd.Parameters.AddWithValue("@minv", r.MinV);
+        cmd.Parameters.AddWithValue("@maxv", r.MaxV);
+        cmd.Parameters.AddWithValue("@ts", r.LastTs);
+        cmd.Parameters.AddWithValue("@status", r.Status);
+        cmd.Parameters.AddWithValue("@qs", r.QState);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>正常态底座：按三元组取模型行（含 qstate），无则 null。</summary>
+    public NormalModelRow? GetNormalModel(string source, string model, string signalKey)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT source, model, signal_key, n, COALESCE(mean,0), COALESCE(sigma,0), COALESCE(p01,0), COALESCE(p50,0), COALESCE(p99,0),
+                   COALESCE(min_v,0), COALESCE(max_v,0), COALESCE(last_ts,''), status, COALESCE(qstate,'')
+            FROM normal_models WHERE source=@s AND model=@m AND signal_key=@k";
+        cmd.Parameters.AddWithValue("@s", source);
+        cmd.Parameters.AddWithValue("@m", model ?? "");
+        cmd.Parameters.AddWithValue("@k", signalKey);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new NormalModelRow
+        {
+            Source = r.GetString(0), Model = r.GetString(1), SignalKey = r.GetString(2),
+            N = r.GetInt64(3), Mean = r.GetDouble(4), Sigma = r.GetDouble(5),
+            P01 = r.GetDouble(6), P50 = r.GetDouble(7), P99 = r.GetDouble(8),
+            MinV = r.GetDouble(9), MaxV = r.GetDouble(10),
+            LastTs = r.GetString(11), Status = r.GetString(12), QState = r.GetString(13),
+        };
     }
 
     /// <summary>规格06期3：backfill 用——按 xml_path 批量取记录简报（免重解析 XML）。</summary>
