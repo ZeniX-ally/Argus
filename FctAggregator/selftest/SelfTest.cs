@@ -1650,6 +1650,9 @@ class SelfTest
         Console.WriteLine("\n【良率日统计】upsert 幂等 / 查询过滤 / 心跳落库 / 变化检测 / 老格式兼容");
         RunYldDailyTests(work);
 
+        Console.WriteLine("\n【正常态自学习】Welford/P²收敛 / 建模与状态机 / PASS过滤 / 异常吞并 / 心跳");
+        RunNormalStateTests(work);
+
         Console.WriteLine("\n【权限与审计】PasswordHasher / users upsert / audit 落库 / 宽松模式 / token 模式角色分级");
         RunAuthAuditTests(work);
 
@@ -5786,5 +5789,32 @@ Argus 统一发布包  v{newer}
         var req=new HttpRequestMessage(HttpMethod.Delete, url);
         if(!string.IsNullOrEmpty(token)) req.Headers.Add("X-Agg-Token", token);
         return _http.SendAsync(req).GetAwaiter().GetResult();
+    }
+
+    static void RunNormalStateTests(string work)
+    {
+        // ── Task1: Welford 收敛对拍 ──
+        var w = new Welford();
+        var xs = new List<double>();
+        var rng = new Random(42);
+        for (int i = 0; i < 1000; i++) { var x = 3.3 + rng.NextDouble() * 0.1; w.Update(x); xs.Add(x); }
+        var mean = xs.Average();
+        var std = Math.Sqrt(xs.Sum(x => (x - mean) * (x - mean)) / (xs.Count - 1));
+        Check(Math.Abs(w.Mean - mean) < 1e-9, $"Welford 均值收敛（{w.Mean:F6} vs {mean:F6}）");
+        Check(Math.Abs(w.Sigma - std) < 1e-9, $"Welford 样本σ收敛（{w.Sigma:F6} vs {std:F6}）");
+        Check(w.N == 1000, "Welford 计数正确");
+
+        // ── Task1: P² 分位数近似 ──
+        var p01 = new P2Quantile(0.01); var p50 = new P2Quantile(0.5); var p99 = new P2Quantile(0.99);
+        foreach (var x in xs) { p01.Update(x); p50.Update(x); p99.Update(x); }
+        var sorted = xs.OrderBy(x => x).ToList();
+        Check(Math.Abs(p50.Quantile() - sorted[500]) < 0.02 * (sorted.Max() - sorted.Min()) + 1e-9,
+            $"P² 中位数近似（{p50.Quantile():F6} vs {sorted[500]:F6}）");
+        Check(p01.Quantile() <= p50.Quantile() && p50.Quantile() <= p99.Quantile(), "P² 分位单调（p01≤p50≤p99）");
+
+        // ── Task1: P² 序列化往返 ──
+        var restored = P2Quantile.Deserialize(p50.Serialize());
+        Check(restored != null && Math.Abs(restored!.Quantile() - p50.Quantile()) < 1e-12, "P² 序列化往返一致");
+        Check(P2Quantile.Deserialize(null) == null && P2Quantile.Deserialize("垃圾") == null, "P² 反序列化容错");
     }
 }
