@@ -73,6 +73,9 @@ public class AppConfig
     public int LearnBaselineWindowDays { get; set; } = 7;
     public double LearnBaselineSigma { get; set; } = 3.0;
     public int LearnBaselineMinSamples { get; set; } = 30;
+    public bool LearnNormalEnabled { get; set; } = false;
+    public int LearnNormalMinSamples { get; set; } = 30;
+    public int LearnNormalStaleDays { get; set; } = 14;
     public int LearnGroupAlertMin { get; set; } = 3;
     public int LearnResourceRetentionDays { get; set; } = 14;
 
@@ -267,6 +270,9 @@ public class AppConfig
                 if (root.TryGetProperty("learn_baseline_window_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lbw) && lbw >= 1) cfg.LearnBaselineWindowDays = lbw;
                 if (root.TryGetProperty("learn_baseline_sigma", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var lbs) && lbs > 0) cfg.LearnBaselineSigma = lbs;
                 if (root.TryGetProperty("learn_baseline_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lbm) && lbm >= 1) cfg.LearnBaselineMinSamples = lbm;
+                if (root.TryGetProperty("learn_normal_enabled", out v)) cfg.LearnNormalEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("learn_normal_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lnm) && lnm >= 1) cfg.LearnNormalMinSamples = lnm;
+                if (root.TryGetProperty("learn_normal_stale_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lns) && lns >= 1) cfg.LearnNormalStaleDays = lns;
                 if (root.TryGetProperty("learn_group_alert_min", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lga) && lga >= 1) cfg.LearnGroupAlertMin = lga;
                 if (root.TryGetProperty("learn_resource_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lrr) && lrr >= 1) cfg.LearnResourceRetentionDays = lrr;
                 if (root.TryGetProperty("analyze_collect_pass", out v)) cfg.AnalyzeCollectPass = v.ValueKind != JsonValueKind.False;
@@ -350,7 +356,8 @@ public class AppConfig
                     "auto_update",
                     "learn_baseline_enabled", "learn_resource_sampling_enabled", "learn_priority_enabled",
                     "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
-                    "learn_baseline_sigma", "learn_baseline_min_samples", "learn_group_alert_min",
+                    "learn_baseline_sigma", "learn_baseline_min_samples", "learn_normal_enabled",
+                    "learn_normal_min_samples", "learn_normal_stale_days", "learn_group_alert_min",
                     "learn_resource_retention_days",
                     "analyze_collect_pass", "analyze_max_file_kb", "analyze_max_tests_per_file",
                     "analyze_drift_enabled", "analyze_cpk_enabled", "analyze_window_days",
@@ -438,6 +445,9 @@ public class AppConfig
                 writer.WriteNumber("learn_baseline_window_days", LearnBaselineWindowDays);
                 writer.WriteNumber("learn_baseline_sigma", LearnBaselineSigma);
                 writer.WriteNumber("learn_baseline_min_samples", LearnBaselineMinSamples);
+                writer.WriteBoolean("learn_normal_enabled", LearnNormalEnabled);
+                writer.WriteNumber("learn_normal_min_samples", LearnNormalMinSamples);
+                writer.WriteNumber("learn_normal_stale_days", LearnNormalStaleDays);
                 writer.WriteNumber("learn_group_alert_min", LearnGroupAlertMin);
                 writer.WriteNumber("learn_resource_retention_days", LearnResourceRetentionDays);
                 writer.WriteBoolean("analyze_collect_pass", AnalyzeCollectPass);

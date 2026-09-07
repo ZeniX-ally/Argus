@@ -5803,6 +5803,11 @@ Argus 统一发布包  v{newer}
 
     static void RunNormalStateTests(string work)
     {
+        // ── Task3: config 默认关闭 ──
+        var defCfg = new AppConfig();
+        Check(!defCfg.LearnNormalEnabled, "learn_normal_enabled 默认 false");
+        Check(defCfg.LearnNormalMinSamples == 30 && defCfg.LearnNormalStaleDays == 14, "正常态默认参数 30/14");
+
         // ── Task1: Welford 收敛对拍 ──
         var w = new Welford();
         var xs = new List<double>();
