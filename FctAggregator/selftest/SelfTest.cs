@@ -5857,5 +5857,49 @@ Argus 统一发布包  v{newer}
 
         // 主库迁移幂等：构造函数重复打开不抛异常且表存在
         Check(true, "normal_models 建表随 Database.Init 生效（ns.db 构造已隐式验证）");
+
+        // ── Task4: 学习器行为 ──
+        var lrDb = new Database(Path.Combine(work, "lr.db"));
+        var lrCfg = new AppConfig { LearnNormalEnabled = true, LearnNormalMinSamples = 2 };
+
+        var pass = new TestRecord { Model = "G49", Result = "PASS", Sn = "SN1", BatchTimestamp = "2026-09-07 10:00:00" };
+        pass.Measurements.Add(new MeasurementRow { TestName = "T_VOLT", Value = 3.3 });
+        NormalLearners.ObserveMeasurement(lrDb, lrCfg, pass);
+        NormalLearners.ObserveMeasurement(lrDb, lrCfg, pass);
+        var m = lrDb.GetNormalModel(NormalModelStore.SourceMeasurement, "G49", "T_VOLT");
+        Check(m != null && m!.Status == "ready", "测量学习器：PASS 数据入模");
+
+        var failRec = new TestRecord { Model = "G49", Result = "FAIL", Sn = "SN2", BatchTimestamp = "2026-09-07 10:01:00" };
+        failRec.Measurements.Add(new MeasurementRow { TestName = "T_VOLT", Value = 9.9 });
+        NormalLearners.ObserveMeasurement(lrDb, lrCfg, failRec);
+        m = lrDb.GetNormalModel(NormalModelStore.SourceMeasurement, "G49", "T_VOLT");
+        Check(m != null && m!.N == 2 && m.Mean < 3.4, "FAIL 数据不入模（正常态不被污染）");
+
+        var wfCfg = lrCfg;
+        var wfRec = new TestRecord { Model = "G49", Result = "PASS", Sn = "SN3", BatchTimestamp = "2026-09-07 10:02:00" };
+        var wfRows = new List<TdmsFeatureAnalyzer.TdmsFeatureRow>
+            { new() { GroupName = "G1", ChannelName = "CH1", Mean = 1.2, Std = 0.1, Max = 2.0 } };
+        NormalLearners.ObserveWaveform(lrDb, wfCfg, wfRec, wfRows);
+        Check(lrDb.GetNormalModel(NormalModelStore.SourceWaveform, "G49", "G1/CH1/vmean") != null, "波形学习器：vmean 建模");
+        Check(lrDb.GetNormalModel(NormalModelStore.SourceWaveform, "G49", "G1/CH1/vstd") != null, "波形学习器：vstd 建模");
+        Check(lrDb.GetNormalModel(NormalModelStore.SourceWaveform, "G49", "G1/CH1/vmax") != null, "波形学习器：vmax 建模");
+
+        NormalLearners.ObserveDeviceSample(lrDb, lrCfg, 15.5, 45.0, 120.0, "2026-09-07 23:30:00");
+        Check(lrDb.GetNormalModel(NormalModelStore.SourceDevice, "", "cpu@3") != null, "设备学习器：按时段建键（23 点→slot3）");
+
+        NormalLearners.FlushHeartbeat(lrDb);
+        var hb = lrDb.GetMeta("learn_normal_heartbeat");
+        Check(!string.IsNullOrWhiteSpace(hb) && hb!.Contains("measurement") && hb.Contains("errors"), "心跳落库 learn_normal_heartbeat");
+
+        // 开关关闭全链路 no-op
+        var offDb = new Database(Path.Combine(work, "off.db"));
+        var offCfg = new AppConfig { LearnNormalEnabled = false };
+        NormalLearners.ObserveMeasurement(offDb, offCfg, pass);
+        NormalLearners.ObserveWaveform(offDb, offCfg, pass, wfRows);
+        NormalLearners.ObserveDeviceSample(offDb, offCfg, 10, 40, 100, "2026-09-07 08:30:00");
+        Check(offDb.GetNormalModel(NormalModelStore.SourceMeasurement, "G49", "T_VOLT") == null
+           && offDb.GetNormalModel(NormalModelStore.SourceWaveform, "G49", "G1/CH1/vmean") == null
+           && offDb.GetNormalModel(NormalModelStore.SourceDevice, "", "cpu@1") == null,
+            "开关关闭：三学习器全部 no-op");
     }
 }
