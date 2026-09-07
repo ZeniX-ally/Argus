@@ -273,6 +273,37 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_fi_ts ON fail_items(ts);
             ";
             cmd8.ExecuteNonQuery();
+
+            // 规格06期3：TDMS 特征化（每通道基础统计，analyze_tdms_enabled 默认关）
+            using var cmd9 = conn.CreateCommand();
+            cmd9.CommandText = @"
+                CREATE TABLE IF NOT EXISTS tdms_features (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_id INTEGER NOT NULL,
+                    xml_path TEXT NOT NULL,
+                    station_id TEXT,
+                    model TEXT,
+                    sn TEXT,
+                    test_date TEXT,
+                    ts TEXT,
+                    tdms_path TEXT NOT NULL,
+                    group_name TEXT NOT NULL,
+                    channel_name TEXT NOT NULL,
+                    section TEXT,
+                    n INTEGER,
+                    vmin REAL,
+                    vmax REAL,
+                    vmean REAL,
+                    vstd REAL,
+                    vfirst REAL,
+                    vlast REAL,
+                    UNIQUE(record_id, group_name, channel_name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_tf_ts ON tdms_features(ts);
+                CREATE INDEX IF NOT EXISTS idx_tf_model_ts ON tdms_features(model, ts);
+                CREATE INDEX IF NOT EXISTS idx_tf_channel_ts ON tdms_features(group_name, channel_name, ts);
+            ";
+            cmd9.ExecuteNonQuery();
         }
         MigrateClosedStatus();
     }
@@ -641,6 +672,148 @@ public sealed partial class Database
         {
             Logger.Warning($"[分析采集] 失败项明细入库失败(不影响主记录): {ex.Message}");
         }
+    }
+
+    /// <summary>规格06期3：TDMS 通道特征批量入库（独立事务 + INSERT OR IGNORE 幂等，失败仅告警不回滚主记录）。</summary>
+    public void InsertTdmsFeaturesFor(TestRecord rec, long id, string tdmsPath, List<TdmsFeatureAnalyzer.TdmsFeatureRow> rows)
+    {
+        if (rows.Count == 0) return;
+        try
+        {
+            using var conn = Open();
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+                INSERT OR IGNORE INTO tdms_features
+                (record_id, xml_path, station_id, model, sn, test_date, ts, tdms_path, group_name, channel_name, section, n, vmin, vmax, vmean, vstd, vfirst, vlast)
+                VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @tdms, @group, @channel, @section, @n, @vmin, @vmax, @vmean, @vstd, @vfirst, @vlast)";
+            var pRid = cmd.Parameters.Add("@rid", SqliteType.Integer);
+            var pPath = cmd.Parameters.Add("@path", SqliteType.Text);
+            var pStation = cmd.Parameters.Add("@station", SqliteType.Text);
+            var pModel = cmd.Parameters.Add("@model", SqliteType.Text);
+            var pSn = cmd.Parameters.Add("@sn", SqliteType.Text);
+            var pDate = cmd.Parameters.Add("@date", SqliteType.Text);
+            var pTs = cmd.Parameters.Add("@ts", SqliteType.Text);
+            var pTdms = cmd.Parameters.Add("@tdms", SqliteType.Text);
+            var pGroup = cmd.Parameters.Add("@group", SqliteType.Text);
+            var pChannel = cmd.Parameters.Add("@channel", SqliteType.Text);
+            var pSection = cmd.Parameters.Add("@section", SqliteType.Text);
+            var pN = cmd.Parameters.Add("@n", SqliteType.Integer);
+            var pVMin = cmd.Parameters.Add("@vmin", SqliteType.Real);
+            var pVMax = cmd.Parameters.Add("@vmax", SqliteType.Real);
+            var pVMean = cmd.Parameters.Add("@vmean", SqliteType.Real);
+            var pVStd = cmd.Parameters.Add("@vstd", SqliteType.Real);
+            var pVFirst = cmd.Parameters.Add("@vfirst", SqliteType.Real);
+            var pVLast = cmd.Parameters.Add("@vlast", SqliteType.Real);
+            var ts = (object?)rec.BatchTimestamp ?? DBNull.Value;
+            foreach (var f in rows)
+            {
+                pRid.Value = id;
+                pPath.Value = rec.XmlPath;
+                pStation.Value = (object?)rec.StationId ?? DBNull.Value;
+                pModel.Value = (object?)rec.Model ?? DBNull.Value;
+                pSn.Value = (object?)rec.Sn ?? DBNull.Value;
+                pDate.Value = (object?)rec.TestDate ?? DBNull.Value;
+                pTs.Value = ts;
+                pTdms.Value = tdmsPath;
+                pGroup.Value = f.GroupName;
+                pChannel.Value = f.ChannelName;
+                pSection.Value = (object?)f.Section ?? DBNull.Value;
+                pN.Value = f.N;
+                pVMin.Value = (object?)f.Min ?? DBNull.Value;
+                pVMax.Value = (object?)f.Max ?? DBNull.Value;
+                pVMean.Value = (object?)f.Mean ?? DBNull.Value;
+                pVStd.Value = (object?)f.Std ?? DBNull.Value;
+                pVFirst.Value = (object?)f.First ?? DBNull.Value;
+                pVLast.Value = (object?)f.Last ?? DBNull.Value;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[TDMS] 特征入库失败(不影响主记录): {ex.Message}");
+        }
+    }
+
+    public int PurgeOldTdmsFeatures(int retentionDays = 30)
+    {
+        var cutoff = DateTime.Now.Date.AddDays(-Math.Max(1, retentionDays)).ToString("yyyy-MM-dd");
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM tdms_features WHERE COALESCE(ts,'') <> '' AND substr(COALESCE(ts,''),1,10) < @cutoff";
+        cmd.Parameters.AddWithValue("@cutoff", cutoff);
+        return cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>UI 用：最近 TDMS 通道特征（含冗余列，免回查 test_records）。</summary>
+    public List<(long RecordId, string Model, string Sn, string GroupName, string ChannelName, string Section, int N, double? Min, double? Max, double? Mean, double? Std, string Ts)>
+        GetRecentTdmsFeatures(int limit = 50)
+    {
+        var list = new List<(long, string, string, string, string, string, int, double?, double?, double?, double?, string)>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT record_id, COALESCE(model,''), COALESCE(sn,''), group_name, channel_name,
+                   COALESCE(section,''), COALESCE(n,0), vmin, vmax, vmean, vstd, COALESCE(ts,'')
+            FROM tdms_features ORDER BY id DESC LIMIT @n";
+        cmd.Parameters.AddWithValue("@n", Math.Max(1, limit));
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            double? Rd(int i) => r.IsDBNull(i) ? null : r.GetDouble(i);
+            list.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4),
+                      r.GetString(5), r.GetInt32(6), Rd(7), Rd(8), Rd(9), Rd(10), r.GetString(11)));
+        }
+        return list;
+    }
+
+    /// <summary>快照用：TDMS 特征总量摘要。</summary>
+    public (long Rows, long Records, string LastTs) GetTdmsFeatureSummary()
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*), COUNT(DISTINCT record_id), COALESCE(MAX(ts),'') FROM tdms_features";
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? (r.GetInt64(0), r.GetInt64(1), r.GetString(2)) : (0, 0, "");
+    }
+
+    /// <summary>规格06期3：backfill 用——按 xml_path 批量取记录简报（免重解析 XML）。</summary>
+    public List<TdmsRecordBrief> GetRecordBriefsByPaths(IEnumerable<string> paths)
+    {
+        var list = new List<TdmsRecordBrief>();
+        var all = paths.Select(Path.GetFullPath).ToList();
+        for (int i = 0; i < all.Count; i += 500)
+        {
+            var chunk = all.Skip(i).Take(500).ToList();
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            var names = new List<string>();
+            for (int j = 0; j < chunk.Count; j++) names.Add($"@p{j}");
+            cmd.CommandText = $@"
+                SELECT id, xml_path, COALESCE(station_id,''), COALESCE(model,''), COALESCE(category,''),
+                       COALESCE(sn,''), COALESCE(test_date,''), COALESCE(NULLIF(batch_timestamp,''),created_at)
+                FROM test_records WHERE xml_path IN ({string.Join(",", names)})";
+            for (int j = 0; j < chunk.Count; j++)
+                cmd.Parameters.AddWithValue(names[j], chunk[j]);
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new TdmsRecordBrief
+                {
+                    Id = r.GetInt64(0),
+                    XmlPath = r.GetString(1),
+                    StationId = r.GetString(2),
+                    Model = r.GetString(3),
+                    Category = r.GetString(4),
+                    Sn = r.GetString(5),
+                    TestDate = r.GetString(6),
+                    Ts = r.IsDBNull(7) ? "" : r.GetString(7),
+                });
+            }
+        }
+        return list;
     }
 
     /// <summary>规格06期2：归因聚合源——全局计数 + fixture/tester/hour 三维桶 + 逐小时失败数。</summary>

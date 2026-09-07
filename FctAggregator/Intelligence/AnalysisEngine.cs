@@ -79,6 +79,27 @@ public sealed class CpkState
     }
 }
 
+public sealed class TdmsState
+{
+    public string Date { get; set; } = "";
+    public long RowsTotal { get; set; }
+    public long RecordsTotal { get; set; }
+    public string LastTs { get; set; } = "";
+    public int FilesOk { get; set; }
+    public int FilesSkipped { get; set; }
+    public int Dropped { get; set; }
+    public string LastError { get; set; } = "";
+    public string LastErrorPath { get; set; } = "";
+
+    public string ToJson() => JsonSerializer.Serialize(this);
+    public static TdmsState? FromJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<TdmsState>(json); }
+        catch { return null; }
+    }
+}
+
 /// <summary>规格06 多元深分析引擎：漂移预警 + CPK 过程能力（照 LearningEngine 模式，挂 DbMaintenance 链尾）。</summary>
 public static class AnalysisEngine
 {
@@ -86,6 +107,7 @@ public static class AnalysisEngine
     public const string MetaCpk = "analyze_cpk_state";
     public const string MetaAttribution = "analyze_attribution_state";
     public const string MetaFixture = "analyze_fixture_state";
+    public const string MetaTdms = "analyze_tdms_state";
     public const int MaxAlerts = 100;
     public const int MaxCpkItems = 200;
     public const double CpkLowThreshold = 1.33;
@@ -93,7 +115,8 @@ public static class AnalysisEngine
     public static void RunOnce(Database db, AppConfig cfg, DateTime? now = null)
     {
         if (!cfg.AnalyzeDriftEnabled && !cfg.AnalyzeCpkEnabled
-            && !cfg.AnalyzeFailAttrEnabled && !cfg.AnalyzeFixtureEnabled) return;
+            && !cfg.AnalyzeFailAttrEnabled && !cfg.AnalyzeFixtureEnabled
+            && !cfg.AnalyzeTdmsEnabled) return;
         var today = (now ?? DateTime.Now).Date;
         if (cfg.AnalyzeDriftEnabled)
         {
@@ -122,6 +145,27 @@ public static class AnalysisEngine
                 db.SetMeta(MetaFixture, state.ToJson());
             }
             catch (Exception ex) { Logger.Warning($"[分析] tester 对比失败: {ex.Message}"); }
+        }
+        if (cfg.AnalyzeTdmsEnabled)
+        {
+            try
+            {
+                var sum = db.GetTdmsFeatureSummary();
+                var state = new TdmsState
+                {
+                    Date = today.ToString("yyyy-MM-dd"),
+                    RowsTotal = sum.Rows,
+                    RecordsTotal = sum.Records,
+                    LastTs = sum.LastTs,
+                    FilesOk = TdmsFeatureCollector.FilesOk,
+                    FilesSkipped = TdmsFeatureCollector.FilesSkipped,
+                    Dropped = TdmsFeatureCollector.Dropped,
+                    LastError = TdmsFeatureCollector.LastError,
+                    LastErrorPath = TdmsFeatureCollector.LastErrorPath,
+                };
+                db.SetMeta(MetaTdms, state.ToJson());
+            }
+            catch (Exception ex) { Logger.Warning($"[分析] TDMS 快照失败: {ex.Message}"); }
         }
     }
 
@@ -168,4 +212,5 @@ public static class AnalysisEngine
     public static CpkState? GetCpkState(Database db) => CpkState.FromJson(db.GetMeta(MetaCpk));
     public static AttributionState? GetAttributionState(Database db) => AttributionState.FromJson(db.GetMeta(MetaAttribution));
     public static FixtureState? GetFixtureState(Database db) => FixtureState.FromJson(db.GetMeta(MetaFixture));
+    public static TdmsState? GetTdmsState(Database db) => TdmsState.FromJson(db.GetMeta(MetaTdms));
 }

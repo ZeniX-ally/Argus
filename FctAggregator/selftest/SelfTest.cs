@@ -5609,6 +5609,164 @@ Argus 统一发布包  v{newer}
             try { Directory.Delete(dirF6, true); } catch { }
             try { Directory.Delete(dirG6, true); } catch { }
             Console.WriteLine("[规格06期2] 快照组完成");
+
+            // ---------- 期3：TDMS 特征化（纯函数 / 定位 / 落表 / 护栏 / 快照） ----------
+            Console.WriteLine("\n【规格06期3】TDMS 特征化 …");
+            // 纯函数：基础统计（口径 = TdmsDoc.Describe）
+            var tdmsRows = TdmsFeatureAnalyzer.Compute(new[]
+            {
+                new TdmsFeatureAnalyzer.TdmsChannelData { Group = "03.2 电压", Channel = "V1", Data = new[] { 1.0, 2.0, 3.0, 4.0, 5.0 } },
+            }, 400);
+            Check(tdmsRows.Count == 1 && tdmsRows[0].N == 5 && tdmsRows[0].Section == "3.2",
+                  "期3: 通道统计 n/section 提取正确");
+            Check(Math.Abs(tdmsRows[0].Mean!.Value - 3.0) < 1e-9
+                  && Math.Abs(tdmsRows[0].Std!.Value - Math.Sqrt(2.5)) < 1e-9
+                  && tdmsRows[0].Min == 1.0 && tdmsRows[0].Max == 5.0
+                  && tdmsRows[0].First == 1.0 && tdmsRows[0].Last == 5.0,
+                  "期3: 通道统计 min/max/mean/std/first/last 逐值正确");
+            var tdmsSkip = TdmsFeatureAnalyzer.Compute(new[]
+            {
+                new TdmsFeatureAnalyzer.TdmsChannelData { Group = "G", Channel = "NaN1", Data = new[] { double.NaN, double.NaN } },
+                new TdmsFeatureAnalyzer.TdmsChannelData { Group = "G", Channel = "Empty", Data = Array.Empty<double>() },
+                new TdmsFeatureAnalyzer.TdmsChannelData { Group = "Resolver", Channel = "C3", Data = new[] { 1.0, 1.0 } },
+            }, 400);
+            Check(tdmsSkip.Count == 1 && tdmsSkip[0].ChannelName == "C3" && tdmsSkip[0].Section == "",
+                  "期3: 全 NaN/空数组通道跳过，无章节号 Group section 为空");
+            var tdmsSingle = TdmsFeatureAnalyzer.Compute(new[]
+            {
+                new TdmsFeatureAnalyzer.TdmsChannelData { Group = "G", Channel = "C1", Data = new[] { 7.0 } },
+            }, 400);
+            Check(tdmsSingle.Count == 1 && tdmsSingle[0].N == 1 && tdmsSingle[0].Std == 0,
+                  "期3: 单样本 Std=0（Describe 口径锁定）");
+            var tdmsCap = TdmsFeatureAnalyzer.Compute(new[]
+            {
+                new TdmsFeatureAnalyzer.TdmsChannelData { Group = "G", Channel = "C1", Data = new[] { 1.0 } },
+                new TdmsFeatureAnalyzer.TdmsChannelData { Group = "G", Channel = "C2", Data = new[] { 2.0 } },
+                new TdmsFeatureAnalyzer.TdmsChannelData { Group = "G", Channel = "C3", Data = new[] { 3.0 } },
+            }, 2);
+            Check(tdmsCap.Count == 2 && tdmsCap[0].ChannelName == "C1" && tdmsCap[1].ChannelName == "C2",
+                  "期3: maxChannels 通道截断");
+
+            // 定位器：临时树 {root}/{Category}/{Model}/{yyyyMMdd}/{SN}_*.tdms
+            var tdmsRootDir = Path.Combine(work, "tdmsroot");
+            var tdmsDayDir = Path.Combine(tdmsRootDir, "Online", "E3002781", "20260905");
+            Directory.CreateDirectory(tdmsDayDir);
+            File.WriteAllText(Path.Combine(tdmsDayDir, "SN001_0001.tdms"), "x");
+            File.WriteAllText(Path.Combine(tdmsDayDir, "SN0011_0001.tdms"), "x");
+            File.WriteAllText(Path.Combine(tdmsDayDir, "SN001_0002.tdms"), "x");
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "20260905", "SN001")
+                  == Path.Combine(tdmsDayDir, "SN001_0002.tdms"),
+                  "期3: 定位命中同 SN 文件名降序最新（SN001_0002）");
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "20260905", "SN009") == "",
+                  "期3: 无匹配 SN 返回空");
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile("", "Online", "E3002781", "20260905", "SN001") == ""
+                  && TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "20260905", "") == "",
+                  "期3: root 空/SN 空 防呆返回空");
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "2026090", "SN001") == "",
+                  "期3: testDate 非 8 位 防呆返回空（前缀不误命中 SN0011）");
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "20260801", "SN001") == "",
+                  "期3: 日期目录不存在 返回空");
+
+            // 落表：Init 预建 / 字段抽查 / UNIQUE 幂等 / Purge + 老库重开
+            var tdmsDbDir = Path.Combine(work, "tdmsdb");
+            Directory.CreateDirectory(tdmsDbDir);
+            var dbT = new Database(Path.Combine(tdmsDbDir, "t.db"));
+            Check(dbT.GetTdmsFeatureSummary() == (0L, 0L, ""), "期3: Init 预建 tdms_features 空表");
+            var tdmsRec = new TestRecord
+            {
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905",
+                Sn = "SN001", Result = "PASS", XmlPath = Path.Combine(work, "a1.xml"),
+                BatchTimestamp = "2026-09-05 10:00:00",
+            };
+            var tdmsFeatureRows = new List<TdmsFeatureAnalyzer.TdmsFeatureRow>
+            {
+                new() { GroupName = "03.2 电压", ChannelName = "V1", Section = "3.2", N = 5,
+                        Min = 1, Max = 5, Mean = 3, Std = Math.Sqrt(2.5), First = 1, Last = 5 },
+                new() { GroupName = "8.11 Resolver Test", ChannelName = "RES_A", Section = "8.11", N = 3,
+                        Min = 0.5, Max = 1.5, Mean = 1.0, Std = 0.5, First = 0.5, Last = 1.5 },
+            };
+            dbT.InsertTdmsFeaturesFor(tdmsRec, 101, Path.Combine(tdmsDayDir, "SN001_0002.tdms"), tdmsFeatureRows);
+            var tdmsRecent = dbT.GetRecentTdmsFeatures(10);
+            Check(tdmsRecent.Count == 2, "期3: InsertTdmsFeaturesFor 落表 2 行");
+            var r1 = tdmsRecent.First(x => x.ChannelName == "V1");
+            Check(r1.RecordId == 101 && r1.Model == "E3002781" && r1.Sn == "SN001"
+                  && r1.GroupName == "03.2 电压" && r1.Section == "3.2" && r1.N == 5
+                  && Math.Abs(r1.Mean!.Value - 3.0) < 1e-9 && r1.Ts == "2026-09-05 10:00:00",
+                  "期3: 特征行字段抽查（冗余列 record_id/model/sn/ts）");
+            dbT.InsertTdmsFeaturesFor(tdmsRec, 101, Path.Combine(tdmsDayDir, "SN001_0002.tdms"), tdmsFeatureRows);
+            Check(dbT.GetTdmsFeatureSummary() == (2L, 1L, "2026-09-05 10:00:00"),
+                  "期3: UNIQUE(record_id,group,channel) 幂等重插不变");
+            var tdmsRecOld = new TestRecord
+            {
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260801",
+                Sn = "SN001", Result = "PASS", XmlPath = Path.Combine(work, "a0.xml"),
+                BatchTimestamp = "2026-08-01 09:00:00",
+            };
+            dbT.InsertTdmsFeaturesFor(tdmsRecOld, 100, "old.tdms", new List<TdmsFeatureAnalyzer.TdmsFeatureRow>
+            {
+                new() { GroupName = "G", ChannelName = "OLD1", N = 2, Min = 0, Max = 1, Mean = 0.5, Std = 0.5, First = 0, Last = 1 },
+            });
+            dbT.PurgeOldTdmsFeatures(30);
+            Check(dbT.GetTdmsFeatureSummary().Rows == 2, "期3: PurgeOldTdmsFeatures 清旧留新");
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+            // 护栏：开关关 / 大小超限 / 无效 TDMS 吞异常
+            TdmsFeatureCollector.FilesOk = 0; TdmsFeatureCollector.FilesSkipped = 0;
+            TdmsFeatureCollector.Dropped = 0; TdmsFeatureCollector.LastError = ""; TdmsFeatureCollector.LastErrorPath = "";
+            var tdmsCfgOff = new AppConfig { AnalyzeTdmsEnabled = false, TdmsRoot = tdmsRootDir };
+            Check(TdmsFeatureCollector.CaptureOne(dbT, tdmsCfgOff, tdmsRec, 101) == 0
+                  && TdmsFeatureCollector.FilesSkipped == 0,
+                  "期3: 开关关 CaptureOne no-op 不计数");
+            var tdmsCfgBig = new AppConfig
+            {
+                AnalyzeTdmsEnabled = true, TdmsRoot = tdmsRootDir,
+                AnalyzeTdmsMaxKb = 1, AnalyzeTdmsMaxChannels = 400,
+            };
+            var tdmsBigFile = Path.Combine(tdmsDayDir, "SN900_0001.tdms");
+            File.WriteAllBytes(tdmsBigFile, new byte[2048]);
+            var tdmsRecBig = new TestRecord
+            {
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905",
+                Sn = "SN900", Result = "PASS", XmlPath = Path.Combine(work, "a2.xml"),
+            };
+            Check(TdmsFeatureCollector.CaptureOne(dbT, tdmsCfgBig, tdmsRecBig, 102) == 0
+                  && TdmsFeatureCollector.FilesSkipped == 1,
+                  "期3: 单文件超 analyze_tdms_max_kb 跳过计数");
+            var tdmsCfgBad = new AppConfig
+            {
+                AnalyzeTdmsEnabled = true, TdmsRoot = tdmsRootDir,
+                AnalyzeTdmsMaxKb = 65536, AnalyzeTdmsMaxChannels = 400,
+            };
+            var tdmsRecBad = new TestRecord
+            {
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905",
+                Sn = "SN001", Result = "PASS", XmlPath = Path.Combine(work, "a3.xml"),
+            };
+            Check(TdmsFeatureCollector.CaptureOne(dbT, tdmsCfgBad, tdmsRecBad, 103) == 0
+                  && TdmsFeatureCollector.FilesSkipped == 2
+                  && TdmsFeatureCollector.LastErrorPath.EndsWith("SN001_0002.tdms")
+                  && dbT.GetTdmsFeatureSummary().Rows == 2,
+                  "期3: 无效 TDMS 内容 Load 抛异常吞掉计数不落行不崩溃");
+
+            // 快照：TdmsState round trip + RunOnce 只开 TDMS 开关
+            var tdmsCfgOn = new AppConfig
+            {
+                AnalyzeDriftEnabled = false, AnalyzeCpkEnabled = false,
+                AnalyzeFailAttrEnabled = false, AnalyzeFixtureEnabled = false,
+                AnalyzeTdmsEnabled = true, TdmsRoot = tdmsRootDir,
+            };
+            AnalysisEngine.RunOnce(dbT, tdmsCfgOn, fixedNow);
+            var tdmsGet = AnalysisEngine.GetTdmsState(dbT);
+            Check(tdmsGet != null && tdmsGet.RowsTotal == 2 && tdmsGet.RecordsTotal == 1
+                  && tdmsGet.FilesSkipped >= 2 && tdmsGet.Date == "2026-09-05",
+                  "期3: RunOnce 仅 TDMS 开关落盘快照（行数/记录数/跳过计数）");
+            Check(TdmsState.FromJson(tdmsGet!.ToJson())!.RowsTotal == tdmsGet.RowsTotal
+                  && TdmsState.FromJson("bad") == null,
+                  "期3: TdmsState JSON 往返一致 + 坏 JSON 安全 null");
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(tdmsDbDir, true); } catch { }
+            try { Directory.Delete(tdmsRootDir, true); } catch { }
+            Console.WriteLine("[规格06期3] TDMS 特征化完成");
         }
     }
 

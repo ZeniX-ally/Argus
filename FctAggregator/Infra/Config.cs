@@ -89,6 +89,9 @@ public class AppConfig
     public int AnalyzeMeasureRetentionDays { get; set; } = 30;
     public int AnalyzeFailItemRetentionDays { get; set; } = 90;
     public bool AnalyzeTdmsEnabled { get; set; } = false;
+    public string TdmsRoot { get; set; } = "";
+    public int AnalyzeTdmsMaxKb { get; set; } = 65536;
+    public int AnalyzeTdmsMaxChannels { get; set; } = 400;
     public bool AnalyzeFailAttrEnabled { get; set; } = true;
     public bool AnalyzeFixtureEnabled { get; set; } = true;
     public int AnalyzeAttrMinBucket { get; set; } = 20;
@@ -278,6 +281,9 @@ public class AppConfig
                 if (root.TryGetProperty("analyze_measure_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var amr) && amr >= 1) cfg.AnalyzeMeasureRetentionDays = amr;
                 if (root.TryGetProperty("analyze_failitem_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var afi) && afi >= 1) cfg.AnalyzeFailItemRetentionDays = afi;
                 if (root.TryGetProperty("analyze_tdms_enabled", out v)) cfg.AnalyzeTdmsEnabled = v.ValueKind == JsonValueKind.True;
+                if (root.TryGetProperty("tdms_root", out v)) cfg.TdmsRoot = (v.GetString() ?? "").Trim();
+                if (root.TryGetProperty("analyze_tdms_max_kb", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var atk) && atk >= 1) cfg.AnalyzeTdmsMaxKb = atk;
+                if (root.TryGetProperty("analyze_tdms_max_channels", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var atc) && atc >= 1) cfg.AnalyzeTdmsMaxChannels = atc;
                 if (root.TryGetProperty("analyze_fail_attr_enabled", out v)) cfg.AnalyzeFailAttrEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("analyze_fixture_enabled", out v)) cfg.AnalyzeFixtureEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("analyze_attr_min_bucket", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var aam) && aam >= 1) cfg.AnalyzeAttrMinBucket = aam;
@@ -350,6 +356,7 @@ public class AppConfig
                     "analyze_drift_enabled", "analyze_cpk_enabled", "analyze_window_days",
                     "analyze_min_samples", "analyze_drift_sigma", "analyze_drift_warn_ratio",
                     "analyze_measure_retention_days", "analyze_failitem_retention_days", "analyze_tdms_enabled",
+                    "tdms_root", "analyze_tdms_max_kb", "analyze_tdms_max_channels",
                     "analyze_fail_attr_enabled", "analyze_fixture_enabled", "analyze_attr_min_bucket",
                     "analyze_attr_dev_ratio", "analyze_effect_d",
                 };
@@ -445,6 +452,9 @@ public class AppConfig
                 writer.WriteNumber("analyze_measure_retention_days", AnalyzeMeasureRetentionDays);
                 writer.WriteNumber("analyze_failitem_retention_days", AnalyzeFailItemRetentionDays);
                 writer.WriteBoolean("analyze_tdms_enabled", AnalyzeTdmsEnabled);
+                writer.WriteString("tdms_root", TdmsRoot);
+                writer.WriteNumber("analyze_tdms_max_kb", AnalyzeTdmsMaxKb);
+                writer.WriteNumber("analyze_tdms_max_channels", AnalyzeTdmsMaxChannels);
                 writer.WriteBoolean("analyze_fail_attr_enabled", AnalyzeFailAttrEnabled);
                 writer.WriteBoolean("analyze_fixture_enabled", AnalyzeFixtureEnabled);
                 writer.WriteNumber("analyze_attr_min_bucket", AnalyzeAttrMinBucket);
