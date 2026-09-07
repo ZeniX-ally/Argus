@@ -18,9 +18,9 @@ public static class BackfillTool
                 int.TryParse(args[i + 1], out var d) && d >= 1)
                 days = Math.Min(d, 3650);
 
-        if (!cfg.AnalyzeCollectPass)
+        if (!cfg.AnalyzeCollectPass && !(cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(cfg.TdmsRoot)))
         {
-            Console.WriteLine("analyze_collect_pass=false，测量值采集已关闭，无内容可回填。");
+            Console.WriteLine("analyze_collect_pass=false 且 TDMS 特征化未启用，无内容可回填。");
             return 0;
         }
 
@@ -74,7 +74,7 @@ public static class BackfillTool
                         .OrderBy(p => p, StringComparer.Ordinal).ToList();
                     if (files.Count == 0) continue;
 
-                    long dayRecords = 0, dayMeasurements = 0, dayFailItems = 0;
+                    long dayRecords = 0, dayMeasurements = 0, dayFailItems = 0, dayTdmsFiles = 0, dayTdmsRows = 0;
                     for (int i = 0; i < files.Count; i += 100)
                     {
                         var chunk = files.Skip(i).Take(100).Select(Path.GetFullPath).ToList();
@@ -121,12 +121,24 @@ public static class BackfillTool
                             db.InsertFailItemsFor(failItemRows);
                             dayFailItems += failItemRows.Sum(r => r.Item1.FailedTests.Count);
                         }
+                        // 规格06期3：TDMS 特征补采档（PASS+FAIL 全量，UNIQUE 幂等；失败不影响测量值回填）
+                        if (cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(cfg.TdmsRoot))
+                        {
+                            try
+                            {
+                                var briefs = db.GetRecordBriefsByPaths(chunk);
+                                var (tf, tr) = TdmsFeatureCollector.CaptureBatch(db, cfg, briefs);
+                                dayTdmsFiles += tf;
+                                dayTdmsRows += tr;
+                            }
+                            catch (Exception ex) { Logger.Warning($"[回填] TDMS 特征补采失败: {ex.Message}"); }
+                        }
                         if (scanned % 200 == 0) Thread.Sleep(100);
                     }
                     insertedRecords += dayRecords;
                     insertedMeasurements += dayMeasurements;
                     insertedFailItems += dayFailItems;
-                    Console.WriteLine($"  {day:yyyy-MM-dd} {Path.GetFileName(modelDir)}: 文件 {files.Count}，新记录 {dayRecords}，补测量 {dayMeasurements}，补失败项 {dayFailItems}");
+                    Console.WriteLine($"  {day:yyyy-MM-dd} {Path.GetFileName(modelDir)}: 文件 {files.Count}，新记录 {dayRecords}，补测量 {dayMeasurements}，补失败项 {dayFailItems}{(dayTdmsRows > 0 ? $"，TDMS {dayTdmsRows} 行/{dayTdmsFiles} 文件" : "")}");
                     db.SetMeta(MetaWatermark, day.ToString("yyyy-MM-dd"));
                 }
             }

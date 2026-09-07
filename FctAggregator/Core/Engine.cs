@@ -314,6 +314,17 @@ public class Engine
         }
         catch (Exception ex) { Logger.Error($"[错误] 入库失败: {path} | {ex.Message}"); return; }
 
+        // 规格06期3：TDMS 特征化实时入队（单消费者队列，不阻塞采集链路；开关关/tdms_root 空静默）
+        if (_cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(_cfg.TdmsRoot))
+        {
+            try
+            {
+                var rid = _db.GetRecordIdsByPaths(new[] { Path.GetFullPath(path) }).Values.FirstOrDefault();
+                if (rid > 0) TdmsFeatureCollector.Enqueue(rec, rid);
+            }
+            catch (Exception ex) { Logger.Warning($"[TDMS] 特征化入队失败: {ex.Message}"); }
+        }
+
         RefreshStats();
 
         if (rec.Result == "FAIL")

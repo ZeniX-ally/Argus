@@ -16,6 +16,8 @@ public class AnalysisPanel : Panel
     private Label _attrEmpty = null!;
     private Label _effectEmpty = null!;
     private Label _groupEmpty = null!;
+    private DataGridView _tdmsGrid = null!;
+    private Label _tdmsEmpty = null!;
 
     public AnalysisPanel(Engine engine)
     {
@@ -88,18 +90,32 @@ public class AnalysisPanel : Panel
         _groupGrid.Columns.Add("msg", "提示");
         _groupGrid.Columns[^1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
+        _tdmsGrid = NewGrid();
+        _tdmsGrid.Columns.Add("sn", "SN");
+        _tdmsGrid.Columns.Add("model", "型号");
+        _tdmsGrid.Columns.Add("group", "Group(章节)");
+        _tdmsGrid.Columns.Add("channel", "通道");
+        _tdmsGrid.Columns.Add("n", "样本");
+        _tdmsGrid.Columns.Add("mean", "mean±std");
+        _tdmsGrid.Columns.Add("range", "min~max");
+        _tdmsGrid.Columns.Add("ts", "时间");
+        _tdmsGrid.Columns[^1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+
         _driftEmpty = EmptyLabel("暂无漂移快照（每日维护窗口自动计算）");
         _cpkEmpty = EmptyLabel("暂无 CPK 快照（每日维护窗口自动计算）");
         _attrEmpty = EmptyLabel("暂无归因快照（每日维护窗口自动计算）");
         _effectEmpty = EmptyLabel("暂无 tester 对比快照（每日维护窗口自动计算）");
         _groupEmpty = EmptyLabel("暂无章节群挂预警");
+        _tdmsEmpty = EmptyLabel("TDMS 特征化未启用或无数据（需配置 tdms_root 并打开 analyze_tdms_enabled）");
 
         var driftHost = SectionHost("规格带漂移 / 逼近规格限预警", _driftGrid, _driftEmpty);
         var cpkHost = SectionHost("CPK 低能力清单（< 1.33）", _cpkGrid, _cpkEmpty);
         var attrHost = SectionHost("失败多维归因（治具 / 测试员 / 时段 异常桶）", _attrGrid, _attrEmpty);
         var effectHost = SectionHost("Tester 效应量对比（同测项均值差 / 合并σ）", _effectGrid, _effectEmpty);
         var groupHost = SectionHost("章节群挂预警（规格 05 自学习）", _groupGrid, _groupEmpty);
+        var tdmsHost = SectionHost("TDMS 特征化（最近通道统计，FAIL+PASS）", _tdmsGrid, _tdmsEmpty);
 
+        Controls.Add(tdmsHost);
         Controls.Add(groupHost);
         Controls.Add(effectHost);
         Controls.Add(attrHost);
@@ -147,8 +163,9 @@ public class AnalysisPanel : Panel
         var attr = AnalysisEngine.GetAttributionState(db);
         var fixture = AnalysisEngine.GetFixtureState(db);
         var group = LearningEngine.GetGroupAlerts(db);
+        var tdms = AnalysisEngine.GetTdmsState(db);
 
-        if (drift == null && cpk == null && attr == null && fixture == null)
+        if (drift == null && cpk == null && attr == null && fixture == null && tdms == null)
         {
             _summary.Text = "暂无分析结果——分析引擎在每日维护窗口自动运行（db_maintenance_hour，默认 3 点），" +
                             "也可用 Argus.exe backfill 先回填存量数据加速冷启动。";
@@ -164,6 +181,8 @@ public class AnalysisPanel : Panel
                 parts.Add($"归因 {attr.Date}（全局失败率 {attr.GlobalFailRate:P1}）：异常桶 {attr.Buckets.Count}，资源相关 {attr.ResourceCorrelations.Count}");
             if (fixture != null)
                 parts.Add($"tester 对比：效应量异常 {fixture.Effects.Count}/{fixture.AnalyzedTests} 测项");
+            if (tdms != null)
+                parts.Add($"TDMS 特征化：{tdms.RowsTotal} 行 / {tdms.RecordsTotal} 记录（跳过 {tdms.FilesSkipped}）");
             _summary.Text = string.Join("；", parts) + "。样本不足的测项/桶不参与评级（冷启动保护）。";
         }
 
@@ -172,6 +191,25 @@ public class AnalysisPanel : Panel
         FillAttr(attr);
         FillEffect(fixture);
         FillGroup(group);
+        FillTdms(db);
+    }
+
+    private void FillTdms(Database db)
+    {
+        _tdmsGrid.Rows.Clear();
+        var rows = db.GetRecentTdmsFeatures(50);
+        _tdmsEmpty.Visible = rows.Count == 0;
+        _tdmsGrid.Visible = rows.Count > 0;
+        foreach (var r in rows)
+        {
+            _tdmsGrid.Rows.Add(
+                r.Sn, r.Model,
+                string.IsNullOrEmpty(r.Section) ? r.GroupName : $"{r.GroupName}(§{r.Section})",
+                r.ChannelName, r.N.ToString(),
+                r.Mean == null ? "-" : $"{r.Mean:F4}±{r.Std:F4}",
+                r.Min == null ? "-" : $"{r.Min:F4}~{r.Max:F4}",
+                r.Ts);
+        }
     }
 
     private void FillDrift(DriftState? state)

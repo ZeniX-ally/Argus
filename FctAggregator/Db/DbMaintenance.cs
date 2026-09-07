@@ -144,6 +144,8 @@ public sealed class DbMaintenance
                 var retainFi = AppConfig.Instance.AnalyzeFailItemRetentionDays;
                 var purgedFi = localDb.PurgeOldFailItems(retainFi);
                 if (purgedFi > 0) Logger.Info($"[库维护] 失败项明细清理: 删除 {purgedFi} 条（保留 {retainFi} 天）");
+                var purgedTf = localDb.PurgeOldTdmsFeatures(retain);
+                if (purgedTf > 0) Logger.Info($"[库维护] TDMS 特征清理: 删除 {purgedTf} 条（保留 {retain} 天）");
             }
         }
         catch (Exception ex)
