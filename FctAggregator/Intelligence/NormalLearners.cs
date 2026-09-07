@@ -17,7 +17,6 @@ public static class NormalLearners
 
     public static void ObserveMeasurement(Database db, AppConfig cfg, TestRecord rec)
     {
-        if (cfg.LearnNormalEnabled || db == null) { }
         if (!cfg.LearnNormalEnabled || db == null) return;
         try
         {
