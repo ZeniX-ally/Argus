@@ -314,6 +314,9 @@ public class Engine
         }
         catch (Exception ex) { Logger.Error($"[错误] 入库失败: {path} | {ex.Message}"); return; }
 
+        // 正常态自学习：PASS 测量值入模（开关关 no-op，吞异常不阻塞采集）
+        NormalLearners.ObserveMeasurement(_db, _cfg, rec);
+
         // 规格06期3：TDMS 特征化实时入队（单消费者队列，不阻塞采集链路；开关关/tdms_root 空静默）
         if (_cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(_cfg.TdmsRoot))
         {

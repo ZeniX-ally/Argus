@@ -111,6 +111,7 @@ public sealed class DeviceSampleRecorder : IDisposable
             if (db != null)
             {
                 db.InsertLocalDeviceSample(cpu, memPct, diskFree);
+                NormalLearners.ObserveDeviceSample(db, AppConfig.Instance, cpu, memPct, diskFree);
             }
 
             return (cpu, memPct, diskFree);
