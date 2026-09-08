@@ -1,7 +1,7 @@
 # 算法优化规格（v3.20.0 候选）
 
 > 适用范围：FctAggregator 主程序（Argus.exe） + WebAggServer + SPA 前端
-> 状态：**待评审**（2026-09）
+> 状态：**历史规格**（01～04 的聚合端实现已随 v3.32.0 对照的 v3.31.0 纯单机化删除；05 机台自学习仍在本机。当前算法主线是正常态自学习，见 `docs/superpowers/specs/2026-09-07-normal-state-learning-design.md`，P1～P4 已于 v3.32.0 落地，开关默认关）
 > 承接：v3.19.0 智能化扩展（9 个智能化域）之后的算法升级
 > 配套更新：`TECHNICAL_DOCUMENTATION.md`、`更新日志.md`
 

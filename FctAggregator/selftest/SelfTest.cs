@@ -77,10 +77,10 @@ class SelfTest
         {
             c.Open();
             using var q = c.CreateCommand();
-            q.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('normal_models')";
+            q.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('normal_models','deviation_events')";
             nmTables = Convert.ToInt32(q.ExecuteScalar());
         }
-        Check(nmTables == 1, "normal_models 表已建（主库 Init 迁移）");
+        Check(nmTables == 2, "normal_models + deviation_events 表已建（主库 Init 迁移）");
 
         var bak = Directory.GetFiles(work, "fct.db.bak-*");
         if (haveReal)
@@ -1178,7 +1178,7 @@ class SelfTest
 
 
 
-        Console.WriteLine("\n【正常态自学习】Welford/P²收敛 / 建模与状态机 / PASS过滤 / 异常吞并 / 心跳");
+        Console.WriteLine("\n【正常态自学习】Welford/P² / 建模 / P2评分闸门回放 / P3快照 / P4证据");
         RunNormalStateTests(work);
 
 
@@ -2915,6 +2915,9 @@ Argus 统一发布包  v{newer}
         var defCfg = new AppConfig();
         Check(!defCfg.LearnNormalEnabled, "learn_normal_enabled 默认 false");
         Check(defCfg.LearnNormalMinSamples == 30 && defCfg.LearnNormalStaleDays == 14, "正常态默认参数 30/14");
+        Check(defCfg.LearnNormalVoteSignals == 3 && defCfg.LearnNormalEventScore == 75 && defCfg.LearnNormalMaxEventsPerDay == 10,
+            "正常态 P2 默认投票/分数/风暴 3/75/10");
+        Check(!defCfg.LearnNormalEnabled, "learn_normal_enabled 默认 false（P2 键不改变关默认）");
 
         // ── Task1: Welford 收敛对拍 ──
         var w = new Welford();
@@ -3009,5 +3012,124 @@ Argus 统一发布包  v{newer}
            && offDb.GetNormalModel(NormalModelStore.SourceWaveform, "G49", "G1/CH1/vmean") == null
            && offDb.GetNormalModel(NormalModelStore.SourceDevice, "", "cpu@1") == null,
             "开关关闭：三学习器全部 no-op");
+
+        // ── P2: DeviationScorer 公式 / 闸门 / 投票 / 风暴 ──
+        Check(DeviationScorer.SigmaFloor == 1e-6, "sigma_floor 常量 1e-6");
+        var scDb = new Database(Path.Combine(work, "sc.db"));
+        var scNow = new DateTime(2026, 9, 8, 12, 0, 0);
+        var readyRow = new NormalModelRow
+        {
+            Source = "measurement", Model = "M1", SignalKey = "T1",
+            N = 50, Mean = 10.0, Sigma = 1.0, Status = "ready",
+            LastTs = "2026-09-08 10:00:00",
+        };
+        Check(DeviationScorer.ScoreOne(readyRow, 13.0, scNow, 14) == 50, "z=3 → 分数 50");
+        Check(DeviationScorer.ScoreOne(readyRow, 16.0, scNow, 14) == 100, "z=6 → 分数 100（封顶）");
+        Check(DeviationScorer.ScoreOne(readyRow, 4.0, scNow, 14) == 100, "负偏离 |z|=6 → 分数 100");
+        var learningRow = new NormalModelRow { Status = "learning", Mean = 10, Sigma = 1, N = 5, LastTs = readyRow.LastTs };
+        Check(DeviationScorer.ScoreOne(learningRow, 16.0, scNow, 14) == null, "非 ready 不可评");
+        var staleRow = new NormalModelRow { Status = "ready", Mean = 10, Sigma = 1, N = 50, LastTs = "2026-01-01 00:00:00" };
+        Check(DeviationScorer.ScoreOne(staleRow, 16.0, scNow, 14) == null, "stale 不可评");
+
+        var voteCfg = new AppConfig
+        {
+            LearnNormalEnabled = true, LearnNormalMinSamples = 5,
+            LearnNormalVoteSignals = 3, LearnNormalEventScore = 75, LearnNormalMaxEventsPerDay = 10,
+            LearnNormalStaleDays = 14,
+        };
+        for (int i = 0; i < 8; i++)
+        {
+            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "A", 10.0 + i * 0.01, "2026-09-01 10:00:00");
+            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "B", 20.0 + i * 0.01, "2026-09-01 10:00:00");
+            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "C", 30.0 + i * 0.01, "2026-09-01 10:00:00");
+            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "D", 40.0 + i * 0.01, "2026-09-01 10:00:00");
+        }
+        var evSilent = DeviationScorer.EvaluateWindow(scDb, voteCfg, "measurement", "M1", "2026-09-08 12:00:00",
+            new[] { ("A", 10.0), ("B", 20.0), ("C", 30.0), ("D", 40.0) }, scNow);
+        Check(evSilent == null && scDb.CountDeviationEventsOnDay("2026-09-08") == 0, "正常窗口沉默（不落事件）");
+
+        var evHit = DeviationScorer.EvaluateWindow(scDb, voteCfg, "measurement", "M1", "2026-09-08 12:01:00",
+            new[] { ("A", 16.0), ("B", 26.0), ("C", 36.0), ("D", 40.0) }, scNow);
+        Check(evHit != null && evHit!.SignalCount >= 3 && evHit.TopScore >= 75, "≥3 信号 score≥75 落偏离事件");
+        Check(scDb.CountDeviationEventsOnDay("2026-09-08") == 1, "投票通过写入 1 条 deviation_events");
+
+        var twoOnly = DeviationScorer.EvaluateWindow(scDb, voteCfg, "measurement", "M1", "2026-09-08 12:02:00",
+            new[] { ("A", 16.0), ("B", 26.0), ("C", 30.0), ("D", 40.0) }, scNow);
+        Check(twoOnly == null && scDb.CountDeviationEventsOnDay("2026-09-08") == 1, "仅 2 信号超门限不落库");
+
+        voteCfg.LearnNormalMaxEventsPerDay = 1;
+        var storm = DeviationScorer.EvaluateWindow(scDb, voteCfg, "measurement", "M1", "2026-09-08 12:03:00",
+            new[] { ("A", 16.0), ("B", 26.0), ("C", 36.0), ("D", 40.0) }, scNow);
+        Check(storm == null && scDb.CountDeviationEventsOnDay("2026-09-08") == 1, "风暴门：超每日上限只计数不落库");
+
+        var offVote = new AppConfig { LearnNormalEnabled = false, LearnNormalVoteSignals = 3, LearnNormalEventScore = 75 };
+        Check(DeviationScorer.EvaluateWindow(scDb, offVote, "measurement", "M1", "2026-09-08 12:04:00",
+            new[] { ("A", 16.0), ("B", 26.0), ("C", 36.0) }, scNow) == null, "开关关：评分 no-op");
+
+        // ── P2: 回填只学 PASS、幂等 ──
+        var bfDb = new Database(Path.Combine(work, "bf.db"));
+        var bfCfg = new AppConfig { LearnNormalEnabled = true, LearnNormalMinSamples = 2 };
+        var passBf = new TestRecord
+        {
+            StationId = "FCT1", Model = "G49", Category = "Online", TestDate = "20260901",
+            Sn = "SNBF1", Result = "PASS", XmlPath = Path.Combine(work, "bf_pass.xml"),
+            BatchTimestamp = "2026-09-01 10:00:00",
+            Measurements = new List<MeasurementRow> { new() { TestName = "T_BF", Value = 5.0 } },
+        };
+        var failBf = new TestRecord
+        {
+            StationId = "FCT1", Model = "G49", Category = "Online", TestDate = "20260901",
+            Sn = "SNBF2", Result = "FAIL", XmlPath = Path.Combine(work, "bf_fail.xml"),
+            BatchTimestamp = "2026-09-01 10:01:00",
+            Measurements = new List<MeasurementRow> { new() { TestName = "T_BF", Value = 99.0 } },
+        };
+        bfDb.BatchInsert(new[] { passBf, failBf });
+        File.WriteAllText(passBf.XmlPath, "<x/>");
+        File.WriteAllText(failBf.XmlPath, "<x/>");
+        var n1 = LearnBackfill.Run(bfDb, bfCfg, 30);
+        var n2 = LearnBackfill.Run(bfDb, bfCfg, 30);
+        var bfRow = bfDb.GetNormalModel(NormalModelStore.SourceMeasurement, "G49", "T_BF");
+        Check(bfRow != null && bfRow!.N >= 1 && bfRow.Mean < 10, "回填只学 PASS（FAIL 99 不入模）");
+        Check(n1 >= 1 && n2 == 0, "回填水位幂等（第二次 0 增量）");
+
+        var offBf = LearnBackfill.Run(offDb, new AppConfig { LearnNormalEnabled = false }, 30);
+        Check(offBf == 0, "开关关：回填 no-op");
+
+        // ── P2: ReplayRunner 合成 4 周三指标 ──
+        var rp = ReplayRunner.RunSynthetic(Path.Combine(work, "rp.db"));
+        Check(rp.DetectionRate >= 0.80, $"回放异常检出率 ≥80%（实得 {rp.DetectionRate:P0}）");
+        Check(rp.FalsePosPerDay <= 0.20, $"回放误报 ≤0.2 条/天（实得 {rp.FalsePosPerDay:F2}）");
+        Check(rp.ReadyCoverage >= 0.90, $"回放 ready 覆盖率 ≥90%（实得 {rp.ReadyCoverage:P0}）");
+        Check(rp.Pass, "ReplayRunner 三指标同时达标");
+
+        var snap = LearningSnapshot.Capture(scDb, voteCfg, scNow);
+        Check(snap.Total >= 4 && snap.Ready >= 4, "P3 快照：覆盖率与表对拍（ready≥4）");
+        Check(snap.Events.Count >= 1, "P3 快照：偏离事件与表对拍");
+        Check(snap.HeartbeatSummary() != null, "P3 快照：心跳文案可生成");
+
+        var evDb = new Database(Path.Combine(work, "ev.db"));
+        var evCfg = new AppConfig
+        {
+            LearnNormalEnabled = true, LearnNormalMinSamples = 5, LearnNormalStaleDays = 14,
+            AnalyzeWindowDays = 7, AnalyzeAttrMinBucket = 20, AnalyzeAttrDevRatio = 1.5,
+        };
+        for (int i = 0; i < 8; i++)
+            NormalModelStore.Observe(evDb, 5, "measurement", "G49", "T_EV", 10.0, "2026-09-01 10:00:00");
+        evDb.BatchInsert(new[]
+        {
+            new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", Category = "Online", TestDate = "20260908",
+                Sn = "SNEV", Result = "FAIL", XmlPath = Path.Combine(work, "ev_fail.xml"),
+                BatchTimestamp = "2026-09-08 12:00:00",
+                FailedTests = { new FailedTest { Name = "T_EV", Value = "16.0" } },
+            },
+        });
+        var attr = FailAttributor.Run(evDb, evCfg, new DateTime(2026, 9, 8, 12, 0, 0));
+        Check(attr.DeviationEvidence.Any(d => d.TestName == "T_EV" && d.Score >= 75),
+            "P4 归因偏离证据：FAIL 信号对本机 ready 模型打出高分");
+        evCfg.LearnNormalEnabled = false;
+        Check(FailAttributor.Run(evDb, evCfg, new DateTime(2026, 9, 8)).DeviationEvidence.Count == 0,
+            "P4 开关关：不附偏离证据");
     }
 }

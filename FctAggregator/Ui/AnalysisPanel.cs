@@ -178,7 +178,8 @@ public class AnalysisPanel : Panel
             if (cpk != null)
                 parts.Add($"CPK：低能力 {cpk.LowCount}/{cpk.AnalyzedTests}");
             if (attr != null)
-                parts.Add($"归因 {attr.Date}（全局失败率 {attr.GlobalFailRate:P1}）：异常桶 {attr.Buckets.Count}，资源相关 {attr.ResourceCorrelations.Count}");
+                parts.Add($"归因 {attr.Date}（全局失败率 {attr.GlobalFailRate:P1}）：异常桶 {attr.Buckets.Count}，资源相关 {attr.ResourceCorrelations.Count}" +
+                          (attr.DeviationEvidence.Count > 0 ? $"，偏离证据 {attr.DeviationEvidence.Count}" : ""));
             if (fixture != null)
                 parts.Add($"tester 对比：效应量异常 {fixture.Effects.Count}/{fixture.AnalyzedTests} 测项");
             if (tdms != null)

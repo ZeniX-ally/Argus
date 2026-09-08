@@ -65,6 +65,10 @@ static class Program
                     EnsureConsole();
                     return BackfillTool.Run(rest);
 
+                case "learn":
+                    EnsureConsole();
+                    return LearnCli.Run(rest);
+
                 case "-h":
                 case "--help":
                 case "help":
@@ -213,6 +217,8 @@ FCT 工具套件 (Argus.exe)
   Argus.exe tdms --help        TDMS 工具的命令行用法
   Argus.exe fetch --help       取数打包工具的命令行用法
   Argus.exe backfill [--days N]  存量 PASS 文件测量值补采（规格06，幂等可续跑）
+  Argus.exe learn --backfill [--days N]  正常态模型历史回填（learn_normal_enabled）
+  Argus.exe learn --replay       合成回放三指标（检出/误报/覆盖）
   Argus.exe --help             本帮助
 
 三个工具也能在主程序左侧「工具箱」里直接点开。

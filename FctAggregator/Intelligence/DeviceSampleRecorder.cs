@@ -113,6 +113,7 @@ public sealed class DeviceSampleRecorder : IDisposable
             if (db != null)
             {
                 db.InsertLocalDeviceSample(cpu.Value, memPct.Value, diskFree.Value);
+                DeviationScorer.EvaluateDeviceSample(db, AppConfig.Instance, cpu.Value, memPct.Value, diskFree.Value);
                 NormalLearners.ObserveDeviceSample(db, AppConfig.Instance, cpu.Value, memPct.Value, diskFree.Value);
             }
 

@@ -30,16 +30,17 @@ public class MainForm : Form
     private FailListPanel _failPage = null!;
     private DebugPanel _debugPage = null!;
     private AnalysisPanel _analysisPage = null!;
+    private LearningPanel _learnPage = null!;
     private System.Windows.Forms.Timer _timer = null!;
     private System.Windows.Forms.Timer? _autoUpdateTimer;
 
     private static readonly string[] PageTitles =
     {
-        "总览", "待办 / 维修记录", "设备状态", "FAIL 记录", "调试工具", "深度分析",
+        "总览", "待办 / 维修记录", "设备状态", "FAIL 记录", "调试工具", "深度分析", "自学习",
         "TDMS 波形",
     };
 
-    private const int OwnPageCount = 6;
+    private const int OwnPageCount = 7;
 
     private static readonly (string key, string label, Func<Form> factory)[] Tools =
     {
@@ -161,8 +162,9 @@ public class MainForm : Form
         _failPage = new FailListPanel(_engine) { Dock = DockStyle.Fill };
         _debugPage = new DebugPanel(_engine) { Dock = DockStyle.Fill };
         _analysisPage = new AnalysisPanel(_engine) { Dock = DockStyle.Fill };
+        _learnPage = new LearningPanel(_engine) { Dock = DockStyle.Fill };
 
-        Control[] pages = { _dashboardPage, _maintPage, _devicePage, _failPage, _debugPage, _analysisPage };
+        Control[] pages = { _dashboardPage, _maintPage, _devicePage, _failPage, _debugPage, _analysisPage, _learnPage };
         for (int i = 0; i < pages.Length; i++)
         {
             var tp = new TabPage(PageTitles[i]) { Dock = DockStyle.Fill, BackColor = Theme.Bg };
@@ -296,6 +298,7 @@ public class MainForm : Form
                 case 2: _devicePage.Refresh2(); break;
                 case 3: _failPage.Refresh2(); break;
                 case 5: _analysisPage.Refresh2(); break;
+                case 6: _learnPage.Refresh2(); break;
                 default: break;
             }
         }

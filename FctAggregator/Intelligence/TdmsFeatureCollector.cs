@@ -96,6 +96,7 @@ public static class TdmsFeatureCollector
             Interlocked.Increment(ref FilesOk);
             if (rows.Count == 0 || db == null) return rows.Count;
             db.InsertTdmsFeaturesFor(rec, recordId, path, rows);
+            DeviationScorer.EvaluateWaveform(db, cfg, rec, rows);
             NormalLearners.ObserveWaveform(db, cfg, rec, rows);
             return rows.Count;
         }

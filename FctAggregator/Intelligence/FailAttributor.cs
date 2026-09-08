@@ -53,6 +53,15 @@ public sealed class ResourceCorrelationItem
     public int Days { get; set; }
 }
 
+public sealed class DeviationEvidenceItem
+{
+    public string Model { get; set; } = "";
+    public string TestName { get; set; } = "";
+    public double Score { get; set; }
+    public double Value { get; set; }
+    public double Mean { get; set; }
+}
+
 public sealed class AttributionState
 {
     public string Date { get; set; } = "";
@@ -61,6 +70,7 @@ public sealed class AttributionState
     public double GlobalFailRate { get; set; }
     public List<AttributionBucketItem> Buckets { get; set; } = new();
     public List<ResourceCorrelationItem> ResourceCorrelations { get; set; } = new();
+    public List<DeviationEvidenceItem> DeviationEvidence { get; set; } = new();
 
     public string ToJson() => JsonSerializer.Serialize(this);
     public static AttributionState? FromJson(string? json)
@@ -118,10 +128,40 @@ public static class FailAttributor
             GlobalFailRate = Math.Round(globalRate, 4),
             Buckets = buckets,
             ResourceCorrelations = ComputeResourceCorrelations(db, src, w),
+            DeviationEvidence = CollectDeviationEvidence(db, cfg, today),
         };
         if (state.Buckets.Count > 0)
             Logger.Warning($"[分析] 失败归因异常桶 {state.Buckets.Count} 项（窗口 {w} 天，全局失败率 {globalRate:P1}）");
         return state;
+    }
+
+    /// <summary>FAIL 测项对本机正常态的偏离分（只读模型，开关关返回空）。</summary>
+    public static List<DeviationEvidenceItem> CollectDeviationEvidence(Database db, AppConfig cfg, DateTime today)
+    {
+        var list = new List<DeviationEvidenceItem>();
+        if (db == null || cfg == null || !cfg.LearnNormalEnabled) return list;
+        try
+        {
+            var from = today.AddDays(-(Math.Max(1, cfg.AnalyzeWindowDays) - 1)).ToString("yyyy-MM-dd");
+            var now = today.AddHours(12);
+            foreach (var (model, name, value) in db.ListFailItemValuesSince(from))
+            {
+                var row = db.GetNormalModel(NormalModelStore.SourceMeasurement, model, name);
+                if (row == null) continue;
+                var score = DeviationScorer.ScoreOne(row, value, now, cfg.LearnNormalStaleDays);
+                if (score is not { } s) continue;
+                list.Add(new DeviationEvidenceItem
+                {
+                    Model = model, TestName = name, Score = s, Value = value, Mean = row.Mean,
+                });
+            }
+            return list.OrderByDescending(x => x.Score).Take(20).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[分析] 偏离证据采集失败: {ex.Message}");
+            return list;
+        }
     }
 
     /// <summary>小时均值 CPU/内存 × 逐小时失败数 Pearson 相关（手写，零依赖）。小时数不足或零方差跳过。</summary>

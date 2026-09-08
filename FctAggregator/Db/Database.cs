@@ -326,6 +326,23 @@ public sealed partial class Database
             ";
             cmd10.ExecuteNonQuery();
 
+            using var cmd11 = conn.CreateCommand();
+            cmd11.CommandText = @"
+                CREATE TABLE IF NOT EXISTS deviation_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    signal_count INTEGER NOT NULL,
+                    top_signal TEXT NOT NULL,
+                    top_score REAL NOT NULL,
+                    detail_json TEXT NOT NULL,
+                    seen INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_de_ts ON deviation_events(ts);
+            ";
+            cmd11.ExecuteNonQuery();
+
             // 审计 M13：归因统计四条查询以 substr(...) 过滤，非 sargable 全表扫描×4（维护窗口拉长）——
             // 补虚拟生成列 batch_ts_date + 索引（幂等；虚拟列不回填历史，老库零成本升级）。
             // 幂等用 try/catch 吞 duplicate（pragma_table_info 表值函数在重复 Init 场景下判定不稳，实测会误报 0）
@@ -877,6 +894,195 @@ public sealed partial class Database
             MinV = r.GetDouble(9), MaxV = r.GetDouble(10),
             LastTs = r.GetString(11), Status = r.GetString(12), QState = r.GetString(13),
         };
+    }
+
+    public void InsertDeviationEvent(DeviationEvent ev)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO deviation_events (ts, model, source, signal_count, top_signal, top_score, detail_json, seen)
+            VALUES (@ts, @m, @src, @n, @top, @score, @detail, @seen)";
+        cmd.Parameters.AddWithValue("@ts", ev.Ts ?? "");
+        cmd.Parameters.AddWithValue("@m", ev.Model ?? "");
+        cmd.Parameters.AddWithValue("@src", ev.Source ?? "");
+        cmd.Parameters.AddWithValue("@n", ev.SignalCount);
+        cmd.Parameters.AddWithValue("@top", ev.TopSignal ?? "");
+        cmd.Parameters.AddWithValue("@score", ev.TopScore);
+        cmd.Parameters.AddWithValue("@detail", ev.DetailJson ?? "[]");
+        cmd.Parameters.AddWithValue("@seen", ev.Seen);
+        cmd.ExecuteNonQuery();
+    }
+
+    public int CountDeviationEventsOnDay(string ymd)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM deviation_events WHERE substr(ts,1,10)=@d";
+        cmd.Parameters.AddWithValue("@d", ymd ?? "");
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    public List<DeviationEvent> ListDeviationEvents(int limit = 100)
+    {
+        var list = new List<DeviationEvent>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT ts, model, source, signal_count, top_signal, top_score, COALESCE(detail_json,''), seen
+            FROM deviation_events ORDER BY id DESC LIMIT @n";
+        cmd.Parameters.AddWithValue("@n", Math.Clamp(limit, 1, 1000));
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new DeviationEvent
+            {
+                Ts = r.GetString(0), Model = r.GetString(1), Source = r.GetString(2),
+                SignalCount = r.GetInt32(3), TopSignal = r.GetString(4), TopScore = r.GetDouble(5),
+                DetailJson = r.GetString(6), Seen = r.GetInt32(7),
+            });
+        }
+        return list;
+    }
+
+    public (int Total, int Ready, int Learning, int Stale) CountNormalModels(DateTime now, int staleDays)
+    {
+        int total = 0, ready = 0, learning = 0, stale = 0;
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT status, COALESCE(last_ts,''), n FROM normal_models";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            total++;
+            var row = new NormalModelRow { Status = r.GetString(0), LastTs = r.GetString(1), N = r.GetInt64(2) };
+            var st = NormalModelStore.EffectiveStatus(row, now, staleDays);
+            if (st == "ready") ready++;
+            else if (st == "stale") stale++;
+            else learning++;
+        }
+        return (total, ready, learning, stale);
+    }
+
+    public List<NormalModelRow> ListNormalModels(string? source = null, string? model = null, int limit = 500)
+    {
+        var list = new List<NormalModelRow>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = new List<string>();
+        if (!string.IsNullOrWhiteSpace(source)) { where.Add("source=@s"); cmd.Parameters.AddWithValue("@s", source); }
+        if (!string.IsNullOrWhiteSpace(model)) { where.Add("model=@m"); cmd.Parameters.AddWithValue("@m", model); }
+        var filter = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
+        cmd.CommandText = $@"
+            SELECT source, model, signal_key, n, COALESCE(mean,0), COALESCE(sigma,0), COALESCE(p01,0), COALESCE(p50,0), COALESCE(p99,0),
+                   COALESCE(min_v,0), COALESCE(max_v,0), COALESCE(last_ts,''), status, COALESCE(qstate,'')
+            FROM normal_models {filter} ORDER BY source, model, signal_key LIMIT @n";
+        cmd.Parameters.AddWithValue("@n", Math.Clamp(limit, 1, 5000));
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new NormalModelRow
+            {
+                Source = r.GetString(0), Model = r.GetString(1), SignalKey = r.GetString(2),
+                N = r.GetInt64(3), Mean = r.GetDouble(4), Sigma = r.GetDouble(5),
+                P01 = r.GetDouble(6), P50 = r.GetDouble(7), P99 = r.GetDouble(8),
+                MinV = r.GetDouble(9), MaxV = r.GetDouble(10),
+                LastTs = r.GetString(11), Status = r.GetString(12), QState = r.GetString(13),
+            });
+        }
+        return list;
+    }
+
+    public void DeleteNormalModel(string source, string model, string signalKey)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM normal_models WHERE source=@s AND model=@m AND signal_key=@k";
+        cmd.Parameters.AddWithValue("@s", source);
+        cmd.Parameters.AddWithValue("@m", model ?? "");
+        cmd.Parameters.AddWithValue("@k", signalKey);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<(long RecordId, string Model, string Ts, string TestName, double Value)> ListPassMeasurementsAfter(long afterRecordId, string fromYmd)
+    {
+        var list = new List<(long, string, string, string, double)>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT m.record_id, COALESCE(m.model,''), COALESCE(m.ts,''), m.test_name, m.value
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE r.result='PASS' AND m.value IS NOT NULL AND m.record_id > @wm
+              AND substr(COALESCE(m.ts,''),1,10) >= @from
+            ORDER BY m.record_id, m.id";
+        cmd.Parameters.AddWithValue("@wm", afterRecordId);
+        cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetDouble(4)));
+        return list;
+    }
+
+    public List<(long RecordId, string Model, string Ts, string Group, string Channel, double? Mean, double? Std, double? Max)> ListPassTdmsAfter(long afterRecordId, string fromYmd)
+    {
+        var list = new List<(long, string, string, string, string, double?, double?, double?)>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT f.record_id, COALESCE(f.model,''), COALESCE(f.ts,''), f.group_name, f.channel_name, f.vmean, f.vstd, f.vmax
+            FROM tdms_features f
+            JOIN test_records r ON r.id = f.record_id
+            WHERE r.result='PASS' AND f.record_id > @wm
+              AND substr(COALESCE(f.ts,''),1,10) >= @from
+            ORDER BY f.record_id, f.id";
+        cmd.Parameters.AddWithValue("@wm", afterRecordId);
+        cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add((
+                r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetDouble(5),
+                r.IsDBNull(6) ? null : r.GetDouble(6),
+                r.IsDBNull(7) ? null : r.GetDouble(7)));
+        }
+        return list;
+    }
+
+    public List<(long Id, string Ts, double Cpu, double Mem, double Disk)> ListDeviceSamplesAfter(long afterId, string fromYmd)
+    {
+        var list = new List<(long, string, double, double, double)>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT id, ts, cpu_usage, mem_used_pct, disk_free_gb
+            FROM device_samples_local
+            WHERE id > @wm AND substr(COALESCE(ts,''),1,10) >= @from
+            ORDER BY id";
+        cmd.Parameters.AddWithValue("@wm", afterId);
+        cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetInt64(0), r.GetString(1), r.GetDouble(2), r.GetDouble(3), r.GetDouble(4)));
+        return list;
+    }
+
+    public List<(string Model, string TestName, double Value)> ListFailItemValuesSince(string fromYmd)
+    {
+        var list = new List<(string, string, double)>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COALESCE(model,''), test_name, value
+            FROM fail_items
+            WHERE value IS NOT NULL AND substr(COALESCE(ts,''),1,10) >= @from
+            ORDER BY id DESC LIMIT 500";
+        cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetString(0), r.GetString(1), r.GetDouble(2)));
+        return list;
     }
 
     /// <summary>规格06期3：backfill 用——按 xml_path 批量取记录简报（免重解析 XML）。</summary>

@@ -32,6 +32,9 @@ public class AppConfig
     public bool LearnNormalEnabled { get; set; } = false;
     public int LearnNormalMinSamples { get; set; } = 30;
     public int LearnNormalStaleDays { get; set; } = 14;
+    public int LearnNormalVoteSignals { get; set; } = 3;
+    public int LearnNormalEventScore { get; set; } = 75;
+    public int LearnNormalMaxEventsPerDay { get; set; } = 10;
     public int LearnGroupAlertMin { get; set; } = 3;
     public int LearnResourceRetentionDays { get; set; } = 14;
 
@@ -121,6 +124,9 @@ public class AppConfig
                 if (root.TryGetProperty("learn_normal_enabled", out v)) cfg.LearnNormalEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_normal_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lnm) && lnm >= 1) cfg.LearnNormalMinSamples = lnm;
                 if (root.TryGetProperty("learn_normal_stale_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lns) && lns >= 1) cfg.LearnNormalStaleDays = lns;
+                if (root.TryGetProperty("learn_normal_vote_signals", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lnv) && lnv >= 1) cfg.LearnNormalVoteSignals = lnv;
+                if (root.TryGetProperty("learn_normal_event_score", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lne) && lne >= 1) cfg.LearnNormalEventScore = Math.Min(100, lne);
+                if (root.TryGetProperty("learn_normal_max_events_per_day", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lnx) && lnx >= 1) cfg.LearnNormalMaxEventsPerDay = lnx;
                 if (root.TryGetProperty("learn_group_alert_min", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lga) && lga >= 1) cfg.LearnGroupAlertMin = lga;
                 if (root.TryGetProperty("learn_resource_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lrr) && lrr >= 1) cfg.LearnResourceRetentionDays = lrr;
                 if (root.TryGetProperty("analyze_collect_pass", out v)) cfg.AnalyzeCollectPass = v.ValueKind != JsonValueKind.False;
@@ -205,7 +211,9 @@ public class AppConfig
                     "learn_baseline_enabled", "learn_resource_sampling_enabled", "learn_priority_enabled",
                     "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
                     "learn_baseline_sigma", "learn_baseline_min_samples", "learn_normal_enabled",
-                    "learn_normal_min_samples", "learn_normal_stale_days", "learn_group_alert_min",
+                    "learn_normal_min_samples", "learn_normal_stale_days",
+                    "learn_normal_vote_signals", "learn_normal_event_score", "learn_normal_max_events_per_day",
+                    "learn_group_alert_min",
                     "learn_resource_retention_days",
                     "analyze_collect_pass", "analyze_max_file_kb", "analyze_max_tests_per_file",
                     "analyze_drift_enabled", "analyze_cpk_enabled", "analyze_window_days",
@@ -245,6 +253,9 @@ public class AppConfig
                 writer.WriteBoolean("learn_normal_enabled", LearnNormalEnabled);
                 writer.WriteNumber("learn_normal_min_samples", LearnNormalMinSamples);
                 writer.WriteNumber("learn_normal_stale_days", LearnNormalStaleDays);
+                writer.WriteNumber("learn_normal_vote_signals", LearnNormalVoteSignals);
+                writer.WriteNumber("learn_normal_event_score", LearnNormalEventScore);
+                writer.WriteNumber("learn_normal_max_events_per_day", LearnNormalMaxEventsPerDay);
                 writer.WriteNumber("learn_group_alert_min", LearnGroupAlertMin);
                 writer.WriteNumber("learn_resource_retention_days", LearnResourceRetentionDays);
                 writer.WriteBoolean("analyze_collect_pass", AnalyzeCollectPass);
