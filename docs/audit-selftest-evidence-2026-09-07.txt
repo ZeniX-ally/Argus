@@ -1,0 +1,1233 @@
+工作目录: C:\Users\admin\AppData\Local\Temp\fct_agg_566ca6
+真实库不存在，用空库
+[OK]   Database 构造完成（Init + 迁移已跑）
+[OK]   normal_models 表已建（主库 Init 迁移）
+    (跳过迁移备份断言：无真实库 fixture)
+[OK]   closed -> resolved 迁移生效（残留 closed = 0）
+[OK]   重复打开库（迁移幂等，无异常）
+
+【时间识别】四种来源格式统一解析
+[OK]   ISO 带时区毫秒(BATCH TIMESTAMP)解析正确
+[OK]   ISO 无时区解析正确
+[OK]   标准格式原样归一
+[OK]   17 位文件名时间解析正确(丢毫秒)
+[OK]   14 位时间解析正确
+[OK]   8 位目录日期解析正确
+[OK]   无法识别的时间返回空(不再吐原始怪串)
+[OK]   空时间返回空
+[OK]   Short 对 ISO 时间可识别
+[OK]   ISO +08:00 偏移：按墙上时间解析，不随机器时区漂移
+[OK]   ISO +0800 无冒号偏移同样支持
+[OK]   ISO Z 后缀同样支持
+[OK]   负偏移按原墙上时间取（不换算成机器本地）
+[OK]   域名1: 文件名 17 位时间贴近系统时间可解析
+[OK]   域名1: 文件名 14 位时间贴近系统时间可解析
+[OK]   域名1: 文件名时间与系统偏差 >30 天判为 SN/误匹配返回空
+[OK]   域名1: 非时间纯数字段且偏差过大判空
+[OK]   域名1: 无 14/17 位数字段返回空
+[OK]   域名1: 空输入返回空
+[OK]   ExtractFileNameTime: 真实现场 17 位时间戳提取年月日时分秒正确(排除后缀非时间段)
+[OK]   ExtractFileNameTime: 14 位合法时间戳提取正确
+[OK]   ExtractFileNameTime: 非法时分秒(小时67)无法转为有效DateTime返回空
+[OK]   ExtractFileNameTime: 无时间段返回空
+[OK]   域名1: 畸形 XML 应判解析失败
+[OK]   域名1: 畸形 XML 分类码=xml_malformed
+[OK]   PASS 文件文件名无 SN 段时回落读 XML DUT ID (实得 E3002781AFV75236898002K30500272)
+[OK]   PASS 文件 SN 回落不破坏 tester/其他字段提取
+[OK]   debug 账号 PASS 文件不计数（跳过不入库）
+[OK]   FAIL 文件 SN 回退 DUT ID 保持不变
+[OK]   域2: 慢查询仅记录>500ms（实得 1）
+[OK]   域2: 健康巡检 integrity_check=ok（实得 ok）
+[OK]   域2: 健康日志已落库（实得 1）
+[OK]   域2: 冷数据归档删除 1 条（实得 1）
+[OK]   域3: 校验应检出多项错误（实得 6）
+[OK]   域3: 校验应检出 peer 非法
+[OK]   域3: 合法配置校验应 0 错误（实得 0）
+[OK]   域3: 推荐应返回列表（空库）
+[OK]   域3: 有数据时推荐应返回（实得 1 条）
+[OK]   域4: 预测应检出异常（实得 2）
+[OK]   域4: 磁盘耗尽预测应命中
+[OK]   域4: 首次 FCT 上报应记变更
+[OK]   域4: 相同 FCT 重复上报不应重复记
+[OK]   域4: 型号/FW 变更应记
+[OK]   域4: fct_change_log 应有 ≥2 条（实得 2）
+[OK]   域4: 巡检应检出磁盘低
+[OK]   域4: 巡检应检出 COM 离线
+[OK]   域4: GET /api/devices/predict → 200
+[OK]   域4: GET /api/fct/changes → 命中
+[OK]   域4: GET /api/devices/inspect → 200
+[OK]   域7: 高优先级判定（high/90）
+[OK]   域7: 低优先级判定（low）
+[OK]   域7: 中优先级判定（medium）
+[OK]   域7: 同 fail 不同机台应分卡（实得 2）
+[OK]   域7: KeyOf 归一命中
+[OK]   域7: 重复 SyncTodo 不新增（去重）
+[OK]   域7: 流转推荐 open->in_progress（实得 in_progress）
+[OK]   域7: 流转推荐 in_progress 有建议（resolved）
+[OK]   域7: GET /api/todos/suggest → 200
+[OK]   域7: GET /api/maintenance/advise → 200
+[OK]   域8: 布局建议按频次 fails 置顶（实得 fails）
+[OK]   域8: engineer 维护频次置顶（实得 maintenance）
+[OK]   域8: 高亮应命中磁盘/CPU/离线异常（实得 1）
+[OK]   域8: loader.js 含 LayoutAdvisor
+[OK]   域8: loader.js 含频次记录
+[OK]   域8: theme.css 含高亮样式
+[OK]   域8: theme.css 含脉冲动画
+[OK]   域8: GET /api/highlights → 200
+[OK]   域8: GET /api/layout/suggest → 200
+[OK]   域9: 预测应命中≥1（实得 3）
+[OK]   域9: 预测含 yield/disk/cpu
+[OK]   域9: 落库≥1（实得 3）
+[OK]   域9: 自愈建议≥1（实得 2）
+[OK]   域9: 自愈含建议文本
+[OK]   域9: 飞书卡片含机台
+[OK]   域9: GET /api/alerts/predict → 200
+[OK]   域9: GET /api/alerts/heal → 200
+[OK]   自反馈: 空库不报错
+[OK]   自反馈: PredictAccuracyExists → true
+[OK]   自反馈: 二次 UPSERT 不报错
+[OK]   自反馈: CountPredictAccuracyByRule 统计正确（1/1）
+[OK]   自反馈: QueryPredictAccuracy 返回行（1）
+[OK]   自反馈: 按 rule 过滤命中
+[OK]   自反馈: ClassifyYieldHit 预测跌破且真跌破 → hit
+[OK]   自反馈: ClassifyYieldHit 预测跌破但实际没跌破 → miss
+[OK]   自反馈: RunOnce 返回条数 ≥ 0（0）
+[OK]   自反馈: Summary 含 yield
+[OK]   自反馈: yield 统计 ≥ 35（36）
+[OK]   自反馈: accuracy<30% → 推荐 yield 阈值上调
+[OK]   自反馈: 全 hit fixture 后 yield 仍有统计
+[OK]   自反馈: 冷启动（< min_samples）不推荐
+[OK]   自反馈: PurgeOldPredictAccuracy 删除 ≥ 1 行（1）
+[OK]   自反馈: GET /api/predict/accuracy → 200
+[OK]   自反馈: 响应含 WindowDays/Summary/PerMachine 字段
+[OK]   季节性: 空输入不崩溃 OverallMean=100/Anomalies 空/长度 28
+[OK]   季节性: 空输入 Seasonal=24 桶 σ=0
+[OK]   季节性: 全相同数据 σ=0 不除零、无异常
+[OK]   季节性: 平稳数据（σ<min_sigma）回退 v3.19.0 老逻辑（返回 null）
+[OK]   季节性: 显著异常日（70% vs 95%）被检出（2 个）
+[OK]   季节性: 异常机台预测产出 1 条 yield/warn
+[OK]   季节性: 白班/夜班周期不误报（异常 0 个）
+[OK]   季节性: 昼夜周期分量被捕获（白天桶 >0.5pp、深夜桶 <−0.5pp）
+[OK]   季节性: 周一低 5pp 不被当异常（异常 0 个）
+[OK]   季节性: 周一周期分量 ≈ −5pp
+[OK]   季节性: 开关关 PredictWithSeasonality 返回 null
+[OK]   季节性: 开关关 /api/alerts/predict 无季节性项（老逻辑回归）
+[OK]   季节性: 跨机台独立分解（异常机台有 / 平稳机台无）
+[OK]   季节性: 非法 mode 回退 hourly
+[OK]   季节性: mode=weekly 解析正确
+[OK]   季节性: GET /api/yield/decompose → 200
+[OK]   季节性: 响应含 Trend/Seasonal/Residual/Sigma/Anomalies 字段（PascalCase）
+[OK]   季节性: machine 缺失 → 400
+[OK]   季节性: viewer POST config → 403
+[OK]   季节性: admin POST config → 200
+[OK]   季节性: 热生效后 GET config 回显 enabled=true/mode=daily
+[OK]   季节性: 非法 mode → 400
+[OK]   文件名时间戳: 标准段位取第 7 段 17 位（实得 20260814072417293）
+[OK]   文件名时间戳: SN 含下划线段位漂移仍能取对时间（实得 20260814072417293）
+[OK]   文件名时间戳: 第 8 段 16 位非标准段自动跳过（实得 20260814072417293）
+[OK]   文件名时间戳: 14 位兼容（实得 20260814072417）
+[OK]   时间源: 文件名 17 位时间优先（实得 2026-08-14 07:24:17）
+[OK]   时间源: Processor 也取文件名时间（实得 2026-08-14 07:24:17）
+[OK]   时间源用例: 机台号仍从 TESTER 提取（实得 FCT6）
+[OK]   时间源: 无文件名时间时回退目录日期（实得 2026-08-14T00:00:00）
+
+【FCT.ini 自动识别】FTS 树搜索 / 浅层全盘搜索
+[OK]   FTS 树搜索能命中深层 FCT.ini
+[OK]   浅层搜索也能命中(自动识别兜底路径)
+[OK]   文件名大小写不敏感(fct.ini 也能识别)
+
+【旧库兼容】产线老库直开: 缺新表 + investigating/closed 状态 + 旧时间格式
+[OK]   旧库打开后自动补建表 todo_items
+[OK]   旧库打开后自动补建表 app_meta
+[OK]   旧库打开后自动补建表 dismissed_todos
+[OK]   旧库打开后自动补建表 resolvers
+[OK]   旧 investigating 记录仍在库中, 归一化到「待办」列
+[OK]   旧 closed 记录迁移到「已完成」列
+[OK]   旧库历史不良可登记待办（新登记 2 条）
+[OK]   旧库 5V_Rail 进待办列
+[OK]   旧库 ISO 带时区时间可解析显示
+[OK]   旧库 14 位数字时间可解析显示
+[OK]   旧库上删除待办正常（自动补建 dismissed_todos 写永久标记）
+[OK]   删除后离开待办列
+[OK]   旧库打开后自动补 test_records.fixture_id 列（v3.26.2）
+[OK]   续推回读 FetchFailRecordsAfter 保真 FixtureId（实得 JIG-A01）
+[OK]   旧数据（无 fixture_id）回读为 null 不炸，聚合端回落 fail_reason 前缀归因
+[OK]   状态体系 4 个且顺序正确: 未知问题 -> 待办 -> 持续跟踪 -> 已完成
+[OK]   新建记录默认状态 = open(未完成)
+[OK]   legacy closed 仍显示为「已完成」（外来 db 兜底）
+[OK]   legacy closed 归并到 resolved 列
+[OK]   legacy investigating 归并到 open（「正在排查」列已去掉）
+[OK]   legacy investigating 显示为「待办」
+[OK]   未知状态归并到 open，不会漏卡片
+[OK]   「进行中」已改名「持续跟踪」
+[OK]   造了 12 条测试记录（4 状态 × 3）
+    计数: 未知问题=3, 待办=3, 持续跟踪=3, 已完成=3
+[OK]   每个状态的真实计数 >= 3（GROUP BY 统计可用）
+[OK]   已完成计数 = 3（3 新 + 0 迁移）
+[OK]   计数总和 12 == 全表 12（不受 LIMIT 截断）
+[OK]   ListMaintenance 全量取到 12 条
+[OK]   每条都取到了 updated_at（v2.1.0 里 SELECT 根本没取）
+[OK]   按最后更新时间倒序（看板语义: 最近动过的置顶）
+[OK]   limit 参数生效（看板每列限量用）
+[OK]   按状态筛选正确
+[OK]   UpdateMaintenance 返回 true
+[OK]   全部字段都写进去了（含备注 / 状态 / 记录日期）
+[OK]   updated_at 已刷新（2026-07-12 08:02:00 -> 2026-09-07 17:03:39）
+[OK]   更新不存在的记录返回 false（UI 会提示「可能已被删除」）
+[OK]   UpdateMaintenanceStatus 返回 true（拖动改状态）
+[OK]   拖动只改状态，其它字段不动
+[OK]   更新另一条状态返回 true
+[OK]   状态变更事件触发一次（实得 1）
+[OK]   事件带旧/新状态（unknown -> in_progress）
+[OK]   同状态重复设置不触发事件（去重）
+[OK]   UpdateMaintenance（全字段）返回 true
+[OK]   全字段更新改状态也触发事件（1 次: in_progress -> resolved）
+[OK]   只改内容不触发状态变更事件
+[OK]   录入往期日期时 updated_at 跟随 created_at（2026-01-15 08:00:00）—— 否则老记录会被顶到看板最前
+[OK]   DeleteMaintenance 返回 true
+[OK]   删除后确实不在列表里
+[OK]   空库新建第一条 id = 1（期望 1）
+[OK]   删掉唯一的一条
+[OK]   **删空后新建 id = 1（期望 1，旧版会给 2）**
+[OK]   连续新建 id = 2, 3
+[OK]   删掉最后一条后新建 id = 3（期望 3）
+[OK]   删中间那条后新建 id = 4（期望 4，不回填空号 2）
+[OK]   删不存在的 id 返回 false 且不报错
+[OK]   无效删除不影响游标（下一个 id = 5）
+[OK]   **右键卡片会触发 ContextRequested（之前右键没任何反应）**
+[OK]   菜单弹出坐标跟随鼠标（12,34）
+[OK]   左键不弹菜单（左键留给拖拽 / 双击编辑）
+[OK]   右键按住拖动不会误走拖拽分支
+[OK]   MaintenanceBoard 向外暴露了 ContextRequested（菜单由 MaintenancePanel 统一提供）
+[OK]   故障项已去重：5 行源数据 -> 2 个项（期望 2，空值不算，前后空格归一）
+[OK]   出现次数统计正确（2, 2）
+[OK]   聚合结果里不含 SN（只有测试项名）
+    真实库去重后故障项 0 个，前 3: 
+    (跳过真实库断言：无 fixture，把任意一个机台库拷到 dist\data\fct.db 即可启用)
+[OK]   FailItemSource 结构里根本没有 Sn 字段（从数据层就不带 SN）
+    大项合并：0 个原始测试项 -> 0 个待办大项
+[OK]   合并后的大项数不多于原始项数
+[OK]   每个大项都能算出非空展示名
+    历史维修人: 张三, 李四, 王五
+[OK]   维修人候选取到历史值（3 个）
+[OK]   维修人候选已去重
+[OK]   维修人候选里没有空值
+[OK]   名单添加「王强」
+[OK]   重复添加（带空格）被拒，不会出两条
+[OK]   （参考）名字大小写不敏感唯一
+[OK]   空名字加不进去
+[OK]   名单添加「赵六」
+[OK]   名单现有 2 人（期望 2）
+[OK]   下拉候选：名单排在前面
+[OK]   候选 = 名单 ∪ 历史（共 5 个，含名单里的王强与历史里的张三）
+[OK]   候选已去重（大小写不敏感）
+[OK]   「张三」在 3 条历史记录里出现过（删人前会提示这个数）
+[OK]   从名单删掉「张三」
+[OK]   删名单**不会动历史维修记录**
+[OK]   删后仍能在候选里看到（因为历史记录里还有）
+[OK]   删不存在的人返回 false
+[OK]   改名（不同步）不动历史记录
+[OK]   名单里已改成「张三三」
+[OK]   改名并同步：改动了 1 条历史记录（期望 1）
+[OK]   历史记录里的名字确实改掉了
+[OK]   旧名字已不再出现在记录里
+[OK]   重新打开库后名单仍在（建表幂等）
+[OK]   拆分：顶号分隔
+[OK]   拆分：兼容 , ; / 等分隔符与空格
+[OK]   拆分：重复人去重
+[OK]   拆分：空值得空列表
+[OK]   拼接：去空去重、用顶号
+[OK]   规范化：任意写法 -> 顶号拼接（保持顺序）
+[OK]   包含判定是**成员级**（「张三丰」不算包含「张三」）
+[OK]   成员级改名：其余人与顺序不变
+[OK]   多人记录已存：孙七、周八
+[OK]   候选里孙七、周八 **分开**出现
+[OK]   候选里不会出现「孙七、周八」这种组合项
+[OK]   按人计数对多人记录也准
+[OK]   多人字段改名后 = 孙七七、周八（只换孙七，周八不动）
+[OK]   多选框预勾选了 2 人（传入两人）
+[OK]   多选框候选含名单与历史里的人
+[OK]   再勾一人后结果三人：王强、赵六、周八
+[OK]   结果用顶号拼接
+[OK]   表单保存时把「新人甲, 新人乙」规范为「新人甲、新人乙」
+[OK]   两个新名字**各自**进了名单（不是整串当一个人）
+[OK]   名单从 5 增到 7
+[OK]   名单里没有带分隔符的脏数据
+[OK]   批量建单：3 个选项(含1个重复) -> 2 条记录（期望 2）
+[OK]   批量记录的 Id 均为 0（交给 DB 自增）
+[OK]   每条的故障项不同
+[OK]   批量记录默认状态 = 待办
+[OK]   批量记录不带设备型号 / SN（表单已去掉这两项）
+[OK]   批量记录已成功写入库
+[OK]   MaintenanceForm 里已删除 _model / _sn 输入框
+[OK]   维修人控件仍在
+[OK]   维修人已改为 ComboBox（可选历史值，也可直接输入）
+
+【待办·大项合并】同类测试项归一化
+[OK]   步骤号不同的同一测试项合并为一项
+[OK]   去掉步骤号后与裸名同键
+[OK]   通道号不同(CH1/CH2)合并
+[OK]   位号不同(pin3/pin7)合并
+[OK]   器件位号不同(U12/U7)合并
+[OK]   **5V 与 12V 不合并**（数字+单位有物理含义）
+[OK]   100ms 与 200ms 不合并
+[OK]   3V3 与 1V8 不合并
+[OK]   大小写与分隔符差异合并
+[OK]   全角写法与半角合并
+[OK]   同一参数带不同括号限定词 -> 合并为一个大项
+[OK]   同一参数不同测量路径(DMM/XCP) -> 合并
+[OK]   **括号里就是核心语义时不丢**（Check(Voltage) 不等于 Check(Current)）
+[OK]   空故障项返回空键（调用方跳过）
+[OK]   纯序号项不会退化成空键（否则会全挤成一张卡）
+[OK]   合并后展示名取最短且去步骤号（得到「5V_Rail」）
+[OK]   优先级按 fail 次数分高/中/低
+[OK]   G49 规则: 栅极驱动六相(PWM 高/低电平)同原理同卡
+[OK]   G49 规则: 旋变四角/解码/励磁同一仿真器链一张卡
+[OK]   G49 规则: 同一电源轨 DMM/接口名/XCP 三种写法别名归并
+[OK]   G49 规则: 不同电源轨不互并（保住诊断信息）
+[OK]   G49 规则: 三相温度/三相电流采样链按家族合并
+[OK]   G49 未命中回落名称归并（非 G49 项行为不变）
+[OK]   todo_spec_merge=false 回退纯名称归并（旧行为兼容）
+
+【待办·登记表】只扫近一个月 · 永久保留 · 按次数排优先级
+[OK]   3 条同类 + 1 条异类 -> 新登记 2 条待办（期望 2，同类已合并）
+[OK]   合并后的大项展示名 = 5V_Rail
+[OK]   合并项累计次数 = 3（实得 3）
+[OK]   记住了 3 个原始测试项（variants）
+[OK]   **200 天前的不良不入待办**（只扫近一个月）
+[OK]   列表按 fail 次数倒序（3 次的排在 1 次前面）
+[OK]   SortCount 单调不增（优先处理次数多的）
+[OK]   重复同步不新增不重算（新增 0，次数仍 3）
+[OK]   新不良增量累加到同一张卡（4 次）
+[OK]   新的同类变体并入 variants
+[OK]   区间统计独立于累计（今日 2 次 / 累计 4 次）
+[OK]   选一个没有不良的区间 -> 待办列为空
+[OK]   **换回不限区间待办还在**（永久保留，不是被删了）
+[OK]   CountPendingTodos 与视图一致
+[OK]   默认视图待办数 == CountPendingTodos（2 == 2，v3.6.1 修复）
+[OK]   不限区间视图 RangeCount 回落为累计次数（不显示误导性的区间次数）
+[OK]   确认待办已建维修记录 #1
+[OK]   确认落到非待办列等同状态变更、触发推送（1 次: '' -> in_progress）
+[OK]   维修记录的故障项 = 合并后的大项名
+[OK]   备注里留了原始测试项清单（可追溯）
+[OK]   可以确认时直接置为「持续跟踪」
+[OK]   确认后该项离开待办列
+[OK]   记录已完成后待办仍不显示（问题已处理）
+[OK]   **处理完后再复发 -> 自动回到待办**
+[OK]   复发时次数继续累加（5 次，不清零）
+[OK]   确认后 CAN 项暂时离开待办
+[OK]   CountFailRecords 能数出该故障项的真实不良数
+[OK]   **删掉维修记录后待办自动回来**（待办删不掉）
+[OK]   **写入 dismissed_todos 也不会让待办消失**（不读忽略名单）
+[OK]   重开库后同步不重复累加（5 -> 5）
+[OK]   同故障项在两个机台各自一条待办
+[OK]   确认到「待办」列也建记录 #2
+[OK]   确认到「待办」列也触发推送（1 次: '' -> open）
+[OK]   待办删除前存在
+[OK]   DeleteTodo 返回 true
+[OK]   删除后离开待办列
+[OK]   **已删除的待办不再复现**（水位线已过，删除是永久的）
+[OK]   删除不存在的待办返回 false
+
+【去重】四份 xlsx 写出器合并为 FctShared.Xlsx，输出必须仍然合法
+[OK]   共享写出器生成 xlsx（2578 字节）
+[OK]   包部件齐全
+[OK]   所有部件都是严格合法的 XML（转义没写漏）
+[OK]   特殊字符已正确转义
+[OK]   冻结行已写入
+[OK]   合并单元格已写入
+[OK]   数值按不变文化写出（小数点不会变成逗号）
+[OK]   工作表名：非法字符（/ :）已换成下划线
+[OK]   工作表名里的尖括号已做 XML 转义（不会把 workbook.xml 搞坏）
+[OK]   维修导出表头仍完整
+[OK]   维修导出冻结表头（v2.9.3 新增；v2.9.2 无冻结，是刻意保留的唯一长相变化）
+[OK]   各工具的 styles.xml 仍是各自的调色板（只合并了外壳，没统一长相）
+[OK]   样式部件格式正常
+[OK]   xlsx 已生成（3836 字节）
+[OK]   csv 已生成（2085 字节）
+[OK]   CSV 公式注入防护：= 开头加单引号前缀
+[OK]   CSV 公式注入防护：+ 开头加单引号前缀
+[OK]   CSV 公式注入防护：- 开头加单引号前缀
+[OK]   CSV 公式注入防护：@ 开头加单引号前缀
+[OK]   CSV 公式注入防护：\t 开头加单引号前缀
+[OK]   CSV 公式注入防护：\r 开头加单引号前缀（含 \r 被引号包裹）
+[OK]   CSV 公式注入防护：= 开头未被引号包裹（引号包裹对公式无效）
+[OK]   xlsx 部件齐全且所有 XML 严格可解析
+[OK]   12 列表头齐全（新增「更新时间」）
+[OK]   新状态在导出里是中文（不是原始 unknown/investigating）
+[OK]   导出里没有漏译的英文 key（单一字典生效）
+[OK]   列宽定义 12 个（应与 12 列一致）
+[OK]   12 个列宽值与人眼确认过的一致（6/24/14/22/30/10/10/12/30/24/20/20）
+[OK]   表头底色仍是 #4472C4 深蓝（调色板未被共享写出器带跑）
+[OK]   表头仍是白色粗体
+[OK]   字体仍是微软雅黑
+[OK]   csv 带 UTF-8 BOM 与标题行（Excel 直开不乱码）
+[OK]   csv 第 2 行是导出时间
+[OK]   csv 表头 12 列（含「更新时间」）
+[OK]   csv 最后一列是「更新时间」
+[OK]   csv 数据行 15 条 == 记录 15 条（正确处理了引号包裹的换行）
+[OK]   每条数据都是 12 个字段（异常行 0 条）
+[OK]   csv 里也没有漏译的英文状态
+
+产物留存（可用 Excel 打开人工确认）:
+  C:\Users\admin\AppData\Local\Temp\fct_agg_566ca6\维修记录.xlsx
+  C:\Users\admin\AppData\Local\Temp\fct_agg_566ca6\维修记录.csv
+
+【机台聚合推送】FAIL 事件文件 / 心跳 / 断线补偿 / 续推
+[OK]   聚合推送：未启用配置下不激活
+[OK]   聚合推送：未启用时共享目录不产生任何文件
+[OK]   聚合推送：未启用时不写 agg_state/agg_queue
+[OK]   聚合推送：先入库 3 条 FAIL（实得 3）
+[OK]   聚合推送：启动续推扫描补齐 3 个 fail 文件
+[OK]   聚合推送：fail-1.json 已写入
+[OK]   fail-1.json 字段 machine/type/seq/ts 正确
+[OK]   fail-1.json data 内 sn/result 正确
+[OK]   聚合推送：fail-2.json 已写入
+[OK]   fail-2.json 字段 machine/type/seq/ts 正确
+[OK]   fail-2.json data 内 sn/result 正确
+[OK]   聚合推送：fail-3.json 已写入
+[OK]   fail-3.json 字段 machine/type/seq/ts 正确
+[OK]   fail-3.json data 内 sn/result 正确
+[OK]   聚合推送：无 .tmp 残留（先写临时再改名）
+[OK]   agg_state.json max_seq=3 正确
+[OK]   LastSeq = 3（已推送最大 seq）
+[OK]   聚合推送：PASS 记录不生成 fail 文件
+[OK]   聚合推送：事件驱动实时推送（共 5 个文件）
+[OK]   seq 与 test_records 自增 id 一一对应（单调、无重复）
+[OK]   重复 seq 幂等跳过（文件不重写、不新增）
+[OK]   去重后队列为空、LastSeq 不变
+[OK]   聚合推送：断线前入库 2 条 FAIL（实得 2）
+[OK]   写共享失败 -> 事件全部进内存队列
+[OK]   断线期间共享目录无任何文件
+[OK]   agg_queue.json 落盘 2 条未推送事件（含原始 JSON，重启不丢队）
+[OK]   共享恢复后自动补推 2 个 fail 文件
+[OK]   补推完成：队列清空、LastSeq=2
+[OK]   agg_state.json 更新 max_seq
+[OK]   心跳文件 heartbeat.json 已生成
+[OK]   心跳字段正确且 last_seq=1（最近已推送 seq）
+[OK]   心跳文件内容可读（ReadTextSafe 吞文件锁）
+[OK]   心跳按周期持续覆盖更新
+[OK]   重启前：2 条事件滞留队列
+[OK]   停止时 agg_queue.json 落盘
+[OK]   重启后补推 2 个 fail 文件（队列补推 + 数据库续推兜底）
+[OK]   补推完成：队列清空、LastSeq=2（状态续推起点正确）
+[OK]   补推后 agg_queue.json 清空
+    聚合推送自检完成
+
+【聚合端监听】AggDatabase 幂等 / 初始扫描 / 增量事件 / 心跳离线
+[OK]   AggDatabase：首次插入 (FCT1,seq=5) 返回 1 新入库，回写 Id=1
+[OK]   AggDatabase：插入成功回写自增 Id
+[OK]   AggDatabase：同 (machine,seq) 二次插入返回 0（幂等忽略）
+[OK]   AggDatabase：全库计数 = 1（实得 1）
+[OK]   AggDatabase：QueryFails 只回 1 条（实得 1）
+[OK]   AggDatabase：回读 17 个字段全部正确（字符串/时间/布尔/数字/路径）
+[OK]   AggDatabase：FCT1 两条 + FCT2 一条全部入库
+[OK]   AggDatabase：计数按机台隔离（FCT1=2, FCT2=1, 全库=3）
+[OK]   AggDatabase：QueryFails(machine=FCT2) 只回 FCT2 的记录
+[OK]   AggDatabase：QueryFails 按 ingest_ts DESC 排序（最新在前）
+[OK]   初始扫描：2 个 fail 文件启动即入库（ProcessedFiles=2, TotalFails=2）
+[OK]   初始扫描：GetMachines 识别出 FCT1，FailCount=2，LastFailAt 非空
+[OK]   初始扫描：FirstSeenAt 有值（取 MIN(ingest_ts)）
+[OK]   增量前置：初始 2 个文件已入库
+[OK]   增量：.tmp→Move 后 fail-3 入库（ProcessedFiles=3, TotalFails=3）
+[OK]   增量：seq=3 记录字段回读正确（sn=SN-FCT1-3）
+[OK]   增量：.tmp 已被改名，无残留
+[OK]   幂等前置：初始 2 个文件已入库
+[OK]   幂等：重复 seq=2 文件被处理但不计数（哨兵 seq=3 到达后 ProcessedFiles=3，实得 3）
+[OK]   幂等：全库 3 条、FCT1 3 条（重复文件未产生新行）
+[OK]   心跳：FCT1 上线（3s 超时阈值内判定），last_seq=7/queued=3 从心跳读出
+[OK]   心跳：ts 落后超时阈值后判离线（轮询 1s 内翻转）
+[OK]   新机台上线前置：FCT1 已在线
+[OK]   新机台上线：运行中出现的 FCT2 目录 + 心跳被轮询发现且在线
+[OK]   新机台上线：机台列表共 2 台（实得 2）
+    聚合端监听自检完成
+
+【HTTP 双通道】机台端直推 / 心跳 / 断线补偿 / 聚合端接收 / 全链路 / 路由
+[OK]   http 推送：http 模式激活（transport=http 且 url 非空）
+[OK]   http 推送：收到 2 条 fail POST body（两条 FAIL 事件）
+[OK]   http 推送：库里 2 条 FAIL（实得 2）
+[OK]   http 推送：SN=SN-H1A 的 body 已收到
+[OK]   http 推送：body 顶层 machine/type/seq/ts 正确（seq=1）
+[OK]   http 推送：body data 内 sn/fail_reason/result 正确（SN=SN-H1A）
+[OK]   http 推送：body 末尾无换行（449 字符，与文件版一致）
+[OK]   http 推送：SN=SN-H1B 的 body 已收到
+[OK]   http 推送：body 顶层 machine/type/seq/ts 正确（seq=2）
+[OK]   http 推送：body data 内 sn/fail_reason/result 正确（SN=SN-H1B）
+[OK]   http 推送：body 末尾无换行（449 字符，与文件版一致）
+[OK]   http 推送：不产生任何共享目录文件（share 目录不存在）
+[OK]   http 心跳：后台线程按周期 POST 心跳
+[OK]   http 心跳：machine/type/ts 字段正确
+[OK]   http 心跳：含 last_seq/queued 字段
+[OK]   http 心跳：后续周期持续 POST（累计 >= 2 条）
+[OK]   http 断线前置：seq=1 body 已到达
+[OK]   http 断线前置：seq=1 已确认出队（响应收讫，Dispose 无 in-flight 竞态）
+[OK]   http 断线：第 2 条滞留内存队列
+[OK]   http 断线：agg_queue.json 已落盘且含断线 seq（重启不丢队）
+[OK]   http 断线：接收端恢复后自动补推第 2 条
+[OK]   http 断线：补推的 body 是完整 JSON（无尾换行）
+[OK]   http 断线：补推完成队列清空、LastSeq=2
+[OK]   HttpIngest：Start 后进入监听状态
+[OK]   HttpIngest：POST /api/fail 回 200（实得 200）
+[OK]   HttpIngest：onFail 回调收到 1 条
+[OK]   HttpIngest：ReceivedCount=1（合法请求才计数）
+[OK]   HttpIngest：onFail 收到的内容与 POST 的 JSON 完全一致（原样透传）
+[OK]   HttpIngest：POST /api/heartbeat 回 200
+[OK]   HttpIngest：onHeartbeat 回调收到 1 条
+[OK]   HttpIngest：onHeartbeat 收到的内容与 POST 一致
+[OK]   http 全链路：POST /api/fail 与 /api/heartbeat 均回 200
+[OK]   http 全链路：HTTP 推送的机台自动出现在看板且在线、FailCount=1（无共享文件也创建）
+[OK]   http 全链路：心跳超时(1s)后轮询判离线（LastSeen 统一在线判定）
+[OK]   http 全链路：重复 seq 重发回 200
+[OK]   http 全链路：重复 seq 幂等，FailCount 不增加
+[OK]   路由：HttpIngest 已监听
+[OK]   路由：POST /api/fail -> 200
+[OK]   路由：GET /api/fail -> 405
+[OK]   路由：POST /nope -> 404
+[OK]   路由：POST /（根路径）按 body type=fail 分发 -> 200
+    HTTP 双通道自检完成
+
+【聚合链路连通性】状态机 / 主备聚合端 / 断连恢复 / 队列溢出计数
+[OK]   主备聚合端：主不可达自动切备用，两条 FAIL 均送达备用端
+[OK]   主备聚合端：链路状态正常（实得 Degraded）
+[OK]   主备聚合端：当前目标已切到备用地址（实得 http://127.0.0.1:61198/）
+[OK]   断连状态机：聚合端全不可达 → 判 Disconnected（连续失败阈值）
+[OK]   断连状态机：LinkStateChanged 事件携带断连翻转
+[OK]   断连状态机：连续失败计数 ≥3（实得 3）
+[OK]   断连状态机：断连期间事件保留在队列（断线补偿不清空）
+[OK]   链路恢复：聚合端全挂 → 先断连
+[OK]   链路恢复：备用端恢复后自动重连（状态回到正常）
+[OK]   链路恢复：断连期间积压的 FAIL 自动补推
+[OK]   队列溢出：超上限丢最老并计数（实得 50）
+[OK]   队列溢出：队列长度不超过上限（实得 5000）
+    聚合链路连通性自检完成
+
+【Web 聚合服务】页面与 API / 推送入库 / XML 下载白名单 / CSV 导出 / 路由错误码
+[OK]   Web 服务：Start 后进入监听状态
+[OK]   GET / -> 200 text/html（看板页）
+[OK]   GET /：页面含看板标题元素
+[OK]   GET /api/health -> 200
+[OK]   GET /api/health：JSON 为 {"ok":true}
+[OK]   GET /api/machines -> 200
+[OK]   GET /api/machines：空库时返回合法 JSON 数组 []
+[OK]   GET /api/fails -> 200
+[OK]   GET /api/fails：空库时返回合法 JSON 数组 []
+[OK]   Web 服务：合法请求计入 ReceivedCount（实得 4）
+[OK]   POST /api/mesh/fail（合法 fail JSON）-> 200
+[OK]   推送入库：聚合库 FailCount=1（实得 1）
+[OK]   GET /api/fails：回读该条记录字段正确（machine/sn/fail_reason/result）
+[OK]   POST /api/mesh/heartbeat -> 200
+[OK]   POST /api/mesh/heartbeat：机台 FCT1 出现在看板且在线
+[OK]   POST /（body type=fail）-> 200
+[OK]   POST /（body type=heartbeat）-> 200
+[OK]   POST / 分发：fail 已入库（FailCount=2，FCT1+FCT2 各一条）
+[OK]   XML 白名单：POST fail（xml_path 指向白名单内文件）-> 200
+[OK]   XML 白名单：带 xml_path 的记录已入库（取到 id）
+[OK]   GET /api/file?id=3 -> 200
+[OK]   GET /api/file?id=：内容与 resultsRoot 下文件一致
+[OK]   GET /api/file?path=（白名单内绝对路径）-> 200
+[OK]   GET /api/file?path=../secret.txt（目录穿越）-> 403
+[OK]   GET /api/file?path={resultsRoot 外真实文件} -> 403
+[OK]   GET /api/file?id=999999（记录不存在）-> 404
+[OK]   GET /api/file?id=abc（非数字）-> 400
+[OK]   GET /api/export.csv -> 200
+[OK]   CSV：以 UTF-8 BOM（EF BB BF）开头
+[OK]   CSV：表头含「时间」「机台」
+[OK]   CSV：数据行含已入库的 sn/fail_reason
+[OK]   CSV 注入：POST fail（fail_reason 以 = 开头）-> 200
+[OK]   CSV 注入：注入记录已入库（FailCount=4）
+[OK]   CSV 注入：= 开头字段被加单引号前缀（'=cmd...），Excel 不执行公式
+[OK]   GET /api/nope（未知路径）-> 404
+[OK]   PUT /api/mesh/fail（方法不符）-> 405
+[OK]   GET /api/mesh/fail（方法不符）-> 405
+[OK]   POST /api/mesh/fail（body 超 1MB）-> 413
+    Web 聚合服务自检完成
+
+【聚合鉴权与分页】agg_token 403 / 分页 offset / 搜索 q / FAIL 总数 / XML 内容落盘
+[OK]   聚合鉴权：带 token 的 Web 服务已启动
+[OK]   GET /api/machines（无 token）-> 403
+[OK]   POST /api/mesh/fail（无 token）-> 403
+[OK]   聚合鉴权：403 的推送未入库（FailCount=0）
+[OK]   GET /api/machines（错误 token）-> 403
+[OK]   POST /api/mesh/fail（正确 token 头）-> 200
+[OK]   聚合鉴权：正确 token 的推送已入库（FailCount=1）
+[OK]   聚合鉴权：共入库 4 条（FailCount=4）
+[OK]   分页:limit=2&offset=0 -> 返回 2 条
+[OK]   分页:limit=2&offset=2 -> 返回 2 条（第二页）
+[OK]   分页:limit=2&offset=4 -> 返回 0 条（越界空页）
+[OK]   搜索:q=SN-103 -> 只命中 1 条且 SN 正确
+[OK]   搜索:q=12V_Rail -> 只命中 fail_reason 匹配的 1 条
+[OK]   搜索:q=不存在 -> 0 条
+[OK]   GET /api/fails/count -> 200
+[OK]   GET /api/fails/count：全库总数 = 4
+[OK]   GET /api/fails/count?q=5V_Rail：过滤后总数 = 2
+[OK]   XML 内容落盘:带 xml_content 的推送已入库（FailCount=5）
+[OK]   XML 内容落盘:XmlPath 已改写为聚合端本地文件且存在
+[OK]   GET /api/file?id=5（跨机台 XML 本地落盘）-> 200
+[OK]   GET /api/file?id=：内容与上送的 xml_content 一致
+[OK]   GET /api/settings（带 token）-> 200
+[OK]   GET /api/settings：返回全部聚合配置字段（端口/token/webhook/汇总/通道/白名单）
+[OK]   GET /api/settings（无 token 且无 Cookie）-> 403（设置页也要鉴权）
+[OK]   GET /api/machines（不带任何 token，凭先前下发的 Cookie）-> 200
+[OK]   GET /：页面含「设置」页签与设置视图容器
+[OK]   GET /：页面 JS 调用 /api/settings（设置页加载）
+[OK]   Config.Save：损坏 config.json 时返回 false 不抛异常
+    聚合鉴权与分页自检完成
+
+【Web 目录浏览】/api/list 白名单与排序 / 下载回归 / 页面文件页签
+[OK]   目录浏览：Web 服务进入监听状态
+[OK]   GET /api/list（无 path = 根目录）-> 200
+[OK]   GET /api/list：根目录 3 项（test.xml + sub + empty-dir，实得 3）
+[OK]   GET /api/list：目录排前、文件排后
+[OK]   GET /api/list：目录/文件各自按名称排序（OrdinalIgnoreCase）
+[OK]   GET /api/list：目录 Size=0
+[OK]   GET /api/list：Path=该项完整路径（可直接回传 /api/list 或 /api/file）
+[OK]   GET /api/list：文件 Size=实际字节数
+[OK]   GET /api/list：Modified 格式 yyyy-MM-dd HH:mm:ss
+[OK]   GET /api/list?path=sub（相对路径）-> 200
+[OK]   GET /api/list?path=sub：列出 sub.txt
+[OK]   GET /api/list?path=<根下子目录绝对路径> -> 200
+[OK]   GET /api/list?path=绝对路径：同样列出 sub.txt
+[OK]   GET /api/list?path=../outside（目录穿越）-> 403
+[OK]   GET /api/list?path=C:\Windows（绝对路径越权）-> 403
+[OK]   GET /api/list 403：返回中文提示「拒绝访问：目录不在允许范围内」
+[OK]   GET /api/list?path=不存在目录 -> 404
+[OK]   GET /api/file?path=（回归）200 且内容与磁盘文件一致
+[OK]   GET /：页面含「文件」页签
+[OK]   GET /：页面含文件浏览容器与表格
+[OK]   GET /：页面 JS 调用了 /api/list
+    目录浏览自检完成
+
+【一键部署】默认聚合配置生成（JSON 内容与合法性）
+[OK]   一键部署:BuildDefaultAggConfigJson 返回非空 JSON
+[OK]   一键部署:station_id=AGG-NODE
+[OK]   一键部署:results_root=D:\Results
+[OK]   一键部署:mesh_port=8081
+[OK]   一键部署:peers 为空数组（单节点起步）
+[OK]   一键部署:agg_token 自动生成 32 位随机串（8a82385f…）
+[OK]   一键部署:agg_summary_minutes=60
+[OK]   一键部署:log_level=INFO
+[OK]   一键部署:JSON 合法可解析
+[OK]   一键部署:JSON 已缩进（WriteIndented 可读格式）
+[OK]   AggDeployer:BuildDefaultConfigJson 与 Program 转发版一致（内嵌单一来源，token 随机除外）
+[OK]   AggDeployer:IsAdmin 可调用（Windows 下返回布尔，不抛异常）
+
+【H-1 回归】/api/mesh/xml 本地读取过白名单（伪造 xml_path 拒绝读取）
+[OK]   两条推送已入库（2）
+[OK]   未设校验器时保持旧行为（白名单内可读）
+[OK]   设校验器后：白名单内 xml_path 照常可读
+[OK]   设校验器后：伪造的白名单外 xml_path 拒绝读取（返回 404，不再泄文件）
+[OK]   幽灵记录不存在（防呆确认）
+
+【更新器】本地更新包检测 / 版本对比 / RELEASE.txt 特点 / 已提示去重
+[OK]   解析更新包名 Argus-v9.9.9-update.zip -> 9.9.9
+[OK]   兼容完整包名 Argus-v3.5.3.zip -> 3.5.3
+[OK]   两位版本号 Argus-v1.2.zip -> 1.2
+[OK]   非 zip 文件名 -> null
+[OK]   扫描到新包 v2.0.0（当前 v1.0.0.0）
+[OK]   返回的 zip 路径正确
+[OK]   新版本初始未提示过
+[OK]   MarkPrompted 后已记录
+[OK]   已提示过的版本不再弹出（去重生效）
+[OK]   RELEASE.txt 提取到 2.0.0 的版本特点（含「更新器上线」）
+[OK]   版本特点含 GUI 原生回归说明
+[OK]   特点段不越界到下一节（到分隔线/标题为止）
+[OK]   与当前版本相同的包不触发（已提示的仍被过滤）
+
+【P0 性能】AggDatabase 读写分离并发 / InsertBatch / 接收端组提交 / 计数缓存 / 每日维护 / RETURNING
+[OK]   InsertBatch：首批 120 条单事务全部插入
+[OK]   InsertBatch：新插入行的自增 Id 全部回填
+[OK]   InsertBatch：重复批（同 machine,seq）全部忽略，返回 0
+[OK]   InsertBatch：重复批不改写已有行的 Id
+[OK]   混合批次只插入新的 20 条（插前 FCT3 存量 = 0）
+[OK]   InsertBatch 后计数正确（全库 140 / FCT1=60 / FCT3=20）
+[OK]   FailCountCached 与直查一致（60）
+[OK]   TTL 内缓存命中：直插一条后缓存值不变（COUNT 不被高频写打断）
+[OK]   ClearCountCache 后读到最新计数
+[OK]   RETURNING：本地库批量插 3 条全部插入
+[OK]   RETURNING：RecordsInserted 事件回传 3 个非零互异自增 id
+[OK]   RETURNING：批量内自增 id 保持递增（顺序语义不回退）
+[OK]   RETURNING：重复 xml_path 批次全部忽略，返回 0
+[OK]   RETURNING：重复批不触发新增事件
+    P0 性能改造自检完成
+
+【在线 XML 查看】ParseReportText 口径 / KPI / 失败标红 / 排除项 / 时间优先级
+[OK]   文本解析成功（DTD Prohibit 防 XXE 路径可走）
+[OK]   SN 提取正确
+[OK]   PANEL 状态提取正确
+[OK]   TESTER 提取正确
+[OK]   USER 提取正确
+[OK]   无 filePath 时 BatchTimestamp 为空（不再读 XML 属性时间）
+[OK]   全部 TEST 项收集（含 PASS，不只失败）
+[OK]   状态徽章 FAIL（主红）
+[OK]   失败项标红（st-fail）
+[OK]   排除项灰色标注（Get Unit Information）
+[OK]   KPI：测试项总数 4
+[OK]   KPI：失败计入不良 1（排除项不计）
+[OK]   KPI：通过项 2
+[OK]   渲染输出无脚本注入
+[OK]   PASS 徽章（墨黑）
+[OK]   PASS 报告失败计数为 0
+
+【聚合库迁移】全新库建表 / v3.5.3 老库升级（表已存在）/ 幂等重入
+[OK]   全新库迁移后 user_version=13（期望 13）
+[OK]   全新库迁移后 agg_records 表存在
+[OK]   全新库迁移后可插入（表结构可用）
+[OK]   v3.5.3 老库（表已存在 + user_version=0）迁移不抛异常
+[OK]   老库升级后 user_version=13（期望 13）
+[OK]   老库升级后既有数据保留（FCT3/seq=100 仍在）
+[OK]   老库升级后可继续插入新行
+[OK]   重复 Migrate 幂等（user_version 不再增长）
+
+【良率日统计】upsert 幂等 / 查询过滤 / 心跳落库 / 变化检测 / 老格式兼容
+[OK]   迁移 v2 后 yld_daily 表存在
+[OK]   3 个 (machine,date) 键 => 3 行（同键重复 upsert 只留 1 行）
+[OK]   同键 upsert 更新为新值（幂等覆盖）
+[OK]   machine=FCT1 过滤 => 2 行
+[OK]   from/to 日期窗口过滤正确
+[OK]   心跳携带统计 -> yld_daily 落库
+[OK]   同值重复心跳不重复写（变化检测）
+[OK]   统计值变化 -> 更新同一行
+[OK]   老格式心跳（无 today）不写库且不报错
+[OK]   缺失 machine 的心跳被忽略（不抛异常）
+
+【正常态自学习】Welford/P²收敛 / 建模与状态机 / PASS过滤 / 异常吞并 / 心跳
+[OK]   learn_normal_enabled 默认 false
+[OK]   正常态默认参数 30/14
+[OK]   Welford 均值收敛（3.349345 vs 3.349345）
+[OK]   Welford 样本σ收敛（0.029396 vs 0.029396）
+[OK]   Welford 计数正确
+[OK]   P² 中位数近似（3.348836 vs 3.349850）
+[OK]   P² 分位单调（p01≤p50≤p99）
+[OK]   P² 序列化往返一致
+[OK]   P² 反序列化容错
+[OK]   初始无模型行
+[OK]   n<minSamples 状态=learning
+[OK]   n≥minSamples 状态=ready
+[OK]   模型均值正确
+[OK]   分位与极值单调合理
+[OK]   超 stale_days 惰性判 stale
+[OK]   窗口内保持 ready
+[OK]   NaN/Inf 不入模（只学有限值）
+[OK]   normal_models 建表随 Database.Init 生效（ns.db 构造已隐式验证）
+[OK]   测量学习器：PASS 数据入模
+[OK]   FAIL 数据不入模（正常态不被污染）
+[OK]   波形学习器：vmean 建模
+[OK]   波形学习器：vstd 建模
+[OK]   波形学习器：vmax 建模
+[OK]   设备学习器：按时段建键（23 点→slot3）
+[OK]   心跳落库 learn_normal_heartbeat
+[OK]   开关关闭：三学习器全部 no-op
+
+【权限与审计】PasswordHasher / users upsert / audit 落库 / 宽松模式 / token 模式角色分级
+[OK]   迁移 v3 后 users 表存在
+[OK]   PasswordHasher：正确密码校验通过
+[OK]   PasswordHasher：错误密码校验失败
+[OK]   PasswordHasher：非法格式返回 false 不抛
+[OK]   PasswordHasher：存储格式 iterations.salt.hash
+[OK]   UpsertUser：新用户带 32hex token
+[OK]   upsert 更新保留旧 token
+[OK]   upsert 更新密码生效
+[OK]   GetUserByToken 命中
+[OK]   ListUsers 返回 2 人
+[OK]   DeleteUser 删除成功
+[OK]   QueryAudit 倒序返回 2 条
+[OK]   鉴权组：宽松模式服务进入监听
+[OK]   宽松模式 GET /api/status -> 200
+[OK]   宽松模式 status.role=admin（实际 admin）
+[OK]   status 含 today_yield 字段
+[OK]   POST /api/users 创建 viewer 返回 token
+[OK]   POST /api/login 正确密码 -> 200
+[OK]   POST /api/login 错误密码 -> 401
+[OK]   创建用户后匿名访问 /api/audit -> 403（鉴权收紧）
+[OK]   viewer token 访问 /api/audit -> 403（角色不足）
+[OK]   鉴权组：审计挂点服务进入监听
+[OK]   GET /api/export.csv -> 200
+[OK]   审计包含 export.csv 记录（导出挂点生效）
+[OK]   鉴权组：token 模式服务进入监听
+[OK]   token 模式：无 token 访问 -> 403
+[OK]   agg_token 通道创建 engineer -> 200
+[OK]   u2 登录拿到 token（login 端点豁免鉴权）
+[OK]   engineer token 访问 /api/status -> 200
+[OK]   engineer 访问 /api/audit -> 403（角色不足）
+[OK]   agg_token(admin) 访问 /api/audit -> 200
+
+【指标与可观测】入库/接收/忽略计数 / /api/metrics 路由 / 日志滚动
+[OK]   InsertFail 计数：2 条新插入 + 1 条重复忽略 => InsertCount=2（期望 2）
+[OK]   InsertBatch 计数：+2 新插入（1 重复不计）=> InsertCount=4（期望 4）
+[OK]   HandleFail 计数：接收 2 / 忽略 1（实得 2/1）
+[OK]   组提交处理行数（含重复）= 2（期望 2）
+[OK]   接收端入库计入 InsertCount（去重后 4+1=5）：5
+[OK]   指标组：服务进入监听
+[OK]   /api/metrics 含 web.requests / web.rejected_503
+[OK]   /api/metrics 含 db.inserts >= 1
+[OK]   /api/metrics 无 mesh 时 receiver 为 null（不炸）
+[OK]   /api/metrics 无 mesh 时 pusher 为 null（不炸）
+[OK]   /api/metrics 含 ok/uptime_sec
+[OK]   日志超阈值后滚动出 app.log.1
+[OK]   滚动后新 app.log 继续写入
+
+【备份与容灾】副本库/机台库每日备份 / XML 容灾缓存命中
+[OK]   副本库每日备份文件生成
+[OK]   备份库可打开且行数一致（2 条）
+[OK]   同日重复备份幂等跳过
+[OK]   备份只保留最近 7 份（实得 7）
+[OK]   机台本地库每日备份生成
+[OK]   机台库备份可打开且行数一致（2 条）
+[OK]   机台库同日重复备份幂等跳过
+[OK]   首次拉取（本机路径）成功
+[OK]   拉取成功后容灾缓存落盘（machine/date 分目录）
+[OK]   源文件删除后命中容灾缓存，仍可读取
+
+【P3+P4】FAIL 双视图分组/高频标色/自定义列/导出 + 源机检索并发/缓存/零膨胀/在线 XML 联动
+[OK]   QueryTestRecords 全量 => 5 条（期望 5，含 PASS）
+[OK]   按 Machine=FCT6 => 3 条（期望 3）
+[OK]   按 Result=FAIL 全机台 => 3 条（期望 3）
+[OK]   按 Machine=FCT6 + Result=FAIL => 2 条
+[OK]   按 Result=PASS 全机台 => 2 条（期望 2）
+[OK]   按 SN 模糊 SN-A => 3 条（期望 3）
+[OK]   按型号 E301 => 2 条（期望 2）
+[OK]   按日期 20260821-20260822 => 4 条（期望 4）
+[OK]   limit=2 offset=1 => 2 条
+
+【P5】维修看板 4 列状态机 legacy + 待办合并优先级20/5 + 人员改名同步 + 12列导出CSV注入防护CWE-1236 + API鉴权三角色
+[OK]   P5 迁移后 user_version=13（期望 13）
+[OK]   P5 迁移后 maintenance_records 存在
+[OK]   P5 迁移后 todo_items 存在
+[OK]   P5 迁移后 dismissed_todos 存在
+[OK]   P5 迁移后 resolvers 存在
+[OK]   状态体系 4 列顺序 unknown→open→in_progress→resolved
+[OK]   legacy closed→resolved
+[OK]   legacy investigating→open
+[OK]   legacy Zh 归并正确
+[OK]   各列计数 correct
+[OK]   resolved 含 legacy closed (2)
+[OK]   ListMaintenance 全量 5 条（实得 5）
+[OK]   拖拽改状态 in_progress
+[OK]   状态已更新
+[OK]   全字段更新成功
+[OK]   多人 resolver 写入正确
+[OK]   删除维修记录成功
+[OK]   删除后不在库
+
+【P6+P7+P2-A】设备监控（心跳轻量+5min全量+L1维度+采样滚动7天+FCT.ini）+ 无头服务化 + 数据拉取趋势/分布雏形
+[OK]   P6 迁移后 user_version=13（期望 13）
+[OK]   P6 迁移后 device_info 存在
+[OK]   P6 迁移后 device_samples 存在
+[OK]   P6 迁移后 device_fct 存在
+[OK]   Config 默认 predict_reconcile_*=true/14/4
+[OK]   Config 默认 predict_tune_*/retain=true/30/180
+[OK]   Config predict_reconcile_* config.json 写入后 Load 读回（接线验证）
+[OK]   Config predict_tune_*/retain config.json 写入后 Load 读回
+[OK]   Config predict_* 非法值全部回退默认（0/-1/99 不覆盖）
+[OK]   Collector CollectFull machine 正确
+[OK]   Collector hostname 非空
+[OK]   Collector cpu_cores >0
+[OK]   Collector mem_total >=0
+[OK]   Collector 轻量 cpu 0-100
+[OK]   Collector FCT machine 正确
+[OK]   UpsertDeviceInfo + Get 正确
+[OK]   UpsertDeviceLight 保留 hostname 仅更新轻量
+[OK]   UpsertDeviceLight 新机台占位创建
+[OK]   ListDeviceInfos 2 台（实得 2）
+[OK]   采样 2 条（实得 2）
+[OK]   采样按时间升序返回（首条为旧）
+[OK]   PurgeOld 7 天删除 1 条旧采样（实删 1）
+[OK]   Purge 后剩 1 条
+[OK]   Upsert/Get DeviceFct 正确
+[OK]   ListDeviceFcts 1 条
+[OK]   心跳 JSON 含 system.cpu_usage 轻量字段
+[OK]   无 lightProvider 时心跳不含 system（向后兼容）
+[OK]   HandleInfo 落库正确
+[OK]   HandleFctIni 落库正确
+[OK]   HandleHeartbeat light 更新 cpu（保留 hostname）
+[OK]   HandleInfo 后 peer 视图含 RDEV
+[OK]   HeadlessService Mesh 非空
+[OK]   HeadlessService Db 非空
+[OK]   HeadlessService Start 无异常
+[OK]   HeadlessService Stop 无异常
+[OK]   HeadlessService Dispose 无异常
+[OK]   HeadlessService withEngine=true 含 Engine
+SN 补采: 无缺失记录
+[OK]   HeadlessService(with Engine) Start 无异常
+[OK]   ServiceManager 类型存在
+[OK]   ServiceManager.Exists() 调用无异常（返回 False）
+[OK]   ServiceManager.Install 方法存在
+[OK]   ServiceManager.Uninstall 方法存在
+[OK]   维护前采样 1 条
+[OK]   维护 RunNow 后旧采样被清理（剩余 0）
+[OK]   归因: GetRecentFailCount 7 天 = 3（2 昨天 + 1 今天 FAIL）
+[OK]   归因: daysBack=0 边界 → 只计今天 = 1
+[OK]   归因: 未知机台 → 0
+[OK]   归因: DecomposeByModel 2 个型号（实得 2）
+[OK]   归因: MOD_X Total=3/Fail=2/Pass=1/Int=0
+[OK]   归因: MOD_X yield≈33.33（实得 33.33）
+[OK]   归因: MOD_X 贡献度≈100（最大失败者自身，实得 100）——贡献度除零修复回归断言
+[OK]   归因: MOD_Y 贡献度≈50.0（1/2 最大失败，实得 50）
+[OK]   归因: fail 降序 → MOD_X Rank=1
+[OK]   归因: DecomposeByFixture 2 个前缀（实得 2）
+[OK]   归因: fixture Solder Fail=2 贡献≈66.7（基准=前缀失败总和 3，贡献度后算修复回归）
+[OK]   归因: YieldAttributor.AnalyzeModel top1 = MOD_X
+[OK]   归因: AnalyzeModel 未知机台 → 空列表
+[OK]   ConfigWatcher: 非法 JSON 被拒绝（旧配置保持生效 = 天然回滚）
+[OK]   ConfigWatcher: 合法变更防抖后触发一次（实得 1）
+[OK]   ConfigWatcher: 事件携带新配置原文
+[OK]   LRU: 超容量淘汰最久未用 → Count=2（实得 2）
+[OK]   LRU: A 已被淘汰 → GetOrSet 重新生成
+[OK]   LRU: C 命中且不调 factory（GetOrSet A 未误删 C）
+[OK]   LRU: TTL 过期只淘汰 A/B/C、保留最新 D → Count=1（实得 1）
+[OK]   LRU: 未过期的 D 命中且未被误删
+[OK]   归因API: GET /api/yield/attribution/FCT_W → 200 且含 MOD_W
+[OK]   归因API: total_fail=1（PASS 行不计入失败总数）
+[OK]   归因API: 缺 machine 路径参数 → 400
+[OK]   归因API: days=999 越界 → clamp 到 90 不报错
+[OK]   归因API: 无 token → 403
+[OK]   fixture: 默认解析器识别 F_ FAIL 文件
+[OK]   fixture: FACTORY@FIXTURE_ID 解析进 ParseOutput（实得 FIX-01）
+[OK]   fixture: XML 无 FIXTURE_ID → null（老格式不受影响）
+[OK]   UUT 排除: 纯 UUT Status Err 的 F_ 文件降级 INTERRUPTED 不计 Fail（实得 INTERRUPTED）
+[OK]   UUT 排除: UUT 项不进 FailedTests/FailReason（无推送内容）
+[OK]   UUT 排除: 混含真实失败仍 FAIL 且仅保留真实项
+[OK]   UUT 排除: 无失败项也无 UUT 的 F_ 文件维持 FAIL（回归防线不误伤）
+[OK]   fixture: InsertBatch→QueryFails fixture_id 回读（含空串行）
+[OK]   fixture: 真治具 ID 优先分组 → FIX-A/FIX-B/Connector 3 组（实得 3）
+[OK]   fixture: FIX-A Fail=2 贡献≈50（基准=前缀失败总和 4）
+[OK]   fixture: 无治具旧行回落 fail_reason 前缀分组（Connector 组存在）
+[OK]   fixture: 有真治具 ID 的行不再按前缀分组（Solder 前缀组不存在）
+[OK]   LRU接线: 300 次写入后容量封顶 256（实得 256）
+[OK]   LRU接线: 最旧条目被淘汰（k000 未命中）
+[OK]   LRU接线: 最新条目命中（k299）
+[OK]   健康分: CpuScore(20%) = 80
+[OK]   健康分: CpuScore(95%) = 5
+[OK]   健康分: CPU 70%+趋势+10%/天（3 天外推 100>95）→ 扣 30 后 0
+[OK]   健康分: CPU 50%+趋势+10%/天（3 天外推 80，未超）→ 不加罚
+[OK]   健康分: 磁盘 25GB(≥2×阈值) = 100
+[OK]   健康分: 磁盘 12GB(≥阈值) = 70
+[OK]   健康分: 磁盘 3GB(<0.5×阈值) = 10
+[OK]   健康分: 磁盘 12GB + 2 天耗尽 → 70-30 = 40
+[OK]   健康分: 磁盘未知(0) → 保守扣到底（规格 §9）
+[OK]   健康分: 内存 50% = 100
+[OK]   健康分: 内存 90% = 50（<70→100/<85→80/<95→50 阶梯）
+[OK]   健康分: 内存 96.25%(≥95%) = 20
+[OK]   健康分: 内存 total=0 → 100（防除零）
+[OK]   健康分: 心跳正常 = 100
+[OK]   健康分: 真离线 400s（>300s=0，std 罚不穿 0）
+[OK]   健康分: 在线但心跳 std=80s → 100-20 = 80
+[OK]   健康分: 全健康机台 health=94 ≥80 level=ok
+[OK]   健康分: components 恰 4 子项（cpu/disk/memory/offline）
+[OK]   健康分: CPU 95% 单项劣化 → health=71.5 warn + top_concern=cpu
+[OK]   健康分: last_seen 600s → offline_score=0、级别非 ok
+[OK]   健康分: CPU95%+离线 600s 多指标齐崩 → health=46.5 critical
+[OK]   健康分: summary 三档计数守恒
+[OK]   健康分: warn 阈值 72 → 71.5 判 warn
+[OK]   健康分: warn 阈值 71 → 71.5 判 ok（边界含端点）
+[OK]   健康分: weight_cpu=1.0 → FCT_B health=5（实得 5，权重可配）
+[OK]   健康分: enabled=true → 高亮为综合口径（含「健康分」字样）
+[OK]   健康分: enabled=false → 回退 v3.19.0 单指标高亮（CPU 阈值口径）
+[OK]   健康分: config 默认 enabled=true / warn 80 / critical 50（缺省可运行）
+[OK]   健康分: 默认权重加和 = 1.0
+[OK]   升级向导: 合成真实结构包校验通过
+[OK]   升级向导: 包内版本号可读（v1.0.0.0）
+[OK]   升级向导: 含 data\ 目录的包被拒绝（包内含 data\ 目录，可能覆盖现场数据，已中止）
+[OK]   升级向导: 缺 Argus.exe 的包被拒绝（包内没有 Argus.exe——这不是 Argus 更新包（应使用 make_release.ps1 产出的 Argus-v*-update.zip））
+[OK]   升级向导: 脚本定位优先 tools\deploy_update.ps1
+[OK]   升级向导: tools\ 缺失时回落安装目录根
+[OK]   升级向导: 安装目录没有时回落包内脚本（v3.22.1 更新包自带）
+[OK]   主题: 固定浅色模式（Bg=系统控件色，暗黑已移除）
+[OK]   主题: 浅色模式文字/背景对比度 ≥120（实得 240）
+[OK]   主题: Bg/Surface/TextMain 三色互不相同（无撞色）
+[OK]   主题: 撞色修复——文字令牌与面板底色不同值（白字白底类回归防线）
+[OK]   主题: Apply 两轮颜色稳定（Bg=系统控件色）
+[OK]   主题: Label 两轮均刷成正文色
+[OK]   主题: DataGridView 单元格底=Surface
+[OK]   主题: DataGridView 背景=Bg（StyleGrid 走令牌）
+[OK]   主题: 按钮 FlatStyle.System 系统原生
+[OK]   无感热升级: config auto_update 缺省 true（自动暂存+自动重启）
+[OK]   无感热升级: 更新包文件名解析版本号
+[OK]   健康API: GET /api/devices/health → 200 且含 FCT_W
+[OK]   健康API: JSON 字段齐全（components/top_concern/summary）
+[OK]   健康API: 无 token → 403
+
+【v3.23.3 客户端主页】Database 统计方法
+[OK]   FetchDailyHourlyStats: 返回完整 24 小时槽位（0..23）
+[OK]   8时统计正确: Pass=2, Fail=1, Total=3 (实得 Pass=2, Fail=1)
+[OK]   8时良率计算准确: ~66.7% (实得 66.7%)
+[OK]   9时统计正确: Pass=1, Fail=1 (实得 Pass=1, Fail=1)
+[OK]   无数据时段产量为 0且良率显示 0.0%
+[OK]   FetchDailyTopFails: 返回不良项清单（2项）
+[OK]   Top1 故障项正确: VoltageCheck 频次 2 (实得 VoltageCheck:2)
+[OK]   Top1 故障占比正确计算 (>60%，实得 66.7%)
+[OK]   Top2 故障项正确: CurrentLimit 频次 1 (实得 CurrentLimit:1)
+[OK]   FetchRecentFailAlerts: 返回最近 2 条 FAIL 记录（实得 2）
+[OK]   流水逆序排列: 最新一条为 SN_2026_004 (实得 SN_2026_004)
+[OK]   流水包含完整失败原因字段
+[OK]   流水包含格式化时间: 2026-09-07 09:10:00
+[OK]   FetchMonthlyStats: 跨机台当月合计正确 (实得 P=1,F=2,I=1)
+[OK]   FetchMonthlyStats: 按机台过滤正确（他台不计）
+[OK]   FetchMonthlyStats: 上月数据不混入当月（前缀隔离）
+[OK]   FetchMonthlyStats: SN 终检口径重测去重 (F→F→P 记 1 PASS、P→F 记 1 FAIL、空 SN 按 xml_path 兜底; 实得 P=3,F=1,I=0)
+[OK]   FetchMonthlyStats: 当月产品数=去重后 4 台 (实得 4)
+
+【v3.24.0 S1】G49ProductDictionary & FailReasonMerger 真实脏样本解析与三级归并断言
+[OK]   字典包含 SiC_G_HV_Low_Level
+[OK]   字典包含旋变 45°
+[OK]   TC_AI_Cur_1 属于三相电流族
+[OK]   P5V_CAN 为 Measurement 语义
+[OK]   8.19.1 识别为 Injection 注入型章节
+[OK]   8.20.2 识别为 Injection 注入型章节
+[OK]   开关关闭时 GetMergedKey 回退原串
+[OK]   signal 粒度下旋变 45° 归并为 RES_v_ResAng(XCP)
+[OK]   旋变故障匹配治具根因 (工装/模拟器)
+[OK]   section 粒度下归并为章号 §8.11
+[OK]   无空格章节号成功剥离: 8.18.2.2
+[OK]   六相栅极 _HU 归并为 SiC_G_HV_Low_Level(OSC)
+[OK]   双空格章节号成功提取
+[OK]   信号基名正确: IOH_CAN
+[OK]   Volt for 前缀剥离且三相电流 _1 归并
+[OK]   值与规格详情剥离且信号为 KL30_1
+[OK]   值与规格被清理，归并名规范
+[OK]   未知格式安全回退原字符串
+[OK]   6.1 电源轨 3 个不同信号成功触发章节群挂告警
+[OK]   章节群挂提示供电/电源系统性问题
+[OK]   S1: KL30_1 与 KL30_2 两轨独立不并
+[OK]   S1: KL30_1 归并入 KL30_1(RailFamily)
+[OK]   S1: KL30_FILT_1 与 KL30_1 同轨归并（保有基名）
+[OK]   S1: GD 状态数组下标归一，同族归并
+[OK]   S1: FLTM 错误状态数组同族归并
+[OK]   S1: 字典含 P17V_LV_LS（独立轨族）
+[OK]   S1: P1.25V_LVD_Core 独立轨族不并
+[OK]   S1: 不同电源轨不并（P12V_FB_HS ≠ P15V_LVD_LS，保住诊断）
+[OK]   Database 初始化成功
+[OK]   查询本地样本数量为 1
+[OK]   本地样本 CPU 读出一致
+[OK]   本地样本 Memory 读出一致
+[OK]   本地样本 DiskGb 读出一致
+[OK]   PurgeOldLocalDeviceSamples 成功清理 14 天前旧数据
+[OK]   DeviceSampleRecorder 单次采样成功
+[OK]   DeviceSampleRecorder CPU 采集合法
+[OK]   DeviceSampleRecorder 内存采集合法
+[OK]   DeviceSampleRecorder 磁盘余量合法
+[OK]   DbMigrator 最新版本为 13
+[OK]   S3: 仅 M1 早段触发 1 条良率跌破预警（实得 1）
+[OK]   S3: 预警定位 M1 早(06-12) 段
+[OK]   S3: 基线均值 100%（窗口全 PASS）
+[OK]   S3: 零σ下限生效，期望下界 ≥ 97（实得 97）
+[OK]   S3: 预警文案含型号与期望区间（只标记不强动作）
+[OK]   S3: 冷启动桶（M2 窗口 <30 件）不产出预警
+[OK]   S3: 型号×时段隔离——正常桶（午段）不误报
+[OK]   S3: 晚段中断热区触发 1 条（实得 1）
+[OK]   S3: 今日晚段中断率 30%
+[OK]   S3: 中断预警带根因指向（治具/通信/操作）
+[OK]   S3: M1 早段桶 60 件/6 天（实得 60/6）
+[OK]   S3: 同 SN 复测去重只保留最新一条
+[OK]   S3: 今日良率恰等于期望下界 97%（开区间）不报警（实得 0 条）
+[OK]   S3: σ 收紧到 2.9 后同数据触发预警（边界外）
+[OK]   S3: BaselineState JSON 序列化往返一致
+[OK]   S3/S4: 全开关关闭时 RunOnce 为 no-op（不写任何 meta，行为兼容）
+[OK]   S3: RunOnce 后 app_meta 落盘 learn_baseline_state
+[OK]   S3: 基线含 E3002781 早段桶（yyyyMMdd 日期格式兼容）
+[OK]   S4: 章节群挂落盘——6.1 三信号族触发 1 条（RES 四角同族不计，实得 1）
+[OK]   S4: 群挂预警根因指向供电系统性问题
+[OK]   S4: 注入型章节（8.19/8.20/8.21）不计群挂
+[OK]   S4: 无维修无删除 → 因子 1.0
+[OK]   S4: 完成维修 10 次 → 因子封顶 1.5
+[OK]   S4: 显式删除 10 次 → 因子下探 0.5
+[OK]   S4: 乘性合成 1.5×0.5=0.75
+[OK]   S4: 已完成维修项因子 > 1.0（优先级上调）
+[OK]   S4: 未学习项因子 = 1.0 原权重
+[OK]   S4: 校准因子 >1 提升评分
+[OK]   S4: 校准使 medium 升 high（仅档位/排序，不改状态机）
+[OK]   S4: 因子越界在 Score 内二次钳制 [0.5,2.0]
+[OK]   S4: Top 排行归并——旋变四角同族合并计数 3（实得 3）
+[OK]   S4: 归并 Top 条目带治具根因指向文案
+[OK]   S4: 归并关闭时 Top 排行保持原串（行为 100% 兼容）
+[OK]   S4: TodoSuggester 校准因子注入后 ItemA 排到首位
+[OK]   S4: 未注入 factorOf 时 CalibratedScore = 原始分（行为兼容）
+[OK]   飞书卡片2.0: 根声明 schema=2.0
+[OK]   飞书卡片2.0: elements 位于 body 层级（非 1.0 顶层）
+[OK]   飞书卡片2.0: 多列用 column_set（无 1.0 div.fields）
+[OK]   飞书卡片2.0: hr/markdown 新 tag
+[OK]   飞书卡片2.0: header.template 合法枚举色
+[OK]   飞书卡片2.0: fill 宽度模式 + 标题 plain_text
+[OK]   飞书卡片2.0: markdown 转义生效（实得 a\*b\[c\]\`d\|e）
+[OK]   飞书卡片2.0: null 输入安全返回空串
+[OK]   飞书卡片2.0: banner img_key 渲染为 img 元素
+[OK]   飞书卡片2.0: banner 负 margin 通栏且贴 header
+[OK]   飞书卡片2.0: 带 banner 时 header 底 padding 归零
+[OK]   飞书卡片2.0: banner 位于 body 最顶端（先于正文字段）
+[OK]   飞书卡片2.0: 未配 img_key 卡片无图（兼容旧版式）
+[OK]   飞书卡片2.0: banner 空白/null key 安全返回 null
+[OK]   飞书卡片2.0: banner 合法 key 返回元素
+[OK]   飞书推送: FallbackWebhookUrl 已置空（开源版不携带任何硬编码凭据）
+
+【规格06】PASS 测量值采集（ParseMeasurements）…
+[OK]   规格06: PASS 文件全 TEST 收录不限 Failed（实得 3）
+[OK]   规格06: 数值测量行 value/上下限/单位/规则齐全
+[OK]   规格06: 非数值 VALUE → value 空 + value_text 原串
+[OK]   规格06: 无 VALUE 节点行保留（无值）
+[OK]   规格06: 科学计数法 VALUE 正常解析
+[OK]   规格06: analyze_collect_pass=false 提取 no-op（开关可关回旧行为）
+[OK]   规格06: 超大文件护栏（>max_file_kb）跳过提取
+[OK]   规格06: 单文件测项上限截断（500 默认可调）
+[OK]   规格06: 损坏 XML 提取安全空表不抛异常
+[OK]   规格06: Parse 集成 PASS 分支接线（实得 3 行）
+[OK]   规格06: FAIL 文件不采测量值（明细留待期2 fail_items）
+[OK]   规格06: Processor 透传 Measurements 至 TestRecord
+[规格06] 采集组完成
+
+【规格06】存储层 test_measurements / fail_items …
+[OK]   规格06: test_measurements 表随 Init 创建（v14）
+[OK]   规格06: fail_items 表预建（期2启用）
+[OK]   规格06: BatchInsert 后测量值自动挂接入库
+[OK]   规格06: UNIQUE(record_id,test_name) 幂等（重复插入不重复落行）
+[OK]   规格06: 老库重开 Init 幂等（CREATE IF NOT EXISTS），数据完好
+[OK]   规格06: 旧 ts 测量行入库
+[OK]   规格06: PurgeOldMeasurements 清旧留新（删 1）
+[OK]   规格06: 聚合按 (model,test_name) 分组（实得 2 组）
+[OK]   规格06: 聚合统计 N/mean 正确
+[OK]   规格06: 样本σ（n−1 修正）与限值聚合正确
+[规格06] 存储组完成
+
+【规格06】分析器 漂移 + CPK …
+[OK]   规格06: 均值漂移触发（z 实得 3.54）
+[OK]   规格06: 漂移预警附期望区间 mean±kσ
+[OK]   规格06: 稳定测项不误报
+[OK]   规格06: 基线样本不足（冷启动 < min_samples）不预警
+[OK]   规格06: 今日样本不足（<3）不出预警
+[OK]   规格06: σ 防零量程下限（1% 量程）使恒定值测项仍可检出漂移
+[OK]   规格06: 恒定值且无量程（σ_eff=0）安全跳过
+[OK]   规格06: 逼近规格限预警（单边限伪量程回退 |mean|→σ_eff≈0.109，余量比实得 0.15）
+[OK]   规格06: 预警排序 drift 优先于 margin
+[OK]   规格06: CPK 双边限计算（实得 2.357）
+[OK]   规格06: 单边限（仅上限）CPK 判定
+[OK]   规格06: 低能力测项 Level=low 入清单
+[OK]   规格06: σ=0 常数量测项记 constant 不参与能力评级
+[OK]   规格06: 无限值/零方差测项分类正确
+[OK]   规格06: MarginRatio σ=0 安全返回 MaxValue
+[OK]   规格06: 分析四开关显式全关 RunOnce no-op（不写任何 meta）
+[OK]   规格06: RunOnce 落盘 app_meta 漂移快照且可读回
+[OK]   规格06: RunOnce 落盘 CPK 快照含低能力项
+[OK]   规格06: CpkState JSON 往返一致
+[规格06] 分析器组完成
+
+【规格06】backfill 回填 …
+[OK]   规格06: 存量记录初始无测量值
+SN 补采: 发现 1 条 SN 缺失记录，开始重读 XML 提取…
+SN 补采完成: 补 1 条，跳过 0 条，耗时 00:00:00
+测量值回填: E:\Argus-main\FctAggregator\selftest\bin\Debug\net8.0-windows\test_backfill_416f112367764fe9aea6905b2833ca2e\local.db
+窗口: 2026-08-09 ~ 2026-09-07（--days 30，已处理天数按水位跳过）
+  2026-09-06 E3002781: 文件 1，新记录 0，补测量 2，补失败项 0
+  2026-09-07 E3002781: 文件 1，新记录 1，补测量 0，补失败项 0
+回填完成: 扫描 2 文件，新记录 1，补测量值 2 行，补失败项 0 行，SN 补采 1 条，耗时 00:00:00
+[OK]   规格06: backfill 首跑 exit 0 且新记录入库（实得 2）
+[OK]   规格06: 新记录自动补测量 + 存量 PASS 补采（实得 4）
+SN 补采: 无缺失记录
+测量值回填: E:\Argus-main\FctAggregator\selftest\bin\Debug\net8.0-windows\test_backfill_416f112367764fe9aea6905b2833ca2e\local.db
+窗口: 2026-08-09 ~ 2026-09-07（--days 30，已处理天数按水位跳过）
+  2026-09-06 E3002781: 文件 1，新记录 0，补测量 2，补失败项 0
+  2026-09-07 E3002781: 文件 1，新记录 0，补测量 2，补失败项 0
+回填完成: 扫描 2 文件，新记录 0，补测量值 4 行，补失败项 0 行，SN 补采 0 条，耗时 00:00:00
+[OK]   规格06: backfill 二跑幂等（xml_path UNIQUE + 测量 UNIQUE 双防线）
+[OK]   规格06: SN 补采覆盖存量与新增空 SN 记录 (实得 2)
+[OK]   规格06: 水位落盘 backfill_last_day（实得 2026-09-07）
+SN 补采: 无缺失记录
+测量值回填: E:\Argus-main\FctAggregator\selftest\bin\Debug\net8.0-windows\test_backfill_416f112367764fe9aea6905b2833ca2e\d6.db
+窗口: 2026-09-07 ~ 2026-09-07（--days 1，已处理天数按水位跳过）
+回填完成: 扫描 0 文件，新记录 0，补测量值 0 行，补失败项 0 行，SN 补采 0 条，耗时 00:00:00
+[OK]   规格06: --days 1 窗口过滤昨日目录
+analyze_collect_pass=false 且 TDMS 特征化未启用，测量值/TDMS 回填跳过（SN 补采仍执行）。
+SN 补采: 无缺失记录
+回填完成: SN 补采 0 条
+[OK]   规格06: collect_pass=false backfill 无动作 exit 0
+SN 补采: 无缺失记录
+results_root 不存在: E:\Argus-main\FctAggregator\selftest\bin\Debug\net8.0-windows\test_backfill_416f112367764fe9aea6905b2833ca2e\off\no_such_root
+[OK]   规格06: results_root 不存在 exit 1
+[规格06] 回填组完成
+
+【规格06期2】失败项明细 fail_items …
+[OK]   期2: FAIL 记录失败项自动挂接（实得 2）
+[OK]   期2: 数值失败项 value REAL + value_text 原串
+[OK]   期2: 非数值失败项 value 空 + value_text 保留
+[OK]   期2: hour 取自 batch_timestamp 空格格式
+[OK]   期2: hour 兼容 T 分隔格式
+[OK]   期2: PASS/INTERRUPTED 记录不落失败项（仅 FAIL 前置守卫）
+[OK]   期2: fail_items UNIQUE(record_id,test_name) 幂等
+[OK]   期2: PurgeOldFailItems 清旧留新（删 1）
+[规格06期2] fail_items 组完成
+
+【规格06期2】失败多维归因 …
+[OK]   期2: 归因全局口径（n=80，全局失败率 0.3）
+[OK]   期2: fixture/tester/hour 三桶异常（实得 3）
+[OK]   期2: 治具 FX1 偏差比 1.67 触发
+[OK]   期2: panel NG 率按 fixture 统计
+[OK]   期2: 治具 FX2 低于阈值不报
+[OK]   期2: 偏差比降序（hour=8 最先）
+[OK]   期2: 桶样本 < min_bucket 跳过
+[OK]   期2: 全局零失败无可比基线不报警
+[OK]   期2: 资源关联 Pearson 正例（cpu r=1，corr=1）
+[OK]   期2: 零方差序列（mem 恒 50）不出相关
+[OK]   期2: Pearson 零方差返回 NaN
+[OK]   期2: Pearson 弱相关低于阈值
+[规格06期2] 归因组完成
+
+【规格06期2】tester 效应量对比 …
+[OK]   期2: tester='UNKNOWN' 脏数据剔除
+[OK]   期2: 两个测项出效应量（实得 2）
+[OK]   期2: 效应量正例 d≈6.02（旋转值列 σ≈0.166，实得 6.02）且降序在前
+[OK]   期2: 次强效应 d≈3.93 仍超 0.8 阈值入清单
+[OK]   期2: 双 tester 恒定值 σ 防零（量程下限）跳过
+[OK]   期2: 单 tester 测项跳过对比
+[OK]   期2: PASS 工厂信息补齐（tester/fixture_id 单遍读取）
+[OK]   期2: tester 非机台号格式时 station 口径回落 UNKNOWN（FCT-01 不含 FCT{i}）
+[OK]   期2: PASS tester 含 FCT{i} 时 station 提取实测机台号（口径改进）
+[规格06期2] 对比组完成
+
+【规格06期2】分析快照 round trip …
+[OK]   期2: RunOnce 落盘归因快照且可读回
+[OK]   期2: AttributionState JSON 往返一致
+[OK]   期2: RunOnce 落盘 tester 对比快照且可读回
+[OK]   期2: FixtureState JSON 往返一致
+[OK]   期2: 坏 JSON 安全返回 null
+[规格06期2] 快照组完成
+
+【规格06期3】TDMS 特征化 …
+[OK]   期3: 通道统计 n/section 提取正确
+[OK]   期3: 通道统计 min/max/mean/std/first/last 逐值正确
+[OK]   期3: 全 NaN/空数组通道跳过，无章节号 Group section 为空
+[OK]   期3: 单样本 Std=0（Describe 口径锁定）
+[OK]   期3: maxChannels 通道截断
+[OK]   期3: 定位命中同 SN 文件名降序最新（SN001_0002）
+[OK]   期3: 无匹配 SN 返回空
+[OK]   期3: root 空/SN 空 防呆返回空
+[OK]   期3: testDate 非 8 位 防呆返回空（前缀不误命中 SN0011）
+[OK]   期3: 日期目录不存在 返回空
+[OK]   期3: Init 预建 tdms_features 空表
+[OK]   期3: InsertTdmsFeaturesFor 落表 2 行
+[OK]   期3: 特征行字段抽查（冗余列 record_id/model/sn/ts）
+[OK]   期3: UNIQUE(record_id,group,channel) 幂等重插不变
+[OK]   期3: PurgeOldTdmsFeatures 清旧留新
+[OK]   期3: 开关关 CaptureOne no-op 不计数
+[OK]   期3: 单文件超 analyze_tdms_max_kb 跳过计数
+[OK]   期3: 无效 TDMS 内容 Load 抛异常吞掉计数不落行不崩溃
+[OK]   期3: RunOnce 仅 TDMS 开关落盘快照（行数/记录数/跳过计数）
+[OK]   期3: TdmsState JSON 往返一致 + 坏 JSON 安全 null
+[规格06期3] TDMS 特征化完成
+
+【Lite-Settings】用户管理UI/角色分级/布局持久化双写/收藏/全局搜索空格分词聚合/自定义拖拽/权限显隐
+[OK]   初始 layout/favorites 为空
+[OK]   SetUserLayout 成功
+[OK]   GetUserLayout 回读一致
+[OK]   SetUserFavorites 成功
+[OK]   GetUserFavorites 回读一致
+[OK]   不存在用户 SetUserLayout 返回 false
+[OK]   GetUserLayout 大小写不敏感
+[OK]   SetUserLayout 大小写不敏感覆盖
+
+【Lite-Fetch】数据拉取完整导出/热力/报告摘要归档对比/程序日志登记时间轴参数diff + 统一CSV注入BOM
+[OK]   Lite-Fetch 迁移后 user_version=13（期望 13）
+[OK]   迁移后 proc_change_log 存在
+[OK]   迁移后 report_archive 存在
+[OK]   ArchiveReport 返回 id=1
+[OK]   ListReportArchives 命中
+[OK]   GetReportArchive 回读
+
+==== 全部通过 ====
