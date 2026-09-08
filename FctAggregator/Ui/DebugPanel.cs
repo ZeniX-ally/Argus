@@ -52,7 +52,7 @@ public class DebugPanel : Panel
         AddBtn("今日统计", QueryToday);
         AddBtn("最大SN", QueryMaxSn);
         AddTag("待办");
-        AddBtn("待办同步", TodoSync);
+        AddBtn("待办登记", TodoSync);
         AddBtn("合并预览", TodoPreview);
         AddTag("配置");
         AddBtn("查看配置", ViewConfig);
@@ -169,7 +169,7 @@ public class DebugPanel : Panel
     {
         var days = _engine.Config.TodoScanDays;
         var n = _engine.Db.SyncTodoItems(days);
-        Print($"待办同步完成（扫描窗口 {days} 天）：新登记 {n} 条；当前未确认 {_engine.Db.CountPendingTodos()} 条");
+        Print($"待办登记完成（扫描窗口 {days} 天）：新登记 {n} 条；当前未确认 {_engine.Db.CountPendingTodos()} 条");
         Print($"水位线(已并入的 test_records 最大 id): {_engine.Db.GetMeta("todo_sync_last_id") ?? "(未设置)"}");
     }
 

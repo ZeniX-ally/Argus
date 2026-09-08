@@ -85,7 +85,7 @@ e:/FctDistributor/            ← 分发器独立仓库（2026-09-02 拆分；�
 |---|---|
 | 零第三方 UI 依赖 | 图表 canvas 自绘、xlsx 手写 OOXML（Infra/Xlsx.cs）、CSS 无框架；禁止引入 ML/图表/前端库 |
 | 依赖白名单 | 仅 Microsoft.Data.Sqlite 8.0.29 + SQLitePCLRaw 2.1.12（CVE 修复线）+ System.IO.Ports + TDMSReader |
-| namespace 不分目录 | 全部主源码 `namespace FctAggregator`（文件级），目录只是物理分组，移动/新增文件不影响解析 |
+| namespace 不分目录 | 全部主源码 `namespace FctAggregator`（文件级），目录只是物理分组，移动/新增文件不影响解析（已知例外：Parsing/ 用 `FctAggregator.Parsing`、modules/ 各自独立 namespace、Infra/Xlsx.cs 共享单写者 `FctShared`——selftest 全限定引用，勿改） |
 | 编译通配 | 主 csproj 默认通配自动收录新 .cs；selftest 用目录通配——**新增文件不需要改任何 csproj**（新目录名避开 `selftest*`/`tools`） |
 | 巨文件禁拆 | Database.cs / MainForm.cs 保持整体（用户决策），新代码放对应域新文件 |
 | 口径单一来源 | 状态机=MaintenanceMeta、合并=TodoGrouping、CSV 防护=CsvUtil、时间=TimeUtil；**禁止在第二处重实现** |

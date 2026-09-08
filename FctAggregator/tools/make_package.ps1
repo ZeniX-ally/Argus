@@ -18,13 +18,12 @@ $progFiles = @(
     'System.IO.Ports.dll',
     'TDMSReader.dll'
 )
-$rootFiles = @('启动.bat', 'app_icon.ico', '一键部署聚合服务.bat')
-$docs = @('版本更新说明.md', '更新日志.md', '聚合服务说明.md')
+$rootFiles = @('启动.bat', 'app_icon.ico')
+$docs = @('版本更新说明.md', '更新日志.md')
 
 function Write-PackageConfig([string]$destPath) {
     $cfg = Get-Content (Join-Path $root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $cfg.webhook_url = ''
-    $cfg.agg_token   = ''
     $cfg | ConvertTo-Json -Depth 6 | Set-Content $destPath -Encoding UTF8
 }
 
@@ -72,18 +71,7 @@ function Assert-DepsWinFiles([string]$stage) {
     Write-Host "[OK] deps.json 的 win 运行时文件已全部入包"
 }
 
-function Copy-WebRoot([string]$stage) {
-    $web = Join-Path $out 'public'
-    if (-not (Test-Path $web)) { throw "$out 下没有 public\（前端静态资源未随构建复制，检查 FctAggregator.csproj 的 Content Include）" }
-    $webDest = Join-Path $stage 'public'
-    New-Item -ItemType Directory -Path $webDest -Force | Out-Null
-    Copy-Item (Join-Path $web '*') $webDest -Recurse -Force
-}
-
-foreach ($f in $rootFiles) {
-    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $out }
-    else { Copy-Item (Join-Path $root $f) $out }
-}
+foreach ($f in $rootFiles) { Copy-Item (Join-Path $root $f) $out }
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $out }
 Write-PackageConfig (Join-Path $out 'config.json')
 New-Item -ItemType Directory -Path (Join-Path $out 'data'), (Join-Path $out 'logs') -Force | Out-Null
@@ -94,11 +82,7 @@ New-Item -ItemType Directory -Path $stage -Force | Out-Null
 foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stage }
 Copy-WinRuntimes $stage
 Assert-DepsWinFiles $stage
-Copy-WebRoot $stage
-foreach ($f in ($rootFiles + $docs)) {
-    if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $stage }
-    else { Copy-Item (Join-Path $root $f) $stage }
-}
+foreach ($f in ($rootFiles + $docs)) { Copy-Item (Join-Path $root $f) $stage }
 Write-PackageConfig (Join-Path $stage 'config.json')
 New-Item -ItemType Directory -Path (Join-Path $stage 'data'), (Join-Path $stage 'logs') -Force | Out-Null
 
@@ -112,9 +96,7 @@ New-Item -ItemType Directory -Path $stageUpd -Force | Out-Null
 foreach ($f in $progFiles) { Copy-Item (Resolve-DistFile $f) $stageUpd }
 Copy-WinRuntimes $stageUpd
 Assert-DepsWinFiles $stageUpd
-Copy-WebRoot $stageUpd
 Copy-Item (Join-Path $root '启动.bat') $stageUpd
-Copy-Item (Join-Path (Join-Path $root 'tools') '一键部署聚合服务.bat') $stageUpd
 Copy-Item (Join-Path (Join-Path $root 'tools') 'deploy_update.ps1') $stageUpd
 Write-PackageConfig (Join-Path $stageUpd 'config.json')
 Copy-Item (Join-Path $root 'app_icon.ico') $stageUpd
