@@ -1,5 +1,11 @@
 #requires -Version 7
-param([string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.2.zip")
+param([string]$Zip)
+if (-not $Zip) {
+    $root = (Resolve-Path "$PSScriptRoot\..").Path
+    $ver = [regex]::Match((Get-Content (Join-Path $root 'FctAggregator.csproj') -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
+    if (-not $ver) { throw 'FctAggregator.csproj 里找不到 <Version>' }
+    $Zip = Join-Path $root "bin\Release\net8.0-windows\Argus-v$ver.zip"
+}
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 
