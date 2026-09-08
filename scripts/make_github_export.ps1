@@ -33,8 +33,16 @@ foreach ($p in $include) { git add -- $p }
 Fail 'whitelist add'
 
 $staged = git diff --cached --name-only
-$bad = $staged | Where-Object { $_ -in @('AGENT_RULES.md', 'CODEBUDDY.md') -or $_ -match '^[.](?!gitignore)' }
+# 审计 C1：config.json（真实 agg_token）绝不允许进导出树；密钥值扫描兜底
+$bad = $staged | Where-Object { $_ -in @('AGENT_RULES.md', 'CODEBUDDY.md', 'FctAggregator/config.json', 'config.json') -or $_ -match '^[.](?!gitignore)' }
 if ($bad) { Pop-Location; throw "export tree contains non-whitelisted paths: $($bad -join ', ')" }
+$leaks = @()
+foreach ($f in $staged) {
+    if ($f -notmatch '\.(json|md|ps1|cs|html|js|css|bat|txt)$') { continue }
+    $txt = git show ":$f" 2>$null
+    if ("$txt" -match '"(agg_token|webhook_url|agg_webhook_url|fallback_webhook_url)"\s*:\s*"[0-9a-fA-F]{16,}"') { $leaks += $f }
+}
+if ($leaks) { Pop-Location; throw "export tree contains secrets in: $($leaks -join ', ')" }
 Write-Host ("export files: " + (git diff --cached --name-only).Count)
 
 git commit -m $msg | Out-Null
