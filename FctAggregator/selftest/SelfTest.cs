@@ -3718,9 +3718,9 @@ Argus 统一发布包  v{newer}
             var rPlogViewer = HttpDeleteWithToken($"{baseUrl}/api/proc-log?id=1", viewerTok2);
             Check(rPlogViewer.StatusCode == HttpStatusCode.Forbidden,
                   $"审计B1: viewer DELETE /api/proc-log -> 403（实得 {rPlogViewer.StatusCode}）");
-            var rSetViewer = HttpGetWithToken($"{baseUrl}/api/settings", viewerTok2);
-            Check(rSetViewer.StatusCode == HttpStatusCode.Forbidden,
-                  $"审计B3: viewer GET /api/settings -> 403（不再暴露 webhook 明文/内部路径，实得 {rSetViewer.StatusCode}）");
+            var rSetViewerB3 = HttpGetWithToken($"{baseUrl}/api/settings", viewerTok2);
+            Check(rSetViewerB3.StatusCode == HttpStatusCode.Forbidden,
+                  $"审计B3: viewer GET /api/settings -> 403（不再暴露 webhook 明文/内部路径，实得 {rSetViewerB3.StatusCode}）");
             var rBakViewer = HttpGetWithToken($"{baseUrl}/api/config/backups", viewerTok2);
             Check(rBakViewer.StatusCode == HttpStatusCode.Forbidden,
                   $"审计B3: viewer GET /api/config/backups -> 403（实得 {rBakViewer.StatusCode}）");

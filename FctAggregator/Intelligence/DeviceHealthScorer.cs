@@ -97,7 +97,7 @@ public static class DeviceHealthScorer
                     Recommendation = level == "ok" ? null : RecommendFor(top.Name),
                 });
             }
-            catch {  }
+            catch (Exception ex) { Logger.Warning($"[健康评分] 单机台评分失败: {ex.Message}"); } // 审计 M10
         }
         foreach (var m in report.Machines)
         {

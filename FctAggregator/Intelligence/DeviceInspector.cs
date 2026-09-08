@@ -43,7 +43,7 @@ public static class DeviceInspector
                 if(!row.Found)
                     list.Add(new SuggestItem{ Machine=row.Machine, Kind="fct", Level="info", Detail="FCT.ini 未找到", Suggestion="检查 FCT.ini 路径配置"});
             }
-        } catch {}
+        } catch (Exception ex) { Logger.Warning($"[巡检] 建议生成失败: {ex.Message}"); } // 审计 M10
         return list;
     }
 }

@@ -86,6 +86,15 @@ public static class FetcherService
     private static readonly ConcurrentDictionary<string, FetchJob> _jobs = new();
     private static readonly object _lock = new();
     private const int MaxJobs = 100;
+    private static readonly System.Threading.Timer _purgeTimer; // 审计 M5：空闲期滞留的含 FAIL 明细导出文件定期清理
+
+    static FetcherService()
+    {
+        // 审计 M5：过期文件清理只在新任务完成时触发——启动时清一次 + 每 10 分钟巡检
+        try { PurgeExpired(); } catch { }
+        _purgeTimer = new System.Threading.Timer(_ => { try { PurgeExpired(); } catch { } },
+            null, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10));
+    }
 
     public static string ExportRoot => Path.Combine(AppConfig.BaseDir, "data", "fetch_exports");
 
@@ -207,9 +216,17 @@ public static class FetcherService
     private static List<AggFailRow> QueryFiltered(AggDatabase db, FetchFilter f)
     {
         var limit = Math.Min(f.Limit + f.Offset + 100, 20000);
-        var baseRows = db.QueryFails(limit, string.IsNullOrWhiteSpace(f.Machine) ? null : f.Machine.Trim(), 0, null);
         var df = FetchFilter.NormalizeDate(f.DateFrom);
         var dt = FetchFilter.NormalizeDate(f.DateTo);
+        // 审计 B2：过滤条件下推 SQL（此前仅内存过滤最新 2 万条，超 2 万时按历史日期段导出静默为空）
+        // 内存侧保留同口径二次过滤兜底（LIKE 大小写等价性差异防御）
+        var baseRows = db.QueryFails(limit,
+            string.IsNullOrWhiteSpace(f.Machine) ? null : f.Machine.Trim(), 0, null,
+            string.IsNullOrWhiteSpace(f.Model) ? null : f.Model.Trim(),
+            string.IsNullOrWhiteSpace(f.Station) ? null : f.Station.Trim(),
+            string.IsNullOrWhiteSpace(f.Category) ? null : f.Category.Trim(),
+            string.IsNullOrEmpty(df) ? null : df,
+            string.IsNullOrEmpty(dt) ? null : dt);
         var filtered = baseRows.Where(r =>
         {
             if (!string.IsNullOrWhiteSpace(f.Model) && !string.Equals(r.Model ?? "", f.Model!.Trim(), StringComparison.OrdinalIgnoreCase) && (r.Model ?? "").IndexOf(f.Model!.Trim(), StringComparison.OrdinalIgnoreCase) < 0) return false;

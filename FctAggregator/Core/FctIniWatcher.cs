@@ -68,9 +68,10 @@ public static class FctIniWatcher
         try{ db.UpsertDeviceFct(newRow); } catch{}
         try
         {
-            var wh = AppConfig.Instance.AggWebhookUrl;
-            if(!string.IsNullOrWhiteSpace(wh))
-                Logger.Info($"[FCT变更] {newRow.Machine}: {detail}");
+            Logger.Info($"[FCT变更] {newRow.Machine}: {detail}");
+            // 审计 D4：此前 webhook 取到后只写日志从未推送——接入飞书链路告警卡片
+            // （PostCard 内部处理 webhook 空→兜底常量→两者皆空跳过，此处无需判空）
+            _ = FeishuNotifier.SendAggLinkAlert(AppConfig.Instance.AggWebhookUrl, newRow.Machine, "FCT配置变更", detail);
         } catch {}
         return true;
     }

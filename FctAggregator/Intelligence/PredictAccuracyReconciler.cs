@@ -98,9 +98,10 @@ public static class PredictAccuracyReconciler
             var rule = p.metric;
             (bool hit, double leadDays, double? actual, string note)? result = rule switch
             {
-                "cpu"     => ClassifyDeviceHit(db, p, predictedAt, "cpu", LookupCpuActual, ClassifyCpuHit),
-                "disk"    => ClassifyDeviceHit(db, p, predictedAt, "disk", LookupDiskActual, ClassifyDiskHit),
-                "offline" => ClassifyOfflineHit(db, p, predictedAt),
+                // 审计 C-I2：分类阈值统一取自 config（device_alert_* 三键），不再硬编码 95%/5GB/90s
+                "cpu"     => ClassifyDeviceHit(db, p, predictedAt, "cpu", LookupCpuActual, a => a.Value >= cfg.DeviceAlertCpuPct),
+                "disk"    => ClassifyDeviceHit(db, p, predictedAt, "disk", LookupDiskActual, a => a.Value <= cfg.DeviceAlertDiskFreeGb),
+                "offline" => ClassifyOfflineHit(db, p, predictedAt, cfg),
                 _ => null,
             };
             if (result == null) continue;
@@ -181,39 +182,43 @@ public static class PredictAccuracyReconciler
             DateTime predictedAt,
             string rule,
             Func<AggDatabase, string, DateTime, ActualValuePublic?> lookup,
-            Func<ActualValuePublic, double, (bool, double)> classify)
+            Func<ActualValuePublic, bool> hitFn)
     {
         var actual = lookup(db, predict.machine, predictedAt);
         if (actual == null) return (false, 0, null, "no actual");
-        var (hit, lead) = classify(actual, predict.predicted);
+        var hit = hitFn(actual);
+        // 审计 C-I2：lead_days 统一基于预测发出时刻（predict.ts）到实际发生时刻，不再用对账时刻倒推
+        var lead = (actual.EventTs - predictedAt).TotalDays;
         return (hit, Math.Round(lead, 2), actual.Value, $"{rule} actual={actual.Value:0.##}");
-    }
-
-    public static (bool Hit, double LeadDays) ClassifyCpuHit(ActualValuePublic actual, double predicted)
-    {
-        var hit = actual.Value >= 95.0;
-        var lead = (actual.EventTs - DateTime.Now.AddDays(-1)).TotalDays;
-        return (hit, Math.Round(lead, 2));
-    }
-
-    public static (bool Hit, double LeadDays) ClassifyDiskHit(ActualValuePublic actual, double predicted)
-    {
-        var hit = actual.Value <= 5.0;
-        var lead = 0.0;
-        return (hit, lead);
     }
 
     private static (bool Hit, double LeadDays, double? Actual, string Note)
         ClassifyOfflineHit(AggDatabase db,
             (long id, string ts, string machine, string metric, string level, double predicted, int? days, string detail) predict,
-            DateTime predictedAt)
+            DateTime predictedAt,
+            AppConfig cfg)
     {
-        var info = db.GetDeviceInfo(predict.machine);
-        if (info == null || string.IsNullOrEmpty(info.LastSeen)) return (false, 0, null, "no device_info");
-        if (!TryParseTs(info.LastSeen, out var lastDt)) return (false, 0, null, "bad last_seen");
-        var gap = (DateTime.Now - lastDt).TotalSeconds;
-        var hit = gap > 90;
-        return (hit, Math.Round((DateTime.Now - predictedAt).TotalDays, 2), gap, $"gap={gap:0}s");
+        // 审计 C-I2：离线判定改在预测窗口内（predictedAt ~ +1d）取采样序列最大上报间隔——
+        // 此前在对账时刻取 gap（now - last_seen），actual 时刻错位；且 90s 秒判定与分钟阈值单位错位
+        var gapSecLimit = Math.Max(1, cfg.DeviceAlertOfflineMinutes) * 60.0;
+        var from = predictedAt.ToString("yyyy-MM-dd HH:mm:ss");
+        var to = predictedAt.AddDays(1).ToString("yyyy-MM-dd HH:mm:ss");
+        var samples = db.QueryDeviceSamples(predict.machine, 2000, fromTs: from, toTs: to);
+        if (samples.Count == 0) return (false, 0, null, "no samples in window");
+        var times = samples
+            .Select(s => TryParseTs(s.Ts, out var t) ? (DateTime?)t : null)
+            .Where(t => t.HasValue).Select(t => t!.Value)
+            .OrderBy(t => t).ToList();
+        if (times.Count < 2) return (false, 0, null, "insufficient samples in window");
+        double maxGap = 0; DateTime gapTs = times[0];
+        for (int i = 1; i < times.Count; i++)
+        {
+            var g = (times[i] - times[i - 1]).TotalSeconds;
+            if (g > maxGap) { maxGap = g; gapTs = times[i]; }
+        }
+        var hit = maxGap > gapSecLimit;
+        var lead = (gapTs - predictedAt).TotalDays;
+        return (hit, Math.Round(lead, 2), Math.Round(maxGap, 1), $"max_gap={maxGap:0}s window_gt={gapSecLimit:0}s");
     }
 
     private static ReconcileSummary BuildSummary(AggDatabase db, AppConfig cfg, bool newEmpty)
@@ -371,6 +376,7 @@ public static class PredictAccuracyReconciler
     private static double GetDeviceThreshold(AppConfig cfg, string rule) => rule switch
     {
         "cpu" => cfg.DeviceAlertCpuPct,
+        "disk" => cfg.DeviceAlertDiskFreeGb, // 审计 C-I2：disk 阈值此前缺失落 0
         "offline" => cfg.DeviceAlertOfflineMinutes,
         _ => 0.0,
     };

@@ -256,7 +256,8 @@ public partial class AggDatabase : IDisposable
         return list;
     }
 
-    public List<AggFailRow> QueryFails(int limit, string? machine = null, int offset = 0, string? keyword = null)
+    public List<AggFailRow> QueryFails(int limit, string? machine = null, int offset = 0, string? keyword = null,
+        string? model = null, string? station = null, string? category = null, string? dateFrom = null, string? dateTo = null)
     {
         using var conn = OpenReader();
         var where = new List<string>();
@@ -265,6 +266,12 @@ public partial class AggDatabase : IDisposable
         {
             where.Add("(sn LIKE @kw OR model LIKE @kw OR fail_reason LIKE @kw)");
         }
+        // 审计 B2：导出过滤下推 SQL——此前只在最新 2 万条内存过滤，超限时按日期段导出得到空结果（静默漏导）
+        if (!string.IsNullOrEmpty(model)) where.Add("model LIKE @model");
+        if (!string.IsNullOrEmpty(station)) where.Add("station_id = @station");
+        if (!string.IsNullOrEmpty(category)) where.Add("category = @category");
+        if (!string.IsNullOrEmpty(dateFrom)) where.Add("test_date >= @df");
+        if (!string.IsNullOrEmpty(dateTo)) where.Add("test_date <= @dt");
         var whereSql = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
@@ -277,6 +284,11 @@ public partial class AggDatabase : IDisposable
                  LIMIT @lim OFFSET @off";
         if (!string.IsNullOrEmpty(machine)) cmd.Parameters.AddWithValue("@m", machine);
         if (!string.IsNullOrEmpty(keyword)) cmd.Parameters.AddWithValue("@kw", $"%{keyword}%");
+        if (!string.IsNullOrEmpty(model)) cmd.Parameters.AddWithValue("@model", $"%{model.Trim()}%");
+        if (!string.IsNullOrEmpty(station)) cmd.Parameters.AddWithValue("@station", station.Trim());
+        if (!string.IsNullOrEmpty(category)) cmd.Parameters.AddWithValue("@category", category.Trim());
+        if (!string.IsNullOrEmpty(dateFrom)) cmd.Parameters.AddWithValue("@df", dateFrom);
+        if (!string.IsNullOrEmpty(dateTo)) cmd.Parameters.AddWithValue("@dt", dateTo);
         cmd.Parameters.AddWithValue("@lim", limit <= 0 ? 200 : limit);
         cmd.Parameters.AddWithValue("@off", offset < 0 ? 0 : offset);
         var list = new List<AggFailRow>();

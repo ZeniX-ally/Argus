@@ -19,4 +19,18 @@ public partial class AggDatabase
         using var r=cmd.ExecuteReader(); while(r.Read()) list.Add((r.GetInt64(0), r.IsDBNull(1)?"":r.GetString(1), r.IsDBNull(2)?"":r.GetString(2), r.IsDBNull(3)?"":r.GetString(3), r.IsDBNull(4)?"":r.GetString(4), r.IsDBNull(5)?0:r.GetDouble(5), r.IsDBNull(6)?0:r.GetDouble(6), r.IsDBNull(7)?"":r.GetString(7)));
         return list;
     }
+
+    /// <summary>审计 M7：预测日志表无清理无界增长——随每日维护按保留天数清理两张预测日志表。</summary>
+    public int PurgeOldPredictLogs(int retainDays)
+    {
+        var cutoff = DateTime.Now.AddDays(-Math.Max(1, retainDays)).ToString("yyyy-MM-dd HH:mm:ss");
+        lock (_writeLock)
+        {
+            Open();
+            using var cmd = _conn!.CreateCommand();
+            cmd.CommandText = "DELETE FROM alert_predict_log WHERE ts < @c; DELETE FROM device_predict_log WHERE ts < @c;";
+            cmd.Parameters.AddWithValue("@c", cutoff);
+            return cmd.ExecuteNonQuery();
+        }
+    }
 }

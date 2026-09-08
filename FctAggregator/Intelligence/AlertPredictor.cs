@@ -34,10 +34,10 @@ public static class AlertPredictor
                     try{
                         var seasonalAlerts = YieldDecomposer.PredictWithSeasonality(db, cfg, g.Key);
                         if(seasonalAlerts != null && seasonalAlerts.Count > 0) list.AddRange(seasonalAlerts);
-                    }catch{}
+                    }catch(Exception ex){ Logger.Warning($"[预测] 季节性预测失败 {g.Key}: {ex.Message}"); } // 审计 M10
                 }
             }
-        } catch{}
+        } catch(Exception ex){ Logger.Warning($"[预测] 良率预测失败: {ex.Message}"); } // 审计 M10
 
         try{
             var preds = DevicePredictor.Predict(db, 7);
@@ -45,14 +45,22 @@ public static class AlertPredictor
                 string rule = p.Metric=="disk" ? "disk" : p.Metric=="cpu" ? "cpu" : "offline";
                 list.Add(new PredictItem{ Machine=p.Machine, Rule=rule, Level=p.Level, Current=p.Current, Predicted=p.Predicted, Detail=p.Detail});
             }
-        } catch{}
+        } catch(Exception ex){ Logger.Warning($"[预测] 设备预测失败: {ex.Message}"); } // 审计 M10
         return list;
     }
 
     public static void LogPredictions(AggDatabase db, List<PredictItem> items)
     {
         foreach(var it in items){
-            try{ db.InsertAlertPredictLog(it.Machine, it.Rule, it.Level, it.Current, it.Predicted, it.Detail);} catch{}
+            try{
+                // 审计 M7：每次请求重复落库会灌水预测对账样本——同 (machine,rule,level,predicted) 12h 内去重
+                var recent = db.QueryAlertPredicts(it.Machine, 50);
+                if (recent.Any(x => x.rule == it.Rule && x.level == it.Level
+                        && Math.Abs(x.predicted - it.Predicted) < 1e-9
+                        && DateTime.TryParse(x.ts, out var ts) && (DateTime.Now - ts).TotalHours < 12))
+                    continue;
+                db.InsertAlertPredictLog(it.Machine, it.Rule, it.Level, it.Current, it.Predicted, it.Detail);
+            } catch(Exception ex){ Logger.Warning($"[预测] 预测日志落库失败 {it.Machine}/{it.Rule}: {ex.Message}"); } // 审计 M10
         }
     }
 }

@@ -172,7 +172,8 @@ public class WebAggServer : IDisposable
         _pipeline.Add("GET", "/api/proc-log/timeline", ctx => { CountHit(); ServeProcLogTimeline(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/proc-log/diff", ctx => { CountHit(); ServeProcLogDiff(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/proc-log/detail", ctx => { CountHit(); ServeProcLogDetail(ctx); return Task.CompletedTask; });
-        _pipeline.Add("DELETE", "/api/proc-log", ctx => { CountHit(); var idStr = ctx.Request.QueryString["id"] ?? ""; if (long.TryParse(idStr, out var did) && _db.DeleteProcLog(did)) RespondText(ctx, 200, "ok"); else RespondText(ctx, 404, "not found"); return Task.CompletedTask; });
+        // 审计 B1：删除程序日志曾无角色校验且不留审计——viewer 可无痕删历史，补 engineer 门禁 + audit
+        _pipeline.Add("DELETE", "/api/proc-log", ctx => { CountHit(); if (!RequireRole(ctx, "engineer")) return Task.CompletedTask; var (_, whoDel) = ResolveRole(ctx); var idStr = ctx.Request.QueryString["id"] ?? ""; if (long.TryParse(idStr, out var did) && _db.DeleteProcLog(did)) { try { _db.LogAudit(whoDel ?? "?", "proclog.delete", idStr); } catch { } RespondText(ctx, 200, "ok"); } else RespondText(ctx, 404, "not found"); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/proc_log", ctx => { CountHit(); ServeProcLogList(ctx); return Task.CompletedTask; });
         _pipeline.Add("GET", "/api/proc_log/timeline", ctx => { CountHit(); ServeProcLogTimeline(ctx); return Task.CompletedTask; });
         #endregion
@@ -613,6 +614,8 @@ public class WebAggServer : IDisposable
 
     private void ServeSettings(HttpListenerContext ctx)
     {
+        // 审计 B3：GET /api/settings 暴露 webhook/路径等运维信息，viewer 不可读（engineer 及以上）
+        if (!RequireRole(ctx, "engineer")) return;
         try
         {
             var cfg = AppConfig.Instance;
@@ -774,9 +777,11 @@ public class WebAggServer : IDisposable
     }
     private void ServeConfigBackups(HttpListenerContext ctx)
     {
+        // 审计 B3：备份清单暴露服务器内部路径，viewer 不可读；响应只回文件名（Rollback 本就按文件名重建路径）
+        if (!RequireRole(ctx, "engineer")) return;
         try
         {
-            var list = AppConfig.ListBackups(20).Select(f=> new { file = Path.GetFileName(f), path = f, time = File.GetLastWriteTime(f).ToString("yyyy-MM-dd HH:mm:ss") });
+            var list = AppConfig.ListBackups(20).Select(f=> new { file = Path.GetFileName(f), time = File.GetLastWriteTime(f).ToString("yyyy-MM-dd HH:mm:ss") });
             Respond(ctx, 200, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(new { ok = true, backups = list }, JsonOpts));
         } catch (Exception ex) { RespondText(ctx, 500, ex.Message); }
     }
@@ -1260,6 +1265,10 @@ public class WebAggServer : IDisposable
         }
     }
 
+    // 审计 B4：登录失败限速——按 (用户名|IP) 记失败次数，10 分钟窗口内失败满 5 次锁定 10 分钟
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int Count, DateTime WindowStart, DateTime LockedUntil)> _loginFails
+        = new();
+
     private async Task ServeLogin(HttpListenerContext ctx)
     {
         try
@@ -1270,12 +1279,27 @@ public class WebAggServer : IDisposable
             using var doc = JsonDocument.Parse(body);
             var name = doc.RootElement.TryGetProperty("name", out var pn) ? pn.GetString() ?? "" : "";
             var pwd = doc.RootElement.TryGetProperty("password", out var pp) ? pp.GetString() ?? "" : "";
+            var ip = ctx.Request.RemoteEndPoint?.Address.ToString() ?? "?";
+            var failKey = $"{name}|{ip}";
+            if (_loginFails.TryGetValue(failKey, out var st) && st.LockedUntil > DateTime.UtcNow)
+            {
+                try { _db.LogAudit(string.IsNullOrWhiteSpace(name) ? "?" : name, "login.locked", $"{ip} retry after lockout"); } catch { }
+                RespondText(ctx, 429, "too many failed attempts, try later");
+                return;
+            }
             var u = _db.GetUserByName(name);
             if (u == null || !PasswordHasher.Verify(pwd, u.PwdHash))
             {
+                var now = DateTime.UtcNow;
+                _loginFails.AddOrUpdate(failKey,
+                    _ => (1, now, DateTime.MinValue),
+                    (_, old) => (now - old.WindowStart).TotalMinutes >= 10 ? (1, now, DateTime.MinValue)
+                                : (old.Count + 1, old.WindowStart, old.Count + 1 >= 5 ? now.AddMinutes(10) : old.LockedUntil));
+                try { _db.LogAudit(string.IsNullOrWhiteSpace(name) ? "?" : name, "login.failed", ip); } catch { }
                 RespondText(ctx, 401, "invalid credentials");
                 return;
             }
+            _loginFails.TryRemove(failKey, out _);
             _db.LogAudit(u.Name, "login", "登录成功");
             Respond(ctx, 200, "application/json; charset=utf-8",
                 JsonSerializer.SerializeToUtf8Bytes(new { ok = true, name = u.Name, role = u.Role, token = u.Token }, JsonOpts));

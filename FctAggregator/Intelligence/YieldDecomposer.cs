@@ -258,14 +258,18 @@ public static class YieldDecomposer
             if (!cfg.YieldSeasonalityEnabled) return null;
             var mode = ParseMode(cfg.YieldSeasonalityMode);
             var dec = Decompose(db, machine, mode, cfg.YieldSeasonalityDays, cfg.YieldSeasonalityTrendWindow, cfg.YieldSeasonalityEpsilon);
-            if (dec.Sigma < cfg.YieldSeasonalityMinSigma) return null;
+            // 审计 M8：min_sigma=0 时 0<0 为假，可绕过 σ 保护直接进入判定——加 <=0 硬护栏
+            if (dec.Sigma <= 0 || dec.Sigma < cfg.YieldSeasonalityMinSigma) return null;
             if (dec.Residual.Count == 0 || dec.Trend.Count == 0) return null;
             double latestResidual = dec.Residual[^1];
             double latestTrend = dec.Trend[^1];
             if (double.IsNaN(latestResidual) || double.IsNaN(latestTrend)) return null;
 
+            // 审计 M8：告警判定与 Decompose 异常检测对齐为中心化 z（残差去均值），此前未去均值口径不一致
+            var finiteRes = dec.Residual.Where(r => !double.IsNaN(r)).ToList();
+            double meanR = finiteRes.Count > 0 ? finiteRes.Average() : 0;
             double predicted = latestTrend + latestResidual;
-            bool isAnomaly = Math.Abs(latestResidual) > cfg.YieldSeasonalityEpsilon * dec.Sigma;
+            bool isAnomaly = Math.Abs(latestResidual - meanR) > cfg.YieldSeasonalityEpsilon * dec.Sigma;
             if (isAnomaly && predicted < cfg.YieldAlertYieldPct)
             {
                 return new List<AlertPredictor.PredictItem>

@@ -33,7 +33,7 @@ public static class DevicePredictor
                 if (diskPred != null) { diskPred.Machine = info.Machine; list.Add(diskPred); }
                 var offlinePred = PredictOffline(samples, info.LastSeen);
                 if (offlinePred != null) { offlinePred.Machine = info.Machine; list.Add(offlinePred); }
-            } catch { }
+            } catch (Exception ex) { Logger.Warning($"[设备预测] {info.Machine} 预测失败: {ex.Message}"); } // 审计 M10
         }
         return list;
     }
@@ -139,7 +139,15 @@ public static class DevicePredictor
     {
         foreach(var it in items)
         {
-            try { db.InsertDevicePredictLog(it.Machine, it.Metric, it.Level, it.Predicted, it.DaysToExhaust, it.Detail); } catch {}
+            try {
+                // 审计 M7：每次巡检重复落库灌水——同 (machine,metric,level,predicted) 12h 内去重
+                var recent = db.QueryDevicePredicts(it.Machine, 50);
+                if (recent.Any(x => x.metric == it.Metric && x.level == it.Level
+                        && Math.Abs(x.predicted - it.Predicted) < 1e-9
+                        && DateTime.TryParse(x.ts, out var ts) && (DateTime.Now - ts).TotalHours < 12))
+                    continue;
+                db.InsertDevicePredictLog(it.Machine, it.Metric, it.Level, it.Predicted, it.DaysToExhaust, it.Detail);
+            } catch (Exception ex) { Logger.Warning($"[设备预测] 日志落库失败 {it.Machine}/{it.Metric}: {ex.Message}"); } // 审计 M10
         }
     }
 }
