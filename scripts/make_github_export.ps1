@@ -14,13 +14,17 @@ $ErrorActionPreference = 'Continue'
 
 $include = @('.gitignore', 'README.md', 'LICENSE', 'Argus.sln', 'FctAggregator', 'scripts', 'docs')
 $branch = 'github-main'
-$msg = @'
-Argus v3.26.3 - initial open-source release
+# 审计 M15：提交信息版本号曾硬编码 v3.26.3 与 csproj 失真——改为从 csproj 读取
+[xml]$csprojXml = Get-Content (Join-Path $repo 'FctAggregator/FctAggregator.csproj')
+$csprojVer = ($csprojXml.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+if ([string]::IsNullOrWhiteSpace($csprojVer)) { Pop-Location; throw 'cannot read Version from FctAggregator.csproj' }
+$msg = @"
+Argus v$csprojVer - open-source export
 
 FCT production-line test data collection, mesh aggregation and dashboard suite.
 Single WinExe: collection engine, P2P mesh, web dashboard, feishu cards, hot upgrade.
 MIT licensed. See README.md.
-'@
+"@
 
 function Fail([string]$step) { if ($LASTEXITCODE -ne 0) { throw "step failed: $step" } }
 
