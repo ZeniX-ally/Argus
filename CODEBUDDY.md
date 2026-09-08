@@ -10,7 +10,7 @@
 
 | 项 | 值 |
 |---|---|
-| 主程序 | FctAggregator **v3.31.0**（**纯单机工具**——v3.31.0 起删除聚合/互联/Web 看板，.NET 8 `net8.0-windows`，单 exe） |
+| 主程序 | FctAggregator **v3.31.1**（**纯单机工具**——v3.31.0 起删除聚合/互联/Web 看板，.NET 8 `net8.0-windows`，单 exe） |
 | 分发器 | FctDistributor **v1.9.2**（**2026-09-02 起独立仓库** `e:/FctDistributor`，与本仓库彻底分离：各自 git、各自发版、代码持副本） |
 | 数据层 | SQLite 单写者 + WAL 短租读；本机库幂等 Init（test_measurements/fail_items/tdms_features/normal_models/device_samples_local 等），**无 DbMigrator/无聚合库** |
 | 自检 | **568 项断言**（v3.31.0 纯单机化裁剪后新基线，随功能递增），全绿是任何提交的硬门槛 |

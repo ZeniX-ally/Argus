@@ -106,13 +106,16 @@ public class Engine
             TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 
         if (models.Count > 0 && !_cfg.SkipHistoricalScan)
+        {
             Task.Run(() => HistoricalScan(models, root));
+        }
         else
         {
-            _initialScanComplete = true;
-            AppState.HistoricalScanComplete = true;
-            if (_cfg.SkipHistoricalScan) Logger.Info("历史扫描已跳过");
-            StartAutoBackfillSn(); // 无历史扫描，直接触发 SN 补账
+            // 开机只补今日：skip 历史全扫或当前无可扫型号时，至少把"程序打开前已产出的今日文件"扫入。
+            // 否则今日 KPI 只随实时事件增长，早于本次启动的文件不显示（线上反馈 v3.31.0 bug）。
+            var today = DateTime.Now.ToString("yyyyMMdd");
+            if (_cfg.SkipHistoricalScan) Logger.Info($"历史扫描已跳过，仅补扫今日({today})目录…");
+            Task.Run(() => HistoricalScan(models, root, today));
         }
     }
 
@@ -165,7 +168,7 @@ public class Engine
         return models.OrderBy(x => x).ToList();
     }
 
-    private void HistoricalScan(List<string> models, string root)
+    private void HistoricalScan(List<string> models, string root, string? onlyDate = null)
     {
         try
         {
@@ -183,8 +186,9 @@ public class Engine
                 foreach (var model in models)
                 {
                     var modelDir = Path.Combine(root, cat, model);
-                    if (!Directory.Exists(modelDir)) continue;
-                    foreach (var f in Directory.EnumerateFiles(modelDir, "*.xml", SearchOption.AllDirectories))
+                    var scanDir = onlyDate == null ? modelDir : Path.Combine(modelDir, onlyDate);
+                    if (!Directory.Exists(scanDir)) continue;
+                    foreach (var f in Directory.EnumerateFiles(scanDir, "*.xml", SearchOption.AllDirectories))
                     {
                         allFiles.Add(f);
                         if (allFiles.Count % 200 == 0)
