@@ -7,6 +7,9 @@ public class Processor
     private readonly Parsing.ParserRegistry _registry;
     private readonly Database? _db;
 
+    /// <summary>审计 A6：单文件读取硬上限 512MB，防失控 XML 整读内存 OOM（与 analyze_max_file_kb 测量值提取护栏相互独立）</summary>
+    private const long OversizeHardCapBytes = 512L * 1024 * 1024;
+
     public Processor(AppConfig cfg, string defaultStation)
         : this(cfg, defaultStation, Parsing.ParserRegistry.Instance, null) { }
 
@@ -26,6 +29,26 @@ public class Processor
         transientFailure = false;
         path = Path.GetFullPath(path);
         if (!path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)) return null;
+
+        // 审计 A6：读前检查文件大小——数百 MB 失控 XML 曾先整读进内存再判断，可 OOM/卡死机台 PC。
+        // 阈值取硬上限 512MB（远高于 analyze_max_file_kb 的测量值提取护栏 2048KB，
+        // 不改变 2048KB~512MB 文件的入库行为，仅拦截内存失控场景），超限永久跳过并留痕
+        try
+        {
+            if (new FileInfo(path).Length > OversizeHardCapBytes)
+            {
+                Logger.Warning($"[解析] 文件超硬上限({OversizeHardCapBytes / 1024 / 1024}MB)，跳过 {path}");
+                _db?.LogParseFailure(path, "oversize", "file exceeds hard size cap", _defaultStation);
+                return null; // 永久性：不重试
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[解析] 读取文件大小失败，跳过 {path}: {ex.Message}");
+            _db?.LogParseFailure(path, "read_error", "stat file failed", _defaultStation);
+            transientFailure = true;
+            return null;
+        }
 
         string rawXml;
         try { rawXml = File.ReadAllText(path, System.Text.Encoding.UTF8); }
@@ -49,7 +72,13 @@ public class Processor
         }
 
         if (outp == null) { Logger.Warning($"[跳过] 无解析器适用: {path}"); return null; } // 永久性：不重试
-        if (outp.Skipped) return null; // 永久性：路径不匹配/未知前缀/debug，不重试
+        if (outp.Skipped)
+        {
+            // 审计 A4：Skipped 此前静默返回无痕消失——落 parse_failure_log 留痕（路径不匹配/未知前缀/debug 仍属永久性，不重试）
+            Logger.Warning($"[跳过] {outp.SkipReason ?? ""}: {path}");
+            _db?.LogParseFailure(path, "skip", outp.SkipReason ?? "", outp.StationId);
+            return null; // 永久性：不重试
+        }
         if (outp.Error)
         {
             AppState.IncParseError();

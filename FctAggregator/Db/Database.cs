@@ -325,6 +325,19 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_nm_status ON normal_models(status);
             ";
             cmd10.ExecuteNonQuery();
+
+            // 审计 M13：归因统计四条查询以 substr(...) 过滤，非 sargable 全表扫描×4（维护窗口拉长）——
+            // 补虚拟生成列 batch_ts_date + 索引（幂等；虚拟列不回填历史，老库零成本升级）
+            using var cmdTsDate = conn.CreateCommand();
+            cmdTsDate.CommandText = "SELECT COUNT(*) FROM pragma_table_info('test_records') WHERE name='batch_ts_date'";
+            var hasTsDate = Convert.ToInt64(cmdTsDate.ExecuteScalar() ?? 0L);
+            if (hasTsDate == 0)
+            {
+                cmdTsDate.CommandText = "ALTER TABLE test_records ADD COLUMN batch_ts_date TEXT GENERATED ALWAYS AS (substr(COALESCE(NULLIF(batch_timestamp,''),created_at),1,10)) VIRTUAL";
+                cmdTsDate.ExecuteNonQuery();
+            }
+            cmdTsDate.CommandText = "CREATE INDEX IF NOT EXISTS idx_tr_tsdate ON test_records(batch_ts_date)";
+            cmdTsDate.ExecuteNonQuery();
         }
         MigrateClosedStatus();
     }
@@ -479,7 +492,7 @@ public sealed partial class Database
         return result1;
     }
 
-    public int BatchInsert(IEnumerable<TestRecord> records)
+    public int BatchInsert(IEnumerable<TestRecord> records, List<long>? insertedIds = null)
     {
         var list = records.ToList();
         if (list.Count == 0) return 0;
@@ -534,10 +547,20 @@ public sealed partial class Database
             }
         }
         tx.Commit();
+        if (insertedIds != null)
+            foreach (var (_, id) in insertedRows) insertedIds.Add(id);
         NotifyRecordsInserted(insertedRows);
         InsertMeasurementsFor(insertedRows);
         InsertFailItemsFor(insertedRows);
         return inserted;
+    }
+
+    /// <summary>审计 A2：单条入库并返回新记录 id（INSERT OR IGNORE 未命中即重复记录时返回 0），免上层反查。</summary>
+    public long InsertOneReturnId(TestRecord rec)
+    {
+        var ids = new List<long>(1);
+        BatchInsert(new[] { rec }, ids);
+        return ids.Count > 0 ? ids[0] : 0;
     }
 
     /// <summary>规格06：PASS 测量值批量入库（独立事务，失败仅告警不回滚主记录）。</summary>
@@ -900,7 +923,7 @@ public sealed partial class Database
                 SELECT COUNT(*),
                        SUM(CASE WHEN result='FAIL' THEN 1 ELSE 0 END)
                 FROM test_records
-                WHERE substr(COALESCE(NULLIF(batch_timestamp,''),created_at),1,10) >= @since";
+                WHERE batch_ts_date >= @since";
             cmd.Parameters.AddWithValue("@since", since);
             using var r = cmd.ExecuteReader();
             if (r.Read())
@@ -923,7 +946,7 @@ public sealed partial class Database
                        SUM(CASE WHEN result='FAIL' THEN 1 ELSE 0 END) AS fails,
                        SUM(CASE WHEN panel_status IS NOT NULL AND panel_status<>'' AND panel_status<>'Passed' THEN 1 ELSE 0 END) AS panelng
                 FROM test_records
-                WHERE substr(COALESCE(NULLIF(batch_timestamp,''),created_at),1,10) >= @since
+                WHERE batch_ts_date >= @since
                   {extra}
                 GROUP BY k";
             cmd.Parameters.AddWithValue("@since", since);
@@ -947,7 +970,7 @@ public sealed partial class Database
                 SELECT CAST(substr(COALESCE(NULLIF(batch_timestamp,''),created_at),12,2) AS INTEGER) AS h,
                        SUM(CASE WHEN result='FAIL' THEN 1 ELSE 0 END)
                 FROM test_records
-                WHERE substr(COALESCE(NULLIF(batch_timestamp,''),created_at),1,10) >= @since
+                WHERE batch_ts_date >= @since
                   AND length(COALESCE(NULLIF(batch_timestamp,''),created_at)) >= 12
                 GROUP BY h";
             cmd.Parameters.AddWithValue("@since", since);

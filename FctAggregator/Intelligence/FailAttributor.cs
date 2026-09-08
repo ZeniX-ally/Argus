@@ -138,7 +138,8 @@ public static class FailAttributor
             foreach (var s in samples)
             {
                 if (s.Ts.Length < 13 || !int.TryParse(s.Ts.Substring(11, 2), out var h) || h is < 0 or > 23) continue;
-                if (!src.HourlyFails.TryGetValue(h, out var fails) || fails <= 0) continue;
+                // 审计 C-I1：零失败小时必须参与样本（fails=0 保留）——此前剔除导致 r 系统性虚高，易输出虚假相关
+                src.HourlyFails.TryGetValue(h, out var fails);
                 cpuAcc[h] = (cpuAcc.GetValueOrDefault(h).Sum + s.Cpu, cpuAcc.GetValueOrDefault(h).N + 1);
                 memAcc[h] = (memAcc.GetValueOrDefault(h).Sum + s.Mem, memAcc.GetValueOrDefault(h).N + 1);
             }

@@ -96,7 +96,9 @@ public static class SelfBaseline
                 deduped.Add(r);
                 continue;
             }
-            var key = (r.TestDate, r.Hour, r.Model ?? "", r.Sn.Trim());
+            // 审计 M11：按归一化日期分键——yyyyMMdd 与 yyyy-MM-dd 新旧格式混存时 SN 去重失效/基线分裂
+            var dateNorm = ParseYmd(r.TestDate)?.ToString("yyyy-MM-dd") ?? r.TestDate;
+            var key = (dateNorm, r.Hour, r.Model ?? "", r.Sn.Trim());
             if (!bySn.TryGetValue(key, out var cur) || r.Id > cur.Id)
                 bySn[key] = r;
         }
@@ -137,7 +139,7 @@ public static class SelfBaseline
         var buckets = new List<BaselineBucketStat>();
         foreach (var grp in baselineRecs.GroupBy(r => (r.Model ?? "", TimeSlot.SlotOfHour(r.Hour))))
         {
-            var dayStats = grp.GroupBy(r => r.TestDate)
+            var dayStats = grp.GroupBy(r => ParseYmd(r.TestDate)?.ToString("yyyy-MM-dd") ?? r.TestDate) // 审计 M11：日期归一
                 .Select(dg =>
                 {
                     int pass = 0, fail = 0, intr = 0;

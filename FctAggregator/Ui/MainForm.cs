@@ -615,28 +615,43 @@ public class MainForm : Form
 
     private void AutoUpdateCheck()
     {
-        var info = UpdateChecker.Scan(db: _engine.Db);
-        if (info == null) return;
-        Logger.Info($"[更新器] 无感热升级：发现新包 v{info.Version}（{Path.GetFileName(info.ZipPath)}），自动暂存中…");
-        try { UpdateChecker.StageUpdate(info, _engine.Db); }
-        catch (Exception ex)
+        // 审计 D3：扫描/解压/整目录复制曾在 UI 线程同步执行——data 大时窗口白屏无响应。全部移入后台线程，
+        // UI 线程只做 BeginInvoke 收尾（通知/重启计时器）。
+        var db = _engine.Db;
+        Task.Run(() =>
         {
-            Logger.Warning($"[更新器] 暂存失败: {ex.Message}");
-            return;
-        }
-        // 审计 C4：由旧进程在退出前自行换装（被本进程加载锁定的文件先改名 *.old 让位再覆盖）。
-        // 旧实现委托新进程提交——新进程无法覆盖自己已加载的 Argus.dll，提交必然 IOException 失败。
-        if (!UpdateChecker.TryCommitPending(_engine.Db))
-        {
-            DesktopNotifier.NotifyRaw($"v{info.Version} 已暂存但安装未完成（详见日志），5 分钟后自动重试。");
-            return; // pending 保留、未标记 prompted → 下一轮检测自动重试
-        }
-        UpdateChecker.MarkPrompted(info.Version, _engine.Db); // 提交成功后才标记，杜绝版本被永久静默
-        DesktopNotifier.NotifyRaw($"新版本 v{info.Version} 已安装，Argus 将在几秒后自动重启。");
-        UpdateChecker.ScheduleRestart(delaySeconds: 3);
-        var t = new System.Windows.Forms.Timer { Interval = 1500 };
-        t.Tick += (_, _) => { t.Stop(); t.Dispose(); Close(); };
-        t.Start();
+            UpdateInfo? info = null;
+            try { info = UpdateChecker.Scan(db: db); }
+            catch (Exception ex) { Logger.Warning($"[更新器] 扫描失败: {ex.Message}"); return; }
+            if (info == null) return;
+            Logger.Info($"[更新器] 无感热升级：发现新包 v{info.Version}（{Path.GetFileName(info.ZipPath)}），自动暂存中…");
+            try { UpdateChecker.StageUpdate(info, db); }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[更新器] 暂存失败: {ex.Message}");
+                return;
+            }
+            // 审计 C4：由旧进程在退出前自行换装（被本进程加载锁定的文件先改名 *.old 让位再覆盖）。
+            // 旧实现委托新进程提交——新进程无法覆盖自己已加载的 Argus.dll，提交必然 IOException 失败。
+            bool committed;
+            try { committed = UpdateChecker.TryCommitPending(db); }
+            catch (Exception ex) { Logger.Warning($"[更新器] 提交异常: {ex.Message}"); committed = false; }
+            var ver = info.Version; // 闭包内可空收窄丢失——提前取值
+            BeginInvoke(() =>
+            {
+                if (!committed)
+                {
+                    DesktopNotifier.NotifyRaw($"v{ver} 已暂存但安装未完成（详见日志），5 分钟后自动重试。");
+                    return; // pending 保留、未标记 prompted → 下一轮检测自动重试
+                }
+                UpdateChecker.MarkPrompted(ver, db); // 提交成功后才标记，杜绝版本被永久静默
+                DesktopNotifier.NotifyRaw($"新版本 v{ver} 已安装，Argus 将在几秒后自动重启。");
+                UpdateChecker.ScheduleRestart(delaySeconds: 3);
+                var t = new System.Windows.Forms.Timer { Interval = 1500 };
+                t.Tick += (_, _) => { t.Stop(); t.Dispose(); Close(); };
+                t.Start();
+            });
+        });
     }
 
     private void ShowAggSettingsDialog()

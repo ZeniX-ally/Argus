@@ -106,15 +106,17 @@ public sealed class DeviceSampleRecorder : IDisposable
             var cpu = SampleSystemCpu();
             var memPct = SampleSystemMemoryPercent();
             var diskFree = SampleDiskFreeGb();
+            // 审计 M12：采样失败曾以 0.0 哨兵值当真实样本写库并喂入自学习（学进 0% 假样本）——失败即整条跳过
+            if (cpu == null || memPct == null || diskFree == null) return null;
 
             var db = Database.Current;
             if (db != null)
             {
-                db.InsertLocalDeviceSample(cpu, memPct, diskFree);
-                NormalLearners.ObserveDeviceSample(db, AppConfig.Instance, cpu, memPct, diskFree);
+                db.InsertLocalDeviceSample(cpu.Value, memPct.Value, diskFree.Value);
+                NormalLearners.ObserveDeviceSample(db, AppConfig.Instance, cpu.Value, memPct.Value, diskFree.Value);
             }
 
-            return (cpu, memPct, diskFree);
+            return (cpu.Value, memPct.Value, diskFree.Value);
         }
         catch (Exception ex)
         {
@@ -152,24 +154,26 @@ public sealed class DeviceSampleRecorder : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
 
-    public double SampleSystemCpu()
+    /// <summary>审计 M12：失败返回 null（不再用 0.0 哨兵——0 会被当真实样本学进正常态模型）。</summary>
+    public double? SampleSystemCpu()
     {
-        if (!OperatingSystem.IsWindows()) return 0.0;
+        if (!OperatingSystem.IsWindows()) return null;
         lock (_cpuLock)
         {
             try
             {
-                if (!GetSystemTimes(out var idle, out var kernel, out var user)) return 0.0;
+                if (!GetSystemTimes(out var idle, out var kernel, out var user)) return null;
                 long idleTime = idle.ToLong();
                 long kernelTime = kernel.ToLong();
                 long userTime = user.ToLong();
 
                 if (_lastKernelTime == 0 && _lastUserTime == 0)
                 {
+                    // 首次调用仅建立基线，无差分可用——不算失败也不造 0 样本，返回 null 由上层跳过
                     _lastIdleTime = idleTime;
                     _lastKernelTime = kernelTime;
                     _lastUserTime = userTime;
-                    return 0.0;
+                    return null;
                 }
 
                 long usrDiff = userTime - _lastUserTime;
@@ -177,7 +181,7 @@ public sealed class DeviceSampleRecorder : IDisposable
                 long idlDiff = idleTime - _lastIdleTime;
 
                 long sysTotal = usrDiff + kerDiff;
-                if (sysTotal <= 0) return 0.0;
+                if (sysTotal <= 0) return null;
 
                 double cpu = (double)(sysTotal - idlDiff) * 100.0 / sysTotal;
 
@@ -185,19 +189,19 @@ public sealed class DeviceSampleRecorder : IDisposable
                 _lastKernelTime = kernelTime;
                 _lastUserTime = userTime;
 
-                if (double.IsNaN(cpu) || double.IsInfinity(cpu)) return 0.0;
+                if (double.IsNaN(cpu) || double.IsInfinity(cpu)) return null;
                 return Math.Clamp(Math.Round(cpu, 1), 0.0, 100.0);
             }
             catch
             {
-                return 0.0;
+                return null;
             }
         }
     }
 
-    public static double SampleSystemMemoryPercent()
+    public static double? SampleSystemMemoryPercent()
     {
-        if (!OperatingSystem.IsWindows()) return 0.0;
+        if (!OperatingSystem.IsWindows()) return null;
         try
         {
             var mem = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX)) };
@@ -219,10 +223,10 @@ public sealed class DeviceSampleRecorder : IDisposable
         }
         catch { }
 
-        return 0.0;
+        return null;
     }
 
-    public static double SampleDiskFreeGb()
+    public static double? SampleDiskFreeGb()
     {
         try
         {
@@ -232,12 +236,12 @@ public sealed class DeviceSampleRecorder : IDisposable
             {
                 drive = DriveInfo.GetDrives().FirstOrDefault(d => d.IsReady && d.DriveType == DriveType.Fixed) ?? drive;
             }
-            if (!drive.IsReady) return 0.0;
+            if (!drive.IsReady) return null;
             return Math.Round(drive.AvailableFreeSpace / 1024.0 / 1024.0 / 1024.0, 2);
         }
         catch
         {
-            return 0.0;
+            return null;
         }
     }
 }

@@ -116,7 +116,7 @@ public class AppConfig
     private static string? GetStringSafe(JsonElement v)
         => v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
-    public static AppConfig Load()
+    public static AppConfig Load(bool allowBackupRestore = true)
     {
         var path = Path.Combine(BaseDir, "config.json");
         try
@@ -286,7 +286,7 @@ public class AppConfig
                 if (root.TryGetProperty("analyze_drift_enabled", out v)) cfg.AnalyzeDriftEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("analyze_cpk_enabled", out v)) cfg.AnalyzeCpkEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("analyze_window_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var awd) && awd >= 1) cfg.AnalyzeWindowDays = awd;
-                if (root.TryGetProperty("analyze_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var ams) && ams >= 1) cfg.AnalyzeMinSamples = ams;
+                if (root.TryGetProperty("analyze_min_samples", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var ams) && ams >= 2) cfg.AnalyzeMinSamples = ams; // 审计 M6：下限收紧为 2（单样本 σ 无意义）
                 if (root.TryGetProperty("analyze_drift_sigma", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var ads) && ads > 0) cfg.AnalyzeDriftSigma = ads;
                 if (root.TryGetProperty("analyze_drift_warn_ratio", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var awr) && awr > 0) cfg.AnalyzeDriftWarnRatio = awr;
                 if (root.TryGetProperty("analyze_measure_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var amr) && amr >= 1) cfg.AnalyzeMeasureRetentionDays = amr;
@@ -314,6 +314,21 @@ public class AppConfig
         catch (Exception ex)
         {
             Logger.Error($"加载 config.json 失败: {ex.Message}");
+            // 审计 D2：config.json 损坏时尝试从最近备份恢复一次，避免现场配置静默丢失且无回退
+            if (allowBackupRestore)
+            {
+                try
+                {
+                    var latest = ListBackups(1).FirstOrDefault();
+                    if (latest != null && File.Exists(latest))
+                    {
+                        File.Copy(latest, path, overwrite: true);
+                        Logger.Warning($"[配置] 已从最近备份恢复: {Path.GetFileName(latest)}，重新加载");
+                        return Load(false);
+                    }
+                }
+                catch (Exception rex) { Logger.Error($"[配置] 备份恢复失败: {rex.Message}"); }
+            }
         }
         return new AppConfig();
     }
@@ -327,7 +342,7 @@ public class AppConfig
             {
                 var bakDir = Path.Combine(BaseDir, "data", "config_backups");
                 Directory.CreateDirectory(bakDir);
-                var bak = Path.Combine(bakDir, $"config_backup_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N[..6]}.json");
+                var bak = Path.Combine(bakDir, $"config_backup_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..6]}.json");
                 File.Copy(path, bak);
                 var olds = Directory.GetFiles(bakDir, "config_backup_*.json").OrderByDescending(f=>f).ToList();
                 foreach (var f2 in olds.Skip(20)) try{ File.Delete(f2);}catch{}

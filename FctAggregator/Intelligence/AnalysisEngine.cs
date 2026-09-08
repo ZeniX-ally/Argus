@@ -117,10 +117,11 @@ public static class AnalysisEngine
         if (!cfg.AnalyzeDriftEnabled && !cfg.AnalyzeCpkEnabled
             && !cfg.AnalyzeFailAttrEnabled && !cfg.AnalyzeFixtureEnabled
             && !cfg.AnalyzeTdmsEnabled) return;
-        var today = (now ?? DateTime.Now).Date;
+        var nowTs = now ?? DateTime.Now;
+        var today = nowTs.Date;
         if (cfg.AnalyzeDriftEnabled)
         {
-            try { RunDrift(db, cfg, today); }
+            try { RunDrift(db, cfg, today, nowTs); }
             catch (Exception ex) { Logger.Warning($"[分析] 漂移预警失败: {ex.Message}"); }
         }
         if (cfg.AnalyzeCpkEnabled)
@@ -169,12 +170,14 @@ public static class AnalysisEngine
         }
     }
 
-    private static void RunDrift(Database db, AppConfig cfg, DateTime today)
+    private static void RunDrift(Database db, AppConfig cfg, DateTime today, DateTime nowTs)
     {
         var w = Math.Max(1, cfg.AnalyzeWindowDays);
         var todayStr = today.ToString("yyyy-MM-dd");
         var baseStats = db.AggregateMeasurementStats(today.AddDays(-w).ToString("yyyy-MM-dd"), todayStr);
-        var todayStats = db.AggregateMeasurementStats(todayStr, today.AddDays(1).ToString("yyyy-MM-dd"));
+        // 审计 C-I3："今日"窗口原为 today 00:00~24:00——维护链默认凌晨 3 点执行时实为 00:00~03:00 部分天，
+        // 凌晨几个样本即可触发假漂移。改为过去 24h+（昨日 00:00 ~ now），覆盖昨日完整生产段。
+        var todayStats = db.AggregateMeasurementStats(today.AddDays(-1).ToString("yyyy-MM-dd"), nowTs.ToString("yyyy-MM-dd HH:mm:ss"));
         var alerts = DriftAnalyzer.Compute(baseStats, todayStats, cfg);
         var state = new DriftState
         {
@@ -185,7 +188,7 @@ public static class AnalysisEngine
         };
         db.SetMeta(MetaDrift, state.ToJson());
         if (state.Alerts.Count > 0)
-            Logger.Warning($"[分析] 漂移/逼近限预警 {state.Alerts.Count} 项（基线窗口 {w} 天，今日分析 {state.AnalyzedTests} 测项）");
+            Logger.Warning($"[分析] 漂移/逼近限预警 {state.Alerts.Count} 项（基线窗口 {w} 天，近24h分析 {state.AnalyzedTests} 测项）");
     }
 
     private static void RunCpk(Database db, AppConfig cfg, DateTime today)

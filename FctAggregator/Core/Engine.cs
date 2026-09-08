@@ -11,6 +11,10 @@ public class Engine
     private MeshNode _mesh;
     private TodoSync _todoSync;
     private readonly List<FileSystemWatcher> _watchers = new();
+    private readonly object _watcherLock = new();
+    private readonly HashSet<string> _watchedDirs = new(StringComparer.OrdinalIgnoreCase);
+    private System.Threading.Timer? _modelRescanTimer; // 审计 A3：周期重扫型号目录，运行期新型号动态挂监控
+    private long _lastStatsRefreshTicks; // 审计 A2：入库热路径统计刷新节流
     private volatile bool _initialScanComplete = false;
     private CancellationTokenSource _cts = new();
 
@@ -104,18 +108,12 @@ public class Engine
             {
                 var dir = Path.Combine(root, cat, model);
                 Directory.CreateDirectory(dir);
-                var w = new FileSystemWatcher(dir, "*.xml")
-                {
-                    IncludeSubdirectories = true,
-                    EnableRaisingEvents = true,
-                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
-                };
-                w.Created += OnFileCreated;
-                w.Changed += OnFileChanged; // 半成品文件写完后再触发一次（配合 WaitForStable + 入库幂等，重复触发无害）
-                w.Renamed += OnFileRenamed;
-                _watchers.Add(w);
-                Logger.Info($"监控已启动: {dir}");
+                AttachWatcherFor(dir);
             }
+
+        // 审计 A3：watcher 仅在启动时对已发现型号建立，运行期新增型号目录曾永不监控静默丢数——周期重扫补挂
+        _modelRescanTimer = new System.Threading.Timer(_ => RescanModels(), null,
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 
         if (models.Count > 0 && !_cfg.SkipHistoricalScan)
             Task.Run(() => HistoricalScan(models, root));
@@ -153,8 +151,10 @@ public class Engine
         _mesh.Stop();
         _cts.Cancel();
         try { _retryThread?.Join(3000); } catch { }
+        try { _modelRescanTimer?.Dispose(); } catch { }
         foreach (var w in _watchers) { try { w.EnableRaisingEvents = false; w.Dispose(); } catch { } }
         _watchers.Clear();
+        lock (_watcherLock) _watchedDirs.Clear();
         SaveRetryQueue(); // 未处理重试条目落盘，下次启动恢复（M5：退出即丢）
     }
 
@@ -279,6 +279,57 @@ public class Engine
 
     private void RefreshStats() => AppState.RefreshStats(_db, _stationId, _cfg.ResultsRoot);
 
+    /// <summary>审计 A2：入库热路径统计刷新节流（10s 一次）——RefreshStats 每条实时记录都全盘枚举 XML + 3 条聚合 SQL，
+    /// 网络共享时可秒级阻塞采集。KPI 实时性由 UI 周期 RefreshDbStats（库内轻量刷新）兜底，磁盘计数低频化。</summary>
+    private void RefreshStatsThrottled()
+    {
+        var nowTicks = DateTime.UtcNow.Ticks;
+        var last = Interlocked.Read(ref _lastStatsRefreshTicks);
+        if (nowTicks - last < TimeSpan.FromSeconds(10).Ticks) return;
+        if (Interlocked.CompareExchange(ref _lastStatsRefreshTicks, nowTicks, last) != last) return;
+        RefreshStats();
+    }
+
+    /// <summary>审计 A3：挂接型号目录监控（幂等，已挂目录跳过），供启动与周期重扫共用。</summary>
+    private void AttachWatcherFor(string dir)
+    {
+        lock (_watcherLock)
+        {
+            if (!_watchedDirs.Add(dir)) return;
+            var w = new FileSystemWatcher(dir, "*.xml")
+            {
+                IncludeSubdirectories = true,
+                EnableRaisingEvents = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
+            };
+            w.Created += OnFileCreated;
+            w.Changed += OnFileChanged; // 半成品文件写完后再触发一次（配合 WaitForStable + 入库幂等，重复触发无害）
+            w.Renamed += OnFileRenamed;
+            _watchers.Add(w);
+        }
+        Logger.Info($"监控已启动: {dir}");
+    }
+
+    /// <summary>审计 A3：周期重扫型号目录，为运行期新增型号补挂监控（幂等；不重复挂已监控目录）。</summary>
+    private void RescanModels()
+    {
+        try
+        {
+            var root = _cfg.ResultsRoot;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return;
+            var models = DiscoverModels(root);
+            AppState.ModelsCount = models.Count;
+            foreach (var model in models)
+                foreach (var cat in new[] { "Online", "Offline" })
+                {
+                    var dir = Path.Combine(root, cat, model);
+                    if (!Directory.Exists(dir)) continue;
+                    AttachWatcherFor(dir);
+                }
+        }
+        catch (Exception ex) { Logger.Warning($"[监控] 新型号周期重扫失败: {ex.Message}"); }
+    }
+
     private void SyncTodos(string tag)
     {
         try
@@ -363,9 +414,10 @@ public class Engine
             }
         }
 
+        long insertedId = 0; // 审计 A2：复用入库返回 id，免去 TDMS 链路逐条反查
         try
         {
-            _db.InsertOne(rec);
+            insertedId = _db.InsertOneReturnId(rec);
             Logger.Info($"[入库] {rec.Model} | {rec.Result} | {Path.GetFileName(path)}");
         }
         catch (Exception ex) { Logger.Error($"[错误] 入库失败: {path} | {ex.Message}"); return; }
@@ -378,13 +430,14 @@ public class Engine
         {
             try
             {
-                var rid = _db.GetRecordIdsByPaths(new[] { Path.GetFullPath(path) }).Values.FirstOrDefault();
+                // 审计 A2：优先复用 InsertOne 返回的 id，仅在 INSERT OR IGNORE 未命中（重复事件）时才反查
+                var rid = insertedId > 0 ? insertedId : _db.GetRecordIdsByPaths(new[] { Path.GetFullPath(path) }).Values.FirstOrDefault();
                 if (rid > 0) TdmsFeatureCollector.Enqueue(rec, rid);
             }
             catch (Exception ex) { Logger.Warning($"[TDMS] 特征化入队失败: {ex.Message}"); }
         }
 
-        RefreshStats();
+        RefreshStatsThrottled();
 
         if (rec.Result == "FAIL")
         {

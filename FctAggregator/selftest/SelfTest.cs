@@ -3714,6 +3714,29 @@ Argus 统一发布包  v{newer}
             Check(rRbAbs.StatusCode == HttpStatusCode.NotFound,
                   $"回滚加固：admin 传绝对路径 C:\\Windows\\win.ini -> 404（拒绝执行，实得 {rRbAbs.StatusCode}）");
 
+            // ── 审计随行回归（v3.31.0）B 组权限 ──
+            var rPlogViewer = HttpDeleteWithToken($"{baseUrl}/api/proc-log?id=1", viewerTok2);
+            Check(rPlogViewer.StatusCode == HttpStatusCode.Forbidden,
+                  $"审计B1: viewer DELETE /api/proc-log -> 403（实得 {rPlogViewer.StatusCode}）");
+            var rSetViewer = HttpGetWithToken($"{baseUrl}/api/settings", viewerTok2);
+            Check(rSetViewer.StatusCode == HttpStatusCode.Forbidden,
+                  $"审计B3: viewer GET /api/settings -> 403（不再暴露 webhook 明文/内部路径，实得 {rSetViewer.StatusCode}）");
+            var rBakViewer = HttpGetWithToken($"{baseUrl}/api/config/backups", viewerTok2);
+            Check(rBakViewer.StatusCode == HttpStatusCode.Forbidden,
+                  $"审计B3: viewer GET /api/config/backups -> 403（实得 {rBakViewer.StatusCode}）");
+            var rSetAdminB3 = HttpGetWithToken($"{baseUrl}/api/settings", "secret-token");
+            Check(rSetAdminB3.StatusCode == HttpStatusCode.OK,
+                  $"审计B3: admin GET /api/settings -> 200（engineer 及以上正常可用，实得 {rSetAdminB3.StatusCode}）");
+            // 审计 B4：登录失败限速（10 分钟窗口 5 次锁定）——专用探测用户名避免污染其他登录测试
+            HttpResponseMessage rLastLogin = null!;
+            for (int i = 0; i < 5; i++)
+                rLastLogin = HttpPostWithToken($"{baseUrl}/api/login", "", "{\"name\":\"st_lockout_probe\",\"password\":\"wrong\"}");
+            Check(rLastLogin.StatusCode == HttpStatusCode.Unauthorized,
+                  $"审计B4: 连续错密 5 次均 401（实得 {rLastLogin.StatusCode}）");
+            var rLock6 = HttpPostWithToken($"{baseUrl}/api/login", "", "{\"name\":\"st_lockout_probe\",\"password\":\"wrong\"}");
+            Check(rLock6.StatusCode == (HttpStatusCode)429,
+                  $"审计B4: 第 6 次触发限速 429（实得 {rLock6.StatusCode}）");
+
             // Config.Rollback 路径加固纯函数断言：任意绝对路径/穿越一律回落到 config_backups 内解析
             Check(!AppConfig.Rollback(Environment.ProcessPath),
                   "回滚加固：Rollback(绝对路径指向自身 exe) -> false（不允许回滚来源目录外文件）");
@@ -4172,6 +4195,28 @@ Argus 统一发布包  v{newer}
             finally
             {
                 try { if (backup2 != null) File.WriteAllText(cfgFile, backup2); else File.Delete(cfgFile); } catch { }
+            }
+        }
+
+        {
+            // 审计 D2：config.json 损坏时 Load 从最近备份恢复一次（备份文件名 Guid 格式串修复后备份才真正生成）
+            var cfgFileD2 = Path.Combine(AppConfig.BaseDir, "config.json");
+            var backupD2 = File.Exists(cfgFileD2) ? File.ReadAllText(cfgFileD2) : null;
+            var bakDirD2 = Path.Combine(AppConfig.BaseDir, "data", "config_backups");
+            Directory.CreateDirectory(bakDirD2);
+            var bakFileD2 = Path.Combine(bakDirD2, "config_backup_99991231_235959_d2test.json");
+            File.WriteAllText(bakFileD2, "{\"station_id\":\"D2_RESTORED\"}");
+            try
+            {
+                File.WriteAllText(cfgFileD2, "{这不是合法JSON");
+                var restored = AppConfig.Load();
+                Check(restored.StationId == "D2_RESTORED",
+                    $"审计D2: config.json 损坏时从最近备份恢复（station_id={restored.StationId}）");
+            }
+            finally
+            {
+                try { if (backupD2 != null) File.WriteAllText(cfgFileD2, backupD2); else File.Delete(cfgFileD2); } catch { }
+                try { File.Delete(bakFileD2); } catch { }
             }
         }
 
@@ -6134,9 +6179,110 @@ Argus 统一发布包  v{newer}
             Check(recSkip == null && !transientSkip, "采集链路: 未知前缀解析失败为永久性（不重试）");
             var recGone = clProc.ParseAndClassify(Path.Combine(clDir, "F_UNIT_SN903_20260905130200_0001.xml"), out var transientGone);
             Check(recGone == null && transientGone, "采集链路: 文件读取失败为暂时性（占用场景可重试）");
+
+            // ── 审计随行回归（v3.31.0）──
+            // A4：Skipped 不再无痕消失——落 parse_failure_log(error_code=skip)
+            var clDbA4 = new Database(Path.Combine(work, "cl_a4.db"));
+            var clProcDb = new Processor(new AppConfig { StationId = "FCT1" }, "FCT1", FctAggregator.Parsing.ParserRegistry.Instance, clDbA4);
+            var recSkipDb = clProcDb.ParseAndClassify(skipXml, out var transientSkipDb);
+            Check(recSkipDb == null && !transientSkipDb, "审计A4: 未知前缀仍为永久性跳过（不重试）");
+            using (var cA4 = new SqliteConnection($"Data Source={Path.Combine(work, "cl_a4.db")}"))
+            {
+                cA4.Open();
+                using var cmd = cA4.CreateCommand();
+                cmd.CommandText = "SELECT COUNT(*) FROM parse_failure_log WHERE error_code='skip' AND xml_path=@p";
+                cmd.Parameters.AddWithValue("@p", Path.GetFullPath(skipXml));
+                Check(Convert.ToInt64(cmd.ExecuteScalar()) >= 1, "审计A4: Skipped 文件落 parse_failure_log(error_code=skip) 留痕");
+            }
+            // A4：registry 对 Skipped 不短路——高优先级 stub 解析器 Skipped 后回落内置解析器
+            var regA4 = FctAggregator.Parsing.ParserRegistry.Load(null);
+            regA4.Register(new SkipStubParser());
+            var passA4 = Path.Combine(clDir, "P_UNIT_SN904_20260905130400_0001.xml");
+            File.WriteAllText(passA4, "<FACTORY USER=\"op1\"/>");
+            var outA4 = regA4.Resolve(passA4, File.ReadAllText(passA4));
+            Check(outA4 != null && !outA4.Skipped && outA4.Result == "PASS",
+                  "审计A4: 高优先级解析器 Skipped 不短路，回落内置解析器正常解析 PASS");
+            // A5：截断的 PASS 文件不再静默入库为 PASS
+            var badPass = Path.Combine(clDir, "P_UNIT_SN905_20260905130500_0001.xml");
+            File.WriteAllText(badPass, "<FACTORY USER=\"op1\"><PANEL STATUS=");
+            var outA5 = regA4.Resolve(badPass, File.ReadAllText(badPass));
+            Check(outA5 != null && outA5.Error && outA5.ErrorCode == "xml_malformed",
+                  "审计A5: 截断 PASS 文件走 xml_malformed 不再静默入库污染良率");
+            // A2：单条入库返回 id，重复 xml_path 返回 0（免反查）
+            var recA2 = new TestRecord { StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905", Sn = "SN906", Result = "PASS", XmlPath = Path.Combine(clDir, "P_UNIT_SN906_20260905130600_0001.xml") };
+            var idA2 = clDbA4.InsertOneReturnId(recA2);
+            var idA2b = clDbA4.InsertOneReturnId(recA2);
+            Check(idA2 > 0 && idA2b == 0, $"审计A2: InsertOneReturnId 新记录返 id>0、重复返 0（实得 {idA2}/{idA2b}）");
+            // M12：CPU 采样首次调用仅建立基线，返回 null（不再产 0.0 哨兵假样本）
+            using (var samplerM12 = new DeviceSampleRecorder(new AppConfig()))
+            {
+                Check(samplerM12.SampleSystemCpu() == null, "审计M12: CPU 采样首次调用返回 null（不再 0.0 哨兵假样本）");
+            }
+            // C-I1：零失败小时参与 Pearson 样本（旧实现剔除后 CPU 恒定 → NaN 无告警）
+            var dbC1 = new Database(Path.Combine(work, "cl_c1.db"));
+            {
+                using (var cC1 = new SqliteConnection($"Data Source={Path.Combine(work, "cl_c1.db")}"))
+                {
+                    cC1.Open();
+                    for (int h = 0; h < 8; h++)
+                    {
+                        using var ins = cC1.CreateCommand();
+                        ins.CommandText = "INSERT INTO device_samples_local(ts, cpu_usage, mem_used_pct, disk_free_gb) VALUES(@t,@c,@m,@d)";
+                        ins.Parameters.AddWithValue("@t", DateTime.Now.ToString("yyyy-MM-dd") + $" {h:00}:00:00");
+                        ins.Parameters.AddWithValue("@c", h < 2 ? 100.0 : 10.0);
+                        ins.Parameters.AddWithValue("@m", 40.0);
+                        ins.Parameters.AddWithValue("@d", 50.0);
+                        ins.ExecuteNonQuery();
+                    }
+                }
+                var srcC1 = new AttributionSource();
+                for (int h = 0; h < 8; h++) srcC1.HourlyFails[h] = h < 2 ? 0 : 5;
+                var corr = FailAttributor.ComputeResourceCorrelations(dbC1, srcC1, 30);
+                Check(corr.Any(x => x.Metric == "cpu" && Math.Abs(x.R) >= 0.6),
+                      "审计C-I1: 零失败小时参与样本（前 2 小时 CPU=100/失败=0 不再被剔除，|r|≈1 可检出）");
+            }
+            // C-I3：漂移今日样本门槛 3→10
+            Check(DriftAnalyzer.MinTodaySamples == 10, "审计C-I3: 漂移对照样本门槛提到 10（凌晨部分天不再假漂移）");
+            // M7：预测日志 12h 去重（两次落库仅一条）
+            var aggM7 = new AggDatabase(Path.Combine(work, "cl_m7.db"));
+            {
+                aggM7.Open();
+                var p7 = new AlertPredictor.PredictItem { Machine = "M7M", Rule = "disk", Level = "warn", Current = 3, Predicted = 4, Detail = "d" };
+                AlertPredictor.LogPredictions(aggM7, new List<AlertPredictor.PredictItem> { p7 });
+                AlertPredictor.LogPredictions(aggM7, new List<AlertPredictor.PredictItem> { p7 });
+                Check(aggM7.QueryAlertPredicts("M7M", 10).Count == 1, "审计M7: 预测日志落库去重（两次仅一条）");
+            }
+            // M6：双单样本 0/0=NaN 不再绕过护栏（effects 为空且不抛异常）
+            var dbM6 = new Database(Path.Combine(work, "cl_m6.db"));
+            {
+                foreach (var (tester, sn) in new[] { ("FX1", "SNM61"), ("FX2", "SNM62") })
+                {
+                    dbM6.BatchInsert(new[]
+                    {
+                        new TestRecord
+                        {
+                            StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905",
+                            Sn = sn, Result = "PASS", XmlPath = Path.Combine(work, $"m6_{sn}.xml"), Tester = tester,
+                            Measurements = new List<MeasurementRow> { new MeasurementRow { TestName = "T_M6", Value = 10.0, Lolim = 9, Hilim = 11 } },
+                        },
+                    });
+                }
+                var fxM6 = FixtureComparator.Run(dbM6, new AppConfig { AnalyzeMinSamples = 1, AnalyzeWindowDays = 7, AnalyzeEffectD = 0.1 }, new DateTime(2026, 9, 8));
+                Check(fxM6.Effects.Count == 0, "审计M6: 双单样本 0/0=NaN 被前置护栏拦截（不产出 NaN 效应量）");
+            }
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             try { Directory.Delete(Path.Combine(work, "clres"), true); } catch { }
             Console.WriteLine("[采集链路] 持久化与分类组完成");
         }
+    }
+
+    /// <summary>审计 A4 断言用：恒 Skipped 的高优先级 stub 解析器（Priority 999 &lt; Default 1000，先跑但不短路）。</summary>
+    sealed class SkipStubParser : FctAggregator.Parsing.IResultParser
+    {
+        public string Id => "selftest-skip-stub";
+        public int Priority => 999;
+        public FctAggregator.Parsing.ParseOutput? Parse(string xmlPath, string rawXml)
+            => new FctAggregator.Parsing.ParseOutput { Skipped = true, SkipReason = "stub" };
     }
 
     static HttpResponseMessage HttpPostWithToken(string url, string token, string json){

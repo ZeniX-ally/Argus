@@ -41,15 +41,24 @@ public static class TdmsFeatureCollector
         if (_queue.Count >= QueueCapacity) { Interlocked.Increment(ref Dropped); return; }
         _queue.Enqueue((rec, recordId));
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0) return;
-        Task.Run(() =>
+        Task.Run(DrainLoop);
+    }
+
+    /// <summary>单消费者循环：复位 _running 后复查队列仍有余项则重启消费——
+    /// 审计 M9：原实现 CAS 失败/复位竞态会让余项滞留，空闲期特征延迟数小时。</summary>
+    private static void DrainLoop()
+    {
+        try
         {
-            try
-            {
-                while (_queue.TryDequeue(out var item))
-                    CaptureOne(Database.Current, AppConfig.Instance, item.Rec, item.RecordId);
-            }
-            finally { Interlocked.Exchange(ref _running, 0); }
-        });
+            while (_queue.TryDequeue(out var item))
+                CaptureOne(Database.Current, AppConfig.Instance, item.Rec, item.RecordId);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _running, 0);
+            if (_queue.Count > 0 && Interlocked.CompareExchange(ref _running, 1, 0) == 0)
+                Task.Run(DrainLoop);
+        }
     }
 
     /// <summary>单记录特征化：护栏链 → 定位 → 大小护栏 → TdmsDoc 读通道 → 纯函数统计 → 落表（db 可为 null 仅计数）。</summary>

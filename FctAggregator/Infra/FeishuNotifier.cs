@@ -143,9 +143,10 @@ public static class FeishuNotifier
         var sb = new StringBuilder();
         foreach (var t in r.FailedTests)
         {
-            var val = string.IsNullOrWhiteSpace(t.Value) ? "" : $" = {t.Value}{t.Unit}";
+            // 审计 M14：XML 值可含 markdown 特殊字符——Value/Unit/Lolim/Hilim 全部过 Escape（Name 原已过）
+            var val = string.IsNullOrWhiteSpace(t.Value) ? "" : $" = {FeishuCardV2.Escape(t.Value)}{FeishuCardV2.Escape(t.Unit)}";
             var spec = string.IsNullOrWhiteSpace(t.Lolim) && string.IsNullOrWhiteSpace(t.Hilim)
-                ? "" : $"（规格 {t.Lolim} ~ {t.Hilim}）";
+                ? "" : $"（规格 {FeishuCardV2.Escape(t.Lolim)} ~ {FeishuCardV2.Escape(t.Hilim)}）";
             sb.AppendLine($"▸ {FeishuCardV2.Escape(t.Name)}{val} {spec}".Trim());
         }
         return sb.ToString().TrimEnd();

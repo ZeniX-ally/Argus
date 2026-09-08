@@ -146,18 +146,21 @@ public sealed class ParserRegistry
     {
         List<IResultParser> snapshot;
         lock (_lock) snapshot = _parsers.ToList();
+        ParseOutput? lastSkipped = null;
         foreach (var p in snapshot)
         {
             try
             {
                 var r = p.Parse(xmlPath, rawXml);
-                if (r != null) return r;
+                // 审计 A4：Skipped 不短路——自定义解析器 Pattern 不匹配时曾阻断回落内置解析器，文件无痕消失
+                if (r != null && !r.Skipped) return r;
+                if (r != null) lastSkipped = r;
             }
             catch (Exception ex)
             {
                 Logger.Warning($"[解析] 解析器 {p.Id} 异常: {ex.Message}");
             }
         }
-        return null;
+        return lastSkipped;
     }
 }

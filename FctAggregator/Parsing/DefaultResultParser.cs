@@ -47,6 +47,17 @@ public sealed class DefaultResultParser : IResultParser
 
         if (isPass)
         {
+            // 审计 A5：PASS 分支此前不校验 XML 完整性，ReadFactoryOnly 吞异常会把截断/损坏文件静默入库为 PASS，污染良率
+            try
+            {
+                using var xr = System.Xml.XmlReader.Create(new StringReader(rawXml),
+                    new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null });
+                while (xr.Read()) { }
+            }
+            catch (Exception ex)
+            {
+                return new ParseOutput { Error = true, ErrorCode = "xml_malformed", SkipReason = $"PASS 文件 XML 校验失败: {ex.Message}" };
+            }
             var fac = ReadFactoryOnly(rawXml);
             user = fac.user;
             tester = fac.tester;

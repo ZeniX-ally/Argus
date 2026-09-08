@@ -15,6 +15,7 @@ public static class Logger
     private static long MaxLogBytes = 20L * 1024 * 1024;
     private const int MaxLogFiles = 7;
     private static long _writtenBytes;
+    private static bool _bytesInited;
 
     public static void SetLevel(string level) => _level = level.ToUpperInvariant();
 
@@ -35,6 +36,13 @@ public static class Logger
         {
             lock (_fileLock)
             {
+                // 审计 M16：滚动字节计数不随重启初始化——低日志量机台 _writtenBytes 永远到不了阈值，
+                // app.log 跨重启无限膨胀。首次写前用现有文件长度初始化。
+                if (!_bytesInited)
+                {
+                    try { _writtenBytes = new FileInfo(LogPath).Length; } catch { _writtenBytes = 0; }
+                    _bytesInited = true;
+                }
                 var dir = Path.GetDirectoryName(LogPath)!;
                 Directory.CreateDirectory(dir);
                 _writtenBytes += line.Length + 2;

@@ -82,7 +82,6 @@ function Copy-WebRoot([string]$stage) {
 
 foreach ($f in $rootFiles) {
     if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $out }
-    elseif ($f -eq 'deploy_update.ps1') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $out }
     else { Copy-Item (Join-Path $root $f) $out }
 }
 foreach ($f in $docs) { Copy-Item (Join-Path $root $f) $out }
@@ -98,7 +97,6 @@ Assert-DepsWinFiles $stage
 Copy-WebRoot $stage
 foreach ($f in ($rootFiles + $docs)) {
     if ($f -eq '一键部署聚合服务.bat') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $stage }
-    elseif ($f -eq 'deploy_update.ps1') { Copy-Item (Join-Path (Join-Path $root 'tools') $f) $stage }
     else { Copy-Item (Join-Path $root $f) $stage }
 }
 Write-PackageConfig (Join-Path $stage 'config.json')

@@ -43,7 +43,9 @@ public sealed class DbMaintenance
         while (!_stopping)
         {
             var now = DateTime.Now;
-            if (now.Hour == _hour && now.Date != _lastRunDate)
+            // 审计 C-I3：精确整点匹配曾导致错过维护小时（进程 3:00-3:59 未运行）当天全链跳过且无补跑——
+            // 改为到达维护小时后当日首个tick执行（滞后补跑）
+            if (now.Hour >= _hour && now.Date != _lastRunDate)
             {
                 RunNow();
                 _lastRunDate = now.Date;
@@ -100,6 +102,16 @@ public sealed class DbMaintenance
         catch (Exception ex)
         {
             Logger.Warning($"[库维护] 预测对账清理失败: {ex.Message}");
+        }
+        try
+        {
+            var retain = AppConfig.Instance.PredictAccuracyRetainDays;
+            var purged = _db.PurgeOldPredictLogs(retain); // 审计 M7：预测日志表纳入每日清理
+            if (purged > 0) Logger.Info($"[库维护] 预测日志清理: 删除 {purged} 条（保留 {retain} 天）");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] 预测日志清理失败: {ex.Message}");
         }
         try
         {

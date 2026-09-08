@@ -59,6 +59,8 @@ public static class FixtureComparator
             var top = testers.OrderByDescending(t => t.N).Take(2).ToList();
             var a = top[0];
             var b = top[1];
+            // 审计 M6：双单样本时 N1+N2-2=0，0/0=NaN 曾绕过下方两道护栏直通序列化，炸掉整个 tester 对比——前置护栏
+            if (a.N + b.N - 2 <= 0) continue;
             double sPooled = Math.Sqrt(((a.N - 1) * a.Sigma * a.Sigma + (b.N - 1) * b.Sigma * b.Sigma) / (a.N + b.N - 2));
             double range = a.Hilim.HasValue && a.Lolim.HasValue && a.Hilim.Value > a.Lolim.Value
                 ? a.Hilim.Value - a.Lolim.Value
