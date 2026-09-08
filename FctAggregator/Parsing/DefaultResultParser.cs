@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
 using System.Xml;
 using FctAggregator;
@@ -53,6 +53,7 @@ public sealed class DefaultResultParser : IResultParser
             fixtureId = fac.fixtureId;
             if (_rules.IsDebug(user))
                 return new ParseOutput { Skipped = true, SkipReason = "debug" };
+            if (string.IsNullOrEmpty(snFromName)) snFromName = fac.sn;
             result = "PASS";
             panelStatus = "Passed";
             measurements = ParseMeasurements(rawXml);
@@ -271,9 +272,10 @@ public sealed class DefaultResultParser : IResultParser
         return rows;
     }
 
-    /// <summary>PASS 文件轻量读取：FACTORY 处一次取 USER/TESTER/FIXTURE_ID 即停（期2 补齐 tester/fixture，治具分母与 tester 对比依赖）。</summary>
-    private (string? user, string? tester, string? fixtureId) ReadFactoryOnly(string rawXml)
+    /// <summary>PASS 文件轻量读取：FACTORY 取 USER/TESTER/FIXTURE_ID，继续读到首个 DUT 取 SN 即停（期2 补齐 tester/fixture，治具分母与 tester 对比依赖）。</summary>
+    private (string? user, string? tester, string? fixtureId, string? sn) ReadFactoryOnly(string rawXml)
     {
+        string? user = null, tester = null, fixtureId = null, sn = null;
         try
         {
             var settings = new XmlReaderSettings
@@ -288,18 +290,26 @@ public sealed class DefaultResultParser : IResultParser
             while (reader.Read())
             {
                 if (reader.NodeType != XmlNodeType.Element) continue;
-                if (reader.Name == "FACTORY")
-                    return (
-                        reader.GetAttribute(_rules.AttrFactoryUser),
-                        reader.GetAttribute(_rules.AttrTester),
-                        reader.GetAttribute(_rules.AttrFixtureId));
-                if (reader.Name == "PANEL") break;
+                switch (reader.Name)
+                {
+                    case "FACTORY":
+                        user = reader.GetAttribute(_rules.AttrFactoryUser);
+                        tester = reader.GetAttribute(_rules.AttrTester);
+                        fixtureId = reader.GetAttribute(_rules.AttrFixtureId);
+                        break;
+                    case "PANEL":
+                        fixtureId ??= reader.GetAttribute(_rules.AttrFixtureId);
+                        break;
+                    case "DUT":
+                        sn = reader.GetAttribute(_rules.AttrDutId);
+                        return (user, tester, fixtureId, sn);
+                }
             }
         }
         catch (Exception ex)
         {
             Logger.Warning($"ReadFactoryOnly 失败: {ex.Message}");
         }
-        return (null, null, null);
+        return (user, tester, fixtureId, sn);
     }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace FctAggregator;
 
@@ -12,6 +13,9 @@ public class Engine
     private readonly List<FileSystemWatcher> _watchers = new();
     private volatile bool _initialScanComplete = false;
     private CancellationTokenSource _cts = new();
+
+    private readonly ConcurrentDictionary<string, byte> _inFlight = new(); // 在途路径去重（Changed 高频连发防护）
+    private readonly string _retryQueueFile; // 重试队列落盘文件（Stop 写 / Start 读回，治退出即丢）
 
     private const int MaxStableRetries = 3;
     private const int StableRetryDelayMs = 30000;
@@ -40,6 +44,7 @@ public class Engine
 
         var dataDir = Path.Combine(AppConfig.BaseDir, "data");
         Directory.CreateDirectory(dataDir);
+        _retryQueueFile = Path.Combine(dataDir, "retry_queue.json");
         var dbFile = Path.Combine(dataDir, $"{(string.IsNullOrEmpty(sid) ? "fct" : sid)}.db");
         _db = new Database(dbFile);
 
@@ -81,6 +86,7 @@ public class Engine
             Logger.Error("⚠ 数据采集无法开始！请创建目录后重启");
             AppState.SetStatus("error");
             _initialScanComplete = true;
+            StartAutoBackfillSn(); // 无扫描可做，仍触发一次 SN 补账（幂等）
             return;
         }
 
@@ -89,6 +95,7 @@ public class Engine
         AppState.SetStatus("running");
         Logger.Info($"发现型号目录: {string.Join(", ", models)}");
 
+        LoadRetryQueue(); // 先恢复上次停机落盘的未处理重试条目
         _retryThread = new Thread(RetryLoop) { IsBackground = true, Name = "stable-retry" };
         _retryThread.Start();
 
@@ -104,6 +111,7 @@ public class Engine
                     NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
                 };
                 w.Created += OnFileCreated;
+                w.Changed += OnFileChanged; // 半成品文件写完后再触发一次（配合 WaitForStable + 入库幂等，重复触发无害）
                 w.Renamed += OnFileRenamed;
                 _watchers.Add(w);
                 Logger.Info($"监控已启动: {dir}");
@@ -116,7 +124,26 @@ public class Engine
             _initialScanComplete = true;
             AppState.HistoricalScanComplete = true;
             if (_cfg.SkipHistoricalScan) Logger.Info("历史扫描已跳过");
+            StartAutoBackfillSn(); // 无历史扫描，直接触发 SN 补账
         }
+    }
+
+    private void AutoBackfillSn()
+    {
+        try
+        {
+            var processor = new Processor(_cfg, _stationId, Parsing.ParserRegistry.Instance, _db);
+            var n = BackfillTool.BackfillMissingSn(_db, processor, _cts.Token);
+            if (n > 0) RefreshStats();
+        }
+        catch (Exception ex) { Logger.Warning($"[SN补账] 自动回填异常: {ex.Message}"); }
+    }
+
+    private void StartAutoBackfillSn()
+    {
+        // SN 自动补账：启动后补齐历史空 SN 记录（幂等，无缺失秒回；完成后刷新主页统计）。
+        // 延迟到历史扫描完成后触发，避免与扫描批次写入竞争 SQLite 写锁（M7）。
+        Task.Run(AutoBackfillSn);
     }
 
     public void Stop()
@@ -128,6 +155,7 @@ public class Engine
         try { _retryThread?.Join(3000); } catch { }
         foreach (var w in _watchers) { try { w.EnableRaisingEvents = false; w.Dispose(); } catch { } }
         _watchers.Clear();
+        SaveRetryQueue(); // 未处理重试条目落盘，下次启动恢复（M5：退出即丢）
     }
 
     public void RestartPusher()
@@ -219,7 +247,15 @@ public class Engine
                     catch (Exception ex) { Logger.Error($"[历史扫描] 解析失败: {p} | {ex.Message}"); }
                     processed++;
                 }
-                totalInserted += _db.BatchInsert(records);
+                try { totalInserted += _db.BatchInsert(records); }
+                catch (Exception ex)
+                {
+                    // 批量级保护：单批写锁冲突（database is locked）不中止整轮扫描，短等待后重试一次，再失败放弃该批继续下一批
+                    Logger.Error($"[历史扫描] 批次入库失败(起始索引 {i}, {records.Count} 条): {ex.Message}，2s 后重试一次");
+                    Thread.Sleep(2000);
+                    try { totalInserted += _db.BatchInsert(records); }
+                    catch (Exception ex2) { Logger.Error($"[历史扫描] 批次重试仍失败(起始索引 {i})，放弃该批继续: {ex2.Message}"); }
+                }
                 AppState.SetScanProgress(parsed: processed);
                 RefreshStats();
             }
@@ -237,6 +273,7 @@ public class Engine
             AppState.HistoricalScanComplete = true;
             RefreshStats();
             Logger.Info("历史扫描完成，FAIL 告警推送已启用");
+            StartAutoBackfillSn(); // 扫描结束后再补 SN，避免写锁竞争
         }
     }
 
@@ -253,16 +290,21 @@ public class Engine
     }
 
     private void OnFileCreated(object sender, FileSystemEventArgs e) => ScheduleProcess(e.FullPath);
+    private void OnFileChanged(object sender, FileSystemEventArgs e) => ScheduleProcess(e.FullPath);
     private void OnFileRenamed(object sender, RenamedEventArgs e) => ScheduleProcess(e.FullPath);
 
     private void ScheduleProcess(string path) => ScheduleProcess(path, 0);
 
     private void ScheduleProcess(string path, int attempt)
     {
+        // Changed 事件高频连发防护：同一路径在途时忽略本次触发；
+        // 漏触发由 WaitForStable 未稳定 / 解析暂时失败入重试队列兜底，入库本身 xml_path UNIQUE 幂等
+        if (attempt == 0 && !_inFlight.TryAdd(path, 0)) return;
         Task.Run(() =>
         {
             try { ProcessRealtime(path, attempt); }
             catch (Exception ex) { Logger.Error($"[错误] 处理异常: {path} | {ex.Message}"); }
+            finally { if (attempt == 0) _inFlight.TryRemove(path, out _); }
         });
     }
 
@@ -273,17 +315,31 @@ public class Engine
         {
             if (attempt < MaxStableRetries)
             {
-                _retryQueue.Enqueue((path, attempt, Environment.TickCount64 + StableRetryDelayMs));
-                Logger.Warning($"[重试] 文件未稳定，{StableRetryDelayMs / 1000}s 后重试({attempt + 1}/{MaxStableRetries}): {path}");
+                if (EnqueueRetry(path, attempt))
+                    Logger.Warning($"[重试] 文件未稳定，{StableRetryDelayMs / 1000}s 后重试({attempt + 1}/{MaxStableRetries}): {path}");
             }
             else
                 Logger.Warning($"[跳过] 文件持续未稳定，已达重试上限({MaxStableRetries}): {path}");
             return;
         }
 
-            var processor = new Processor(_cfg, _stationId, Parsing.ParserRegistry.Instance, _db);
-        var rec = processor.ParseAndClassify(path);
-        if (rec == null) return;
+        var processor = new Processor(_cfg, _stationId, Parsing.ParserRegistry.Instance, _db);
+        var rec = processor.ParseAndClassify(path, out var transientFailure);
+        if (rec == null)
+        {
+            if (transientFailure)
+            {
+                // 暂时性失败（半成品 XML/读取被占用）：入重试队列，文件写完后再试，避免永久漏采；永久性失败保持原样不重试
+                if (attempt < MaxStableRetries)
+                {
+                    if (EnqueueRetry(path, attempt))
+                        Logger.Warning($"[重试] 解析暂时失败，{StableRetryDelayMs / 1000}s 后重试({attempt + 1}/{MaxStableRetries}): {path}");
+                }
+                else
+                    Logger.Warning($"[跳过] 解析持续失败，已达重试上限({MaxStableRetries}): {path}");
+            }
+            return;
+        }
 
         if (rec.HasFailItems)
         {
@@ -404,5 +460,82 @@ public class Engine
             }
         }
         catch (Exception ex) { Logger.Error($"[重试线程] 异常: {ex.Message}"); }
+    }
+
+    private bool EnqueueRetry(string path, int attempt)
+    {
+        // 队列去重：同路径已有未处理条目时跳过，防止 Changed 高频触发塞爆队列
+        if (_retryQueue.Any(x => string.Equals(x.Path, path, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        _retryQueue.Enqueue((path, attempt, Environment.TickCount64 + StableRetryDelayMs));
+        return true;
+    }
+
+    // ── 重试队列落盘持久化：Stop 写 data/retry_queue.json（原子替换），Start 读回入队（治 M5 退出即丢） ──
+
+    private void LoadRetryQueue()
+    {
+        try
+        {
+            if (!File.Exists(_retryQueueFile)) return;
+            var items = DeserializeRetryQueue(File.ReadAllText(_retryQueueFile));
+            foreach (var (p, attempt) in items)
+                _retryQueue.Enqueue((p, attempt, Environment.TickCount64 + StableRetryDelayMs));
+            if (items.Count > 0)
+            {
+                Logger.Info($"[重试队列] 启动恢复 {items.Count} 条未处理路径（{StableRetryDelayMs / 1000}s 后陆续重试）");
+                File.Delete(_retryQueueFile);
+            }
+        }
+        catch (Exception ex) { Logger.Warning($"[重试队列] 恢复失败，忽略: {ex.Message}"); } // 文件损坏不阻断启动
+    }
+
+    private void SaveRetryQueue()
+    {
+        var items = new List<(string Path, int Attempt)>();
+        while (_retryQueue.TryDequeue(out var it)) items.Add((it.Path, it.Attempt));
+        if (items.Count == 0) { try { File.Delete(_retryQueueFile); } catch { } return; }
+        try
+        {
+            var tmp = _retryQueueFile + ".tmp";
+            File.WriteAllText(tmp, SerializeRetryQueue(items));
+            File.Move(tmp, _retryQueueFile, overwrite: true); // 原子替换，风格同 MeshPusher 落盘
+            Logger.Info($"[重试队列] 停机落盘 {items.Count} 条未处理路径: {_retryQueueFile}");
+        }
+        catch (Exception ex)
+        {
+            // 写盘失败不能丢条目：回灌内存队列（进程仍在时还能被处理；下次 Stop 再试落盘）
+            foreach (var it in items) _retryQueue.Enqueue((it.Path, it.Attempt, Environment.TickCount64 + StableRetryDelayMs));
+            Logger.Warning($"[重试队列] 落盘失败，已回灌 {items.Count} 条到内存队列: {ex.Message}");
+        }
+    }
+
+    /// <summary>重试队列序列化（纯函数，SelfTest 往返校验用）。</summary>
+    public static string SerializeRetryQueue(List<(string Path, int Attempt)> items)
+    {
+        var dtos = items.Select(x => new RetryItemDto { path = x.Path, attempt = x.Attempt }).ToList();
+        return JsonSerializer.Serialize(dtos);
+    }
+
+    /// <summary>重试队列反序列化（纯函数）：坏 JSON/空内容返回空列表，不抛异常。</summary>
+    public static List<(string Path, int Attempt)> DeserializeRetryQueue(string json)
+    {
+        var items = new List<(string Path, int Attempt)>();
+        try
+        {
+            var dtos = JsonSerializer.Deserialize<List<RetryItemDto>>(json);
+            if (dtos != null)
+                foreach (var d in dtos)
+                    if (!string.IsNullOrEmpty(d.path))
+                        items.Add((d.path, d.attempt));
+        }
+        catch { }
+        return items;
+    }
+
+    private sealed class RetryItemDto
+    {
+        public string path { get; set; } = "";
+        public int attempt { get; set; }
     }
 }

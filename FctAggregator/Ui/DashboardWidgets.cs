@@ -281,9 +281,11 @@ public sealed class TodayGaugePanel : Control
         int gaugeH = Height - gaugeY - 54;
 
         Color yieldColor = total == 0 ? Theme.TextFaint : (yieldRate >= 98.0 ? Theme.Success : (yieldRate >= 95.0 ? Color.FromArgb(241, 196, 15) : Theme.Danger));
+        // 空数据时副标题按"暂无数据"提示，避免误报"需关注"（副标题绘制本身已用 TextFaint 色）
+        string yieldSub = total == 0 ? "质量状态: 暂无数据" : (yieldRate >= 98.0 ? "质量状态: 达标 (≥98%)" : "质量状态: 需关注");
         DrawRingMeter(g, new Rectangle(0, gaugeY, Width, gaugeH),
             yieldRate, total > 0 ? $"{yieldRate:F1}%" : "—",
-            yieldRate >= 98.0 ? "质量状态: 达标 (≥98%)" : "质量状态: 需关注",
+            yieldSub,
             yieldColor);
 
         int botY = Height - 48;

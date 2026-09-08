@@ -135,6 +135,24 @@ static class Program
 
         ApplicationConfiguration.Initialize();
 
+        // 全局异常兜底：UI 线程异常记录日志并弹窗提示（不退出），非 UI 线程异常尽量落日志后放行
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) =>
+        {
+            Logger.Error($"[全局异常] UI 线程: {e.Exception.GetType().FullName}: {e.Exception.Message}\n{e.Exception.StackTrace}");
+            try
+            {
+                MessageBox.Show("发生界面异常，详情见日志。", "FCT 工具套件",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            catch { }
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            var ex = e.ExceptionObject as Exception;
+            Logger.Error($"[全局异常] 非UI线程(是否终止进程={e.IsTerminating}): {ex?.GetType().FullName}: {ex?.Message}\n{ex?.StackTrace}");
+        };
+
         var cfg = AppConfig.Instance;
         Logger.SetLevel(cfg.LogLevel);
 

@@ -324,10 +324,13 @@ public class WebAggServer : IDisposable
             using var resp = ctx.Response;
 
             var absPath = ctx.Request.Url?.AbsolutePath ?? "";
+            var method = ctx.Request.HttpMethod.ToUpperInvariant();
             var loginExempt = absPath.Equals("/api/login", StringComparison.OrdinalIgnoreCase);
-            var staticExempt = absPath.Equals("/", StringComparison.OrdinalIgnoreCase)
-                || absPath.StartsWith("/public/", StringComparison.OrdinalIgnoreCase)
-                || absPath.Equals("/public", StringComparison.OrdinalIgnoreCase);
+            // 静态豁免仅对 GET/HEAD 生效：POST / 等写方法不走豁免，必须通过完整鉴权（防止无 token 直推 ServePush）
+            var staticExempt = (method == "GET" || method == "HEAD")
+                && (absPath.Equals("/", StringComparison.OrdinalIgnoreCase)
+                    || absPath.StartsWith("/public/", StringComparison.OrdinalIgnoreCase)
+                    || absPath.Equals("/public", StringComparison.OrdinalIgnoreCase));
             if (!loginExempt && !staticExempt && !IsAuthenticated(ctx))
             {
                 Logger.Warning($"[Web 服务] 403: 鉴权缺失或不匹配（{ctx.Request.RemoteEndPoint} {ctx.Request.HttpMethod} {ctx.Request.Url?.AbsolutePath}）");
@@ -651,6 +654,17 @@ public class WebAggServer : IDisposable
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
             var cfg = AppConfig.Instance;
+
+            // 角色门禁：设置保存整体至少 engineer；敏感字段（agg_token/agg_webhook_url）仅在值发生实际变更时要求 admin
+            // （设置页每次保存都会回传这两个字段：token 输入框恒为空串、webhook 回显现值，按"字段存在"判定会误伤 engineer 常规保存）
+            if (!RequireRole(ctx, "engineer")) return;
+            bool tokenChanging = root.TryGetProperty("agg_token", out var ptGate) && ptGate.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(ptGate.GetString())
+                && !string.Equals(ptGate.GetString()!.Trim(), cfg.AggToken, StringComparison.Ordinal);
+            bool hookChanging = root.TryGetProperty("agg_webhook_url", out var pwGate) && pwGate.ValueKind == JsonValueKind.String
+                && !string.Equals(pwGate.GetString() ?? "", cfg.AggWebhookUrl, StringComparison.Ordinal);
+            if ((tokenChanging || hookChanging) && !RequireRole(ctx, "admin")) return;
+
             var changed = new List<string>();
 
             if (root.TryGetProperty("mesh_port", out var pp) && pp.ValueKind == JsonValueKind.Number
@@ -659,11 +673,15 @@ public class WebAggServer : IDisposable
                 cfg.MeshPort = port;
                 changed.Add("mesh_port");
             }
-            if (root.TryGetProperty("agg_token", out var pt) && pt.ValueKind == JsonValueKind.String
-                && !string.Equals(pt.GetString(), cfg.AggToken, StringComparison.Ordinal))
+            if (root.TryGetProperty("agg_token", out var pt) && pt.ValueKind == JsonValueKind.String)
             {
-                cfg.AggToken = pt.GetString() ?? "";
-                changed.Add("agg_token");
+                // 空/空白视为"未修改"（前端恒回传空串），同时防止把 token 清空导致聚合端鉴权失效
+                var newTok = (pt.GetString() ?? "").Trim();
+                if (newTok.Length > 0 && !string.Equals(newTok, cfg.AggToken, StringComparison.Ordinal))
+                {
+                    cfg.AggToken = newTok;
+                    changed.Add("agg_token");
+                }
             }
             if (root.TryGetProperty("agg_webhook_url", out var pw) && pw.ValueKind == JsonValueKind.String
                 && !string.Equals(pw.GetString() ?? "", cfg.AggWebhookUrl, StringComparison.Ordinal))

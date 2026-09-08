@@ -38,12 +38,19 @@ public static class AppState
     public static void IncParseError() { lock (_lock) ParseError++; }
 
     public static void RefreshStats(Database db, string stationId, string resultsRoot)
+        => Refresh(db, stationId, resultsRoot, true);
+
+    /// <summary>轻量刷新：只重算数据库统计（不含结果目录 XML 全盘扫描），供 UI 周期调用保证看板实时（跨日归零、无入库时也对齐库内最新值）。</summary>
+    public static void RefreshDbStats(Database db, string stationId)
+        => Refresh(db, stationId, null, false);
+
+    private static void Refresh(Database db, string stationId, string? resultsRoot, bool includeDiskScan)
     {
         var g = db.FetchGlobalStats(stationId);
         var today = DateTime.Now.ToString("yyyyMMdd");
         var d = db.FetchDailyStats(stationId, today);
         var month = db.FetchMonthlyStats(stationId, DateTime.Now.ToString("yyyyMM"));
-        var xmlOnDisk = CountDiskXml(resultsRoot);
+        var xmlOnDisk = includeDiskScan && resultsRoot != null ? CountDiskXml(resultsRoot) : XmlCount;
         lock (_lock)
         {
             Pass = g.Pass; Fail = g.Fail; Interrupted = g.Interrupted;

@@ -1108,13 +1108,16 @@ public sealed partial class Database
         return result;
     }
 
+    // TSV 归档需要压平的字符（制表/回车/换行）
+    private static readonly char[] SanitizeTsvChars = { '\t', '\r', '\n' };
+
     public int ArchiveColdData(int warmDays = 90)
     {
         if (warmDays <= 0) return 0;
         var cutoff = DateTime.Today.AddDays(-warmDays).ToString("yyyyMMdd");
         try
         {
-            int toArchive = 0;
+            int toArchive;
             using (var conn = Open())
             using (var cmd = conn.CreateCommand())
             {
@@ -1125,17 +1128,61 @@ public sealed partial class Database
             if (toArchive == 0) return 0;
             var archDir = Path.Combine(Path.GetDirectoryName(_dbPath) ?? ".", "archive");
             Directory.CreateDirectory(archDir);
-            var archFile = Path.Combine(archDir, $"test_records_before_{cutoff}.txt");
-            File.WriteAllText(archFile, $"cutoff={cutoff} count={toArchive} at={DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            var archFile = Path.Combine(archDir, $"test_records_before_{cutoff}.tsv");
+            string[] cols = { "id", "station_id", "model", "category", "test_date", "sn", "result", "xml_path",
+                              "fail_reason", "tester", "panel_status", "batch_timestamp", "has_fail_items",
+                              "file_size", "fixture_id", "created_at" };
+            // 删除前先备份数据库文件；备份失败视为归档失败（不删数据）
+            if (!BackupDbFile())
+                throw new IOException("数据库备份失败，跳过冷数据删除");
+            // 真归档：同一事务内先流式导出全部待归档行到 TSV，全部写成功后才执行 DELETE 并 COMMIT；
+            // 写文件失败/异常则回滚且不删任何数据
             using (var conn = Open())
-            using (var cmd = conn.CreateCommand())
+            using (var tx = conn.BeginTransaction())
             {
-                cmd.CommandText = "DELETE FROM test_records WHERE test_date < @c";
-                cmd.Parameters.AddWithValue("@c", cutoff);
-                var deleted = cmd.ExecuteNonQuery();
-                Logger.Info($"[DB分层] 归档冷数据 {deleted} 条 (test_date < {cutoff}) -> {archFile}");
-                LogHealth("archive_cold", $"deleted={deleted} cutoff={cutoff}");
-                return deleted;
+                try
+                {
+                    using (var cmd = conn.CreateCommand())
+                    using (var writer = new StreamWriter(archFile, append: false))
+                    {
+                        cmd.Transaction = tx;
+                        cmd.CommandText = $"SELECT {string.Join(", ", cols)} FROM test_records WHERE test_date < @c ORDER BY id";
+                        cmd.Parameters.AddWithValue("@c", cutoff);
+                        using var r = cmd.ExecuteReader();
+                        writer.WriteLine(string.Join('\t', cols));
+                        writer.WriteLine($"cutoff={cutoff} count={toArchive} at={DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                        var vals = new string[cols.Length];
+                        while (r.Read())
+                        {
+                            for (int i = 0; i < cols.Length; i++)
+                            {
+                                var v = r.IsDBNull(i) ? "" : r.GetValue(i)?.ToString() ?? "";
+                                // TSV 安全化：fail_reason 等字段可能含换行/制表符，直接写会列错行错，统一压成空格
+                                if (v.IndexOfAny(SanitizeTsvChars) >= 0)
+                                    v = v.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+                                vals[i] = v;
+                            }
+                            writer.WriteLine(string.Join('\t', vals));
+                        }
+                    }
+                    using (var cmd = conn.CreateCommand())
+                    {
+                        cmd.Transaction = tx;
+                        cmd.CommandText = "DELETE FROM test_records WHERE test_date < @c";
+                        cmd.Parameters.AddWithValue("@c", cutoff);
+                        var deleted = cmd.ExecuteNonQuery();
+                        tx.Commit();
+                        Logger.Info($"[DB分层] 归档冷数据 {deleted} 条 (test_date < {cutoff}) -> {archFile}");
+                        LogHealth("archive_cold", $"deleted={deleted} cutoff={cutoff}");
+                        return deleted;
+                    }
+                }
+                catch
+                {
+                    try { tx.Rollback(); } catch { }
+                    try { if (File.Exists(archFile)) File.Delete(archFile); } catch { }
+                    throw;
+                }
             }
         }
         catch (Exception ex)
@@ -1156,7 +1203,7 @@ public sealed partial class Database
                 COUNT(CASE WHEN result='FAIL' THEN 1 END),
                 COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
                 COUNT(CASE WHEN result='INVALID' THEN 1 END),
-                COUNT(DISTINCT sn)
+                COUNT(DISTINCT COALESCE(NULLIF(COALESCE(sn,''),''), xml_path))
             FROM test_records {where}";
         if (!string.IsNullOrEmpty(stationId))
             cmd.Parameters.AddWithValue("@s", stationId);
@@ -1184,7 +1231,7 @@ public sealed partial class Database
                 COUNT(CASE WHEN result='PASS' THEN 1 END),
                 COUNT(CASE WHEN result='FAIL' THEN 1 END),
                 COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
-                COUNT(DISTINCT sn)
+                COUNT(DISTINCT COALESCE(NULLIF(COALESCE(sn,''),''), xml_path))
             FROM test_records {where}";
         cmd.Parameters.AddWithValue("@d", dateYmd);
         if (!string.IsNullOrEmpty(stationId))
@@ -1201,20 +1248,32 @@ public sealed partial class Database
         return s;
     }
 
+    /// <summary>当月统计（SN 终检口径）：每个产品（SN，空 SN 按 xml_path 兜底）只取当月最后一次测试结果，
+    /// 维修重测不再重复计入分母；良率 = 终检 PASS / (终检 PASS + 终检 FAIL)，中断不计分母。</summary>
     public StatsData FetchMonthlyStats(string stationId, string dateYm)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        var where = "WHERE substr(test_date, 1, 6) = @m";
+        // 8 位日期下 substr 前缀匹配 == 闭区间范围匹配（@to 上界取 "31"，不存在该日也不会越到下月），
+        // 范围谓词可走 idx_date 索引，避免 UI 定时器每 5 秒触发全表扫描
+        var from = dateYm + "01";
+        var to = dateYm + "31";
+        var where = "WHERE (test_date >= @from AND test_date <= @to)";
         if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
         cmd.CommandText = $@"
             SELECT
                 COUNT(CASE WHEN result='PASS' THEN 1 END),
                 COUNT(CASE WHEN result='FAIL' THEN 1 END),
                 COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
-                COUNT(DISTINCT sn)
-            FROM test_records {where}";
-        cmd.Parameters.AddWithValue("@m", dateYm);
+                COUNT(*)
+            FROM (
+                SELECT result, ROW_NUMBER() OVER (
+                    PARTITION BY COALESCE(NULLIF(COALESCE(sn,''),''), xml_path)
+                    ORDER BY id DESC) AS rn
+                FROM test_records {where}
+            ) WHERE rn = 1";
+        cmd.Parameters.AddWithValue("@from", from);
+        cmd.Parameters.AddWithValue("@to", to);
         if (!string.IsNullOrEmpty(stationId))
             cmd.Parameters.AddWithValue("@s", stationId);
         using var r = cmd.ExecuteReader();
@@ -1227,6 +1286,74 @@ public sealed partial class Database
             s.TodayProductCount = r.GetInt32(3);
         }
         return s;
+    }
+
+    /// <summary>列出 SN 缺失的记录（历史回填用），返回 (id, xml_path)。</summary>
+    public List<(long Id, string XmlPath)> ListRecordsMissingSn()
+    {
+        var list = new List<(long, string)>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT id, xml_path FROM test_records
+            WHERE (sn IS NULL OR sn = '') AND COALESCE(xml_path,'') <> ''
+            ORDER BY id";
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add((r.GetInt64(0), r.GetString(1)));
+        return list;
+    }
+
+    /// <summary>回填单条记录的 SN（仅当仍为空时生效，幂等）。返回受影响行数。</summary>
+    public int UpdateMissingSn(long id, string sn)
+    {
+        if (string.IsNullOrWhiteSpace(sn)) return 0;
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE test_records SET sn = @sn WHERE id = @id AND (sn IS NULL OR sn = '')";
+        cmd.Parameters.AddWithValue("@sn", sn.Trim());
+        cmd.Parameters.AddWithValue("@id", id);
+        return cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>批量回填 SN：单连接单事务内执行与 UpdateMissingSn 相同的 UPDATE（仅写仍为空的行，幂等），
+    /// 避免逐条独立事务每条一次 fsync。返回总受影响行数；
+    /// 批内任一条失败（如锁冲突）则回滚整批并退化为逐条重试，保证不整批丢失。</summary>
+    public int UpdateMissingSnBatch(List<(long Id, string Sn)> rows)
+    {
+        if (rows.Count == 0) return 0;
+        using var conn = Open();
+        using var tx = conn.BeginTransaction();
+        try
+        {
+            int total = 0;
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "UPDATE test_records SET sn = @sn WHERE id = @id AND (sn IS NULL OR sn = '')";
+            var pSn = cmd.Parameters.Add("@sn", SqliteType.Text);
+            var pId = cmd.Parameters.Add("@id", SqliteType.Integer);
+            foreach (var (id, sn) in rows)
+            {
+                if (string.IsNullOrWhiteSpace(sn)) continue;
+                pSn.Value = sn.Trim();
+                pId.Value = id;
+                total += cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+            return total;
+        }
+        catch (Exception ex)
+        {
+            try { tx.Rollback(); } catch { }
+            Logger.Warning($"[DB] SN 批量回填失败(已回滚本批)，退化为逐条重试: {ex.Message}");
+        }
+        // 逐条重试该批：与 UpdateMissingSn 同语义（仅写仍为空的行），个别失败不影响其余行
+        int retried = 0;
+        foreach (var (id, sn) in rows)
+        {
+            try { retried += UpdateMissingSn(id, sn); }
+            catch (Exception ex2) { Logger.Warning($"[DB] SN 逐条回填 id={id} 失败: {ex2.Message}"); }
+        }
+        return retried;
     }
 
     public List<HourlyStatItem> FetchDailyHourlyStats(string stationId, string dateYmd)
@@ -1876,12 +2003,15 @@ public sealed partial class Database
         var list = new List<TodoItem>();
         using (var cmd = conn.CreateCommand())
         {
+            // 排序与截断下推 SQL（LIMIT），避免全量加载后在内存 Take
             cmd.CommandText = @"
                 SELECT id, group_key, station_id, title, COALESCE(model,''), COALESCE(variants,''),
                        variant_count, fail_count, COALESCE(first_seen,''), COALESCE(last_seen,'')
                   FROM todo_items
                  WHERE state='pending'
-                 ORDER BY fail_count DESC, last_seen DESC";
+                 ORDER BY fail_count DESC, last_seen DESC
+                 LIMIT @limit";
+            cmd.Parameters.AddWithValue("@limit", limit);
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
@@ -1958,10 +2088,14 @@ public sealed partial class Database
             foreach (var it in list) it.RangeCount = it.TotalCount;
         }
 
-        list = list.OrderByDescending(x => x.SortCount)
-                   .ThenByDescending(x => x.LastSeen, StringComparer.Ordinal)
-                   .Take(limit)
-                   .ToList();
+        // 排序与截断已下推 SQL（ORDER BY fail_count DESC, last_seen DESC + LIMIT @limit），
+        // 删除内存截断；区间模式下 RangeCount 可能与累计 fail_count 不同，按 SortCount 复排保持原排序口径（不截断）
+        if (from != null || to != null)
+        {
+            list = list.OrderByDescending(x => x.SortCount)
+                       .ThenByDescending(x => x.LastSeen, StringComparer.Ordinal)
+                       .ToList();
+        }
         return list;
     }
 

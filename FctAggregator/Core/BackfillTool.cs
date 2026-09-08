@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace FctAggregator;
 
-/// <summary>规格06：backfill 子命令——为存量 PASS 文件补采测量值（按天水位增量 + INSERT OR IGNORE 幂等）。</summary>
+/// <summary>规格06：backfill 子命令——为存量 PASS 文件补采测量值（按天水位增量 + INSERT OR IGNORE 幂等），并为历史 SN 缺失记录重读 XML 补 SN。</summary>
 public static class BackfillTool
 {
     public const string MetaWatermark = "backfill_last_day";
@@ -19,10 +19,7 @@ public static class BackfillTool
                 days = Math.Min(d, 3650);
 
         if (!cfg.AnalyzeCollectPass && !(cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(cfg.TdmsRoot)))
-        {
-            Console.WriteLine("analyze_collect_pass=false 且 TDMS 特征化未启用，无内容可回填。");
-            return 0;
-        }
+            Console.WriteLine("analyze_collect_pass=false 且 TDMS 特征化未启用，测量值/TDMS 回填跳过（SN 补采仍执行）。");
 
         var sid = cfg.StationId;
         if (string.IsNullOrEmpty(sid))
@@ -37,6 +34,14 @@ public static class BackfillTool
         }
         var db = new Database(dbFile);
         var processor = new Processor(cfg, sid, Parsing.ParserRegistry.Instance, db);
+
+        // SN 补采：历史 PASS 记录文件名无 SN 段导致 sn 为空，重读 XML DUT ID 补齐（独立于测量值开关，debug 文件不入库故天然排除）
+        int snFixed = BackfillMissingSn(db, processor);
+        if (!cfg.AnalyzeCollectPass && !(cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(cfg.TdmsRoot)))
+        {
+            Console.WriteLine($"回填完成: SN 补采 {snFixed} 条");
+            return 0;
+        }
 
         var today = DateTime.Now.Date;
         var from = today.AddDays(-(days - 1));
@@ -144,7 +149,60 @@ public static class BackfillTool
             }
         }
 
-        Console.WriteLine($"回填完成: 扫描 {scanned} 文件，新记录 {insertedRecords}，补测量值 {insertedMeasurements} 行，补失败项 {insertedFailItems} 行，耗时 {sw.Elapsed:hh\\:mm\\:ss}");
+        Console.WriteLine($"回填完成: 扫描 {scanned} 文件，新记录 {insertedRecords}，补测量值 {insertedMeasurements} 行，补失败项 {insertedFailItems} 行，SN 补采 {snFixed} 条，耗时 {sw.Elapsed:hh\\:mm\\:ss}");
         return 0;
+    }
+
+    /// <summary>SN 补采：对库中 sn 为空的记录重读其 XML 提取 DUT ID 回填（文件已清理/解析失败/无 SN 的跳过，仅写仍为空的行，幂等）。
+    /// 主程序启动时自动调用（幂等、无缺失秒回），CLI backfill 子命令亦可手动触发。</summary>
+    public static int BackfillMissingSn(Database db, Processor processor, CancellationToken ct = default)
+    {
+        var missing = db.ListRecordsMissingSn();
+        if (missing.Count == 0)
+        {
+            Console.WriteLine("SN 补采: 无缺失记录");
+            Logger.Info("[SN补账] 无缺失记录，跳过");
+            return 0;
+        }
+        Console.WriteLine($"SN 补采: 发现 {missing.Count} 条 SN 缺失记录，开始重读 XML 提取…");
+        Logger.Info($"[SN补账] 发现 {missing.Count} 条 SN 缺失记录，开始重读 XML 提取…");
+        int fixedCount = 0, skipped = 0, handled = 0;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var batch = new List<(long Id, string Sn)>();
+        foreach (var (id, xmlPath) in missing)
+        {
+            if (ct.IsCancellationRequested) break;
+            handled++;
+            try
+            {
+                if (!File.Exists(xmlPath)) { skipped++; continue; }
+                var rec = processor.ParseAndClassify(xmlPath);
+                if (rec == null || string.IsNullOrWhiteSpace(rec.Sn)) { skipped++; continue; }
+                batch.Add((id, rec.Sn));
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[回填] SN 补采失败 {xmlPath}: {ex.Message}");
+                skipped++;
+            }
+            // 每 500 条攒一批单事务提交（避免逐条独立事务每条一次 fsync），节流保持每 500 条一次
+            if (batch.Count >= 500)
+            {
+                fixedCount += db.UpdateMissingSnBatch(batch);
+                batch.Clear();
+                Thread.Sleep(50);
+            }
+            if (handled % 2000 == 0)
+            {
+                Console.WriteLine($"  SN 补采进度: {handled}/{missing.Count}，已补 {fixedCount}");
+                Logger.Info($"[SN补账] 进度: {handled}/{missing.Count}，已补 {fixedCount}");
+            }
+        }
+        // 不足一批的收尾提交
+        if (batch.Count > 0)
+            fixedCount += db.UpdateMissingSnBatch(batch);
+        Console.WriteLine($"SN 补采完成: 补 {fixedCount} 条，跳过 {skipped} 条，耗时 {sw.Elapsed:hh\\:mm\\:ss}");
+        Logger.Info($"[SN补账] 完成: 补 {fixedCount} 条，跳过 {skipped} 条，耗时 {sw.Elapsed:hh\\:mm\\:ss}");
+        return fixedCount;
     }
 }

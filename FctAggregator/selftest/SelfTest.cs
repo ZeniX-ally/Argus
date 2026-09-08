@@ -149,6 +149,32 @@ class SelfTest
         Check(pfOut != null && pfOut.ErrorCode == "xml_malformed", "域名1: 畸形 XML 分类码=xml_malformed");
 
         {
+            const string passXml = """
+                <BATCH TIMESTAMP="2026-09-01T10:00:00.000">
+                <FACTORY USER="Operator" TESTER="PEU_G49_FCT6"/>
+                <PANEL STATUS="Passed"><DUT ID="E3002781AFV75236898002K30500272">
+                <TEST NAME="P5V_LVX_LS" VALUE="5.0" HILIM="5.5" LOLIM="4.5" STATUS="Passed"/>
+                </DUT></PANEL>
+                </BATCH>
+                """;
+            var parser1 = new FctAggregator.Parsing.DefaultResultParser(FctAggregator.Parsing.ParserRuleSet.Default, "FCT1");
+            var passOut = parser1.Parse("D:\\Results\\Online\\E3002781\\20260901\\P_20260901105125969.xml", passXml);
+            Check(passOut != null && passOut.Result == "PASS" && passOut.Sn == "E3002781AFV75236898002K30500272",
+                  $"PASS 文件文件名无 SN 段时回落读 XML DUT ID (实得 {(passOut?.Sn ?? "null")})");
+            Check(passOut != null && passOut.Tester == "PEU_G49_FCT6" && passOut.Sn != null && passOut.Sn.Length >= 8,
+                  "PASS 文件 SN 回落不破坏 tester/其他字段提取");
+
+            var dbgOut = parser1.Parse("D:\\Results\\Online\\E3002781\\20260901\\P_20260901105125969.xml",
+                passXml.Replace("Operator", "debug"));
+            Check(dbgOut != null && dbgOut.Skipped && dbgOut.SkipReason == "debug",
+                  "debug 账号 PASS 文件不计数（跳过不入库）");
+
+            var fOut = parser1.Parse("D:\\Results\\Online\\E3002781\\20260901\\F_20260901105125969.xml", passXml);
+            Check(fOut != null && fOut.Result == "FAIL" && fOut.Sn == "E3002781AFV75236898002K30500272",
+                  "FAIL 文件 SN 回退 DUT ID 保持不变");
+        }
+
+        {
             var tmp2 = Path.Combine(Path.GetTempPath(), "fct_db2_" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(tmp2);
             var dbPath2 = Path.Combine(tmp2, "test.db");
@@ -165,6 +191,21 @@ class SelfTest
             db2.BatchInsert(new[] { new TestRecord{ StationId="FCT1", Model="E300", Category="Offline", TestDate=oldDate, Sn="SN-OLD", Result="FAIL", XmlPath="X:\\old.xml", FailReason="OLD", BatchTimestamp="2026-01-01 00:00:00"} });
             var del = db2.ArchiveColdData(90);
             Check(del==1, $"域2: 冷数据归档删除 1 条（实得 {del}）");
+            // 真归档断言：TSV 导出、行数对账、内容含被归档 SN、表内冷数据清零
+            var cutoffArc = DateTime.Today.AddDays(-90).ToString("yyyyMMdd");
+            var archFile = Path.Combine(tmp2, "archive", $"test_records_before_{cutoffArc}.tsv");
+            Check(File.Exists(archFile), "域2: 归档文件已生成(.tsv，真导出而非伪归档头)");
+            var archLines = File.ReadAllLines(archFile);
+            Check(archLines.Length == del + 2, $"域2: 归档文件行数 = 归档记录数+2（列头+元信息行，实得 {archLines.Length}）");
+            Check(File.ReadAllText(archFile).Contains("SN-OLD"), "域2: 归档文件内容包含被归档的 SN");
+            using (var cArc = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath2}"))
+            {
+                cArc.Open();
+                using var cmdArc = cArc.CreateCommand();
+                cmdArc.CommandText = "SELECT COUNT(*) FROM test_records WHERE test_date < @c";
+                cmdArc.Parameters.AddWithValue("@c", cutoffArc);
+                Check(Convert.ToInt32(cmdArc.ExecuteScalar()) == 0, "域2: 归档后表内冷数据为 0");
+            }
             try { Directory.Delete(tmp2, true); } catch { }
         }
 
@@ -1646,6 +1687,9 @@ class SelfTest
 
         RunMeshXmlWhitelistTests(work);
 
+        Console.WriteLine("\n【邻居离线扫描】IsPeerTimedOut 判定 / 周期扫描翻转离线并触发 PeerOffline/PeerOnline");
+        RunMeshOfflineScanTests(work);
+
         RunUpdateCheckerTests(work);
 
         Console.WriteLine("\n【P0 性能】AggDatabase 读写分离并发 / InsertBatch / 接收端组提交 / 计数缓存 / 每日维护 / RETURNING");
@@ -2377,6 +2421,46 @@ Argus 统一发布包  v{newer}
             Check(ghost == null, "幽灵记录不存在（防呆确认）");
         }
         try { Directory.Delete(root, true); } catch { }
+    }
+
+    static void RunMeshOfflineScanTests(string work)
+    {
+        var now = DateTime.Now;
+        Check(MeshReceiver.IsPeerTimedOut(now.AddSeconds(-300), online: true, now, timeoutSec: 90),
+              "IsPeerTimedOut：在线且 LastSeen 超过阈值 -> true（应翻转为离线）");
+        Check(!MeshReceiver.IsPeerTimedOut(now.AddSeconds(-10), online: true, now, timeoutSec: 90),
+              "IsPeerTimedOut：在线且 LastSeen 未超时 -> false");
+        Check(!MeshReceiver.IsPeerTimedOut(now.AddSeconds(-300), online: false, now, timeoutSec: 90),
+              "IsPeerTimedOut：已离线邻居不重复判超时 -> false（离线事件不重复触发）");
+
+        var root = Path.Combine(work, "meshoffline");
+        Directory.CreateDirectory(root);
+        using (var db = new AggDatabase(Path.Combine(root, "agg.db")))
+        {
+            db.Open();
+            var rx = new MeshReceiver(db, heartbeatTimeoutSec: 5, localMachine: "SELF");
+            string? offlineMachine = null;
+            var offlineAt = DateTime.MinValue;
+            rx.PeerOffline += (m, t) => { offlineMachine = m; offlineAt = t; };
+            bool onlineFired = false;
+            rx.PeerOnline += (m, t) => { if (m == "FCT-OUT") onlineFired = true; };
+            rx.StartOfflineScan();
+            try
+            {
+                rx.HandleHeartbeat(BuildHeartbeatJsonString("FCT-OUT", 1, 0));
+                Check(WaitUntil(() => rx.GetPeerStatuses().Any(p => p.Machine == "FCT-OUT" && p.Online), 3000),
+                      "离线扫描：心跳后邻居在线");
+                Check(WaitUntil(() => offlineMachine == "FCT-OUT" && offlineAt != DateTime.MinValue, 8000),
+                      "离线扫描：超过 heartbeatTimeoutSec 后周期扫描触发 PeerOffline");
+                Check(!rx.GetPeerStatuses().FirstOrDefault(p => p.Machine == "FCT-OUT")?.Online ?? false,
+                      "离线扫描：PeerView.Online 已翻转为 false（不再恒在线）");
+                onlineFired = false; // 复位首次上线标记，保证下方"恢复心跳触发 PeerOnline"断言有鉴别力
+                rx.HandleHeartbeat(BuildHeartbeatJsonString("FCT-OUT", 2, 0));
+                Check(WaitUntil(() => onlineFired, 3000), "离线扫描：离线邻居恢复心跳触发 PeerOnline");
+            }
+            finally { rx.StopOfflineScan(); }
+        }
+        TryDeleteDir(root);
     }
 
     static void RunP0PerformanceTests(string work)
@@ -3550,7 +3634,33 @@ Argus 统一发布包  v{newer}
                 new StringContent(BuildFailJsonCustom(101, "FCT1", "X:\\fct\\a.xml", "SN-101", "无 token"),
                     Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
             Check(rNoTokPush.StatusCode == HttpStatusCode.Forbidden, "POST /api/mesh/fail（无 token）-> 403");
+            var rNoTokRoot = _http.PostAsync($"{baseUrl}/",
+                new StringContent(BuildFailJsonCustom(100, "FCT9", "X:\\fct\\n.xml", "SN-100", "根路径无 token"),
+                    Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+            Check(rNoTokRoot.StatusCode == HttpStatusCode.Forbidden, "POST /（无 token：写方法不走静态豁免）-> 403");
             Check(WaitUntil(() => db.FailCount("") == 0, 3000), "聚合鉴权：403 的推送未入库（FailCount=0）");
+
+            // 设置保存角色门禁：token 空串=未修改不触发 admin（engineer 可保存常规项）；token 值变更需 admin
+            db.UpsertUser("sengineer", PasswordHasher.Hash("pwd"), "engineer");
+            db.UpsertUser("sviewer2", PasswordHasher.Hash("pwd"), "viewer");
+            var engineerTok = db.GetUserByName("sengineer")!.Token;
+            var viewerTok2 = db.GetUserByName("sviewer2")!.Token;
+            var rSetEng = HttpPostWithToken($"{baseUrl}/api/settings", engineerTok, "{\"agg_token\":\"\"}");
+            Check(rSetEng.StatusCode == HttpStatusCode.OK,
+                  $"设置门禁：engineer 保存（token 空串=未修改）-> 200（实得 {rSetEng.StatusCode}）");
+            var rSetViewer = HttpPostWithToken($"{baseUrl}/api/settings", viewerTok2, "{\"agg_token\":\"\"}");
+            Check(rSetViewer.StatusCode == HttpStatusCode.Forbidden,
+                  $"设置门禁：viewer 保存设置 -> 403（实得 {rSetViewer.StatusCode}）");
+            var rSetTok = HttpPostWithToken($"{baseUrl}/api/settings", engineerTok, "{\"agg_token\":\"changed-token\"}");
+            Check(rSetTok.StatusCode == HttpStatusCode.Forbidden,
+                  $"设置门禁：engineer 修改 agg_token 值 -> 403（需 admin，实得 {rSetTok.StatusCode}）");
+            var rSetAdmin = HttpPostWithToken($"{baseUrl}/api/settings", "secret-token", "{\"agg_token\":\"changed-token\"}");
+            Check(rSetAdmin.StatusCode == HttpStatusCode.OK,
+                  $"设置门禁：admin 修改 agg_token 值 -> 200（实得 {rSetAdmin.StatusCode}）");
+            // admin 改 token 会即时生效，立即改回，避免影响本组后续用 secret-token 的断言
+            var rSetBack = HttpPostWithToken($"{baseUrl}/api/settings", "changed-token", "{\"agg_token\":\"secret-token\"}");
+            Check(rSetBack.StatusCode == HttpStatusCode.OK,
+                  $"设置门禁：admin 恢复原 token -> 200（实得 {rSetBack.StatusCode}）");
 
             using (var bad = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/machines"))
             {
@@ -3672,6 +3782,17 @@ Argus 统一发布包  v{newer}
             if (rXml.StatusCode == HttpStatusCode.OK)
                 Check(rXml.Content.ReadAsStringAsync().GetAwaiter().GetResult() == xmlPayload,
                       "GET /api/file?id=：内容与上送的 xml_content 一致");
+
+            using (var okRoot = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/"))
+            {
+                okRoot.Headers.Add("X-Agg-Token", "secret-token");
+                okRoot.Content = new StringContent(
+                    BuildFailJsonCustom(202, "FCT3", "X:\\fct\\root202.xml", "SN-202", "根路径带 token"),
+                    Encoding.UTF8, "application/json");
+                var rOkRoot = _http.SendAsync(okRoot).GetAwaiter().GetResult();
+                Check(rOkRoot.StatusCode == HttpStatusCode.OK, "POST /（正确 token：写方法过鉴权后仍可推送）-> 200");
+            }
+            Check(WaitUntil(() => db.FailCount("") == 6, 10000), "POST / 带 token：fail 已入库（FailCount=6）");
 
             var rSet = _http.GetAsync($"{baseUrl}/api/settings?token=secret-token").GetAwaiter().GetResult();
             Check(rSet.StatusCode == HttpStatusCode.OK, "GET /api/settings（带 token）-> 200");
@@ -3982,6 +4103,25 @@ Argus 统一发布包  v{newer}
             finally
             {
                 try { if (backup2 != null) File.WriteAllText(cfgFile, backup2); else File.Delete(cfgFile); } catch { }
+            }
+        }
+
+        {
+            // 单键类型错误不再让整份配置静默回落默认（GetStringSafe 安全化）
+            var cfgFile6 = Path.Combine(AppConfig.BaseDir, "config.json");
+            var backup6 = File.Exists(cfgFile6) ? File.ReadAllText(cfgFile6) : null;
+            try
+            {
+                File.WriteAllText(cfgFile6, "{\"results_root\":123,\"station_id\":\"ST-SELFTEST\",\"todo_scan_days\":45}");
+                var loaded6 = AppConfig.Load();
+                Check(loaded6.StationId == "ST-SELFTEST" && loaded6.TodoScanDays == 45,
+                    "Config results_root 类型错误(数字)时其余正常键仍生效（不抛异常整份回落）");
+                Check(loaded6.ResultsRoot == new AppConfig().ResultsRoot,
+                    $"Config results_root 类型错误时该键回落默认值（实得 {loaded6.ResultsRoot}）");
+            }
+            finally
+            {
+                try { if (backup6 != null) File.WriteAllText(cfgFile6, backup6); else File.Delete(cfgFile6); } catch { }
             }
         }
 
@@ -4490,6 +4630,30 @@ Argus 统一发布包  v{newer}
             }
         }
 
+        // ── UI 稳定性: 主页大屏空数据口径与自绘控件离屏绘制 ──
+        {
+            var emptySnap = new StatsSnapshot();
+            Check(emptySnap.TodayPass + emptySnap.TodayFail == 0 && emptySnap.TodayYield == 0.0,
+                  "UI 口径: 空数据 StatsSnapshot（TodayPass+TodayFail==0，KPI 良率按 — 显示）");
+            bool paintOk = false;
+            try
+            {
+                using var gauge = new TodayGaugePanel { Bounds = new Rectangle(0, 0, 320, 240) };
+                gauge.SetData(0, 0, 0);
+                using var bmp = new Bitmap(320, 240);
+                using var g = Graphics.FromImage(bmp);
+                var onPaint = typeof(Control).GetMethod("OnPaint",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                onPaint!.Invoke(gauge, new object[] { new PaintEventArgs(g, new Rectangle(0, 0, 320, 240)) });
+                paintOk = true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"    (离屏绘制异常: {ex.GetType().Name}: {ex.Message})");
+            }
+            Check(paintOk, "UI 稳定性: TodayGaugePanel 空数据 OnPaint 离屏绘制无异常");
+        }
+
         {
             Check(new AppConfig().AutoUpdate, "无感热升级: config auto_update 缺省 true（自动暂存+自动重启）");
             Check(UpdateChecker.ParseZipVersion("Argus-v3.26.0-update.zip") == new Version(3, 26, 0),
@@ -4656,6 +4820,86 @@ Argus 统一发布包  v{newer}
                         "FetchMonthlyStats: 上月数据不混入当月（前缀隔离）");
                 }
                 finally { try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(monthDbPath); } catch { } }
+            }
+
+            {
+                var reDbPath = Path.Combine(Path.GetTempPath(), "argus_monthly_re_" + DateTime.Now.Ticks + ".db");
+                try
+                {
+                    var rdb = new Database(reDbPath);
+                    var ym = DateTime.Now.ToString("yyyyMM");
+                    rdb.BatchInsert(new[]
+                    {
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "05", Result = "FAIL", Sn = "SN-RE", XmlPath = "re1.xml", FailReason = "KL30" },
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "05", Result = "FAIL", Sn = "SN-RE", XmlPath = "re2.xml", FailReason = "KL30" },
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "06", Result = "PASS", Sn = "SN-RE", XmlPath = "re3.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "05", Result = "PASS", Sn = "SN-RE2", XmlPath = "re4.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "06", Result = "FAIL", Sn = "SN-RE2", XmlPath = "re5.xml", FailReason = "KL30" },
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "06", Result = "PASS", Sn = "", XmlPath = "re6.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = ym + "06", Result = "PASS", Sn = "  ", XmlPath = "re7.xml" },
+                    });
+                    var mRe = rdb.FetchMonthlyStats("", ym);
+                    Check(mRe.Pass == 3 && mRe.Fail == 1 && mRe.Interrupted == 0,
+                        $"FetchMonthlyStats: SN 终检口径重测去重 (F→F→P 记 1 PASS、P→F 记 1 FAIL、空 SN 按 xml_path 兜底; 实得 P={mRe.Pass},F={mRe.Fail},I={mRe.Interrupted})");
+                    Check(mRe.TodayProductCount == 4,
+                        $"FetchMonthlyStats: 当月产品数=去重后 4 台 (实得 {mRe.TodayProductCount})");
+                }
+                finally { try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(reDbPath); } catch { } }
+            }
+
+            {
+                // 产品数口径统一断言：空 SN 记录按 xml_path 兜底去重（与月度口径一致），不再被空串坍缩/NULL 丢失
+                var snDbPath = Path.Combine(Path.GetTempPath(), "argus_sn_fallback_" + DateTime.Now.Ticks + ".db");
+                try
+                {
+                    var sdb = new Database(snDbPath);
+                    var dStr = DateTime.Now.ToString("yyyyMMdd");
+                    sdb.BatchInsert(new[]
+                    {
+                        new TestRecord { StationId = "FCT1", TestDate = dStr, Result = "PASS", Sn = "SN-A", XmlPath = "p1.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = dStr, Result = "PASS", Sn = "", XmlPath = "p2.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = dStr, Result = "PASS", Sn = "   ", XmlPath = "p3.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = dStr, Result = "PASS", Sn = null, XmlPath = "p4.xml" },
+                    });
+                    var gStats = sdb.FetchGlobalStats("");
+                    Check(gStats.ProductCount == 4,
+                        $"FetchGlobalStats: 产品数空 SN 按 xml_path 兜底去重=4（旧口径空串坍缩为 1 且 NULL 不计；实得 {gStats.ProductCount}）");
+                    var dStats = sdb.FetchDailyStats("", dStr);
+                    Check(dStats.TodayProductCount == 4,
+                        $"FetchDailyStats: 今日产品数空 SN 按 xml_path 兜底去重=4（与月度口径一致；实得 {dStats.TodayProductCount}）");
+                    Check(gStats.Pass == 4 && dStats.Pass == 4,
+                        $"PASS 记录口径不变仍按条数计（实得 全局={gStats.Pass}, 今日={dStats.Pass}）");
+                }
+                finally { try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(snDbPath); } catch { } }
+            }
+
+            {
+                // SN 批量回填断言：单事务批量写，仅填仍为空的行，返回受影响行数，幂等
+                var bfDbPath = Path.Combine(Path.GetTempPath(), "argus_sn_batch_" + DateTime.Now.Ticks + ".db");
+                try
+                {
+                    var bdb = new Database(bfDbPath);
+                    bdb.BatchInsert(new[]
+                    {
+                        new TestRecord { StationId = "FCT1", TestDate = "20260101", Result = "PASS", Sn = "", XmlPath = "b1.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = "20260101", Result = "PASS", Sn = null, XmlPath = "b2.xml" },
+                        new TestRecord { StationId = "FCT1", TestDate = "20260101", Result = "PASS", Sn = "KEEP", XmlPath = "b3.xml" },
+                    });
+                    var ids = new List<long>();
+                    using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={bfDbPath}"))
+                    {
+                        c.Open();
+                        using var cmd = c.CreateCommand();
+                        cmd.CommandText = "SELECT id FROM test_records WHERE xml_path IN ('b1.xml','b2.xml','b3.xml') ORDER BY xml_path";
+                        using var r = cmd.ExecuteReader();
+                        while (r.Read()) ids.Add(r.GetInt64(0));
+                    }
+                    var n1 = bdb.UpdateMissingSnBatch(new List<(long, string)> { (ids[0], "SN-B1"), (ids[1], "SN-B2"), (ids[2], "SN-SKIP") });
+                    Check(n1 == 2, $"UpdateMissingSnBatch: 仅填仍为空的行受影响 2（已有 SN 的行跳过；实得 {n1}）");
+                    var n2 = bdb.UpdateMissingSnBatch(new List<(long, string)> { (ids[0], "SN-AGAIN") });
+                    Check(n2 == 0, $"UpdateMissingSnBatch: 幂等重放不再改写（实得 {n2}）");
+                }
+                finally { try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(bfDbPath); } catch { } }
             }
 
             try { Directory.Delete(dbDir, true); } catch { }
@@ -5336,6 +5580,14 @@ Argus 统一发布包  v{newer}
                 int rc2 = BackfillTool.Run(Array.Empty<string>(), dbB6Path);
                 Check(rc2 == 0 && RowCount(dbB6Path, "test_records") == 2 && RowCount(dbB6Path, "test_measurements") == 4,
                       "规格06: backfill 二跑幂等（xml_path UNIQUE + 测量 UNIQUE 双防线）");
+                using (var csn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbB6Path}"))
+                {
+                    csn.Open();
+                    using var cmdSn = csn.CreateCommand();
+                    cmdSn.CommandText = "SELECT COUNT(*) FROM test_records WHERE sn = 'E3002781A1'";
+                    var snCnt = Convert.ToInt64(cmdSn.ExecuteScalar());
+                    Check(snCnt == 2, $"规格06: SN 补采覆盖存量与新增空 SN 记录 (实得 {snCnt})");
+                }
                 Check(dbB6.GetMeta(BackfillTool.MetaWatermark) == DateTime.Now.Date.ToString("yyyy-MM-dd"),
                       $"规格06: 水位落盘 backfill_last_day（实得 {dbB6.GetMeta(BackfillTool.MetaWatermark)}）");
 
@@ -5780,6 +6032,41 @@ Argus 统一发布包  v{newer}
             try { Directory.Delete(tdmsDbDir, true); } catch { }
             try { Directory.Delete(tdmsRootDir, true); } catch { }
             Console.WriteLine("[规格06期3] TDMS 特征化完成");
+        }
+
+        // ============ 数据采集链路修复：重试队列落盘 / 解析失败暂时性与永久性分类 ============
+        {
+            Console.WriteLine("\n【采集链路】重试队列持久化纯函数 …");
+            var rqItems = new List<(string Path, int Attempt)>
+            {
+                (@"C:\res\Online\E3002781\P_UNIT_SN001_0001.xml", 0),
+                (@"C:\res\Offline\E3002781\F_UNIT_SN002_0001.xml", 2),
+            };
+            var rqBack = Engine.DeserializeRetryQueue(Engine.SerializeRetryQueue(rqItems));
+            Check(rqBack.Count == 2 && rqBack[0].Path == rqItems[0].Path && rqBack[0].Attempt == 0
+                  && rqBack[1].Path == rqItems[1].Path && rqBack[1].Attempt == 2,
+                  "采集链路: 重试队列 序列化→反序列化 往返一致（path/attempt 保留）");
+            Check(Engine.SerializeRetryQueue(new List<(string Path, int Attempt)>()) == "[]",
+                  "采集链路: 空重试队列序列化为 []");
+            Check(Engine.DeserializeRetryQueue("{坏JSON!!").Count == 0 && Engine.DeserializeRetryQueue("").Count == 0,
+                  "采集链路: 坏 JSON/空串反序列化返回空列表不抛异常");
+
+            Console.WriteLine("【采集链路】解析失败暂时性/永久性分类 …");
+            var clDir = Path.Combine(work, "clres", "Online", "E3002781", "20260905");
+            Directory.CreateDirectory(clDir);
+            var clProc = new Processor(new AppConfig { StationId = "FCT1" }, "FCT1", FctAggregator.Parsing.ParserRegistry.Instance, null);
+            var halfXml = Path.Combine(clDir, "F_UNIT_SN901_20260905130000_0001.xml");
+            File.WriteAllText(halfXml, "<FACTORY USER=\"op1\"><PANEL STATUS="); // 半成品 XML
+            var recHalf = clProc.ParseAndClassify(halfXml, out var transientHalf);
+            Check(recHalf == null && transientHalf, "采集链路: 半成品 XML 解析失败为暂时性（引擎将入重试队列）");
+            var skipXml = Path.Combine(clDir, "X_UNIT_SN902_20260905130100_0001.xml");
+            File.WriteAllText(skipXml, "<FACTORY USER=\"op1\"/>"); // 未知前缀
+            var recSkip = clProc.ParseAndClassify(skipXml, out var transientSkip);
+            Check(recSkip == null && !transientSkip, "采集链路: 未知前缀解析失败为永久性（不重试）");
+            var recGone = clProc.ParseAndClassify(Path.Combine(clDir, "F_UNIT_SN903_20260905130200_0001.xml"), out var transientGone);
+            Check(recGone == null && transientGone, "采集链路: 文件读取失败为暂时性（占用场景可重试）");
+            try { Directory.Delete(Path.Combine(work, "clres"), true); } catch { }
+            Console.WriteLine("[采集链路] 持久化与分类组完成");
         }
     }
 

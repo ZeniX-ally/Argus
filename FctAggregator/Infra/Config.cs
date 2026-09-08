@@ -111,6 +111,11 @@ public class AppConfig
     public static string BaseDir =>
         AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
 
+    /// <summary>安全读取字符串键：JSON 值不是字符串（如数字/布尔）时返回 null（保留该键默认值），
+    /// 避免单个键类型错误抛异常导致整份配置静默回落默认。</summary>
+    private static string? GetStringSafe(JsonElement v)
+        => v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
     public static AppConfig Load()
     {
         var path = Path.Combine(BaseDir, "config.json");
@@ -122,12 +127,12 @@ public class AppConfig
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
                 var cfg = new AppConfig();
-                if (root.TryGetProperty("station_id", out var v)) cfg.StationId = v.GetString() ?? "";
-                if (root.TryGetProperty("results_root", out v)) cfg.ResultsRoot = v.GetString() ?? cfg.ResultsRoot;
-                if (root.TryGetProperty("fct_ini_path", out v)) cfg.FctIniPath = v.GetString() ?? cfg.FctIniPath;
-                if (root.TryGetProperty("webhook_url", out v)) cfg.WebhookUrl = v.GetString() ?? "";
+                if (root.TryGetProperty("station_id", out var v)) cfg.StationId = GetStringSafe(v) ?? "";
+                if (root.TryGetProperty("results_root", out v)) cfg.ResultsRoot = GetStringSafe(v) ?? cfg.ResultsRoot;
+                if (root.TryGetProperty("fct_ini_path", out v)) cfg.FctIniPath = GetStringSafe(v) ?? cfg.FctIniPath;
+                if (root.TryGetProperty("webhook_url", out v)) cfg.WebhookUrl = GetStringSafe(v) ?? "";
                 if (root.TryGetProperty("skip_historical_scan", out v)) cfg.SkipHistoricalScan = v.ValueKind == JsonValueKind.True;
-                if (root.TryGetProperty("log_level", out v)) cfg.LogLevel = v.GetString() ?? "INFO";
+                if (root.TryGetProperty("log_level", out v)) cfg.LogLevel = GetStringSafe(v) ?? "INFO";
                 if (root.TryGetProperty("desktop_notify", out v)) cfg.DesktopNotify = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("notify_min_interval_sec", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var sec) && sec >= 0)
@@ -136,23 +141,23 @@ public class AppConfig
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var days) && days >= 1)
                     cfg.TodoScanDays = days;
                 if (root.TryGetProperty("agg_enabled", out v)) cfg.AggEnabled = v.ValueKind == JsonValueKind.True;
-                if (root.TryGetProperty("agg_share_root", out v)) cfg.AggShareRoot = v.GetString() ?? "";
+                if (root.TryGetProperty("agg_share_root", out v)) cfg.AggShareRoot = GetStringSafe(v) ?? "";
                 if (root.TryGetProperty("agg_transport", out v))
                 {
-                    var t = (v.GetString() ?? "").Trim().ToLowerInvariant();
+                    var t = (GetStringSafe(v) ?? "").Trim().ToLowerInvariant();
                     cfg.AggTransport = t == "http" ? "http" : "smb";
                 }
-                if (root.TryGetProperty("agg_http_url", out v)) cfg.AggHttpUrl = v.GetString() ?? "";
+                if (root.TryGetProperty("agg_http_url", out v)) cfg.AggHttpUrl = GetStringSafe(v) ?? "";
                 cfg.AggHttpUrl = (cfg.AggHttpUrl ?? "").Trim();
                 if (cfg.AggHttpUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
                     Logger.Warning($"[安全] agg_http_url 使用明文http，token将明文传输，建议改用https: {cfg.AggHttpUrl}");
                 if (root.TryGetProperty("agg_http_port", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var port) && port >= 1 && port <= 65535)
                     cfg.AggHttpPort = port;
-                if (root.TryGetProperty("agg_token", out v)) cfg.AggToken = v.GetString() ?? "";
+                if (root.TryGetProperty("agg_token", out v)) cfg.AggToken = GetStringSafe(v) ?? "";
                 cfg.AggToken = (cfg.AggToken ?? "").Trim();
-                if (root.TryGetProperty("agg_webhook_url", out v)) cfg.AggWebhookUrl = v.GetString() ?? "";
-                if (root.TryGetProperty("feishu_banner_img_key", out v)) cfg.FeishuBannerImgKey = (v.GetString() ?? "").Trim();
+                if (root.TryGetProperty("agg_webhook_url", out v)) cfg.AggWebhookUrl = GetStringSafe(v) ?? "";
+                if (root.TryGetProperty("feishu_banner_img_key", out v)) cfg.FeishuBannerImgKey = (GetStringSafe(v) ?? "").Trim();
                 if (root.TryGetProperty("agg_summary_minutes", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var m) && m >= 1)
                     cfg.AggSummaryMinutes = m;
@@ -160,7 +165,7 @@ public class AppConfig
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var fam) && fam >= 1)
                     cfg.AggFailAlertMinutes = fam;
                 if (root.TryGetProperty("parsers_path", out v) && v.ValueKind == JsonValueKind.String)
-                    cfg.ParsersPath = v.GetString() ?? "parsers.json";
+                    cfg.ParsersPath = GetStringSafe(v) ?? "parsers.json";
                 if (root.TryGetProperty("todo_spec_merge", out v) &&
                     (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False))
                     cfg.TodoSpecMerge = v.GetBoolean();
@@ -197,7 +202,7 @@ public class AppConfig
                 if (root.TryGetProperty("card_show_queue", out v)) cfg.CardShowQueue = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("card_sort", out v) && v.ValueKind == JsonValueKind.String)
                 {
-                    var s = (v.GetString() ?? "").Trim();
+                    var s = (GetStringSafe(v) ?? "").Trim();
                     if (s == "fail" || s == "online" || s == "name") cfg.CardSort = s;
                 }
                 if (root.TryGetProperty("card_compact", out v)) cfg.CardCompact = v.ValueKind == JsonValueKind.True;
@@ -225,7 +230,7 @@ public class AppConfig
                     cfg.PredictAccuracyRetainDays = par;
                 if (root.TryGetProperty("yield_seasonality_enabled", out v)) cfg.YieldSeasonalityEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("yield_seasonality_mode", out v) && v.ValueKind == JsonValueKind.String)
-                    cfg.YieldSeasonalityMode = v.GetString() ?? "hourly";
+                    cfg.YieldSeasonalityMode = GetStringSafe(v) ?? "hourly";
                 if (root.TryGetProperty("yield_seasonality_epsilon", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var yse) && yse > 0)
                     cfg.YieldSeasonalityEpsilon = yse;
@@ -264,7 +269,7 @@ public class AppConfig
                 if (root.TryGetProperty("learn_fail_merge_enabled", out v)) cfg.LearnFailMergeEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_fail_merge_level", out v) && v.ValueKind == JsonValueKind.String)
                 {
-                    var lvl = (v.GetString() ?? "signal").Trim().ToLowerInvariant();
+                    var lvl = (GetStringSafe(v) ?? "signal").Trim().ToLowerInvariant();
                     if (lvl == "off" || lvl == "signal" || lvl == "section") cfg.LearnFailMergeLevel = lvl;
                 }
                 if (root.TryGetProperty("learn_baseline_window_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var lbw) && lbw >= 1) cfg.LearnBaselineWindowDays = lbw;
@@ -287,7 +292,7 @@ public class AppConfig
                 if (root.TryGetProperty("analyze_measure_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var amr) && amr >= 1) cfg.AnalyzeMeasureRetentionDays = amr;
                 if (root.TryGetProperty("analyze_failitem_retention_days", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var afi) && afi >= 1) cfg.AnalyzeFailItemRetentionDays = afi;
                 if (root.TryGetProperty("analyze_tdms_enabled", out v)) cfg.AnalyzeTdmsEnabled = v.ValueKind == JsonValueKind.True;
-                if (root.TryGetProperty("tdms_root", out v)) cfg.TdmsRoot = (v.GetString() ?? "").Trim();
+                if (root.TryGetProperty("tdms_root", out v)) cfg.TdmsRoot = (GetStringSafe(v) ?? "").Trim();
                 if (root.TryGetProperty("analyze_tdms_max_kb", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var atk) && atk >= 1) cfg.AnalyzeTdmsMaxKb = atk;
                 if (root.TryGetProperty("analyze_tdms_max_channels", out v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var atc) && atc >= 1) cfg.AnalyzeTdmsMaxChannels = atc;
                 if (root.TryGetProperty("analyze_fail_attr_enabled", out v)) cfg.AnalyzeFailAttrEnabled = v.ValueKind != JsonValueKind.False;

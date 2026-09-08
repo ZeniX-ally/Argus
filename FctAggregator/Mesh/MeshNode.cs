@@ -66,6 +66,7 @@ public sealed class MeshNode : IDisposable
     {
         _aggDb.Open();
         Pusher.Init();
+        Receiver.StartOfflineScan();
         TodoSync.Start();
         Gossiper.Start();
         _maintenance = DbMaintenance.StartFor(_cfg, _aggDb);
@@ -75,6 +76,7 @@ public sealed class MeshNode : IDisposable
 
     public void Stop()
     {
+        Receiver.StopOfflineScan();
         _maintenance?.Stop();
         Gossiper.Stop();
         TodoSync.Stop();

@@ -22,6 +22,59 @@ public sealed class MeshReceiver
         _localMachine = localMachine;
     }
 
+    private System.Threading.Timer? _offlineScanTimer;
+
+    // 启动周期性邻居离线扫描（幂等）：间隔取心跳超时的一半与 30 秒的较小者
+    public void StartOfflineScan()
+    {
+        if (_offlineScanTimer != null) return;
+        var intervalMs = Math.Min(_heartbeatTimeoutSec * 1000 / 2, 30_000);
+        _offlineScanTimer = new System.Threading.Timer(_ => ScanOfflinePeers(), null, intervalMs, intervalMs);
+    }
+
+    // 停止离线扫描并释放定时器（随 MeshNode.Stop 生命周期调用）
+    public void StopOfflineScan()
+    {
+        var t = _offlineScanTimer;
+        _offlineScanTimer = null;
+        t?.Dispose();
+    }
+
+    private void ScanOfflinePeers()
+    {
+        List<(string Machine, DateTime LastSeen)> expired = new();
+        lock (_lock)
+        {
+            var now = DateTime.Now;
+            foreach (var st in _peers.Values)
+            {
+                if (IsPeerTimedOut(st.LastSeen, st.Online, now, _heartbeatTimeoutSec))
+                {
+                    st.Online = false;
+                    expired.Add((st.Machine, st.LastSeen));
+                }
+            }
+        }
+        // 事件回调放到锁外触发，避免锁内做 IO（离线飞书告警等）
+        foreach (var (machine, lastSeen) in expired)
+        {
+            // TOCTOU 复查：快照到触发之间该邻居若已恢复心跳（重新在线），跳过过期离线事件，防止虚假离线告警
+            bool stillOffline;
+            lock (_lock)
+            {
+                stillOffline = _peers.TryGetValue(machine, out var cur) && !cur.Online;
+            }
+            if (!stillOffline) continue;
+            Logger.Info($"[Mesh接收] 离线扫描：邻居 {machine} 超过 {_heartbeatTimeoutSec}s 无心跳，判定离线");
+            FirePeerOffline(machine, lastSeen);
+        }
+        if (expired.Count > 0) TryFireChanged();
+    }
+
+    // 判定邻居是否心跳超时（应翻转为离线）：仅对当前在线的邻居判定，避免对已离线邻居重复触发事件
+    internal static bool IsPeerTimedOut(DateTime lastSeen, bool online, DateTime now, int timeoutSec)
+        => online && (now - lastSeen).TotalSeconds > timeoutSec;
+
     public void HandleFail(string json)
     {
         long seq;
@@ -167,7 +220,7 @@ public sealed class MeshReceiver
                     changed = true;
                 }
                 st.LastSeen = DateTime.Now;
-                var online = (DateTime.Now - st.LastSeen).TotalSeconds <= _heartbeatTimeoutSec;
+                var online = !IsPeerTimedOut(st.LastSeen, st.Online, DateTime.Now, _heartbeatTimeoutSec);
                 if (online != st.Online) { st.Online = online; changed = true; if (online) FirePeerOnline(row.Machine, st.LastSeen); else FirePeerOffline(row.Machine, st.LastSeen); }
             }
             if (changed) TryFireChanged();
@@ -304,7 +357,7 @@ public sealed class MeshReceiver
                 st.LastHeartbeat = ts;
                 st.LastSeq = lastSeq;
                 st.Queued = queued;
-                var online = (DateTime.Now - st.LastSeen).TotalSeconds <= _heartbeatTimeoutSec;
+                var online = !IsPeerTimedOut(st.LastSeen, st.Online, DateTime.Now, _heartbeatTimeoutSec);
                 if (online != st.Online)
                 {
                     st.Online = online; changed = true;
@@ -460,7 +513,7 @@ public sealed class MeshReceiver
                 changed = true;
             }
             st.LastSeen = DateTime.Now;
-            var online = (DateTime.Now - st.LastSeen).TotalSeconds <= _heartbeatTimeoutSec;
+            var online = !IsPeerTimedOut(st.LastSeen, st.Online, DateTime.Now, _heartbeatTimeoutSec);
             if (online != st.Online) { st.Online = online; changed = true; }
         }
         return changed;

@@ -381,11 +381,25 @@ public class MainForm : Form
         UpdateChips();
         UpdateProgress();
         UpdateKpi();
-        if (_page == 0 && (_tickCount % 3 == 1)) UpdateDashboardWidgets();
+        if (_page == 0) UpdateDashboardWidgets();
         if (_tickCount % 10 == 1) UpdateTodoBadge();
         UpdateStatusBar();
         if (_tickCount % 5 == 1) UpdateAggLinkUi();
+        if (_tickCount % 5 == 1) RefreshLiveStats();
         AutoRefreshMaintenance();
+    }
+
+    /// <summary>看板实时性兜底：后台轻量重算数据库统计（不含磁盘扫描），跨日归零与无入库场景下 KPI 也保持与库内一致。</summary>
+    private void RefreshLiveStats()
+    {
+        if (_engine?.Db == null) return;
+        var db = _engine.Db;
+        var sid = _engine.ResolvedStationId;
+        Task.Run(() =>
+        {
+            try { AppState.RefreshDbStats(db, sid); }
+            catch (Exception ex) { Logger.Warning($"[实时刷新] 统计刷新失败: {ex.Message}"); }
+        });
     }
 
     private void UpdateAggLinkUi()
@@ -478,26 +492,52 @@ public class MainForm : Form
         SetKpi("today_product", s.TodayProductCount.ToString("N0"), $"累计 {s.ProductCount:N0}");
         SetKpi("today_pass", s.TodayPass.ToString("N0"));
         SetKpi("today_fail", s.TodayFail.ToString("N0"));
-        SetKpi("today_yield", $"{s.TodayYield:F1}%");
+        // 空数据时与良率仪表同口径：显示 "—" 而非误导性的 0.0%
+        SetKpi("today_yield", s.TodayPass + s.TodayFail == 0 ? "—" : $"{s.TodayYield:F1}%");
         SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
 
         _todayGauge?.SetData(s.MonthPass, s.MonthFail, s.MonthInterrupted);
     }
+
+    private volatile bool _dashUpdating = false;
 
     private void UpdateDashboardWidgets()
     {
         try
         {
             if (_engine?.Db == null) return;
+            if (_dashUpdating) return; // 上一轮查询未完成时跳过本轮，防止任务堆积
+            _dashUpdating = true;
+            var db = _engine.Db;
             string todayYmd = DateTime.Now.ToString("yyyyMMdd");
-            var hourly = _engine.Db.FetchDailyHourlyStats(string.Empty, todayYmd);
-            _hourlyChart?.SetData(hourly);
-
-            var topFails = _engine.Db.FetchDailyTopFails(string.Empty, todayYmd, 5);
-            _topFailRank?.SetData(topFails);
-
-            var alerts = _engine.Db.FetchRecentFailAlerts(string.Empty, 10);
-            _liveAlert?.SetData(alerts);
+            Task.Run(() =>
+            {
+                try
+                {
+                    var hourly = db.FetchDailyHourlyStats(string.Empty, todayYmd);
+                    var topFails = db.FetchDailyTopFails(string.Empty, todayYmd, 5);
+                    var alerts = db.FetchRecentFailAlerts(string.Empty, 10);
+                    BeginInvoke(() =>
+                    {
+                        // 回调在 UI 线程执行，窗体关闭竞态时控件可能已 Dispose，兜底防未处理异常
+                        try
+                        {
+                            _hourlyChart?.SetData(hourly);
+                            _topFailRank?.SetData(topFails);
+                            _liveAlert?.SetData(alerts);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warning($"主页大屏刷新回调异常: {ex.Message}");
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"主页大屏组件更新失败: {ex.Message}");
+                }
+                finally { _dashUpdating = false; }
+            });
         }
         catch (Exception ex)
         {
