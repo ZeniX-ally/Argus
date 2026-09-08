@@ -782,6 +782,9 @@ public class WebAggServer : IDisposable
     }
     private void ServeConfigRollback(HttpListenerContext ctx)
     {
+        // 安全加固（审计 C3）：回滚会整份覆盖 config.json（含 agg_token/webhook），属 admin 高危操作；
+        // viewer 借此可把疑似泄露的旧 token 换回，必须门禁
+        if (!RequireRole(ctx, "admin")) return;
         string body; try { body = ReadBody(ctx.Request); } catch (BodyTooLargeException) { ctx.Response.StatusCode=413; ctx.Response.KeepAlive=false; return; }
         try
         {

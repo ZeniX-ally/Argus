@@ -2375,6 +2375,44 @@ Argus 统一发布包  v{newer}
         using (var fs = File.Create(curZip)) { fs.Write(new byte[] { 0x50, 0x4B, 0x05, 0x06 }, 0, 4); }
         Check(UpdateChecker.Scan(updDir, db) == null, "与当前版本相同的包不触发（已提示的仍被过滤）");
 
+        // 审计 C4 回归：换装语义——未锁定直接覆盖、被本进程加载锁定的文件先改名 *.old 让位再覆盖
+        {
+            var stage = Path.Combine(root, "staging_sim");
+            var base_ = Path.Combine(root, "base_sim");
+            Directory.CreateDirectory(Path.Combine(stage, "sub"));
+            Directory.CreateDirectory(base_);
+            File.WriteAllText(Path.Combine(stage, "free.txt"), "NEW-FREE");
+            File.WriteAllText(Path.Combine(stage, "sub", "nested.txt"), "NEW-NESTED");
+            File.WriteAllText(Path.Combine(stage, "locked.dll"), "NEW-LOCKED-DLL");
+            File.WriteAllText(Path.Combine(stage, "config.json"), "PKG-CONFIG");
+            File.WriteAllText(Path.Combine(base_, "free.txt"), "OLD-FREE");
+            File.WriteAllText(Path.Combine(base_, "locked.dll"), "OLD-LOCKED");
+            File.WriteAllText(Path.Combine(base_, "config.json"), "SITE-CONFIG");
+            // 模拟已加载映像：持有读+删除共享（镜像加载器语义）——Copy 会撞锁、Move 允许
+            using (var hold = new FileStream(Path.Combine(base_, "locked.dll"), FileMode.Open,
+                FileAccess.Read, FileShare.Read | FileShare.Delete))
+            {
+                UpdateChecker.SwapIn(stage, base_);
+                Check(File.ReadAllText(Path.Combine(base_, "free.txt")) == "NEW-FREE",
+                      "换装：未锁定文件直接覆盖");
+                Check(File.ReadAllText(Path.Combine(base_, "sub", "nested.txt")) == "NEW-NESTED",
+                      "换装：子目录结构镜像创建");
+                Check(File.ReadAllText(Path.Combine(base_, "locked.dll")) == "NEW-LOCKED-DLL",
+                      "换装：被锁定文件改名让位后新内容落位");
+            }
+            Check(File.ReadAllText(Path.Combine(base_, "locked.dll.old")) == "OLD-LOCKED",
+                  "换装：被锁定文件的旧映像保留为 *.old（待下次启动清理）");
+            Check(File.ReadAllText(Path.Combine(base_, "config.json")) == "SITE-CONFIG",
+                  "换装：config.json 跳过不覆盖（站点合并专用）");
+            var oldMarker = Path.Combine(AppConfig.BaseDir, "swapin_selftest.old");
+            File.WriteAllText(oldMarker, "x");
+            UpdateChecker.CleanupOldBinaries();
+            Check(!File.Exists(oldMarker), "换装：CleanupOldBinaries 清理 BaseDir 下 *.old 残留");
+            Check(UpdateChecker.TryCommitPending(db), "换装：无 pending 任务 TryCommitPending -> true（幂等 no-op）");
+            try { Directory.Delete(stage, true); } catch { }
+            try { Directory.Delete(base_, true); } catch { }
+        }
+
         try { Directory.Delete(root, true); } catch { }
     }
 
@@ -3661,6 +3699,37 @@ Argus 统一发布包  v{newer}
             var rSetBack = HttpPostWithToken($"{baseUrl}/api/settings", "changed-token", "{\"agg_token\":\"secret-token\"}");
             Check(rSetBack.StatusCode == HttpStatusCode.OK,
                   $"设置门禁：admin 恢复原 token -> 200（实得 {rSetBack.StatusCode}）");
+
+            // 审计 C3 回归：回滚会整份覆盖 config.json（含 agg_token），必须 admin + 只认 config_backups 内文件
+            var rRbViewer = HttpPostWithToken($"{baseUrl}/api/config/rollback", viewerTok2, "{}");
+            Check(rRbViewer.StatusCode == HttpStatusCode.Forbidden,
+                  $"回滚门禁：viewer POST /api/config/rollback -> 403（实得 {rRbViewer.StatusCode}）");
+            var rRbEng = HttpPostWithToken($"{baseUrl}/api/config/rollback", engineerTok, "{}");
+            Check(rRbEng.StatusCode == HttpStatusCode.Forbidden,
+                  $"回滚门禁：engineer POST /api/config/rollback -> 403（实得 {rRbEng.StatusCode}）");
+            var rRbTrav = HttpPostWithToken($"{baseUrl}/api/config/rollback", "secret-token", "{\"file\":\"..\\evil.json\"}");
+            Check(rRbTrav.StatusCode == HttpStatusCode.NotFound,
+                  $"回滚加固：admin 传穿越路径 ../evil.json -> 404（拒绝执行，实得 {rRbTrav.StatusCode}）");
+            var rRbAbs = HttpPostWithToken($"{baseUrl}/api/config/rollback", "secret-token", "{\"file\":\"C:\\Windows\\win.ini\"}");
+            Check(rRbAbs.StatusCode == HttpStatusCode.NotFound,
+                  $"回滚加固：admin 传绝对路径 C:\\Windows\\win.ini -> 404（拒绝执行，实得 {rRbAbs.StatusCode}）");
+
+            // Config.Rollback 路径加固纯函数断言：任意绝对路径/穿越一律回落到 config_backups 内解析
+            Check(!AppConfig.Rollback(Environment.ProcessPath),
+                  "回滚加固：Rollback(绝对路径指向自身 exe) -> false（不允许回滚来源目录外文件）");
+            Check(!AppConfig.Rollback("..\\..\\fct.db"),
+                  "回滚加固：Rollback(穿越文件名) -> false");
+            {
+                // 幂等正例：备份内容=当前 config.json 原样字节，回滚成功且配置零变化
+                var cfgPathRb = Path.Combine(AppConfig.BaseDir, "config.json");
+                var bkDirRb = Path.Combine(AppConfig.BaseDir, "data", "config_backups");
+                Directory.CreateDirectory(bkDirRb);
+                var originalRb = File.ReadAllBytes(cfgPathRb);
+                var bkNameRb = "config_backup_selftest_rollback.json";
+                File.WriteAllBytes(Path.Combine(bkDirRb, bkNameRb), originalRb);
+                Check(AppConfig.Rollback(bkNameRb), "回滚加固：Rollback(config_backups 内文件名) -> true");
+                Check(File.ReadAllBytes(cfgPathRb).SequenceEqual(originalRb), "回滚加固：回滚后 config.json 字节不变（同源备份）");
+            }
 
             using (var bad = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/machines"))
             {

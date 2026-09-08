@@ -124,6 +124,7 @@ static class Program
                 Logger.Error($"[更新器] 提交失败: {ex.Message}");
             }
         }
+        UpdateChecker.CleanupOldBinaries(); // 上次热升级换装遗留的 *.old 旧映像（旧进程退出后锁已释放）
 
         _singleInstanceMutex = new Mutex(true, @"Global\Argus_SingleInstance", out bool isNew);
         if (!isNew)

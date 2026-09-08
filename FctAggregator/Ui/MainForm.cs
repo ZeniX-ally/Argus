@@ -618,9 +618,21 @@ public class MainForm : Form
         var info = UpdateChecker.Scan(db: _engine.Db);
         if (info == null) return;
         Logger.Info($"[更新器] 无感热升级：发现新包 v{info.Version}（{Path.GetFileName(info.ZipPath)}），自动暂存中…");
-        UpdateChecker.StageUpdate(info, _engine.Db);
-        UpdateChecker.MarkPrompted(info.Version, _engine.Db);
-        DesktopNotifier.NotifyRaw($"发现新版本 v{info.Version}：Argus 将在几秒后自动重启完成升级，数据与配置不受影响。");
+        try { UpdateChecker.StageUpdate(info, _engine.Db); }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[更新器] 暂存失败: {ex.Message}");
+            return;
+        }
+        // 审计 C4：由旧进程在退出前自行换装（被本进程加载锁定的文件先改名 *.old 让位再覆盖）。
+        // 旧实现委托新进程提交——新进程无法覆盖自己已加载的 Argus.dll，提交必然 IOException 失败。
+        if (!UpdateChecker.TryCommitPending(_engine.Db))
+        {
+            DesktopNotifier.NotifyRaw($"v{info.Version} 已暂存但安装未完成（详见日志），5 分钟后自动重试。");
+            return; // pending 保留、未标记 prompted → 下一轮检测自动重试
+        }
+        UpdateChecker.MarkPrompted(info.Version, _engine.Db); // 提交成功后才标记，杜绝版本被永久静默
+        DesktopNotifier.NotifyRaw($"新版本 v{info.Version} 已安装，Argus 将在几秒后自动重启。");
         UpdateChecker.ScheduleRestart(delaySeconds: 3);
         var t = new System.Windows.Forms.Timer { Interval = 1500 };
         t.Tick += (_, _) => { t.Stop(); t.Dispose(); Close(); };

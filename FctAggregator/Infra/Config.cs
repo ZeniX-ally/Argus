@@ -510,6 +510,12 @@ public class AppConfig
             var dir = Path.Combine(BaseDir, "data", "config_backups");
             if (string.IsNullOrEmpty(backupPath))
                 backupPath = Directory.GetFiles(dir, "config_backup_*.json").OrderByDescending(f=>f).FirstOrDefault();
+            else
+            {
+                // 安全加固（审计 C3）：回滚源只允许来自 config_backups 内——一律按文件名重建路径，
+                // 拦截绝对路径与 ..\ 穿越属性，防止把服务器上任意可读文件覆写为 config.json
+                backupPath = Path.Combine(dir, Path.GetFileName(backupPath));
+            }
             if (string.IsNullOrEmpty(backupPath) || !File.Exists(backupPath)) return false;
             var dest = Path.Combine(BaseDir, "config.json");
             File.Copy(backupPath, dest, overwrite:true);

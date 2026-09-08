@@ -202,14 +202,56 @@ public static class UpdateChecker
         Logger.Info($"[更新器] 已排定 {delaySeconds}s 后自动重启并完成升级提交");
     }
 
-    public static void CommitPendingUpdate(Database? db = null)
+    /// <summary>把暂存目录内容换装入 baseDir：未锁定文件直接覆盖；被运行进程锁定的文件
+    /// （Argus.exe/Argus.dll/本地原生库等）先改名为 *.old（NTFS 允许重命名已加载映像）再覆盖。
+    /// config.json 跳过（由 MergeConfig 站点合并，不整份覆盖）。</summary>
+    public static void SwapIn(string stagingDir, string baseDir)
+    {
+        foreach (var f in Directory.EnumerateFiles(stagingDir, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(stagingDir, f);
+            if (rel.Equals("config.json", StringComparison.OrdinalIgnoreCase)) continue;
+            var dest = Path.Combine(baseDir, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            try
+            {
+                File.Copy(f, dest, overwrite: true);
+            }
+            catch (IOException)
+            {
+                // 目标被占用（本进程已加载）：旧文件让位改名后重试覆盖；*.old 由下次启动 CleanupOldBinaries 清理
+                var old = dest + ".old";
+                try { if (File.Exists(old)) File.Delete(old); } catch { }
+                File.Move(dest, old);
+                File.Copy(f, dest, overwrite: true);
+            }
+        }
+    }
+
+    /// <summary>清理上次提交更新遗留的 *.old 旧映像（旧进程退出后锁即释放；失败忽略下次再清）。</summary>
+    public static void CleanupOldBinaries()
+    {
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(AppConfig.BaseDir, "*.old", SearchOption.TopDirectoryOnly))
+            {
+                try { File.Delete(f); Logger.Info($"[更新器] 已清理旧映像 {Path.GetFileName(f)}"); } catch { }
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>提交待更新：把暂存内容换装入程序目录并合并站点配置。
+    /// 返回 true=已提交或本无待更新任务；false=提交失败（pending 保留，等待下次启动/检测重试）。
+    /// 由"旧进程在退出前自行换装"调用（审计 C4：新进程无法覆盖自己已加载的映像文件）。</summary>
+    public static bool TryCommitPending(Database? db = null)
     {
         Database d;
         try { d = db ?? EngineDb(); }
-        catch { return; }
+        catch { return false; }
 
         var pendingZip = d.GetMeta(PendingKey);
-        if (string.IsNullOrEmpty(pendingZip)) return;
+        if (string.IsNullOrEmpty(pendingZip)) return true; // 本无待更新任务，视为成功（可放心重启）
 
         var updatesRoot = ResolveUpdateDir();
         var ver = ParseZipVersion(Path.GetFileName(pendingZip));
@@ -225,41 +267,31 @@ public static class UpdateChecker
             {
                 d.SetMeta(PendingKey, "");
                 Logger.Warning($"[更新器] 暂存目录丢失（{stagingDir}），已清除待更新标记");
-                return;
+                return true;
             }
 
-            foreach (var f in Directory.EnumerateFiles(stagingDir, "*", SearchOption.AllDirectories))
-            {
-                var rel = Path.GetRelativePath(stagingDir, f);
-                if (rel.Equals("config.json", StringComparison.OrdinalIgnoreCase)) continue;
-                var dest = Path.Combine(baseDir, rel);
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.Copy(f, dest, overwrite: true);
-            }
+            SwapIn(stagingDir, baseDir);
             MergeConfig(Path.Combine(stagingDir, "config.json"), Path.Combine(baseDir, "config.json"));
 
             try { Directory.Delete(stagingDir, true); } catch { }
             if (backupDir != null) try { Directory.Delete(backupDir, true); } catch { }
             d.SetMeta(PendingKey, "");
             Logger.Info($"[更新器] 已提交更新 v{verStr}，程序文件已替换");
+            return true;
         }
         catch (Exception ex)
         {
-            Logger.Error($"[更新器] 提交更新失败: {ex.Message}");
-            if (backupDir != null && Directory.Exists(backupDir))
-            {
-                try
-                {
-                    var bkData = Path.Combine(backupDir, "data");
-                    if (Directory.Exists(bkData))
-                        CopyDir(bkData, Path.Combine(baseDir, "data"));
-                    var bkCfg = Path.Combine(backupDir, "config.json");
-                    if (File.Exists(bkCfg)) File.Copy(bkCfg, Path.Combine(baseDir, "config.json"), true);
-                }
-                catch (Exception rex) { Logger.Error($"[更新器] 回滚失败: {rex.Message}"); }
-            }
-            d.SetMeta(PendingKey, "");
+            // 失败不再清除 pending（旧实现"标记已提示+清 pending"=该版本永久静默）：保留现场等待重试
+            Logger.Error($"[更新器] 提交更新失败（pending 保留，将自动重试）: {ex.Message}");
+            return false;
         }
+    }
+
+    /// <summary>启动时提交路径（--post-update / 检测到 pending）的兼容入口。</summary>
+    public static void CommitPendingUpdate(Database? db = null)
+    {
+        if (!TryCommitPending(db))
+            Logger.Warning("[更新器] 提交未完成，待更新标记保留，下次启动/检测时重试");
     }
 
     private static void MergeConfig(string pkgCfg, string siteCfg)
