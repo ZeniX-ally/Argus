@@ -15,9 +15,6 @@ public class MainForm : Form
     private ProgressBar _progressBar = null!;
     private Label _statusLeft = null!;
     private Label _statusRight = null!;
-    private Label _lblAggLink = null!;
-    private ToolTip _aggLinkTip = null!;
-    private System.Windows.Forms.Timer _aggLinkTimer = null!;
 
     private readonly Dictionary<string, KpiCard> _kpi = new();
     private readonly Dictionary<string, Label> _statValues = new();
@@ -39,7 +36,7 @@ public class MainForm : Form
     private static readonly string[] PageTitles =
     {
         "总览", "待办 / 维修记录", "设备状态", "FAIL 记录", "调试工具", "深度分析",
-        "TDMS 波形", "聚合看板",
+        "TDMS 波形",
     };
 
     private const int OwnPageCount = 6;
@@ -47,9 +44,6 @@ public class MainForm : Form
     private static readonly (string key, string label, Func<Form> factory)[] Tools =
     {
         ("tdms",       "TDMS 波形", () => new FctTdmsViewer.MainForm()),
-        ("agg",        "聚合看板", () => new AggCenterForm(
-            AppConfig.Instance.AggShareRoot,
-            Path.Combine(AppConfig.BaseDir, "data", "agg_center.db"))),
     };
 
     private readonly ToolHost[] _toolPages = new ToolHost[Tools.Length];
@@ -109,31 +103,7 @@ public class MainForm : Form
             Dock = DockStyle.Right, Width = 280, ForeColor = Theme.TextFaint, Font = Theme.Small,
             BackColor = Theme.Surface, Padding = new Padding(0, 0, 14, 0), TextAlign = ContentAlignment.MiddleRight,
         };
-        var btnAggSettings = new Button
-        {
-            Text = "聚合设置",
-            Dock = DockStyle.Right, Width = 96, Height = Theme.StatusBarHeight,
-            FlatStyle = FlatStyle.Flat, BackColor = Theme.Surface, ForeColor = Theme.TextSub,
-            Font = Theme.Small, Cursor = Cursors.Hand,
-        };
-        btnAggSettings.FlatAppearance.BorderColor = Theme.Border;
-        btnAggSettings.Click += (_, _) => ShowAggSettingsDialog();
-        _lblAggLink = new Label
-        {
-            Text = "聚合：…",
-            Dock = DockStyle.Right, Width = 150, TextAlign = ContentAlignment.MiddleRight,
-            ForeColor = Theme.TextFaint, BackColor = Theme.Surface, Font = Theme.Small,
-            Cursor = Cursors.Hand,
-        };
-        _lblAggLink.Click += (_, _) => ShowAggSettingsDialog();
-        _aggLinkTip = new ToolTip { AutoPopDelay = 10000, InitialDelay = 400, ReshowDelay = 200 };
-        _aggLinkTip.SetToolTip(_lblAggLink, "聚合链路状态");
-        _aggLinkTimer = new System.Windows.Forms.Timer { Interval = 3000 };
-        _aggLinkTimer.Tick += (_, _) => { try { UpdateAggLinkUi(); } catch { } };
-        _aggLinkTimer.Start();
         statusBar.Controls.Add(_statusRight);
-        statusBar.Controls.Add(btnAggSettings);
-        statusBar.Controls.Add(_lblAggLink);
         statusBar.Controls.Add(_statusLeft);
         Controls.Add(statusBar);
 
@@ -344,7 +314,7 @@ public class MainForm : Form
         if (idx >= 0) { ShowPage(idx); e.Handled = true; return; }
         int tool = e.KeyCode switch
         {
-            Keys.D6 => 0, Keys.D7 => 1,
+            Keys.D6 => 0,
             _ => -1,
         };
         if (tool >= 0)
@@ -384,7 +354,6 @@ public class MainForm : Form
         if (_page == 0) UpdateDashboardWidgets();
         if (_tickCount % 10 == 1) UpdateTodoBadge();
         UpdateStatusBar();
-        if (_tickCount % 5 == 1) UpdateAggLinkUi();
         if (_tickCount % 5 == 1) RefreshLiveStats();
         AutoRefreshMaintenance();
     }
@@ -400,40 +369,6 @@ public class MainForm : Form
             try { AppState.RefreshDbStats(db, sid); }
             catch (Exception ex) { Logger.Warning($"[实时刷新] 统计刷新失败: {ex.Message}"); }
         });
-    }
-
-    private void UpdateAggLinkUi()
-    {
-        try
-        {
-            var cfg = AppConfig.Instance;
-            var mesh = _engine.Mesh;
-            var links = mesh?.PeerLinks ?? Array.Empty<PeerLink>();
-            if (mesh == null || links.Length == 0)
-            {
-                _lblAggLink.Text = "Mesh：单节点";
-                _lblAggLink.ForeColor = Theme.TextFaint;
-                _aggLinkTip.SetToolTip(_lblAggLink, "未配置 peers，本机以单节点模式运行（可在 config.json 的 peers 添加邻居）");
-                return;
-            }
-            var lines = links.Select(l =>
-                $"{l.Url}: {(l.State switch {
-                    AggLinkState.Disconnected => "断连",
-                    AggLinkState.Degraded => "积压",
-                    AggLinkState.Connected => "正常",
-                    _ => "等待" })}{(l.ConsecutiveFailures > 0 ? $"(失败{l.ConsecutiveFailures})" : "")}");
-            var tip = "P2P 邻居链路:\n" + string.Join("\n", lines) + "\n上次成功: "
-                    + links.Where(l => l.LastSuccessAt != default).Select(l => l.LastSuccessAt.ToString("HH:mm:ss")).DefaultIfEmpty("从未").First();
-            var disconnected = links.Any(l => l.State == AggLinkState.Disconnected);
-            var degraded = links.Any(l => l.State == AggLinkState.Degraded);
-            _lblAggLink.Text = disconnected ? "● 邻居断连" : degraded ? "● 邻居积压" : "● 互联正常";
-            _lblAggLink.ForeColor = disconnected ? Theme.Danger : degraded ? Theme.Warning : Theme.Success;
-            _aggLinkTip.SetToolTip(_lblAggLink, tip);
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[聚合推送] 状态灯刷新失败: {ex.Message}");
-        }
     }
 
     private void UpdateChips()
@@ -568,7 +503,7 @@ public class MainForm : Form
         var left = $"结果目录: {_cfg.ResultsRoot}     库: {db}     待办 {_pendingTodo} 条     未完成维修 {_openMaint} 条";
         if (s.Status == "error") left = "⚠ 结果目录不存在，数据采集未运行！  " + left;
         if (_statusLeft.Text != left) _statusLeft.Text = left;
-        var right = $"更新于 {DateTime.Now:HH:mm}     Ctrl+1~5 切页 / 6~9 工具 / R 刷新";
+        var right = $"更新于 {DateTime.Now:HH:mm}     Ctrl+1~5 切页 / 6 TDMS / R 刷新";
         if (_statusRight.Text != right) _statusRight.Text = right;
     }
 
@@ -652,230 +587,6 @@ public class MainForm : Form
                 t.Start();
             });
         });
-    }
-
-    private void ShowAggSettingsDialog()
-    {
-        var cfg = AppConfig.Instance;
-        using var dlg = new Form
-        {
-            Text = "聚合设置",
-            Size = new Size(560, 420),
-            MinimumSize = new Size(560, 420),
-            StartPosition = FormStartPosition.CenterParent,
-            FormBorderStyle = FormBorderStyle.FixedDialog,
-            MaximizeBox = false,
-            MinimizeBox = false,
-            BackColor = Theme.Bg,
-            Font = Theme.Body,
-        };
-
-        var stateLabel = new Label
-        {
-            Text = cfg.AggEnabled
-                ? $"当前: 已开启聚合推送（{cfg.AggTransport} → {UrlOrShare()}）"
-                : "当前: 未开启聚合推送",
-            Location = new Point(24, 16), AutoSize = true, ForeColor = Theme.TextSub, Font = Theme.Small,
-        };
-        dlg.Controls.Add(stateLabel);
-
-        var linkStateLabel = new Label
-        {
-            Text = BuildLinkStateText(),
-            Location = new Point(24, 34), AutoSize = true, ForeColor = Theme.TextFaint, Font = Theme.Small,
-        };
-        dlg.Controls.Add(linkStateLabel);
-
-        var secLabel = new Label
-        {
-            Text = "① 连接聚合端（本机作为机台推送数据）", Location = new Point(24, 52),
-            AutoSize = true, ForeColor = Theme.TextSub, Font = Theme.Body,
-        };
-        dlg.Controls.Add(secLabel);
-
-        var lblIp = new Label { Text = "聚合端 IP", Location = new Point(24, 86), AutoSize = true, ForeColor = Theme.TextSub };
-        var txtIp = new TextBox { Location = new Point(150, 82), Width = 200, Text = CurrentIpOf(cfg) };
-        var lblPort = new Label { Text = "端口", Location = new Point(362, 86), AutoSize = true, ForeColor = Theme.TextSub };
-        var txtPort = new TextBox { Location = new Point(410, 82), Width = 80, Text = cfg.MeshPort.ToString() };
-        var btnConnect = new Button { Text = "连接", Location = new Point(150, 116), Size = new Size(110, 30) };
-        var lblConnMsg = new Label { Text = "", Location = new Point(270, 121), AutoSize = true, ForeColor = Theme.Success, Font = Theme.Small };
-        dlg.Controls.Add(lblIp); dlg.Controls.Add(txtIp);
-        dlg.Controls.Add(lblPort); dlg.Controls.Add(txtPort);
-        dlg.Controls.Add(btnConnect); dlg.Controls.Add(lblConnMsg);
-
-        btnConnect.Click += (_, _) =>
-        {
-            var ip = txtIp.Text.Trim();
-            if (ip.Length == 0 || !int.TryParse(txtPort.Text.Trim(), out var port) || port < 1 || port > 65535)
-            {
-                lblConnMsg.ForeColor = Theme.Danger;
-                lblConnMsg.Text = "IP 或端口无效";
-                return;
-            }
-            cfg.AggEnabled = true;
-            cfg.AggTransport = "http";
-            cfg.AggHttpUrl = $"http://{ip}:{port}/";
-            if (!cfg.Save())
-            {
-                lblConnMsg.ForeColor = Theme.Danger;
-                lblConnMsg.Text = "配置保存失败（看日志）";
-                return;
-            }
-            _engine.RestartPusher();
-            lblConnMsg.ForeColor = Theme.Success;
-            lblConnMsg.Text = $"已连接 {cfg.AggHttpUrl}，推送器已重启";
-            stateLabel.Text = $"当前: 已开启聚合推送（http → {cfg.AggHttpUrl}）";
-        };
-
-        var sec2 = new Label
-        {
-            Text = "② 本机一键成为聚合端（自动配置环境 + 启动聚合服务）", Location = new Point(24, 168),
-            AutoSize = true, ForeColor = Theme.TextSub, Font = Theme.Body,
-        };
-        dlg.Controls.Add(sec2);
-
-        var btnBecome = new Button { Text = "一键部署聚合服务", Location = new Point(24, 200), Size = new Size(180, 34) };
-        var lblBecomeMsg = new Label
-        {
-            Text = "会弹 UAC 确认（防火墙放行需要管理员权限）。完成后浏览器访问 http://本机IP:8081/ 即可查看看板。",
-            Location = new Point(24, 244), Size = new Size(500, 40),
-            ForeColor = Theme.TextFaint, Font = Theme.Small,
-        };
-        dlg.Controls.Add(btnBecome); dlg.Controls.Add(lblBecomeMsg);
-
-        btnBecome.Click += (_, _) =>
-        {
-            if (!AggDeployer.IsAdmin())
-            {
-                var ask = MessageBox.Show(
-                    "一键成为聚合端需要管理员权限（防火墙放行）。\n是否以管理员身份重新启动部署？",
-                    "聚合服务一键部署", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                if (ask != DialogResult.Yes) return;
-                if (AggDeployer.RelaunchAsAdmin())
-                {
-                    lblBecomeMsg.ForeColor = Theme.Success;
-                    lblBecomeMsg.Text = "已以管理员身份启动部署窗口（UAC 点「是」），完成后本机即聚合端。";
-                }
-                else
-                {
-                    lblBecomeMsg.ForeColor = Theme.Danger;
-                    lblBecomeMsg.Text = "提权启动失败（UAC 被取消？），请右键 Argus.exe → 以管理员身份运行后重试。";
-                }
-                return;
-            }
-
-            lblBecomeMsg.ForeColor = Theme.TextSub;
-            lblBecomeMsg.Text = "部署中，请稍候...";
-            Cursor = Cursors.WaitCursor;
-            try
-            {
-                var r = AggDeployer.Deploy();
-                var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"步骤 1: config.json 就绪（端口 {r.Port}）");
-                sb.AppendLine(r.FirewallOk
-                    ? "步骤 2: 防火墙放行 ✓"
-                    : $"步骤 2: 防火墙放行失败（{r.FirewallMsg}）");
-                sb.AppendLine(r.AutoStartOk
-                    ? "步骤 3: 开机自启 ✓"
-                    : $"步骤 3: 开机自启失败（{r.AutoStartMsg}）");
-                sb.AppendLine(r.ServiceOk
-                    ? "步骤 4: 聚合服务已启动 ✓"
-                    : $"步骤 4: 服务启动失败（{r.ServiceMsg}）");
-                if (r.Addresses.Count > 0)
-                {
-                    sb.AppendLine("步骤 5: 浏览器访问地址");
-                    foreach (var ip in r.Addresses)
-                        sb.AppendLine($"  http://{ip}:{r.Port}/{(r.NewToken.Length > 0 ? $"?token={r.NewToken}" : "")}");
-                }
-                else
-                    sb.AppendLine($"步骤 5: 浏览器访问 http://本机IP:{r.Port}/" +
-                        (r.NewToken.Length > 0 ? $"?token={r.NewToken}" : ""));
-                if (r.NewToken.Length > 0)
-                {
-                    sb.AppendLine();
-                    sb.AppendLine($"访问令牌(agg_token)：{r.NewToken}");
-                    sb.AppendLine("（首次用上面带 ?token= 的地址打开即可；机台端推送需配同一串 token）");
-                }
-                sb.AppendLine();
-                sb.AppendLine("机台端在「聚合设置」里填本机 IP 即可连接。");
-                MessageBox.Show(sb.ToString(), "聚合服务一键部署",
-                    MessageBoxButtons.OK, r.FullSuccess ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-                lblBecomeMsg.ForeColor = Theme.Success;
-                lblBecomeMsg.Text = r.FullSuccess
-                    ? "部署完成，本机已是聚合端（浏览器访问上面地址查看看板）。"
-                    : "部署部分完成（见弹窗），未成功的步骤请看提示。";
-            }
-            catch (Exception ex)
-            {
-                lblBecomeMsg.ForeColor = Theme.Danger;
-                lblBecomeMsg.Text = $"部署失败: {ex.Message}";
-            }
-            finally
-            {
-                Cursor = Cursors.Default;
-            }
-        };
-
-        var btnDisable = new Button
-        {
-            Text = "断开聚合推送", Location = new Point(24, 310), Size = new Size(140, 30),
-            ForeColor = Theme.Danger,
-        };
-        var lblDisableMsg = new Label { Text = "", Location = new Point(180, 315), AutoSize = true, ForeColor = Theme.TextSub, Font = Theme.Small };
-        dlg.Controls.Add(btnDisable); dlg.Controls.Add(lblDisableMsg);
-        btnDisable.Click += (_, _) =>
-        {
-            cfg.AggEnabled = false;
-            cfg.Save();
-            _engine.RestartPusher();
-            lblDisableMsg.Text = "已断开，推送器已停止";
-            stateLabel.Text = "当前: 未开启聚合推送";
-        };
-
-        Theme.Apply(dlg);
-        dlg.ShowDialog(this);
-    }
-
-    private string UrlOrShare()
-    {
-        var cfg = AppConfig.Instance;
-        return cfg.AggTransport.Contains("http", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(cfg.AggHttpUrl)
-            ? cfg.AggHttpUrl
-            : cfg.AggShareRoot;
-    }
-
-    private string BuildLinkStateText()
-    {
-        var cfg = AppConfig.Instance;
-        var mesh = _engine.Mesh;
-        var links = mesh?.PeerLinks ?? Array.Empty<PeerLink>();
-        if (links.Length == 0) return "链路状态: 未配置 peers（单节点模式）";
-        try
-        {
-            var summaries = links.Select(l => $"{l.Url}:{(l.State switch
-            {
-                AggLinkState.Disconnected => "断连",
-                AggLinkState.Degraded => "积压",
-                AggLinkState.Connected => "正常",
-                _ => "等待",
-            })}").ToList();
-            return "链路状态: " + string.Join(" ", summaries);
-        }
-        catch (Exception ex)
-        {
-            return $"链路状态: 读取失败（{ex.Message}）";
-        }
-    }
-
-    private static string CurrentIpOf(AppConfig cfg)
-    {
-        if (cfg.AggHttpUrl.Length == 0) return "";
-        try
-        {
-            var u = new Uri(cfg.AggHttpUrl);
-            return u.Host;
-        }
-        catch { return ""; }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

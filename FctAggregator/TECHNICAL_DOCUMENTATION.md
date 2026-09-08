@@ -1,15 +1,16 @@
 ﻿# Argus 技术文档（C# 版）
 
-**项目**：FCT 测试结果聚合系统（工控机端）
-**当前版本**：v3.8.0（FCT 工具套件：单 exe + 工具内嵌 + 风格统一 + 去重 + 正式图标 + **P2P Mesh 去中心化聚合 + Web 看板**；数据分发独立成 FCT-Distributor）
+**项目**：FCT 测试结果采集与分析工具（**纯单机版**，工控机端）
+**当前版本**：v3.31.0（**纯单机**——v3.31.0 起删除 P2P Mesh 聚合 / Web 看板 / 聚合库 / 设备监控上报，退化为纯单机工具；数据分发独立成 FCT-Distributor）
 **技术栈**：C# / .NET 8 / WinForms / SQLite
-**文档更新**：2026-08-27
+**文档更新**：2026-09-08
 **前身**：Python v1.0.2（PyQt6 + FastAPI + PyInstaller），已于 2026-07-27 删除。
 
-> ⚠ **本文档自 v3.5.0 起已按 P2P Mesh 架构更新**：v3.0.0~v3.4.x 的「中心化聚合（共享目录 / 单一聚合机）」已
-> 被「每机一个 Mesh 节点 + 纯 HTTP 互相推送 + 任意节点可起 Web 看板」取代。老的中心化类
-> （`AgentPusher` / `AggWatcher` / `HttpIngest` / `AggCenterForm`）仍保留但已 `[Obsolete]`，仅自检回归用。
-> 文档与代码以实际源码为准，改动细节见 `更新日志.md`。
+> ⚠ **v3.31.0 起本文档描述与源码不再一一对应**：下列内容在 v3.31.0 已被删除，**仅作历史架构参考，请勿按之修改代码**——
+> `Mesh/`（P2P 去中心化）、`Agg/`（WebAggServer/HttpIngest/聚合服务）、`public/`（Web 看板前端）、
+> `Db/AggDatabase*.cs` + `DbMigrator.cs`（聚合库与迁移）、`Ui/AggCenterForm`、设备/预测/告警/布局等
+> Intelligence 类、`agg` 子命令与 `agg_token`/`peers`/`mesh_port` 配置。当前程序仅含本机采集、FAIL 列表、
+> 维修/待办登记、规格 06 多元深分析、正常态自学习与工具箱。改动细节见 `更新日志.md`。
 
 > ⚠ **源码备份已丢**：原文档写「保留在 `F:\Programe\G4_9-QA\fct-aggregator-python-v1.0.2-源码备份.tar.gz`」，
 > 2026-07-31 仓库改名为 `Argus` 后核对发现：该文件在新旧路径、整个 F: 盘均**不存在**，
@@ -41,9 +42,9 @@
 ## 1. 项目概述
 
 部署在 FCT 工控机上的单机程序：监控 FCT 测试软件产出的 XML 结果文件，
-解析 → 分类 → 入 SQLite → 实时统计良率，FAIL 时推送飞书告警；
-附带设备状态查看（读 FCT.ini）、维修记录看板（拖拽改状态，含 Excel/CSV 导出）、
-FAIL 记录报告查看、调试工具页；**v3.5.0 起多机台经 P2P Mesh 互相聚合，任意节点可开 Web 看板**。
+解析 → 分类 → 入本机 SQLite → 实时统计良率，FAIL 时推送飞书告警；
+附带维修记录看板（拖拽改状态，含 Excel/CSV 导出）、待办登记、FAIL 记录报告查看、
+规格 06 多元深分析、调试工具页。**v3.31.0 起为纯单机：无 Mesh 聚合、无 Web 看板**。
 
 ### 1.1 核心功能
 
@@ -62,7 +63,7 @@ FAIL 记录报告查看、调试工具页；**v3.5.0 起多机台经 P2P Mesh �
 | 桌面提示 | FAIL 落库即弹 **Windows 原生通知**（托盘 `NotifyIcon` + BalloonTip，无 UWP 依赖），节流合并，点通知直达待办看板 |
 | FAIL 记录 | **表格 / 树形双视图**（工具栏一键切换）：表格 = 4 列对齐（失败项/SN/型号/时间，按失败项次数倒序分组、高频标红）；树形 = 按失败项聚合、子节点 SN；共用搜索框即时过滤失败项/SN/型号；双击行/SN 弹出报告式查看器（完整测试流程，失败项标红） |
 | 调试工具 | 推送测试 / 数据库状态 / 机台检测 / 型号发现 / 查询 / 自启开关 / 清库 |
-| 多机聚合（v3.5.0+） | **P2P Mesh**：每机一个节点，FAIL/心跳互相推送 + 30s 对账；任意节点 `argus agg --web` 起 Web 看板（机台卡片 / FAIL 明细 / XML 在线报告 / CSV 导出 / 文件浏览 / 设置页）；飞书离线告警 + 定时汇总；详见 §3.1 |
+| 多元深分析（规格06） | 每日维护窗口由 `AnalysisEngine.RunOnce` 计算漂移预警/CPK 低能力清单/多维归因/tester 效应量/TDMS 特征化，主页「深度分析」页展示；PASS 测量值随入库实时采集 |
 | 运行保障 | 单实例 Mutex、开机自启（启动文件夹快捷方式，手动开关）、两阶段自更新（`UpdateChecker`） |
 
 ### 1.2 运行环境
@@ -78,25 +79,20 @@ FAIL 记录报告查看、调试工具页；**v3.5.0 起多机台经 P2P Mesh �
 
 ```
 FctAggregator/
-├── Program.cs                # 入口：子命令分发 → 单实例 Mutex → 读配置 → 启动 Engine → Application.Run
+├── Program.cs                # 入口：子命令分发（GUI/fetch/tdms/rank/upgrade/backfill）→ 单实例 Mutex → 读配置 → 启动 Engine → Application.Run
 ├── Core/                     # 采集引擎与数据模型：Engine / Processor / Classifier / XmlParser /
-│                             #   StationDetector / TestRecord / AppState / FctIni / FctIniWatcher
-│                             #   （遗留 AgentPusher / AggWatcher 也在此，已标 Obsolete）
-├── Db/                       # SQLite 数据层：Database（本地库）/ AggDatabase.*.cs（聚合库 partial：
-│                             #   Accuracy/Alert/AlertPredict/Device/DeviceIntelligent/Maintenance/ProcLog/Settings）
-│                             #   / DbMigrator（schema 版本化迁移）/ DbMaintenance（每日维护）
-├── Mesh/                     # v3.5.0 P2P 去中心化：MeshNode / MeshPusher / MeshReceiver /
-│                             #   MeshGossiper / MeshQueryService / TodoSync（全局待办池）
-├── Agg/                      # 聚合服务端：WebAggServer / RoutePipeline / HttpIngest / AggDeployer /
-│                             #   AggAlertService / HeadlessService / ServiceManager / FetcherService /
-│                             #   DeviceModels / DeviceInfoCollector / XmlReportHtml（/api/xmlview 渲染）
-├── Intelligence/             # 智能化域（v3.19/3.20）：ConfigValidator / ConfigAdvisor / DevicePredictor /
-│                             #   DeviceInspector / PriorityScorer / FlowAdvisor / TodoSuggester /
-│                             #   LayoutAdvisor / HighlightEngine / AlertHealer / AlertPredictor /
-│                             #   PredictAccuracyReconciler（预测准确率对账）
+│                             #   StationDetector / TestRecord / AppState / FctIni / BackfillTool
+├── Db/                       # SQLite 数据层：Database（**本机库**：建表/入库/统计/维修/待办 +
+│                             #   本机分析表 test_measurements/fail_items/tdms_features/normal_models，
+│                             #   构造时幂等 Init，无 DbMigrator）/ DbMaintenance（本机库维护器）
+├── Intelligence/             # 本机分析与自学习：AnalysisEngine / LearningEngine / SelfBaseline /
+│                             #   FailReasonMerger / G49ProductDictionary / NormalLearners / NormalModelStore /
+│                             #   StreamingStats / DriftAnalyzer / CpkAnalyzer / TdmsFeatureAnalyzer /
+│                             #   TdmsFeatureCollector / FailAttributor / FixtureComparator /
+│                             #   DeviceSampleRecorder / ConfigValidator
 ├── Ui/                       # WinForms 界面层：MainForm / SplashForm / Theme / UiWidgets / AppIcon /
-│                             #   AggCenterForm / 各 Panel 与看板（DeviceStatusPanel / Maintenance* /
-│                             #   FailListPanel / DebugPanel）/ BoardCard / CardPreview / TodoCard /
+│                             #   AnalysisPanel（规格06 深度分析页）/ Maintenance* / FailListPanel /
+│                             #   DeviceStatusPanel / DebugPanel / BoardCard / CardPreview / TodoCard /
 │                             #   TodoGrouping / FailItemPicker / ResolverManager / MaintenanceExporter /
 │                             #   DesktopNotifier / UpdatePromptForm
 ├── Infra/                    # 横切基础设施：Config / Logger / TimeUtil / CsvUtil / Xlsx（手写 OOXML）/
@@ -104,21 +100,21 @@ FctAggregator/
 ├── Parsing/                  # v3.5.0 插件式解析器：IResultParser / ParserConfig / ParserRegistry / Default / Configurable
 ├── FctAggregator.csproj      # net8.0-windows / WinForms / SelfContained=false
 ├── config.json               # 运行配置
-├── public/                   # v3.8.0 Web 看板静态前端（SPA 模块化，随构建复制到输出目录）
 ├── app_icon.ico              # 多分辨率图标(16~256)，同时作为 EmbeddedResource
 ├── assets/icon/              # 图标源 PNG（tools/make_icon.py 可重建 ico）
 ├── modules/                  # v2.9.0 合入、v3.0.0 拆分后的三个工具（各自保留 namespace）
 │   ├── FailRanker/           #   原 fct-fail-ranker（FctFailRanker）
 │   ├── Fetcher/              #   原 fct-fetcher-cs，含 CLI（FctFetcher）
 │   └── TdmsViewer/           #   原 fct-tdm-viewer，含 CLI，依赖 TDMSReader（FctTdmsViewer）
-├── selftest/                 # 自检工程（不属主程序，按目录通配编主源码，1000+ 项断言）
-├── data/                     # SQLite 数据库（{station_id}.db + mesh_agg.db + agg_xml/）
+├── selftest/                 # 自检工程（不属主程序，按目录通配编主源码，568 项断言）
+├── data/                     # SQLite 数据库（fct.db + config_backups/）
 ├── logs/                     # app.log
 └── dist/                     # 发布产物（含 启动.bat）
 ```
 
-> 2026-09-01 起根目录源码按域分组到 Core/Db/Mesh/Agg/Intelligence/Ui/Infra 七个子目录，
+> 2026-09-01 起根目录源码按域分组到 Core/Db/Intelligence/Ui/Infra/Parsing/modules 等子目录，
 > 命名空间不变（全部 `namespace FctAggregator`），移动不影响解析与行为。
+> v3.31.0 起 Mesh/、Agg/、public/ 目录与聚合库已删除（见头部 ⚠ 说明）。
 
 ### 2.1 依赖包
 

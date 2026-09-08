@@ -37,20 +37,15 @@ if (-not $SkipBuild) {
 
 Head "2. 运行打包器（生成纯净 zip）"
 & (Join-Path $repo 'FctAggregator\tools\make_package.ps1') | Out-Host
-& (Join-Path $repo 'FctAggregator\tools\make_package_agg.ps1') | Out-Host
-Ok '两个打包器均完成'
+Ok '主程序打包器完成'
 
 Head "3. 收集并归档 zip"
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
 $candidates = @()
-$aggBuild = Join-Path $repo 'FctAggregator\bin\Release\net8.0-windows'
+$mainBuild = Join-Path $repo 'FctAggregator\bin\Release\net8.0-windows'
 foreach ($n in @("Argus-v$Version.zip", "Argus-v$Version-update.zip")) {
-    if (Test-Path (Join-Path $aggBuild $n)) { $candidates += Join-Path $aggBuild $n }
-}
-$aggPkg = Join-Path $repo 'FctAggregator\dist-agg'
-foreach ($n in @("Argus-Agg-v$Version.zip")) {
-    if (Test-Path (Join-Path $aggPkg $n)) { $candidates += Join-Path $aggPkg $n }
+    if (Test-Path (Join-Path $mainBuild $n)) { $candidates += Join-Path $mainBuild $n }
 }
 
 if ($candidates.Count -eq 0) { throw '没有收集到任何 zip，请检查打包器是否成功' }
@@ -105,7 +100,6 @@ foreach ($zip in $archived) {
 [void]$sb.AppendLine("部署方式：")
 [void]$sb.AppendLine("  主程序更新：Argus.exe upgrade（图形化升级向导，v3.22.1 起）选本更新包一键部署；")
 [void]$sb.AppendLine("              或命令行 deploy_update.ps1 -Execute（脚本已随包自带，data/logs 不受影响）。")
-[void]$sb.AppendLine("  聚合后端：  解压 Argus-Agg-v$Version.zip，运行 一键部署聚合服务.bat。")
 [void]$sb.AppendLine("  分发器：    已独立仓库 e:/FctDistributor（FCT-Distributor v1.9.2），用其自带 make_package.ps1 单独发版。")
 $manifestPath = Join-Path $outDir 'RELEASE.txt'
 $sb.ToString() | Set-Content $manifestPath -Encoding UTF8

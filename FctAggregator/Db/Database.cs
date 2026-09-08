@@ -327,17 +327,21 @@ public sealed partial class Database
             cmd10.ExecuteNonQuery();
 
             // 审计 M13：归因统计四条查询以 substr(...) 过滤，非 sargable 全表扫描×4（维护窗口拉长）——
-            // 补虚拟生成列 batch_ts_date + 索引（幂等；虚拟列不回填历史，老库零成本升级）
-            using var cmdTsDate = conn.CreateCommand();
-            cmdTsDate.CommandText = "SELECT COUNT(*) FROM pragma_table_info('test_records') WHERE name='batch_ts_date'";
-            var hasTsDate = Convert.ToInt64(cmdTsDate.ExecuteScalar() ?? 0L);
-            if (hasTsDate == 0)
+            // 补虚拟生成列 batch_ts_date + 索引（幂等；虚拟列不回填历史，老库零成本升级）。
+            // 幂等用 try/catch 吞 duplicate（pragma_table_info 表值函数在重复 Init 场景下判定不稳，实测会误报 0）
+            try
             {
+                using var cmdTsDate = conn.CreateCommand();
                 cmdTsDate.CommandText = "ALTER TABLE test_records ADD COLUMN batch_ts_date TEXT GENERATED ALWAYS AS (substr(COALESCE(NULLIF(batch_timestamp,''),created_at),1,10)) VIRTUAL";
                 cmdTsDate.ExecuteNonQuery();
             }
-            cmdTsDate.CommandText = "CREATE INDEX IF NOT EXISTS idx_tr_tsdate ON test_records(batch_ts_date)";
-            cmdTsDate.ExecuteNonQuery();
+            catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column"))
+            {
+                // 老库已升级过，幂等跳过
+            }
+            using var cmdIdxTsDate = conn.CreateCommand();
+            cmdIdxTsDate.CommandText = "CREATE INDEX IF NOT EXISTS idx_tr_tsdate ON test_records(batch_ts_date)";
+            cmdIdxTsDate.ExecuteNonQuery();
         }
         MigrateClosedStatus();
     }
@@ -2750,177 +2754,6 @@ public class MaintenanceRecord
     public string UpdatedAt = "";
 
     public MaintenanceRecord Clone() => (MaintenanceRecord)MemberwiseClone();
-}
-
-public sealed class TodoSyncRow
-{
-    public string OriginMachine = "";
-    public long TodoId;
-    public string? Owner;
-    public string State = "";
-    public long Version;
-    public string UpdatedAt = "";
-}
-
-public sealed partial class Database
-{
-    public long BumpTodoVersion(long todoId)
-    {
-        var key = $"todo_ver_{todoId}";
-        long v = 0;
-        using (var conn = Open())
-        {
-            var cur = GetMeta(conn, key);
-            if (cur != null) long.TryParse(cur, out v);
-        }
-        v++;
-        using (var conn = Open()) SetMeta(conn, key, v.ToString());
-        return v;
-    }
-
-    public void ApplyRemoteTodoEvent(TodoEvent ev)
-    {
-        try
-        {
-            using var conn = Open();
-            using var tx = conn.BeginTransaction();
-            long localVer = 0; string? localOwner = null;
-            using (var sel = conn.CreateCommand())
-            {
-                sel.Transaction = tx;
-                sel.CommandText = "SELECT version, owner FROM todo_sync_state WHERE origin_machine=@m AND todo_id=@t";
-                sel.Parameters.AddWithValue("@m", ev.OriginMachine);
-                sel.Parameters.AddWithValue("@t", ev.TodoId);
-                using var r = sel.ExecuteReader();
-                if (r.Read())
-                {
-                    localVer = r.IsDBNull(0) ? 0 : r.GetInt64(0);
-                    localOwner = r.IsDBNull(1) ? null : r.GetString(1);
-                }
-            }
-            bool accept = ev.Version > localVer ||
-                          (ev.Version == localVer && string.IsNullOrEmpty(localOwner) && !string.IsNullOrEmpty(ev.Owner));
-            if (!accept) { tx.Commit(); return; }
-
-            using var ups = conn.CreateCommand();
-            ups.Transaction = tx;
-            ups.CommandText = @"
-                INSERT INTO todo_sync_state (origin_machine, todo_id, owner, state, version, updated_at)
-                VALUES (@m,@t,@owner,@state,@ver,@upd)
-                ON CONFLICT(origin_machine, todo_id)
-                DO UPDATE SET owner=excluded.owner, state=excluded.state,
-                              version=excluded.version, updated_at=excluded.updated_at";
-            ups.Parameters.AddWithValue("@m", ev.OriginMachine);
-            ups.Parameters.AddWithValue("@t", ev.TodoId);
-            ups.Parameters.AddWithValue("@owner", (object?)ev.Owner ?? DBNull.Value);
-            ups.Parameters.AddWithValue("@state", ev.State);
-            ups.Parameters.AddWithValue("@ver", ev.Version);
-            ups.Parameters.AddWithValue("@upd", ev.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss"));
-            ups.ExecuteNonQuery();
-            tx.Commit();
-            Logger.Info($"[待办同步] 已合并远端事件 {ev.OriginMachine}#{ev.TodoId} v{ev.Version}（owner={ev.Owner ?? "∅"}）");
-        }
-        catch (Exception ex) { Logger.Warning($"[待办同步] 应用远端事件失败: {ex.Message}"); }
-    }
-
-    public List<MeshQueryService.QueryItem> QueryTestRecords(string localMachine, MeshQueryService.QueryRequest req)
-    {
-        var where = new List<string>();
-        var ps = new List<(string name, object val)>();
-        if (!string.IsNullOrWhiteSpace(req.Machine))
-        {
-            where.Add("station_id = @machine");
-            ps.Add(("@machine", req.Machine!.Trim()));
-        }
-        if (!string.IsNullOrWhiteSpace(req.Sn))
-        {
-            where.Add("sn LIKE @sn");
-            ps.Add(("@sn", $"%{req.Sn!.Trim()}%"));
-        }
-        if (!string.IsNullOrWhiteSpace(req.Model))
-        {
-            where.Add("model LIKE @model");
-            ps.Add(("@model", $"%{req.Model!.Trim()}%"));
-        }
-        if (!string.IsNullOrWhiteSpace(req.Result) && !string.Equals(req.Result.Trim(), "ALL", StringComparison.OrdinalIgnoreCase))
-        {
-            var r = req.Result!.Trim().ToUpperInvariant();
-            if (r == "PASS" || r == "FAIL" || r == "INTERRUPTED" || r == "INVALID")
-            {
-                where.Add("result = @result");
-                ps.Add(("@result", r));
-            }
-        }
-        var df = NormalizeQueryDate(req.DateFrom);
-        var dt = NormalizeQueryDate(req.DateTo);
-        if (!string.IsNullOrEmpty(df)) { where.Add("test_date >= @df"); ps.Add(("@df", df)); }
-        if (!string.IsNullOrEmpty(dt)) { where.Add("test_date <= @dt"); ps.Add(("@dt", dt)); }
-        var whereSql = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
-        var limit = Math.Clamp(req.Limit <= 0 ? 100 : req.Limit, 1, 2000);
-        var offset = Math.Max(0, req.Offset);
-        using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $@"
-            SELECT id, station_id, sn, model, result, test_date, fail_reason, xml_path, file_size, batch_timestamp, tester
-              FROM test_records {whereSql}
-             ORDER BY test_date DESC, id DESC
-             LIMIT @lim OFFSET @off";
-        foreach (var (name, val) in ps) cmd.Parameters.AddWithValue(name, val);
-        cmd.Parameters.AddWithValue("@lim", limit);
-        cmd.Parameters.AddWithValue("@off", offset);
-        var list = new List<MeshQueryService.QueryItem>();
-        using var rdr = cmd.ExecuteReader();
-        while (rdr.Read())
-        {
-            list.Add(new MeshQueryService.QueryItem
-            {
-                Machine = localMachine,
-                Id = rdr.GetInt64(0),
-                Sn = rdr.IsDBNull(2) ? "" : rdr.GetString(2),
-                Model = rdr.IsDBNull(3) ? "" : rdr.GetString(3),
-                Result = rdr.IsDBNull(4) ? "" : rdr.GetString(4),
-                TestDate = rdr.IsDBNull(5) ? "" : rdr.GetString(5),
-                FailReason = rdr.IsDBNull(6) ? "" : rdr.GetString(6),
-                XmlPath = rdr.IsDBNull(7) ? "" : rdr.GetString(7),
-                FileSize = rdr.IsDBNull(8) ? 0 : rdr.GetInt64(8),
-                BatchTimestamp = rdr.IsDBNull(9) ? "" : rdr.GetString(9),
-                Tester = rdr.IsDBNull(10) ? "" : rdr.GetString(10),
-            });
-        }
-        return list;
-    }
-
-    private static string NormalizeQueryDate(string? d)
-    {
-        if (string.IsNullOrWhiteSpace(d)) return "";
-        var s = d.Trim().Replace("-", "").Replace("/", "");
-        if (s.Length >= 8) return s.Substring(0, 8);
-        return s;
-    }
-
-    public List<TodoSyncRow> GetTodoSyncStates()
-    {
-        var list = new List<TodoSyncRow>();
-        try
-        {
-            using var conn = Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT origin_machine, todo_id, owner, state, version, updated_at FROM todo_sync_state ORDER BY updated_at DESC";
-            using var r = cmd.ExecuteReader();
-            while (r.Read())
-                list.Add(new TodoSyncRow
-                {
-                    OriginMachine = r.IsDBNull(0) ? "" : r.GetString(0),
-                    TodoId = r.IsDBNull(1) ? 0 : r.GetInt64(1),
-                    Owner = r.IsDBNull(2) ? null : r.GetString(2),
-                    State = r.IsDBNull(3) ? "" : r.GetString(3),
-                    Version = r.IsDBNull(4) ? 0 : r.GetInt64(4),
-                    UpdatedAt = r.IsDBNull(5) ? "" : r.GetString(5),
-                });
-        }
-        catch (Exception ex) { Logger.Warning($"[待办同步] 查询失败: {ex.Message}"); }
-        return list;
-    }
 }
 
 public class HourlyStatItem

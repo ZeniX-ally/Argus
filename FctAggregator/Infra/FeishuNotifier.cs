@@ -20,26 +20,6 @@ public static class FeishuNotifier
         await PostCard(webhookUrl, BuildStatusChangeCard(rec, fromStatus, toStatus), $"#{rec.Id} {rec.FailItem}");
     }
 
-    public static async Task SendAggLinkAlert(string webhookUrl, string machine, string kind, string detail)
-    {
-        if (string.IsNullOrWhiteSpace(webhookUrl)) return;
-        var (title, template) = kind switch
-        {
-            "recovered" => ($"聚合链路已恢复 · {machine}", "green"),
-            "overflow" => ($"聚合推送队列溢出 · {machine}", "yellow"),
-            _ => ($"聚合链路断连 · {machine}", "red"),
-        };
-        var elements = new List<object>
-        {
-            FeishuCardV2.FieldRow(("机台", machine)),
-            FeishuCardV2.Md($"**{FeishuCardV2.Escape(detail)}**\n请检查机台与聚合端之间的网络 / 聚合端服务状态。"),
-            FeishuCardV2.Hr(),
-            FeishuCardV2.Note($"Argus 链路告警 · {DateTime.Now:yyyy-MM-dd HH:mm:ss}"),
-        };
-        var card = FeishuCardV2.Root(title, template, elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
-        await PostCard(webhookUrl, card, $"link-{kind}-{machine}");
-    }
-
     private static async Task PostCard(string webhookUrl, object card, string tag)
     {
         if (string.IsNullOrWhiteSpace(webhookUrl))

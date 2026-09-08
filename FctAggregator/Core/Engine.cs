@@ -7,9 +7,8 @@ public class Engine
 {
     private readonly AppConfig _cfg;
     private readonly Database _db;
+    private readonly DbMaintenance _maintenance;
     private readonly string _stationId;
-    private MeshNode _mesh;
-    private TodoSync _todoSync;
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly object _watcherLock = new();
     private readonly HashSet<string> _watchedDirs = new(StringComparer.OrdinalIgnoreCase);
@@ -30,11 +29,7 @@ public class Engine
     public Database Db => _db;
     public string ResolvedStationId => _stationId;
     public AppConfig Config => _cfg;
-    public MeshPusher Pusher => _mesh.Pusher;
-    public MeshNode Mesh => _mesh;
-    public AggDatabase AggDb => _mesh.AggDb;
-
-    public Engine(AppConfig cfg, AggDatabase? sharedAggDb = null)
+    public Engine(AppConfig cfg)
     {
         _cfg = cfg;
 
@@ -51,12 +46,7 @@ public class Engine
         _retryQueueFile = Path.Combine(dataDir, "retry_queue.json");
         var dbFile = Path.Combine(dataDir, $"{(string.IsNullOrEmpty(sid) ? "fct" : sid)}.db");
         _db = new Database(dbFile);
-
-        var aggDb = sharedAggDb ?? new AggDatabase(Path.Combine(dataDir, "mesh_agg.db"));
-        _mesh = new MeshNode(cfg, _stationId, _db, aggDb, cfg.Peers);
-        _todoSync = _mesh.TodoSync;
-
-        _mesh.Start();
+        _maintenance = DbMaintenance.StartFor(cfg, _db);
 
         try { DeviceSampleRecorder.Instance.Start(); } catch { }
 
@@ -147,8 +137,7 @@ public class Engine
     public void Stop()
     {
         try { DeviceSampleRecorder.Instance.Stop(); } catch { }
-        _todoSync.Stop();
-        _mesh.Stop();
+        _maintenance.Stop();
         _cts.Cancel();
         try { _retryThread?.Join(3000); } catch { }
         try { _modelRescanTimer?.Dispose(); } catch { }
@@ -156,18 +145,6 @@ public class Engine
         _watchers.Clear();
         lock (_watcherLock) _watchedDirs.Clear();
         SaveRetryQueue(); // 未处理重试条目落盘，下次启动恢复（M5：退出即丢）
-    }
-
-    public void RestartPusher()
-    {
-        try { _todoSync.Stop(); } catch { }
-        try { _mesh.Stop(); } catch (Exception ex) { Logger.Warning($"旧节点停止异常: {ex.Message}"); }
-        var dataDir = Path.Combine(AppConfig.BaseDir, "data");
-        var aggDb = new AggDatabase(Path.Combine(dataDir, "mesh_agg.db"));
-        _mesh = new MeshNode(_cfg, _stationId, _db, aggDb, _cfg.Peers);
-        _todoSync = _mesh.TodoSync;
-        _mesh.Start();
-        Logger.Info($"[Mesh节点] 已按新配置重启（peers={_cfg.Peers.Count}, port={_cfg.MeshPort}）");
     }
 
     private List<string> DiscoverModels(string root)
@@ -552,7 +529,7 @@ public class Engine
         {
             var tmp = _retryQueueFile + ".tmp";
             File.WriteAllText(tmp, SerializeRetryQueue(items));
-            File.Move(tmp, _retryQueueFile, overwrite: true); // 原子替换，风格同 MeshPusher 落盘
+            File.Move(tmp, _retryQueueFile, overwrite: true); // 原子替换
             Logger.Info($"[重试队列] 停机落盘 {items.Count} 条未处理路径: {_retryQueueFile}");
         }
         catch (Exception ex)

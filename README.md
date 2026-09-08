@@ -1,22 +1,23 @@
-# Argus — FCT 产线测试数据采集聚合套件
+# Argus — FCT 机台测试数据采集与分析工具（纯单机版）
 
-Argus 是一套面向工厂 FCT（Functional Test，功能测试）工位的机台端测试数据采集、聚合与看板系统。单个 WinForms exe 集成采集引擎、Mesh 组网聚合、Web 看板与工具箱，零第三方服务依赖，支持产线内网离线部署与无缝热升级。
+Argus 是一套面向工厂 FCT（Functional Test，功能测试）工位的机台端测试数据采集与分析工具。单个 WinForms exe 集成采集引擎、FAIL/维修待办闭环、本机分析与自学习、工具箱，零第三方服务依赖。
+
+> **v3.31.0 起为纯单机工具**：已删除"聚合/互联/Web 看板"三块能力（Agg / Mesh / public / 聚合库），不再有 P2P 组网、HTTP 服务与浏览器看板；本机采集、FAIL 列表、维修/待办登记、规格 06 多元深分析、正常态自学习等本机能力完整保留。
 
 ## 功能特性
 
-- **测试数据采集**：扫描 FCT 结果 XML / INI，解析 PASS/FAIL 记录、治具（fixture）归属、不良项明细
-- **Mesh 组网聚合**：机台间 P2P 互联（token 鉴权），FAIL 记录断线补偿重推，任一机台即可充当聚合节点
-- **Web 看板**：内置 HTTP 服务，浏览器访问机台 IP 即可查看全产线良率、Fail 排行、设备健康、维修待办
-- **飞书推送**：FAIL 告警 / 离线 / 恢复 / 队列溢出，schema 2.0 交互卡片，多列布局 + 深度信息
-- **智能化九域**：良率归因、季节性分解、预测准确率自反馈、设备健康综合分、告警自愈预测、机台端自学习等（全部可配置开关）
-- **待办维修闭环**：故障归并（产品信号族字典驱动）、维修记录看板化、优先级权重自学习
+- **测试数据采集**：扫描 FCT 结果 XML / INI，解析 PASS/FAIL/INTERRUPTED 记录、治具（fixture）归属、不良项明细、测量值（PASS 也采）
+- **FAIL 列表与维修待办闭环**：FAIL 双视图分组、待办登记（只扫近一个月、同类合并、永久保留）、维修看板 4 状态机、人员名单/改名同步、12 列导出（CSV 注入防护）
+- **飞书推送**：FAIL 告警 / 待办状态变更，schema 2.0 交互卡片（可选，`webhook_url` 配置）
+- **本机分析**（规格 06）：漂移预警、CPK 低能力清单、fail_items 明细、失败多维归因、tester 效应量对比、TDMS 特征化（默认关）
+- **机台端自学习**（规格 05 + 正常态 P1）：G49 产品字典驱动故障归并、自基线良率预警、Welford/P² 正常态建模（`learn_*` 默认关）
 - **工具箱**：FCT 取数打包（fetch）、TDMS 波形查看（tdms）、FAIL 排行导出（rank）
 - **无缝热升级**：检测更新包自动暂存，分离进程提交，失败自动回滚，不碰现场数据
-- **自检体系**：900+ 断言全链路自检，真实库副本隔离运行
+- **自检体系**：568 项断言全链路自检，临时目录隔离运行（不碰真实库）
 
 ## 环境要求
 
-- Windows 10/11 或 Windows Server（WinForms + HTTP 监听）
+- Windows 10/11 或 Windows Server（WinForms）
 - .NET 8 SDK（构建）；目标框架 `net8.0-windows`
 - 产线机台无需安装任何运行时之外的东西
 
@@ -25,10 +26,10 @@ Argus 是一套面向工厂 FCT（Functional Test，功能测试）工位的机�
 ```powershell
 git clone <仓库地址>
 cd Argus-main
-dotnet build -c Release            # 0 警告 0 错误为提交门槛
+dotnet build Argus.sln -c Release   # 0 警告 0 错误为提交门槛
 ```
 
-运行自检（900+ 断言，使用临时目录隔离，不碰真实数据）：
+运行自检（568 项断言，使用临时目录隔离，不碰真实数据）：
 
 ```powershell
 cd FctAggregator\selftest\bin\Release\net8.0-windows
@@ -42,87 +43,73 @@ Get-Content selftest_run.log -Tail 3      # 期望尾部：==== 全部通过 ===
 powershell -ExecutionPolicy Bypass -File scripts\make_release.ps1
 ```
 
-产出三包（均无 `data\`/`logs\`/`*.db`/`*.pdb`，config 为 webhook 置空模板）：
+产出两包（均无 `data\`/`logs\`/`*.db`/`*.pdb`，config 为 webhook 置空模板）：
 
 | 包 | 用途 |
 |----|------|
 | `Argus-v{ver}.zip` | 机台主程序完整包 |
 | `Argus-v{ver}-update.zip` | 机台增量更新包（热升级用） |
-| `Argus-Agg-v{ver}.zip` | 聚合后端包 |
 
 ## 快速开始
 
-### 机台端（工位电脑）
-
 1. 解压 `Argus-v{ver}.zip` 到本机目录
-2. 编辑 `config.json`：`station_id`（机台号）、`results_root`（FCT 结果目录）、`fct_ini_path`
-3. 双击 `Argus.exe` 启动，左侧工具箱可打开全部子工具
-
-### 聚合端（产线内任一机台兼任）
-
-```powershell
-Argus.exe agg --install     # 一键部署：config 生成 / 防火墙放行 / 开机自启 / 启动
-```
-
-浏览器访问 `http://<机台IP>:8081/?token=<agg_token>` 查看全产线看板。
-邻居机台在 `config.json` 的 `peers` 里互填地址即完成 Mesh 组网。
+2. 编辑 `config.json`：`results_root`（FCT 结果目录）、`fct_ini_path`、可选 `station_id`/`webhook_url`
+3. 双击 `Argus.exe` 启动：程序自动扫描入库，主页看当日/当月良率与 FAIL 流水；左侧导航切「深度分析/维修/待办/工具箱」页
 
 ### CLI 子命令
 
 ```
 Argus.exe                    主程序 GUI
-Argus.exe agg --web|--install|--service   聚合服务
 Argus.exe fetch --help       取数打包工具
 Argus.exe tdms [文件.tdms]   TDMS 波形查看
 Argus.exe rank               FAIL 排行导出
 Argus.exe upgrade            图形化升级向导
+Argus.exe backfill [--days N]  历史 PASS 测量值/失败明细/TDMS 回填（规格06）
 ```
 
 ## 配置要点（config.json）
 
 | 键 | 说明 |
 |----|------|
-| `station_id` | 机台号（Mesh 节点标识） |
+| `station_id` | 机台号（本机标识，可不配自动识别） |
 | `results_root` | FCT 结果 XML 根目录 |
+| `fct_ini_path` | FCT.ini 路径（自动识别兜底） |
 | `webhook_url` | 飞书群机器人 webhook（留空则无推送） |
-| `agg_token` | Mesh 互联鉴权 token（留空自动生成，邻居需一致） |
-| `peers` / `mesh_port` | 邻居机台地址列表 / 监听端口 |
 | `auto_update` | 无感热升级开关（默认开） |
-| `update_dir` | 更新包检测目录（默认 `data/updates`，支持 UNC） |
-| `learn_*` | 机台端自学习系列开关（默认关） |
+| `todo_scan_days` | 待办扫描窗口（默认 30 天） |
+| `analyze_*` | 规格 06 多元深分析开关/参数（采集默认开，TDMS 默认关） |
+| `learn_*` | 机台端自学习开关（默认关） |
 
 完整键位见 `FctAggregator/config.example.json`。
 
 ## 升级
 
-- **自动**：把 `Argus-v{ver}-update.zip` 放进机台 `update_dir`（默认 `data/updates`），程序 5 分钟周期检测后自动暂存 → 托盘提示 → 分离进程重启提交，失败自动回滚
-- **手动**：`Argus.exe upgrade` 图形化向导（演练 → 执行 → 回滚），或 `deploy_update.ps1 -Execute`
-- 升级不触碰 `data\` / `logs\`，数据库 schema 由内置 `DbMigrator` 自动迁移并向下兼容老库
+- **自动**：把 `Argus-v{ver}-update.zip` 放进机台 `data/updates`，程序 5 分钟周期检测后自动暂存 → 托盘提示 → 分离进程重启提交，失败自动回滚
+- **手动**：`Argus.exe upgrade` 图形化向导，或 `deploy_update.ps1 -Execute`
+- 升级不触碰 `data\` / `logs\`，老机台库由程序启动时幂等补表，向下兼容
 
 ## 目录结构
 
 ```
 Argus-main/
-├── FctAggregator/          # 主程序（单 exe 工具套件）
-│   ├── Core/               # 采集引擎 / 解析 / 分类
-│   ├── Agg/                # 聚合 Web 服务 / Mesh 查询
-│   ├── Mesh/               # P2P 互联 / 推送 / 同步
-│   ├── Intelligence/       # 智能化九域（归因/预测/自学习/字典）
-│   ├── Ui/                 # WinForms 界面
-│   ├── Db/                 # SQLite 持久层 / 迁移
-│   ├── modules/            # fetch / tdms / rank / upgrader 工具
-│   ├── selftest/           # 900+ 断言自检工程
-│   └── tools/              # 打包 / 部署 / 诊断脚本
+├── FctAggregator/          # 主程序（纯单机，单 exe 工具）
+│   ├── Core/               # 采集引擎 / 解析 / 分类 / FCT.ini
+│   ├── Db/                 # Database（本机库，幂等 Init）+ DbMaintenance
+│   ├── Intelligence/       # 本机分析：规格05/06 自学习、漂移/CPK/归因/TDMS
+│   ├── Ui/                 # WinForms 界面（MainForm/各 Panel）
+│   ├── Infra/              # Config/Logger/TimeUtil/Xlsx/CsvUtil/FeishuNotifier
+│   ├── Parsing/            # 插件式 XML 解析器
+│   ├── modules/            # fetch / tdms / rank 工具箱
+│   ├── selftest/           # 568 项断言自检工程
+│   └── tools/              # 打包 / 冒烟 / 诊断脚本
 ├── scripts/                # make_release.ps1 一键发布
-├── docs/                   # 设计文档
+├── docs/                   # 设计文档（含历史 mesh/聚合协议文档备查）
 └── Releases/               # 发布归档（gitignore）
 ```
 
 ## 安全说明
 
-- Mesh 互联与 Web 看板均要求 token；token 比较使用固定时间比较（防时序侧信道）
-- 飞书 webhook 建议通过 `config.json` 配置，不要提交到版本库
-- 防火墙规则仅放行 RFC1918 内网网段
+- 飞书 webhook 通过 `config.json` 配置，不要提交到版本库
 - 更新包部署前有纯净性强制校验，防止测试数据污染产线
 
 ## 许可证
@@ -131,4 +118,4 @@ Argus-main/
 
 ## 致谢与依赖
 
-核心依赖仅 4 个 NuGet 包：`Microsoft.Data.Sqlite`、`SQLitePCLRaw.bundle_e_sqlite3`、`System.IO.Ports`、`TDMSReader`。其余全部为手写实现（OOXML 导出、HTTP 服务、Mesh 协议、飞书卡片等）。
+核心依赖仅 4 个 NuGet 包：`Microsoft.Data.Sqlite`、`SQLitePCLRaw.bundle_e_sqlite3`、`System.IO.Ports`、`TDMSReader`。其余全部为手写实现（OOXML 导出、自绘 UI、分析算法、飞书卡片等）。

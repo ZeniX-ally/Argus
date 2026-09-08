@@ -1,24 +1,27 @@
 namespace FctAggregator;
 
+/// <summary>本机库每日维护：每日到达 db_maintenance_hour 后执行（含滞后补跑）。
+/// 原实现由 MeshNode 承载并同时维护聚合库（mesh_agg.db）；聚合/互联功能移除后，
+/// 仅保留本机 Database 的自学习/深度分析/滚动清理/每日备份部分。</summary>
 public sealed class DbMaintenance
 {
-    private readonly AggDatabase _db;
+    private readonly Database _db;
+    private readonly AppConfig _cfg;
     private readonly int _hour;
-    private readonly long _vacuumThresholdBytes;
     private Thread? _thread;
     private volatile bool _stopping;
     private DateTime _lastRunDate = DateTime.MinValue;
 
-    private DbMaintenance(AggDatabase db, int hour, long vacuumThresholdBytes)
+    private DbMaintenance(Database db, AppConfig cfg, int hour)
     {
         _db = db;
+        _cfg = cfg;
         _hour = hour;
-        _vacuumThresholdBytes = vacuumThresholdBytes;
     }
 
-    public static DbMaintenance StartFor(AppConfig cfg, AggDatabase db)
+    public static DbMaintenance StartFor(AppConfig cfg, Database db)
     {
-        var m = new DbMaintenance(db, cfg.DbMaintenanceHour, (long)cfg.DbVacuumThresholdMb * 1024 * 1024);
+        var m = new DbMaintenance(db, cfg, cfg.DbMaintenanceHour);
         m.Start();
         return m;
     }
@@ -27,7 +30,7 @@ public sealed class DbMaintenance
     {
         if (_thread != null) return;
         _stopping = false;
-        _thread = new Thread(Loop) { IsBackground = true, Name = "agg-db-maintenance" };
+        _thread = new Thread(Loop) { IsBackground = true, Name = "local-db-maintenance" };
         _thread.Start();
     }
 
@@ -43,8 +46,8 @@ public sealed class DbMaintenance
         while (!_stopping)
         {
             var now = DateTime.Now;
-            // 审计 C-I3：精确整点匹配曾导致错过维护小时（进程 3:00-3:59 未运行）当天全链跳过且无补跑——
-            // 改为到达维护小时后当日首个tick执行（滞后补跑）
+            // 精确整点匹配曾导致错过维护小时当天全链跳过且无补跑——
+            // 改为到达维护小时后当日首个 tick 执行（滞后补跑）
             if (now.Hour >= _hour && now.Date != _lastRunDate)
             {
                 RunNow();
@@ -59,69 +62,18 @@ public sealed class DbMaintenance
     {
         try
         {
-            var summary = _db.RunMaintenance(_vacuumThresholdBytes);
-            Logger.Info($"[库维护] {Path.GetFileName(_db.DbPath)}: {summary}");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[库维护] {_db.DbPath} 维护失败（不影响运行）: {ex.Message}");
-        }
-        try
-        {
             var bak = _db.BackupDaily();
-            if (bak != null) Logger.Info($"[库维护] 每日备份完成: {Path.GetFileName(bak)}（保留 {AggDatabase.BackupKeepDays} 份）");
+            if (bak != null) Logger.Info($"[库维护] 每日备份完成: {Path.GetFileName(bak)}（保留 {Database.BackupKeepDays} 份）");
         }
         catch (Exception ex)
         {
-            Logger.Warning($"[库维护] {_db.DbPath} 每日备份失败（不影响运行）: {ex.Message}");
+            Logger.Warning($"[库维护] 本机库每日备份失败（不影响运行）: {ex.Message}");
         }
         try
         {
-            var retain = AppConfig.Instance.DeviceSamplesRetainDays;
-            var purged = _db.PurgeOldDeviceSamples(retain);
-            if (purged > 0) Logger.Info($"[库维护] 设备采样清理: 删除 {purged} 条（保留 {retain} 天）");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[库维护] 设备采样清理失败: {ex.Message}");
-        }
-        try
-        {
-            PredictAccuracyReconciler.RunOnce(_db, AppConfig.Instance);
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[库维护] 预测对账失败: {ex.Message}");
-        }
-        try
-        {
-            var retain = AppConfig.Instance.PredictAccuracyRetainDays;
-            var purged = _db.PurgeOldPredictAccuracy(retain);
-            if (purged > 0) Logger.Info($"[库维护] 预测对账清理: 删除 {purged} 条（保留 {retain} 天）");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[库维护] 预测对账清理失败: {ex.Message}");
-        }
-        try
-        {
-            var retain = AppConfig.Instance.PredictAccuracyRetainDays;
-            var purged = _db.PurgeOldPredictLogs(retain); // 审计 M7：预测日志表纳入每日清理
-            if (purged > 0) Logger.Info($"[库维护] 预测日志清理: 删除 {purged} 条（保留 {retain} 天）");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[库维护] 预测日志清理失败: {ex.Message}");
-        }
-        try
-        {
-            var localDb = Database.Current;
-            if (localDb != null)
-            {
-                var retain = AppConfig.Instance.LearnResourceRetentionDays;
-                var purged = localDb.PurgeOldLocalDeviceSamples(retain);
-                if (purged > 0) Logger.Info($"[库维护] 本机设备采样清理: 删除 {purged} 条（保留 {retain} 天）");
-            }
+            var retain = _cfg.LearnResourceRetentionDays;
+            var purged = _db.PurgeOldLocalDeviceSamples(retain);
+            if (purged > 0) Logger.Info($"[库维护] 本机设备采样清理: 删除 {purged} 条（保留 {retain} 天）");
         }
         catch (Exception ex)
         {
@@ -129,8 +81,7 @@ public sealed class DbMaintenance
         }
         try
         {
-            var localDb = Database.Current;
-            if (localDb != null) LearningEngine.RunOnce(localDb, AppConfig.Instance);
+            LearningEngine.RunOnce(_db, _cfg);
         }
         catch (Exception ex)
         {
@@ -138,8 +89,7 @@ public sealed class DbMaintenance
         }
         try
         {
-            var localDb = Database.Current;
-            if (localDb != null) AnalysisEngine.RunOnce(localDb, AppConfig.Instance);
+            AnalysisEngine.RunOnce(_db, _cfg);
         }
         catch (Exception ex)
         {
@@ -147,18 +97,14 @@ public sealed class DbMaintenance
         }
         try
         {
-            var localDb = Database.Current;
-            if (localDb != null)
-            {
-                var retain = AppConfig.Instance.AnalyzeMeasureRetentionDays;
-                var purged = localDb.PurgeOldMeasurements(retain);
-                if (purged > 0) Logger.Info($"[库维护] 测量值清理: 删除 {purged} 条（保留 {retain} 天）");
-                var retainFi = AppConfig.Instance.AnalyzeFailItemRetentionDays;
-                var purgedFi = localDb.PurgeOldFailItems(retainFi);
-                if (purgedFi > 0) Logger.Info($"[库维护] 失败项明细清理: 删除 {purgedFi} 条（保留 {retainFi} 天）");
-                var purgedTf = localDb.PurgeOldTdmsFeatures(retain);
-                if (purgedTf > 0) Logger.Info($"[库维护] TDMS 特征清理: 删除 {purgedTf} 条（保留 {retain} 天）");
-            }
+            var retain = _cfg.AnalyzeMeasureRetentionDays;
+            var purged = _db.PurgeOldMeasurements(retain);
+            if (purged > 0) Logger.Info($"[库维护] 测量值清理: 删除 {purged} 条（保留 {retain} 天）");
+            var retainFi = _cfg.AnalyzeFailItemRetentionDays;
+            var purgedFi = _db.PurgeOldFailItems(retainFi);
+            if (purgedFi > 0) Logger.Info($"[库维护] 失败项明细清理: 删除 {purgedFi} 条（保留 {retainFi} 天）");
+            var purgedTf = _db.PurgeOldTdmsFeatures(retain);
+            if (purgedTf > 0) Logger.Info($"[库维护] TDMS 特征清理: 删除 {purgedTf} 条（保留 {retain} 天）");
         }
         catch (Exception ex)
         {
