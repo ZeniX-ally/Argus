@@ -408,18 +408,22 @@ public class Engine
         }
         catch (Exception ex) { Logger.Error($"[错误] 入库失败: {path} | {ex.Message}"); return; }
 
+        // 审计：实时喂样推进回填水位（LearnBackfill.AdvanceWatermark 只增不降），
+        // 否则下次回填会把实时已喂过的记录再喂一遍，normal_models.n 双计。
+        long learnRid = insertedId > 0 ? insertedId
+            : _db.GetRecordIdsByPaths(new[] { Path.GetFullPath(path) }).Values.FirstOrDefault();
+
         // 正常态：先评分再入模，避免当前点污染基线；开关关 no-op
         DeviationScorer.EvaluateMeasurementRecord(_db, _cfg, rec);
         NormalLearners.ObserveMeasurement(_db, _cfg, rec);
+        LearnBackfill.AdvanceWatermark(_db, LearnBackfill.MetaMeas, learnRid);
 
         // 规格06期3：TDMS 特征化实时入队（单消费者队列，不阻塞采集链路；开关关/tdms_root 空静默）
         if (_cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(_cfg.TdmsRoot))
         {
             try
             {
-                // 审计 A2：优先复用 InsertOne 返回的 id，仅在 INSERT OR IGNORE 未命中（重复事件）时才反查
-                var rid = insertedId > 0 ? insertedId : _db.GetRecordIdsByPaths(new[] { Path.GetFullPath(path) }).Values.FirstOrDefault();
-                if (rid > 0) TdmsFeatureCollector.Enqueue(rec, rid);
+                if (learnRid > 0) TdmsFeatureCollector.Enqueue(rec, learnRid);
             }
             catch (Exception ex) { Logger.Warning($"[TDMS] 特征化入队失败: {ex.Message}"); }
         }

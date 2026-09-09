@@ -40,6 +40,8 @@ public static class BackfillTool
         if (DateTime.TryParseExact(wm, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var wmd) &&
             wmd >= from && wmd < today)
             from = wmd.AddDays(1);
+        // 审计：水位只升不降（多 Online/Offline×机型 目录遍历顺序下，末次写入可能小于已处理的最大日期，导致每轮整窗重扫）
+        var wmMax = wm;
 
         var root = cfg.ResultsRoot;
         if (!Directory.Exists(root))
@@ -135,7 +137,12 @@ public static class BackfillTool
                     report.InsertedFailItems += dayFailItems;
                     report.TdmsRows += dayTdmsRows;
                     onProgress?.Invoke($"{day:yyyy-MM-dd} {Path.GetFileName(modelDir)}: 文件 {files.Count}，补测量 {dayMeasurements}");
-                    db.SetMeta(MetaWatermark, day.ToString("yyyy-MM-dd"));
+                    var dayStr = day.ToString("yyyy-MM-dd");
+                    if (string.CompareOrdinal(dayStr, wmMax) > 0)
+                    {
+                        db.SetMeta(MetaWatermark, dayStr);
+                        wmMax = dayStr;
+                    }
                 }
             }
         }

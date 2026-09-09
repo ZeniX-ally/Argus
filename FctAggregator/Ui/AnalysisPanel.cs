@@ -220,8 +220,12 @@ public class AnalysisPanel : Panel
             }
             UiAsync.Post(this, () =>
             {
-                if (!IsDisposed) _devChart?.SetData(labels, series, emptyHint, statusHint);
-                _chartBusy = false;
+                try
+                {
+                    if (!IsDisposed) _devChart?.SetData(labels, series, emptyHint, statusHint);
+                }
+                catch (Exception ex) { Logger.Warning($"[分析] 折线回写失败: {ex.Message}"); }
+                finally { _chartBusy = false; }
             });
         });
     }

@@ -120,9 +120,11 @@ public sealed class DeviceSampleRecorder : IDisposable
             var db = Database.Current;
             if (db != null)
             {
-                db.InsertLocalDeviceSample(cpu.Value, memPct.Value, diskFree.Value);
+                long sampleId = db.InsertLocalDeviceSample(cpu.Value, memPct.Value, diskFree.Value);
                 DeviationScorer.EvaluateDeviceSample(db, AppConfig.Instance, cpu.Value, memPct.Value, diskFree.Value);
                 NormalLearners.ObserveDeviceSample(db, AppConfig.Instance, cpu.Value, memPct.Value, diskFree.Value);
+                // 审计：实时喂样推进设备回填水位，避免回填重复喂同一采样点双计
+                LearnBackfill.AdvanceWatermark(db, LearnBackfill.MetaDev, sampleId);
             }
 
             return (cpu.Value, memPct.Value, diskFree.Value);

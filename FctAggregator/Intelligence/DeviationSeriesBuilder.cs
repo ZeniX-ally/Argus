@@ -91,7 +91,7 @@ public static class DeviationSeriesBuilder
 
         // v3.36.0 性能：一次性加载全部 measurement 模型（原逐点 GetNormalModel 为 N+1，大窗口上万次查询）
         var modelDict = new Dictionary<(string, string), NormalModelRow>();
-        foreach (var m in db.ListNormalModels(NormalModelStore.SourceMeasurement, limit: 5000))
+        foreach (var m in db.ListNormalModels(NormalModelStore.SourceMeasurement, limit: 1_000_000))
             modelDict[(m.Model ?? "", m.SignalKey ?? "")] = m;
 
         var bySignal = new Dictionary<string, DeviationSeries>(StringComparer.OrdinalIgnoreCase);

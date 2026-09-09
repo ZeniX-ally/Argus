@@ -183,9 +183,13 @@ public class LearningPanel : Panel
                 var meas = db.CountPassMeasurementRows();
                 UiAsync.Post(this, () =>
                 {
-                    if (IsDisposed || gen != _refreshGen) return;
-                    ApplySnapshot(snap, meas);
-                    _refreshBusy = false;
+                    try
+                    {
+                        if (IsDisposed || gen != _refreshGen) return;
+                        ApplySnapshot(snap, meas);
+                    }
+                    catch (Exception ex) { Logger.Warning($"[正常态] 刷新回写失败: {ex.Message}"); }
+                    finally { _refreshBusy = false; }
                 });
             }
             catch (Exception ex)
@@ -315,24 +319,29 @@ public class LearningPanel : Panel
             string? err = null;
             try
             {
-                BeginInvoke(() => _summary.Text = $"现场回放运行中（{days} 天）…");
+                try { if (!IsDisposed) BeginInvoke(() => _summary.Text = $"现场回放运行中（{days} 天）…"); } catch { }
                 rp = ReplayRunner.RunField(dbPath, cfg, days, null);
             }
             catch (Exception ex) { err = ex.Message; Logger.Warning($"[正常态] 现场回放失败: {ex.Message}"); }
-            BeginInvoke(() =>
+            try
             {
-                SetBusy(false);
-                Refresh2();
-                if (err != null)
+                if (IsDisposed || !IsHandleCreated) return; // 审计：窗体已关闭时不再回写 UI
+                BeginInvoke(() =>
                 {
-                    MessageBox.Show($"回放失败：{err}", "现场回放", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                if (rp == null) return;
-                var body = $"检出率 {rp.DetectionRate:P0}\n误报 {rp.FalsePosPerDay:F2} 条/天\nready 覆盖 {rp.ReadyCoverage:P0}\n偏离事件 {rp.EventsTotal}\n\n{(rp.Pass ? "三指标达标" : "三指标未达标")}";
-                MessageBox.Show(body, "现场回放结果", MessageBoxButtons.OK,
-                    rp.Pass ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-            });
+                    SetBusy(false);
+                    Refresh2();
+                    if (err != null)
+                    {
+                        MessageBox.Show($"回放失败：{err}", "现场回放", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                    if (rp == null) return;
+                    var body = $"检出率 {rp.DetectionRate:P0}\n误报 {rp.FalsePosPerDay:F2} 条/天\nready 覆盖 {rp.ReadyCoverage:P0}\n偏离事件 {rp.EventsTotal}\n\n{(rp.Pass ? "三指标达标" : "三指标未达标")}";
+                    MessageBox.Show(body, "现场回放结果", MessageBoxButtons.OK,
+                        rp.Pass ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                });
+            }
+            catch (Exception ex) { Logger.Warning($"[正常态] 回放 UI 回写失败: {ex.Message}"); }
         });
     }
 

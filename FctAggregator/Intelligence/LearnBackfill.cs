@@ -26,6 +26,18 @@ public static class LearnBackfill
     private static long ReadWm(Database db, string key)
         => long.TryParse(db.GetMeta(key), out var n) && n >= 0 ? n : 0;
 
+    /// <summary>推进回填水位（单调，只增不降）。实时喂样与回填共用同一水位，防止同一记录被喂两遍导致 n 双计。</summary>
+    public static void AdvanceWatermark(Database db, string key, long id)
+    {
+        try
+        {
+            if (db == null || id <= 0) return;
+            var cur = ReadWm(db, key);
+            if (id > cur) db.SetMeta(key, id.ToString());
+        }
+        catch (Exception ex) { Logger.Warning($"[正常态] 水位推进失败: {ex.Message}"); }
+    }
+
     private static int BackfillMeasurements(Database db, AppConfig cfg, string from, CancellationToken ct)
     {
         var rows = db.ListPassMeasurementsAfter(ReadWm(db, MetaMeas), from);
@@ -63,7 +75,7 @@ public static class LearnBackfill
                 GroupName = g.Group, ChannelName = g.Channel, Mean = g.Mean, Std = g.Std, Max = g.Max,
             }).ToList();
             NormalLearners.ObserveWaveform(db, cfg, rec, feats);
-            db.SetMeta(MetaTdms, grp.Key.ToString());
+            AdvanceWatermark(db, MetaTdms, grp.Key);
             n++;
             if (++sinceSleep >= 200) { Thread.Sleep(100); sinceSleep = 0; }
         }

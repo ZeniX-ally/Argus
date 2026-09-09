@@ -323,7 +323,15 @@ public static class UpdateChecker
             catch {  }
         }
 
-        var keep = new[] { "station_id", "results_root", "webhook_url", "agg_token", "update_source" };
+        // 与 tools/deploy_update.ps1 的 carryKeys 保持一致（v3.31.1 审计定稿的现场保留键），
+        // 避免自动更新与手工部署行为分叉：agg_token/聚合遗留键不保留，现场调参键（analyze_collect_pass/fct_ini_path 等）不丢失。
+        var keep = new[] {
+            "station_id", "results_root", "webhook_url", "feishu_banner_img_key",
+            "fct_ini_path", "log_level", "todo_scan_days", "db_maintenance_hour",
+            "notify_min_interval_sec", "desktop_notify", "auto_start",
+            "learn_resource_sampling_enabled", "analyze_collect_pass",
+            "update_source",
+        };
         var used = new HashSet<string>();
         using var stream = new MemoryStream();
         using (var w = new System.Text.Json.Utf8JsonWriter(stream, new System.Text.Json.JsonWriterOptions { Indented = true }))

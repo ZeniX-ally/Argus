@@ -995,7 +995,8 @@ public sealed partial class Database
             SELECT source, model, signal_key, n, COALESCE(mean,0), COALESCE(sigma,0), COALESCE(p01,0), COALESCE(p50,0), COALESCE(p99,0),
                    COALESCE(min_v,0), COALESCE(max_v,0), COALESCE(last_ts,''), status, COALESCE(qstate,'')
             FROM normal_models {filter} ORDER BY source, model, signal_key LIMIT @n";
-        cmd.Parameters.AddWithValue("@n", Math.Clamp(limit, 1, 5000));
+        // 审计：限定上限远大于单机模型数（机型×测项），仅为防失控查询，不构成截断漏线
+        cmd.Parameters.AddWithValue("@n", Math.Clamp(limit, 1, 1_000_000));
         using var r = cmd.ExecuteReader();
         while (r.Read())
         {
@@ -2687,18 +2688,19 @@ public sealed partial class Database
         return GetTodoItem(Convert.ToInt32(v));
     }
 
-    public void InsertLocalDeviceSample(double cpuUsage, double memUsedPct, double diskFreeGb, string? ts = null)
+    public long InsertLocalDeviceSample(double cpuUsage, double memUsedPct, double diskFreeGb, string? ts = null)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             INSERT INTO device_samples_local (ts, cpu_usage, mem_used_pct, disk_free_gb)
-            VALUES (@ts, @cpu, @mem, @disk);";
+            VALUES (@ts, @cpu, @mem, @disk);
+            SELECT last_insert_rowid();";
         cmd.Parameters.AddWithValue("@ts", string.IsNullOrEmpty(ts) ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : ts);
         cmd.Parameters.AddWithValue("@cpu", Math.Round(cpuUsage, 2));
         cmd.Parameters.AddWithValue("@mem", Math.Round(memUsedPct, 2));
         cmd.Parameters.AddWithValue("@disk", Math.Round(diskFreeGb, 2));
-        cmd.ExecuteNonQuery();
+        return Convert.ToInt64(cmd.ExecuteScalar());
     }
 
     public List<(string Ts, double Cpu, double Mem, double DiskFree)> GetLocalDeviceSamples(int days = 7)

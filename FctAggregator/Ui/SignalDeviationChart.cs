@@ -129,7 +129,10 @@ public sealed class SignalDeviationChart : Control
             int alpha = _series.Count > 40 ? 120 : 200;
             using var linePen = new Pen(Color.FromArgb(alpha, col), si == _hoverSeries ? lineW + 1f : lineW);
             if (pts.Count == 1)
-                g.FillEllipse(new SolidBrush(col), pts[0].X - 3, pts[0].Y - 3, 6, 6);
+            {
+                using var singleBrush = new SolidBrush(col);
+                g.FillEllipse(singleBrush, pts[0].X - 3, pts[0].Y - 3, 6, 6);
+            }
             else
                 g.DrawLines(linePen, pts.ToArray());
             if (drawDots)

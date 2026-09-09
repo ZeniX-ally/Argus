@@ -98,6 +98,8 @@ public static class TdmsFeatureCollector
             db.InsertTdmsFeaturesFor(rec, recordId, path, rows);
             DeviationScorer.EvaluateWaveform(db, cfg, rec, rows);
             NormalLearners.ObserveWaveform(db, cfg, rec, rows);
+            // 审计：实时喂样推进波形回填水位，避免下次回填重复喂同一 record 双计
+            LearnBackfill.AdvanceWatermark(db, LearnBackfill.MetaTdms, recordId);
             return rows.Count;
         }
         catch (Exception ex) { NoteSkip(path, ex); return 0; }

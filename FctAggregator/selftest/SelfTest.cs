@@ -3345,6 +3345,19 @@ Argus 统一发布包  v{newer}
         Check(bfRow != null && bfRow!.N >= 1 && bfRow.Mean < 10, "回填只学 PASS（FAIL 99 不入模）");
         Check(n1 >= 1 && n2 == 0, "回填水位幂等（第二次 0 增量）");
 
+        // 审计：实时喂样推进水位的单调语义（不回拨；且不破坏已有水位）
+        LearnBackfill.AdvanceWatermark(bfDb, LearnBackfill.MetaMeas, 1000);
+        LearnBackfill.AdvanceWatermark(bfDb, LearnBackfill.MetaMeas, 500);
+        LearnBackfill.AdvanceWatermark(bfDb, LearnBackfill.MetaMeas, 0);
+        Check(bfDb.GetMeta(LearnBackfill.MetaMeas) == "1000",
+              "审计: AdvanceWatermark 单调不回拨（1000→500→0 保持 1000）");
+        var devIdDb = new Database(Path.Combine(work, "dev_wm.db"));
+        long devId = devIdDb.InsertLocalDeviceSample(12.5, 40.0, 200.0, "2026-09-09 10:00:00");
+        Check(devId > 0, $"审计: InsertLocalDeviceSample 返回自增 id（实得 {devId}）");
+        LearnBackfill.AdvanceWatermark(devIdDb, LearnBackfill.MetaDev, devId);
+        Check(devIdDb.GetMeta(LearnBackfill.MetaDev) == devId.ToString(),
+              "审计: 设备采样实时喂样推进设备水位");
+
         var offBf = LearnBackfill.Run(offDb, new AppConfig { LearnNormalEnabled = false }, 30);
         Check(offBf == 0, "开关关：回填 no-op");
 

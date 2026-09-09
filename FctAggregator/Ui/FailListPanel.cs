@@ -193,12 +193,16 @@ public sealed class FailListPanel : Panel
             }
             UiAsync.Post(this, () =>
             {
-                if (IsDisposed || gen != _loadGen) return;
-                _all = rows;
-                ComputeGroups();
-                ComputeSnGroups();
-                RebuildActiveView();
-                _loadBusy = false;
+                try
+                {
+                    if (IsDisposed || gen != _loadGen) return;
+                    _all = rows;
+                    ComputeGroups();
+                    ComputeSnGroups();
+                    RebuildActiveView();
+                }
+                catch (Exception ex) { Logger.Error($"FAIL 记录刷新回写失败: {ex.Message}"); }
+                finally { _loadBusy = false; }
             });
         });
     }
