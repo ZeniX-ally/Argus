@@ -546,7 +546,7 @@ public sealed class TopFailRankPanel : Control
     }
 }
 
-/// <summary>总览页：自学习基线 / 章节群挂预警条（无预警时高度 0）。</summary>
+/// <summary>总览页：自学习基线预警条（无预警时高度 0）。</summary>
 public sealed class LearnAlertStrip : Control
 {
     private List<string> _lines = new();

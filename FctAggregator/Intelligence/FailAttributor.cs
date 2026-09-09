@@ -81,7 +81,7 @@ public sealed class AttributionState
     }
 }
 
-/// <summary>规格06期2：失败多维归因（纯函数）。fixture/tester/hour 桶失败率 vs 全局，偏差比超阈值报异常；资源采样与失败数 Pearson 相关。</summary>
+/// <summary>规格06期2：失败时段归因（纯函数）。hour 桶失败率 vs 全局，偏差比超阈值报异常；资源采样与失败数 Pearson 相关。</summary>
 public static class FailAttributor
 {
     public const int MaxBuckets = 50;
@@ -100,6 +100,7 @@ public static class FailAttributor
         {
             foreach (var b in src.Buckets)
             {
+                if (!string.Equals(b.Dim, "hour", StringComparison.OrdinalIgnoreCase)) continue;
                 if (b.N < cfg.AnalyzeAttrMinBucket) continue;
                 double rate = (double)b.Fails / b.N;
                 double ratio = rate / globalRate;

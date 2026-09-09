@@ -2551,15 +2551,13 @@ Argus 统一发布包  v{newer}
             var attrState = FailAttributor.Run(dbF6, cfgF, fixedNow);
             Check(attrState.TotalN == 80 && Math.Abs(attrState.GlobalFailRate - 0.3) < 1e-6,
                   $"期2: 归因全局口径（n={attrState.TotalN}，全局失败率 {attrState.GlobalFailRate}）");
-            Check(attrState.Buckets.Count == 3, $"期2: fixture/tester/hour 三桶异常（实得 {attrState.Buckets.Count}）");
-            var bFx1 = attrState.Buckets.FirstOrDefault(b => b.Dim == "fixture" && b.Key == "FX1");
-            Check(bFx1 != null && Math.Abs(bFx1.Ratio - 1.67) < 0.01 && bFx1.N == 40 && bFx1.Fails == 20,
-                  "期2: 治具 FX1 偏差比 1.67 触发");
-            Check(bFx1 != null && Math.Abs(bFx1.PanelNgRate - 0.5) < 1e-6, "期2: panel NG 率按 fixture 统计");
-            Check(attrState.Buckets.All(b => !(b.Dim == "fixture" && b.Key == "FX2")),
-                  "期2: 治具 FX2 低于阈值不报");
-            Check(attrState.Buckets.First().Dim == "hour" && attrState.Buckets.First().Key == "8",
-                  "期2: 偏差比降序（hour=8 最先）");
+            Check(attrState.Buckets.Count == 1, $"期2: 仅 hour 桶异常（实得 {attrState.Buckets.Count}）");
+            Check(attrState.Buckets.All(b => b.Dim == "hour"), "期2: 归因输出仅保留 hour 维");
+            var bH8 = attrState.Buckets.FirstOrDefault(b => b.Dim == "hour" && b.Key == "8");
+            Check(bH8 != null && bH8.N == 20 && bH8.Fails == 20 && Math.Abs(bH8.Ratio - 3.33) < 0.05,
+                  "期2: hour=8 全失败桶偏差比 ~3.33 触发");
+            Check(bH8 != null && Math.Abs(bH8.PanelNgRate - 1.0) < 1e-6, "期2: panel NG 率按 hour 桶统计");
+            Check(attrState.Buckets.First().Key == "8", "期2: 偏差比降序（hour=8 最先）");
             var cfgF5 = new AppConfig { AnalyzeWindowDays = 7, AnalyzeAttrMinBucket = 50, AnalyzeAttrDevRatio = 1.5 };
             Check(FailAttributor.Run(dbF6, cfgF5, fixedNow).Buckets.Count == 0,
                   "期2: 桶样本 < min_bucket 跳过");
@@ -2672,8 +2670,8 @@ Argus 统一发布包  v{newer}
                 AnalyzeMinSamples = 30, AnalyzeEffectD = 0.8,
             }, fixedNow);
             var attrGet = AnalysisEngine.GetAttributionState(dbF6);
-            Check(attrGet != null && attrGet.Buckets.Count == 3 && attrGet.Date == "2026-09-05",
-                  "期2: RunOnce 落盘归因快照且可读回");
+            Check(attrGet != null && attrGet.Buckets.Count == 1 && attrGet.Date == "2026-09-05",
+                  "期2: RunOnce 落盘归因快照且可读回（hour-only）");
             Check(AttributionState.FromJson(attrGet!.ToJson())!.Buckets.Count == attrGet.Buckets.Count,
                   "期2: AttributionState JSON 往返一致");
             AnalysisEngine.RunOnce(dbG6, new AppConfig
@@ -3262,6 +3260,22 @@ Argus 统一发布包  v{newer}
         var fr = ReplayRunner.RunField(fieldDbPath, fieldCfg, 28, new[] { "2026-08-25" });
         Check(fr.Pass, "RunField 现场回放三指标达标");
         Check(fr.DetectionRate >= 0.80, $"RunField 检出率 ≥80%（实得 {fr.DetectionRate:P0}）");
+
+        foreach (var g in fieldDb.ListPassMeasurementPoints("2026-08-01", "2026-08-21", null, 5000).GroupBy(r => r.RecordId))
+        {
+            var f = g.First();
+            NormalLearners.ObserveMeasurement(fieldDb, fieldCfg, new TestRecord
+            {
+                Model = f.Model, Result = "PASS", BatchTimestamp = f.Ts,
+                Measurements = g.Select(x => new MeasurementRow { TestName = x.TestName, Value = x.Value }).ToList(),
+            });
+        }
+        var chartNow = new DateTime(2026, 8, 28, 12, 0, 0);
+        var (zLabels, zSeries) = DeviationSeriesBuilder.Build(fieldDb, fieldCfg, 28, 5, 200, chartNow);
+        Check(zLabels.Count >= 7 && zSeries.Count >= 1 && zSeries[0].Points.Count >= 1,
+            "偏离折线：PASS 时间轴 + 至少一条 |z| 序列");
+        Check(zSeries.Any(s => s.Points.Any(p => p.Point.Z > 1)),
+            "偏离折线：评分周异常 PASS 的 |z| > 1");
 
         var snap = LearningSnapshot.Capture(scDb, voteCfg, scNow);
         Check(snap.Total >= 4 && snap.Ready >= 4, "P3 快照：覆盖率与表对拍（ready≥4）");

@@ -1024,6 +1024,41 @@ public sealed partial class Database
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>折线图：PASS 测量点（日期闭区间），按 ts/record 排序；testNames 为空则不过滤测项。</summary>
+    public List<(long RecordId, string Model, string Ts, string TestName, double Value)> ListPassMeasurementPoints(
+        string fromYmd, string toYmdInclusive, IEnumerable<string>? testNames = null, int maxRows = 5000)
+    {
+        var list = new List<(long, string, string, string, double)>();
+        var names = testNames?.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var sql = @"
+            SELECT m.record_id, COALESCE(m.model,''), COALESCE(m.ts,''), m.test_name, m.value
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE r.result='PASS' AND m.value IS NOT NULL
+              AND substr(COALESCE(m.ts,''),1,10) >= @from
+              AND substr(COALESCE(m.ts,''),1,10) <= @to";
+        if (names is { Count: > 0 })
+        {
+            var ph = new List<string>();
+            for (int i = 0; i < names.Count; i++) ph.Add($"@n{i}");
+            sql += $" AND m.test_name IN ({string.Join(",", ph)})";
+        }
+        sql += " ORDER BY m.ts, m.record_id, m.id LIMIT @lim";
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
+        cmd.Parameters.AddWithValue("@to", toYmdInclusive ?? "");
+        cmd.Parameters.AddWithValue("@lim", Math.Max(1, maxRows));
+        if (names is { Count: > 0 })
+            for (int i = 0; i < names.Count; i++)
+                cmd.Parameters.AddWithValue($"@n{i}", names[i]);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetDouble(4)));
+        return list;
+    }
+
     /// <summary>回放专用：PASS 测量在 [fromYmd, toYmdExclusive) 日期闭开区间。</summary>
     public List<(long RecordId, string Model, string Ts, string TestName, double Value)> ListPassMeasurementsBetween(string fromYmd, string toYmdExclusive)
     {

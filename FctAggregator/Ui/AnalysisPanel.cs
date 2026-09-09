@@ -1,23 +1,19 @@
 namespace FctAggregator;
 
-/// <summary>规格06：深度分析页——漂移/逼近限预警 + CPK 低能力清单 + 失败归因 + tester 效应量 + 章节群挂。</summary>
+/// <summary>分析页：PASS 偏离折线 + 正常态自学习 + 时段归因 + TDMS。</summary>
 public class AnalysisPanel : Panel
 {
     private readonly Engine _engine;
     private System.Windows.Forms.Timer _timer = null!;
     private Label _summary = null!;
-    private DataGridView _driftGrid = null!;
-    private DataGridView _cpkGrid = null!;
     private DataGridView _attrGrid = null!;
-    private DataGridView _effectGrid = null!;
-    private DataGridView _groupGrid = null!;
-    private Label _driftEmpty = null!;
-    private Label _cpkEmpty = null!;
     private Label _attrEmpty = null!;
-    private Label _effectEmpty = null!;
-    private Label _groupEmpty = null!;
     private DataGridView _tdmsGrid = null!;
     private Label _tdmsEmpty = null!;
+    private SignalDeviationChart _devChart = null!;
+    private ComboBox _winDays = null!;
+    private LearningPanel _learnPanel = null!;
+    private volatile bool _chartBusy;
 
     public AnalysisPanel(Engine engine)
     {
@@ -37,58 +33,19 @@ public class AnalysisPanel : Panel
 
         _summary = new Label
         {
-            Dock = DockStyle.Top, Height = 40, ForeColor = Theme.TextSub, Font = Theme.Small,
+            Dock = DockStyle.Top, Height = 36, ForeColor = Theme.TextSub, Font = Theme.Small,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(2, 2, 0, 2),
         };
 
-        _driftGrid = NewGrid();
-        _driftGrid.Columns.Add("kind", "类型");
-        _driftGrid.Columns.Add("model", "型号");
-        _driftGrid.Columns.Add("test", "测项");
-        _driftGrid.Columns.Add("today", "今日均值");
-        _driftGrid.Columns.Add("base", "基线均值");
-        _driftGrid.Columns.Add("expect", "期望区间");
-        _driftGrid.Columns.Add("score", "得分");
-        _driftGrid.Columns.Add("n", "样本(基/今)");
-        _driftGrid.Columns.Add("msg", "说明");
-        _driftGrid.Columns[^1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-
-        _cpkGrid = NewGrid();
-        _cpkGrid.Columns.Add("model", "型号");
-        _cpkGrid.Columns.Add("test", "测项");
-        _cpkGrid.Columns.Add("cpk", "CPK");
-        _cpkGrid.Columns.Add("n", "样本");
-        _cpkGrid.Columns.Add("unit", "单位");
-        _cpkGrid.Columns.Add("lo", "下限");
-        _cpkGrid.Columns.Add("hi", "上限");
-
         _attrGrid = NewGrid();
-        _attrGrid.Columns.Add("dim", "维度");
-        _attrGrid.Columns.Add("key", "桶值");
+        _attrGrid.Columns.Add("slot", "时段");
         _attrGrid.Columns.Add("n", "样本");
         _attrGrid.Columns.Add("fails", "失败");
         _attrGrid.Columns.Add("rate", "失败率");
         _attrGrid.Columns.Add("global", "全局率");
         _attrGrid.Columns.Add("ratio", "偏差比");
-        _attrGrid.Columns.Add("panelng", "panel NG 率");
         _attrGrid.Columns.Add("msg", "说明");
         _attrGrid.Columns[^1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-
-        _effectGrid = NewGrid();
-        _effectGrid.Columns.Add("model", "型号");
-        _effectGrid.Columns.Add("test", "测项");
-        _effectGrid.Columns.Add("a", "TesterA(均值/样本)");
-        _effectGrid.Columns.Add("b", "TesterB(均值/样本)");
-        _effectGrid.Columns.Add("d", "效应量 d");
-        _effectGrid.Columns.Add("msg", "说明");
-        _effectGrid.Columns[^1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-
-        _groupGrid = NewGrid();
-        _groupGrid.Columns.Add("section", "章节");
-        _groupGrid.Columns.Add("count", "不同信号数");
-        _groupGrid.Columns.Add("signals", "信号");
-        _groupGrid.Columns.Add("msg", "提示");
-        _groupGrid.Columns[^1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
         _tdmsGrid = NewGrid();
         _tdmsGrid.Columns.Add("sn", "SN");
@@ -101,33 +58,43 @@ public class AnalysisPanel : Panel
         _tdmsGrid.Columns.Add("ts", "时间");
         _tdmsGrid.Columns[^1].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
-        _driftEmpty = EmptyLabel("暂无漂移快照（每日维护窗口自动计算）");
-        _cpkEmpty = EmptyLabel("暂无 CPK 快照（每日维护窗口自动计算）");
-        _attrEmpty = EmptyLabel("暂无归因快照（每日维护窗口自动计算）");
-        _effectEmpty = EmptyLabel("暂无 tester 对比快照（每日维护窗口自动计算）");
-        _groupEmpty = EmptyLabel("暂无章节群挂预警");
-        _tdmsEmpty = EmptyLabel("TDMS 特征化未启用或无数据（需配置 tdms_root 并打开 analyze_tdms_enabled）");
+        _attrEmpty = EmptyLabel("暂无时段归因快照（每日维护窗口自动计算）");
+        _tdmsEmpty = EmptyLabel("TDMS 无数据（配置 tdms_root 后自动采集）");
 
-        var driftHost = SectionHost("规格带漂移 / 逼近规格限预警（仅过程量）", _driftGrid, _driftEmpty);
-        var cpkHost = SectionHost("CPK 低能力清单（< 1.33）", _cpkGrid, _cpkEmpty);
-        var attrHost = SectionHost("失败多维归因（治具 / 测试员 / 时段 异常桶）", _attrGrid, _attrEmpty);
-        var effectHost = SectionHost("Tester 效应量对比（同测项均值差 / 合并σ）", _effectGrid, _effectEmpty);
-        var groupHost = SectionHost("章节群挂预警（规格 05 自学习）", _groupGrid, _groupEmpty);
-        var tdmsHost = SectionHost("TDMS 特征化（最近通道统计，FAIL+PASS）", _tdmsGrid, _tdmsEmpty);
+        _devChart = new SignalDeviationChart { Dock = DockStyle.Fill };
+        _winDays = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList, Width = 96, Left = 78, Top = 7,
+        };
+        _winDays.Items.AddRange(new object[] { "近 3 天", "近 7 天", "近 14 天" });
+        _winDays.SelectedIndex = 1;
+        _winDays.SelectedIndexChanged += (_, _) => RefreshDeviationChart();
+        var chartToolbar = new Panel { Dock = DockStyle.Top, Height = 36, BackColor = Theme.Surface };
+        chartToolbar.Controls.Add(new Label
+        {
+            Text = "时间窗口", Left = 12, Top = 10, Width = 60, Height = 20,
+            ForeColor = Theme.TextFaint, Font = Theme.Tiny, TextAlign = ContentAlignment.MiddleLeft,
+        });
+        chartToolbar.Controls.Add(_winDays);
+        var chartHost = new Panel { Dock = DockStyle.Top, Height = 360, BackColor = Theme.Surface, Padding = new Padding(0, 0, 0, 8) };
+        chartHost.Controls.Add(_devChart);
+        chartHost.Controls.Add(chartToolbar);
+
+        _learnPanel = new LearningPanel(_engine) { Dock = DockStyle.Top, Height = 420 };
+
+        var attrHost = SectionHost("失败时段归因（按小时桶）", _attrGrid, _attrEmpty, 220);
+        var tdmsHost = SectionHost("TDMS 特征化（最近通道统计）", _tdmsGrid, _tdmsEmpty, 220);
 
         Controls.Add(tdmsHost);
-        Controls.Add(groupHost);
-        Controls.Add(effectHost);
         Controls.Add(attrHost);
-        Controls.Add(cpkHost);
-        Controls.Add(driftHost);
+        Controls.Add(_learnPanel);
+        Controls.Add(chartHost);
         Controls.Add(_summary);
     }
 
-    private static Panel SectionHost(string title, DataGridView grid, Label empty)
+    private static Panel SectionHost(string title, DataGridView grid, Label empty, int height = 280)
     {
-        var host = new Panel { Dock = DockStyle.Top, BackColor = Theme.Surface, Padding = new Padding(12, 8, 12, 10) };
-        host.Height = 280;
+        var host = new Panel { Dock = DockStyle.Top, BackColor = Theme.Surface, Padding = new Padding(12, 8, 12, 10), Height = height };
         host.Controls.Add(grid);
         host.Controls.Add(empty);
         host.Controls.Add(new Label
@@ -160,41 +127,49 @@ public class AnalysisPanel : Panel
         var db = _engine.Db;
         try { AnalysisEngine.RunOnce(db, _engine.Config); }
         catch (Exception ex) { Logger.Warning($"[分析] 刷新重算失败: {ex.Message}"); }
-        var drift = AnalysisEngine.GetDriftState(db);
-        var cpk = AnalysisEngine.GetCpkState(db);
+
         var attr = AnalysisEngine.GetAttributionState(db);
-        var fixture = AnalysisEngine.GetFixtureState(db);
-        var group = LearningEngine.GetGroupAlerts(db);
+        var snap = LearningSnapshot.Capture(db, _engine.Config);
         var tdms = AnalysisEngine.GetTdmsState(db);
 
-        if (drift == null && cpk == null && attr == null && fixture == null && tdms == null)
-        {
-            _summary.Text = "暂无分析结果——分析引擎在每日维护窗口自动运行（db_maintenance_hour，默认 3 点），" +
-                            "也可用 Argus.exe backfill 先回填存量数据加速冷启动。";
-        }
-        else
-        {
-            var parts = new List<string>();
-            if (drift != null)
-                parts.Add($"漂移 {drift.Date}（{drift.WindowDays} 天窗口，{drift.AnalyzedTests} 测项）：预警 {drift.Alerts.Count}");
-            if (cpk != null)
-                parts.Add($"CPK：低能力 {cpk.LowCount}/{cpk.AnalyzedTests}");
-            if (attr != null)
-                parts.Add($"归因 {attr.Date}（全局失败率 {attr.GlobalFailRate:P1}）：异常桶 {attr.Buckets.Count}，资源相关 {attr.ResourceCorrelations.Count}" +
-                          (attr.DeviationEvidence.Count > 0 ? $"，偏离证据 {attr.DeviationEvidence.Count}" : ""));
-            if (fixture != null)
-                parts.Add($"tester 对比：效应量异常 {fixture.Effects.Count}/{fixture.AnalyzedTests} 测项");
-            if (tdms != null)
-                parts.Add($"TDMS 特征化：{tdms.RowsTotal} 行 / {tdms.RecordsTotal} 记录（跳过 {tdms.FilesSkipped}）");
-            _summary.Text = string.Join("；", parts) + "。样本不足的测项/桶不参与评级（冷启动保护）。";
-        }
+        var parts = new List<string>();
+        if (snap.Enabled)
+            parts.Add($"正常态 {snap.Ready}/{snap.Total} ready，偏离事件 {snap.Events.Count}");
+        if (attr != null)
+            parts.Add($"时段归因 {attr.Date}：异常桶 {attr.Buckets.Count(r => r.Dim == "hour")}");
+        if (tdms != null)
+            parts.Add($"TDMS {tdms.RowsTotal} 行");
+        _summary.Text = parts.Count > 0
+            ? string.Join("；", parts) + "。"
+            : "暂无分析数据——先采集 PASS 或点「回填历史」。";
 
-        FillDrift(drift);
-        FillCpk(cpk);
         FillAttr(attr);
-        FillEffect(fixture);
-        FillGroup(group);
         FillTdms(db);
+        RefreshDeviationChart();
+        _learnPanel.Refresh2();
+    }
+
+    private void RefreshDeviationChart()
+    {
+        if (_chartBusy) return;
+        _chartBusy = true;
+        int days = _winDays?.SelectedIndex switch { 0 => 3, 1 => 7, _ => 14 };
+        var db = _engine.Db;
+        var cfg = _engine.Config;
+        Task.Run(() =>
+        {
+            List<string> labels = new();
+            List<DeviationSeries> series = new();
+            try { (labels, series) = DeviationSeriesBuilder.Build(db, cfg, days); }
+            catch (Exception ex) { Logger.Warning($"[分析] 偏离折线构建失败: {ex.Message}"); }
+            try
+            {
+                if (!IsDisposed && IsHandleCreated)
+                    BeginInvoke(() => { _devChart?.SetData(labels, series); });
+            }
+            catch { }
+            finally { _chartBusy = false; }
+        });
     }
 
     private void FillTdms(Database db)
@@ -215,90 +190,23 @@ public class AnalysisPanel : Panel
         }
     }
 
-    private void FillDrift(DriftState? state)
-    {
-        _driftGrid.Rows.Clear();
-        var rows = state?.Alerts ?? new List<DriftAlertItem>();
-        _driftEmpty.Visible = rows.Count == 0;
-        _driftGrid.Visible = rows.Count > 0;
-        if (state != null && rows.Count == 0) _driftEmpty.Text = "今日无漂移/逼近限预警";
-        foreach (var a in rows)
-        {
-            _driftGrid.Rows.Add(
-                a.Kind == "drift" ? "均值漂移" : "逼近规格限",
-                a.Model, a.TestName,
-                a.TodayMean.ToString("F4"), a.BaseMean.ToString("F4"),
-                a.Kind == "drift" ? $"[{a.ExpectedLow:F4}, {a.ExpectedHigh:F4}]" : "-",
-                a.Score.ToString("F2"), $"{a.NBase}/{a.NToday}", a.Message);
-        }
-    }
-
-    private void FillCpk(CpkState? state)
-    {
-        _cpkGrid.Rows.Clear();
-        var rows = state?.Items ?? new List<CpkItem>();
-        _cpkEmpty.Visible = rows.Count == 0;
-        _cpkGrid.Visible = rows.Count > 0;
-        if (state != null && rows.Count == 0) _cpkEmpty.Text = "窗口期内无 CPK < 1.33 的测项";
-        foreach (var c in rows)
-        {
-            _cpkGrid.Rows.Add(
-                c.Model, c.TestName,
-                c.Cpk?.ToString("F3") ?? "-",
-                c.N.ToString(),
-                c.Unit ?? "", c.Lolim?.ToString("F4") ?? "-", c.Hilim?.ToString("F4") ?? "-");
-        }
-    }
-
     private void FillAttr(AttributionState? state)
     {
         _attrGrid.Rows.Clear();
-        var rows = state?.Buckets ?? new List<AttributionBucketItem>();
+        var rows = (state?.Buckets ?? new List<AttributionBucketItem>())
+            .Where(b => string.Equals(b.Dim, "hour", StringComparison.OrdinalIgnoreCase))
+            .ToList();
         _attrEmpty.Visible = rows.Count == 0;
         _attrGrid.Visible = rows.Count > 0;
         if (state != null && rows.Count == 0)
-            _attrEmpty.Text = state.GlobalFailRate <= 0 ? "窗口期内全局零失败，无可比基线" : "无超阈值异常桶";
+            _attrEmpty.Text = state.GlobalFailRate <= 0 ? "窗口期内全局零失败" : "无超阈值时段异常桶";
         foreach (var b in rows)
         {
+            var slot = int.TryParse(b.Key, out var h) ? $"{h:D2}:00–{h:D2}:59" : b.Key;
             _attrGrid.Rows.Add(
-                b.Dim switch { "fixture" => "治具", "tester" => "测试员", _ => "时段" },
-                b.Key, b.N, b.Fails,
+                slot, b.N, b.Fails,
                 b.FailRate.ToString("P1"), b.GlobalRate.ToString("P1"),
-                b.Ratio.ToString("F2") + "×", b.PanelNgRate.ToString("P1"), b.Hint);
-        }
-    }
-
-    private void FillEffect(FixtureState? state)
-    {
-        _effectGrid.Rows.Clear();
-        var rows = state?.Effects ?? new List<EffectItem>();
-        _effectEmpty.Visible = rows.Count == 0;
-        _effectGrid.Visible = rows.Count > 0;
-        if (state != null && rows.Count == 0)
-            _effectEmpty.Text = "无 |d| ≥ 阈值的测项（或 tester 样本不足 / 存量 PASS 无 tester 冷启动中）";
-        foreach (var e in rows)
-        {
-            _effectGrid.Rows.Add(
-                e.Model, e.TestName,
-                $"{e.TesterA}({e.MeanA:F4}/{e.N1})",
-                $"{e.TesterB}({e.MeanB:F4}/{e.N2})",
-                e.D.ToString("F2"), e.Hint);
-        }
-    }
-
-    private void FillGroup(GroupAlertState? state)
-    {
-        _groupGrid.Rows.Clear();
-        var rows = state?.Alerts ?? new List<GroupAlertItem>();
-        _groupEmpty.Visible = rows.Count == 0;
-        _groupGrid.Visible = rows.Count > 0;
-        if (state != null && rows.Count == 0)
-            _groupEmpty.Text = $"今日无章节群挂预警（阈值 {state.Threshold} 个不同信号族）";
-        foreach (var g in rows)
-        {
-            _groupGrid.Rows.Add(
-                "§" + g.Section, g.DistinctSignalCount.ToString(),
-                string.Join("、", g.Signals), string.IsNullOrEmpty(g.Message) ? g.Hint : g.Message);
+                b.Ratio.ToString("F2") + "×", b.Hint);
         }
     }
 }

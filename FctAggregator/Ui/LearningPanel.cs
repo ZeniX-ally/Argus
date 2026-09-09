@@ -1,6 +1,6 @@
 namespace FctAggregator;
 
-/// <summary>正常态自学习 Tab：心跳 / 覆盖率 / 模型明细 / 偏离事件。数据全部本机直查。</summary>
+/// <summary>正常态自学习区：心跳 / 覆盖率 / 模型明细 / 偏离事件（嵌入「分析」页）。数据全部本机直查。</summary>
 public class LearningPanel : Panel
 {
     private readonly Engine _engine;
