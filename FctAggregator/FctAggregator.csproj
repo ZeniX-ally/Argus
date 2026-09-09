@@ -9,9 +9,9 @@
     <AssemblyName>Argus</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
     <StartupObject>FctAggregator.Program</StartupObject>
-    <Version>3.35.5</Version>
-  <AssemblyVersion>3.35.5.0</AssemblyVersion>
-  <FileVersion>3.35.5.0</FileVersion>
+    <Version>3.36.0</Version>
+  <AssemblyVersion>3.36.0.0</AssemblyVersion>
+  <FileVersion>3.36.0.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

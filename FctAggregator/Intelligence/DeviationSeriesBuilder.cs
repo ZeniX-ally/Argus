@@ -80,25 +80,31 @@ public static class DeviationSeriesBuilder
             .ThenBy(p => p.RecordId)
             .Take(maxPasses)
             .ToList();
-        var passIndex = new Dictionary<(long, string), int>();
-        var passLabels = new List<string>(passOrder.Count);
-        for (int i = 0; i < passOrder.Count; i++)
-        {
-            passIndex[passOrder[i]] = i;
-            var ts = passOrder[i].Ts;
-            passLabels.Add(ts.Length >= 16 ? ts[5..16] : ts);
-        }
-
-        var bySignal = new Dictionary<string, DeviationSeries>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in raw)
-        {
-            if (!passIndex.TryGetValue((row.RecordId, row.Ts), out var xi)) continue;
-            if (!bySignal.TryGetValue(row.TestName, out var ser))
-            {
-                ser = new DeviationSeries { TestName = row.TestName, Model = row.Model };
-                bySignal[row.TestName] = ser;
-            }
-            var z = ComputeAbsZ(db, cfg, row.Model, row.TestName, row.Value, scoreAt);
+        var passIndex = new Dictionary<(long, string), int>();
+        var passLabels = new List<string>(passOrder.Count);
+        for (int i = 0; i < passOrder.Count; i++)
+        {
+            passIndex[passOrder[i]] = i;
+            var ts = passOrder[i].Ts;
+            passLabels.Add(ts.Length >= 16 ? ts[5..16] : ts);
+        }
+
+        // v3.36.0 性能：一次性加载全部 measurement 模型（原逐点 GetNormalModel 为 N+1，大窗口上万次查询）
+        var modelDict = new Dictionary<(string, string), NormalModelRow>();
+        foreach (var m in db.ListNormalModels(NormalModelStore.SourceMeasurement, limit: 5000))
+            modelDict[(m.Model ?? "", m.SignalKey ?? "")] = m;
+
+        var bySignal = new Dictionary<string, DeviationSeries>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in raw)
+        {
+            if (!passIndex.TryGetValue((row.RecordId, row.Ts), out var xi)) continue;
+            if (!bySignal.TryGetValue(row.TestName, out var ser))
+            {
+                ser = new DeviationSeries { TestName = row.TestName, Model = row.Model };
+                bySignal[row.TestName] = ser;
+            }
+            modelDict.TryGetValue((row.Model, row.TestName), out var mdl);
+            var z = ComputeAbsZ(mdl, cfg, row.Value, scoreAt);
             if (z == null) continue;
             ser.Points.Add((xi, new PassDeviationPoint
             {
@@ -126,10 +132,9 @@ public static class DeviationSeriesBuilder
         return (passLabels, series, hint);
     }
 
-    private static double? ComputeAbsZ(Database db, AppConfig cfg, string model, string testName, double value, DateTime now)
-    {
-        var row = db.GetNormalModel(NormalModelStore.SourceMeasurement, model ?? "", testName);
-        if (row == null) return null;
+    private static double? ComputeAbsZ(NormalModelRow? row, AppConfig cfg, double value, DateTime now)
+    {
+        if (row == null) return null;
         if (NormalModelStore.EffectiveStatus(row, now, cfg.LearnNormalStaleDays) != "ready") return null;
         var sigma = Math.Max(row.Sigma, DeviationScorer.SigmaFloor);
         if (!double.IsFinite(sigma) || sigma <= 0) return null;

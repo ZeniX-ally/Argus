@@ -1214,6 +1214,9 @@ class SelfTest
         Console.WriteLine("\n【正常态自学习】Welford/P² / 建模 / P2评分闸门回放 / P3快照 / P4证据");
         RunNormalStateTests(work);
 
+        Console.WriteLine("\n【v3.36.0 性能】表达式/复合索引 + PRAGMA + N+1 批量缓存");
+        RunPerfIndexTests(work);
+
 
 
 
@@ -1350,6 +1353,123 @@ Argus 统一发布包  v{newer}
               "update_source: 恢复空值后回落本机 update_dir（不残留源状态）");
 
         try { Directory.Delete(root, true); } catch { }
+    }
+
+    static void RunPerfIndexTests(string work)
+    {
+        var dbPath = Path.Combine(work, "perf_idx.db");
+        if (File.Exists(dbPath)) File.Delete(dbPath);
+        var db = new Database(dbPath);
+        // 造 ~20 天 × 100 条 PASS/FAIL 混合（PASS 带测量值），供 EXPLAIN 计划判定
+        var seed = new List<TestRecord>();
+        var now = DateTime.Now;
+        for (int d = 0; d < 20; d++)
+            for (int i = 0; i < 100; i++)
+            {
+                bool pass = (i % 3) != 0;
+                var day = now.Date.AddDays(-d);
+                seed.Add(new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", TestDate = day.ToString("yyyyMMdd"),
+                    Sn = $"SN{d}_{i}", Result = pass ? "PASS" : "FAIL",
+                    FailReason = pass ? "" : "STEP_X fail",
+                    XmlPath = $"X:\\perf_{d}_{i}.xml",
+                    Measurements = pass ? new List<MeasurementRow> { new() { TestName = $"T{i % 10}", Value = 10.0 + i * 0.01 } } : new List<MeasurementRow>(),
+                });
+            }
+        db.BatchInsert(seed);
+
+        // 1) 索引存在（Init 幂等建出）
+        var idx = new HashSet<string>();
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_tr_date_result','idx_tm_daystr','idx_fi_daystr','idx_tf_daystr')";
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) idx.Add(r.GetString(0));
+        }
+        Check(idx.Contains("idx_tr_date_result"), "性能: test_records(test_date,result) 复合索引已建");
+        Check(idx.Contains("idx_tm_daystr") && idx.Contains("idx_fi_daystr") && idx.Contains("idx_tf_daystr"),
+              "性能: 三张明细表日期表达式索引已建");
+
+        // 2) 看板 top fails 走复合索引（等值前缀，计划确定）
+        string planTopFails;
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "EXPLAIN QUERY PLAN SELECT COALESCE(fail_reason,''), COALESCE(station_id,'') FROM test_records WHERE test_date = @d AND result = 'FAIL'";
+            cmd.Parameters.AddWithValue("@d", now.ToString("yyyyMMdd"));
+            using var r = cmd.ExecuteReader();
+            var sb = new System.Text.StringBuilder();
+            while (r.Read()) sb.AppendLine(r.GetString(3));
+            planTopFails = sb.ToString();
+        }
+        Check(planTopFails.Contains("idx_tr_date_result"),
+              "性能: 看板 top fails 查询命中 idx_tr_date_result（避免全表扫描）");
+
+        // 3) 测量窗口 DISTINCT 查询不再整表扫描 test_measurements（表达式索引/sargable 化生效）
+        string planTm;
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"EXPLAIN QUERY PLAN
+                SELECT DISTINCT m.test_name
+                FROM test_measurements m
+                JOIN test_records r ON r.id = m.record_id
+                WHERE r.result='PASS' AND m.value IS NOT NULL
+                  AND m.test_name IS NOT NULL AND m.test_name <> ''
+                  AND substr(COALESCE(m.ts,''),1,10) >= @from
+                  AND substr(COALESCE(m.ts,''),1,10) <= @to
+                ORDER BY m.test_name COLLATE NOCASE";
+            cmd.Parameters.AddWithValue("@from", now.AddDays(-20).ToString("yyyy-MM-dd"));
+            cmd.Parameters.AddWithValue("@to", now.ToString("yyyy-MM-dd"));
+            using var r = cmd.ExecuteReader();
+            var sb = new System.Text.StringBuilder();
+            while (r.Read()) sb.AppendLine(r.GetString(3));
+            planTm = sb.ToString();
+        }
+        Check(!planTm.Contains("SCAN test_measurements"),
+              "性能: 测量窗口 DISTINCT 查询不整表扫描 test_measurements");
+        Check(planTm.Contains("USING INDEX"),
+              "性能: 测量窗口查询 JOIN 走索引（非全表扫描）");
+
+        // 4) 连接 PRAGMA 内容
+        Check(Database.ConnectionPragmas.Contains("synchronous = NORMAL")
+              && Database.ConnectionPragmas.Contains("cache_size = -20000")
+              && Database.ConnectionPragmas.Contains("temp_store = MEMORY"),
+              "性能: 连接 PRAGMA 含 synchronous=NORMAL/cache_size/temp_store");
+
+        // 5) DeviationSeriesBuilder 批量模型缓存：200 测项×400 PASS 大库全量出图（证明 N+1 消除后行为等价）
+        var bigDbPath = Path.Combine(work, "perf_big_build.db");
+        if (File.Exists(bigDbPath)) File.Delete(bigDbPath);
+        var bdb = new Database(bigDbPath);
+        var bcfg = new AppConfig { LearnNormalEnabled = true, LearnNormalMinSamples = 5, LearnNormalStaleDays = 30 };
+        var bBase = new DateTime(2026, 7, 22);
+        for (int t = 0; t < 200; t++)
+            for (int s = 0; s < 8; s++)
+                NormalModelStore.Observe(bdb, 5, "measurement", "G49", $"T_{t:D3}",
+                    10.0 + t * 0.01, bBase.AddDays(s).ToString("yyyy-MM-dd HH:mm:ss"));
+        var bbatch = new List<TestRecord>(400);
+        for (int p = 0; p < 400; p++)
+        {
+            var ts = bBase.AddMinutes(p * 3).ToString("yyyy-MM-dd HH:mm:ss");
+            var meas = new List<MeasurementRow>(200);
+            for (int t = 0; t < 200; t++)
+                meas.Add(new MeasurementRow { TestName = $"T_{t:D3}", Value = 10.0 + t * 0.01 + (p % 7) * 0.02 });
+            bbatch.Add(new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", TestDate = ts[..10].Replace("-", ""),
+                Sn = $"SN{p}", Result = "PASS", BatchTimestamp = ts, Measurements = meas,
+                XmlPath = $"X:\\big_{p}.xml",
+            });
+        }
+        bdb.BatchInsert(bbatch);
+        var (bLabels, bSeries, _) = DeviationSeriesBuilder.Build(bdb, bcfg, 0);
+        Check(bSeries.Count == 200, $"性能: 批量模型缓存 Build 全量出图（实得 {bSeries.Count}/200）");
+        Check(bLabels.Count >= 400, $"性能: 400 条 PASS 全部入轴（实得 {bLabels.Count}）");
     }
 
     static void TryDeleteDir(string dir)

@@ -483,12 +483,15 @@ public class MainForm : Form
     }
 
     private volatile bool _dashUpdating = false;
+    private long _lastDashRun = long.MinValue; // v3.36.0 性能：看板聚合从每秒降为 5s 节流
 
     private void UpdateDashboardWidgets()
     {
         try
         {
             if (_engine?.Db == null) return;
+            if (Environment.TickCount64 - _lastDashRun < 5000) return; // 5s 节流，避免每秒全量聚合与采集写库争抢
+            _lastDashRun = Environment.TickCount64;
             if (_dashUpdating) return; // 上一轮查询未完成时跳过本轮，防止任务堆积
             _dashUpdating = true;
             var db = _engine.Db;

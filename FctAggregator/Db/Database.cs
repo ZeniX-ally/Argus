@@ -41,12 +41,21 @@ public sealed partial class Database
         Current = this;
     }
 
+    /// <summary>每连接执行的 PRAGMA（WAL + 写性能 + 读缓存）。synchronous=NORMAL 为 WAL 下官方推荐组合，
+    /// 断电最多丢最近几条已提交写入，防库损坏能力不变；cache_size/temp_store 纯读加速。常量化供 selftest 断言。</summary>
+    internal const string ConnectionPragmas =
+        "PRAGMA busy_timeout = 5000; " +
+        "PRAGMA journal_mode = WAL; " +
+        "PRAGMA synchronous = NORMAL; " +
+        "PRAGMA cache_size = -20000; " +
+        "PRAGMA temp_store = MEMORY;";
+
     private SqliteConnection Open()
     {
         var c = new SqliteConnection(_connString);
         c.Open();
         using var cmd = c.CreateCommand();
-        cmd.CommandText = "PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;";
+        cmd.CommandText = ConnectionPragmas;
         cmd.ExecuteNonQuery();
         return c;
     }
@@ -78,6 +87,8 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_date ON test_records(test_date);
                 CREATE INDEX IF NOT EXISTS idx_sn ON test_records(sn);
                 CREATE INDEX IF NOT EXISTS idx_result ON test_records(result);
+                -- v3.36.0 性能：看板/月度聚合常用 (test_date + result) 组合，复合索引避免回表
+                CREATE INDEX IF NOT EXISTS idx_tr_date_result ON test_records(test_date, result);
             ";
             cmd.ExecuteNonQuery();
 
@@ -273,6 +284,9 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_fi_fixture_ts ON fail_items(fixture_id, ts);
                 CREATE INDEX IF NOT EXISTS idx_fi_tester_ts ON fail_items(tester, ts);
                 CREATE INDEX IF NOT EXISTS idx_fi_ts ON fail_items(ts);
+                -- v3.36.0 性能：日期窗口过滤用的表达式索引（与查询 substr(COALESCE(ts,''),1,10) 逐字一致，非 sargable 谓词可原地走索引）
+                CREATE INDEX IF NOT EXISTS idx_tm_daystr ON test_measurements(substr(COALESCE(ts,''),1,10));
+                CREATE INDEX IF NOT EXISTS idx_fi_daystr ON fail_items(substr(COALESCE(ts,''),1,10));
             ";
             cmd8.ExecuteNonQuery();
 
@@ -304,6 +318,8 @@ public sealed partial class Database
                 CREATE INDEX IF NOT EXISTS idx_tf_ts ON tdms_features(ts);
                 CREATE INDEX IF NOT EXISTS idx_tf_model_ts ON tdms_features(model, ts);
                 CREATE INDEX IF NOT EXISTS idx_tf_channel_ts ON tdms_features(group_name, channel_name, ts);
+                -- v3.36.0 性能：TDMS 日期窗口过滤的表达式索引（同 test_measurements/fail_items 方案）
+                CREATE INDEX IF NOT EXISTS idx_tf_daystr ON tdms_features(substr(COALESCE(ts,''),1,10));
             ";
             cmd9.ExecuteNonQuery();
 

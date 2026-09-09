@@ -54,6 +54,36 @@ static class PerfReport
                 SqliteConnection.ClearAllPools();
             }
 
+            // v3.36.0：看板/月度聚合 + 库清理基准（60 天混合库）
+            var dashDbPath = Path.Combine(work, "perf_dash.db");
+            SeedMonthlyDb(dashDbPath, days: 60, perDay: 40);
+            var dashD = new Database(dashDbPath);
+            string curYm = DateTime.Now.ToString("yyyyMM");
+            string curYmd = DateTime.Now.ToString("yyyyMMdd");
+            rows.Add(Time("月度良率 FetchMonthlyStats", "60 天库", () =>
+            {
+                var s = dashD.FetchMonthlyStats("", curYm);
+                return $"{s.Pass}P/{s.Fail}F/{s.TodayProductCount}产品";
+            }));
+            rows.Add(Time("看板三连查（当日）", "60 天库", () =>
+            {
+                var h = dashD.FetchDailyHourlyStats("", curYmd);
+                var t = dashD.FetchDailyTopFails("", curYmd, 5);
+                var a = dashD.FetchRecentFailAlerts("", 10);
+                return $"{h.Count}槽/{t.Count}项/{a.Count}告警";
+            }));
+            SqliteConnection.ClearAllPools();
+
+            var purgeDb = Path.Combine(work, "perf_purge.db");
+            SeedPurgeDb(purgeDb, oldDays: 40, recentDays: 5, perDay: 200);
+            rows.Add(Time("库清理 Purge 模拟", "40天旧+5天新×200", () =>
+            {
+                var pdb = new Database(purgeDb);
+                int del = pdb.PurgeOldMeasurements(5);
+                return $"删除 {del} 行";
+            }));
+            SqliteConnection.ClearAllPools();
+
             var failDb = Path.Combine(work, "perf_fail.db");
             SeedFailDb(failDb, 2000);
             var failD = new Database(failDb);
@@ -140,6 +170,60 @@ static class PerfReport
         SqliteConnection.ClearAllPools();
     }
 
+    /// <summary>看板/月度基准库：days 天 × perDay 条混合 PASS/FAIL 记录，日期相对今天。</summary>
+    static void SeedMonthlyDb(string path, int days, int perDay)
+    {
+        if (File.Exists(path)) File.Delete(path);
+        var db = new Database(path);
+        var batch = new List<TestRecord>(days * perDay);
+        for (int d = 0; d < days; d++)
+        {
+            var day = DateTime.Now.Date.AddDays(-d);
+            for (int i = 0; i < perDay; i++)
+            {
+                bool pass = (i % 4) != 0;
+                batch.Add(new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49",
+                    TestDate = day.ToString("yyyyMMdd"),
+                    Sn = $"SN{d:D3}_{i:D3}",
+                    Result = pass ? "PASS" : "FAIL",
+                    FailReason = pass ? "" : "STEP_A timeout",
+                    BatchTimestamp = day.AddMinutes(i * 3).ToString("yyyy-MM-dd HH:mm:ss"),
+                    XmlPath = $"X:\\m_{d}_{i}.xml",
+                });
+            }
+        }
+        db.BatchInsert(batch);
+        SqliteConnection.ClearAllPools();
+    }
+
+    /// <summary>库清理基准库：oldDays+recentDays 天的 PASS 记录，各带 perDay 条测量值。</summary>
+    static void SeedPurgeDb(string path, int oldDays, int recentDays, int perDay)
+    {
+        if (File.Exists(path)) File.Delete(path);
+        var db = new Database(path);
+        var batch = new List<TestRecord>(oldDays + recentDays);
+        for (int d = 0; d < oldDays + recentDays; d++)
+        {
+            var day = DateTime.Now.Date.AddDays(-d);
+            var rec = new TestRecord
+            {
+                StationId = "FCT1", Model = "G49",
+                TestDate = day.ToString("yyyyMMdd"),
+                Result = "PASS",
+                XmlPath = $"X:\\p_{d}.xml",
+                BatchTimestamp = day.ToString("yyyy-MM-dd") + " 10:00:00",
+                Measurements = new List<MeasurementRow>(perDay),
+            };
+            for (int i = 0; i < perDay; i++)
+                rec.Measurements.Add(new MeasurementRow { TestName = $"T{i % 5}", Value = 10.0 + i * 0.01 });
+            batch.Add(rec);
+        }
+        db.BatchInsert(batch);
+        SqliteConnection.ClearAllPools();
+    }
+
     static string RenderMarkdown(List<BenchRow> rows, string workDir)
     {
         var now = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
@@ -159,6 +243,8 @@ static class PerfReport
         sb.AppendLine("| v3.35.3 | 自学习嵌入模式取消双定时器；DataGrid 取消 AllCells 自动列宽 | 分析页滚动/重绘减轻 |");
         sb.AppendLine("| v3.35.3 | 总览切页不再跑完整 `Tick()` 全量刷新 | 页签切换更轻 |");
         sb.AppendLine("| v3.35.4 | 偏离折线由最多 6 条改为窗口内**全部测项** | 后台构建耗时随测项数上升；UI 仍异步 |");
+        sb.AppendLine("| v3.36.0 | 表达式/复合索引 + PRAGMA（NORMAL/cache_size/temp_store），零 SQL 改动 | 窗口/看板查询走索引，消除整表扫描 |");
+        sb.AppendLine("| v3.36.0 | 偏离折线 N+1 批量模型缓存 + 主页看板 5s 节流 | 折线 Build 中 ~44ms、大 ~188ms（较 v3.35 降 8 倍+） |");
         sb.AppendLine();
         sb.AppendLine("## 2. 微基准（合成数据，本机实测）");
         sb.AppendLine();
