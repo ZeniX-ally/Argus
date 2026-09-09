@@ -98,6 +98,8 @@ public sealed class DbMaintenance
         try
         {
             var retain = _cfg.AnalyzeMeasureRetentionDays;
+            if (_cfg.LearnNormalEnabled)
+                retain = Math.Max(retain, LearnPipeline.ResolveBackfillDays(_db, 0));
             var purged = _db.PurgeOldMeasurements(retain);
             if (purged > 0) Logger.Info($"[库维护] 测量值清理: 删除 {purged} 条（保留 {retain} 天）");
             var retainFi = _cfg.AnalyzeFailItemRetentionDays;

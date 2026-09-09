@@ -7,6 +7,8 @@ public sealed class SignalDeviationChart : Control
 {
     private List<string> _passLabels = new();
     private List<DeviationSeries> _series = new();
+    private string? _emptyHint;
+    private string? _statusHint;
     private int _hoverSeries = -1;
     private int _hoverPass = -1;
 
@@ -18,10 +20,12 @@ public sealed class SignalDeviationChart : Control
         Height = 320;
     }
 
-    public void SetData(List<string> passLabels, List<DeviationSeries> series)
+    public void SetData(List<string> passLabels, List<DeviationSeries> series, string? emptyHint = null, string? statusHint = null)
     {
         _passLabels = passLabels ?? new List<string>();
         _series = series ?? new List<DeviationSeries>();
+        _emptyHint = series.Count == 0 ? emptyHint : null;
+        _statusHint = series.Count > 0 ? statusHint : null;
         _hoverSeries = _hoverPass = -1;
         Invalidate();
     }
@@ -55,8 +59,13 @@ public sealed class SignalDeviationChart : Control
 
         TextRenderer.DrawText(g, "PASS 偏离趋势（纵轴 |z|，横轴每条 PASS）", Theme.BodyBold,
             new Rectangle(16, 10, 420, 22), Theme.TextMain, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-        TextRenderer.DrawText(g, "相对正常态模型；虚线 z=3 / z=6", Theme.Tiny,
-            new Rectangle(16, 30, 360, 16), Theme.TextFaint, TextFormatFlags.Left);
+        var sub = "相对正常态模型；虚线 z=3 / z=6";
+        if (_series.Count > 0)
+            sub += $"  ·  {_series.Count} 条测项 / {_passLabels.Count} 条 PASS";
+        if (!string.IsNullOrWhiteSpace(_statusHint))
+            sub += $"  ·  {_statusHint}";
+        TextRenderer.DrawText(g, sub, Theme.Tiny,
+            new Rectangle(16, 30, Width - 32, 16), Theme.TextFaint, TextFormatFlags.EndEllipsis);
 
         int chartLeft = 48, chartRight = Width - 24, chartTop = 52, chartBottom = Height - 42;
         int chartW = chartRight - chartLeft, chartH = chartBottom - chartTop;
@@ -64,9 +73,12 @@ public sealed class SignalDeviationChart : Control
 
         if (_series.Count == 0 || _passLabels.Count == 0)
         {
-            TextRenderer.DrawText(g, "暂无数据——需 PASS 测量 + ready 正常态模型（先回填历史）", Theme.Body,
-                new Rectangle(chartLeft, chartTop + 40, chartW, 40), Theme.TextFaint,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            var hint = string.IsNullOrWhiteSpace(_emptyHint)
+                ? "暂无数据——需 PASS 测量 + ready 正常态模型（先回填历史）"
+                : _emptyHint!;
+            TextRenderer.DrawText(g, hint, Theme.Body,
+                new Rectangle(chartLeft, chartTop + 24, chartW, 56), Theme.TextFaint,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak);
             return;
         }
 
@@ -97,19 +109,11 @@ public sealed class SignalDeviationChart : Control
         int nPass = Math.Max(1, _passLabels.Count);
         float xSlot = (float)chartW / Math.Max(1, nPass - 1);
 
-        int legX = chartRight - 220;
-        int legY = 12;
-        for (int si = 0; si < _series.Count; si++)
-        {
-            var col = ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(si));
-            using var lb = new SolidBrush(col);
-            g.FillRectangle(lb, legX, legY + si * 18, 10, 10);
-            var shortName = _series[si].TestName.Length > 22 ? _series[si].TestName[..22] + "…" : _series[si].TestName;
-            TextRenderer.DrawText(g, shortName, Theme.Tiny,
-                new Rectangle(legX + 14, legY + si * 18 - 2, 200, 16), Theme.TextSub,
-                TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
-        }
+        DrawLegend(g, chartRight, chartTop);
 
+        float lineW = _series.Count switch { <= 12 => 2f, <= 40 => 1.5f, _ => 1f };
+        int dotR = _series.Count <= 40 ? 2 : 1;
+        bool drawDots = _series.Count <= 60;
         for (int si = 0; si < _series.Count; si++)
         {
             var ser = _series[si];
@@ -122,14 +126,18 @@ public sealed class SignalDeviationChart : Control
                 pts.Add(new PointF(x, y));
             }
             if (pts.Count == 0) continue;
-            using var linePen = new Pen(Color.FromArgb(200, col), si == _hoverSeries ? 2.8f : 2f);
+            int alpha = _series.Count > 40 ? 120 : 200;
+            using var linePen = new Pen(Color.FromArgb(alpha, col), si == _hoverSeries ? lineW + 1f : lineW);
             if (pts.Count == 1)
                 g.FillEllipse(new SolidBrush(col), pts[0].X - 3, pts[0].Y - 3, 6, 6);
             else
                 g.DrawLines(linePen, pts.ToArray());
-            using var dotBrush = new SolidBrush(col);
-            foreach (var pt in pts)
-                g.FillEllipse(dotBrush, pt.X - 2.5f, pt.Y - 2.5f, 5, 5);
+            if (drawDots)
+            {
+                using var dotBrush = new SolidBrush(col);
+                foreach (var pt in pts)
+                    g.FillEllipse(dotBrush, pt.X - dotR, pt.Y - dotR, dotR * 2, dotR * 2);
+            }
         }
 
         int labelStep = nPass <= 12 ? 1 : Math.Max(1, nPass / 10);
@@ -156,6 +164,33 @@ public sealed class SignalDeviationChart : Control
             g.DrawRectangle(tipPen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
             TextRenderer.DrawText(g, tip, Theme.Small, rect, Theme.TextMain,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+    }
+
+    private void DrawLegend(Graphics g, int chartRight, int chartTop)
+    {
+        if (_series.Count == 0) return;
+        int legX = chartRight - 200;
+        int legY = chartTop + 4;
+        const int maxShow = 8;
+        if (_series.Count > maxShow)
+        {
+            TextRenderer.DrawText(g, $"共 {_series.Count} 条测项", Theme.Tiny,
+                new Rectangle(legX, legY, 190, 16), Theme.TextSub, TextFormatFlags.Right);
+            legY += 18;
+            TextRenderer.DrawText(g, "（悬停折线查看详情）", Theme.Tiny,
+                new Rectangle(legX, legY, 190, 16), Theme.TextFaint, TextFormatFlags.Right);
+            return;
+        }
+        for (int si = 0; si < _series.Count; si++)
+        {
+            var col = ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(si));
+            using var lb = new SolidBrush(col);
+            g.FillRectangle(lb, legX, legY + si * 16, 8, 8);
+            var shortName = _series[si].TestName.Length > 20 ? _series[si].TestName[..20] + "…" : _series[si].TestName;
+            TextRenderer.DrawText(g, shortName, Theme.Tiny,
+                new Rectangle(legX + 12, legY + si * 16 - 2, 178, 14), Theme.TextSub,
+                TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
         }
     }
 

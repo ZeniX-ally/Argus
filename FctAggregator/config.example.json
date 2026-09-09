@@ -39,7 +39,7 @@
     "analyze_min_samples": 30,
     "analyze_drift_sigma": 3.0,
     "analyze_drift_warn_ratio": 1.0,
-    "analyze_measure_retention_days": 30,
+    "analyze_measure_retention_days": 90,
     "analyze_failitem_retention_days": 90,
     "analyze_tdms_enabled": true,
     "tdms_root": "",

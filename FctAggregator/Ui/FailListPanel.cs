@@ -23,6 +23,9 @@ public sealed class FailListPanel : Panel
     private List<SnGroupData> _snGroups = new();
 
     private bool _treeMode = false;
+    private volatile bool _loadBusy;
+    private int _loadGen;
+    private System.Windows.Forms.Timer? _searchDebounce;
 
     private sealed class GroupData
     {
@@ -92,7 +95,12 @@ public sealed class FailListPanel : Panel
             Font = Theme.Body, BorderStyle = BorderStyle.FixedSingle,
             Margin = new Padding(16, 2, 0, 0), Anchor = AnchorStyles.Left,
         };
-        _search.TextChanged += (_, _) => RebuildActiveView();
+        _searchDebounce = UiAsync.Debounce(_search, 250, RebuildActiveView);
+        _search.TextChanged += (_, _) =>
+        {
+            _searchDebounce?.Stop();
+            _searchDebounce?.Start();
+        };
         bar.Controls.Add(_search, 4, 0);
 
         var hint = new Label
@@ -168,17 +176,31 @@ public sealed class FailListPanel : Panel
 
     public void Refresh2()
     {
-        try
+        if (_loadBusy) return;
+        _loadBusy = true;
+        int gen = ++_loadGen;
+        var sid = _engine.ResolvedStationId;
+        var db = _engine.Db;
+        Task.Run(() =>
         {
-            _all = _engine.Db.AllFails(_engine.ResolvedStationId);
-            ComputeGroups();
-            ComputeSnGroups();
-            RebuildActiveView();
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"FAIL 记录加载失败: {ex.Message}");
-        }
+            List<FailRecord> rows;
+            try { rows = db.AllFails(sid); }
+            catch (Exception ex)
+            {
+                Logger.Error($"FAIL 记录加载失败: {ex.Message}");
+                UiAsync.Post(this, () => _loadBusy = false);
+                return;
+            }
+            UiAsync.Post(this, () =>
+            {
+                if (IsDisposed || gen != _loadGen) return;
+                _all = rows;
+                ComputeGroups();
+                ComputeSnGroups();
+                RebuildActiveView();
+                _loadBusy = false;
+            });
+        });
     }
 
     private void ComputeGroups()

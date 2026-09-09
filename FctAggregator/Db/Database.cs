@@ -27,6 +27,8 @@ public sealed partial class Database
 
     public static Database? Current { get; private set; }
 
+    public string DbPath => _dbPath;
+
     public Database(string dbPath)
     {
         _dbPath = dbPath;
@@ -1024,6 +1026,28 @@ public sealed partial class Database
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>窗口内出现过的全部 PASS 测项名（去重排序）。</summary>
+    public List<string> ListPassTestNamesInWindow(string fromYmd, string toYmdInclusive)
+    {
+        var list = new List<string>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT DISTINCT m.test_name
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE r.result='PASS' AND m.value IS NOT NULL
+              AND m.test_name IS NOT NULL AND m.test_name <> ''
+              AND substr(COALESCE(m.ts,''),1,10) >= @from
+              AND substr(COALESCE(m.ts,''),1,10) <= @to
+            ORDER BY m.test_name COLLATE NOCASE";
+        cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
+        cmd.Parameters.AddWithValue("@to", toYmdInclusive ?? "");
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(r.GetString(0));
+        return list;
+    }
+
     /// <summary>折线图：PASS 测量点（日期闭区间），按 ts/record 排序；testNames 为空则不过滤测项。</summary>
     public List<(long RecordId, string Model, string Ts, string TestName, double Value)> ListPassMeasurementPoints(
         string fromYmd, string toYmdInclusive, IEnumerable<string>? testNames = null, int maxRows = 5000)
@@ -1079,6 +1103,31 @@ public sealed partial class Database
         while (r.Read())
             list.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetDouble(4)));
         return list;
+    }
+
+    /// <summary>库内最早 PASS 记录日期（yyyy-MM-dd），无 PASS 则 null。</summary>
+    public string? GetEarliestPassRecordYmd()
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT MIN(substr(COALESCE(NULLIF(batch_timestamp,''), test_date, created_at),1,10))
+            FROM test_records WHERE result='PASS'";
+        var v = cmd.ExecuteScalar();
+        if (v == null || v is DBNull) return null;
+        var s = v.ToString();
+        return string.IsNullOrEmpty(s) || s.Length < 10 ? null : s;
+    }
+
+    /// <summary>PASS 测量缓存行数（test_measurements）。</summary>
+    public long CountPassMeasurementRows()
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COUNT(*) FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id WHERE r.result='PASS'";
+        return Convert.ToInt64(cmd.ExecuteScalar());
     }
 
     /// <summary>回放专用：取 PASS 测量日期范围（yyyy-MM-dd），无数据则 null。</summary>

@@ -141,7 +141,7 @@ public class MainForm : Form
         var btnRefresh = Theme.MakeButton("刷新", 74);
         btnRefresh.Dock = DockStyle.Fill;
         btnRefresh.Margin = new Padding(0);
-        btnRefresh.Click += (_, _) => RefreshCurrentPage();
+        btnRefresh.Click += (_, _) => RefreshCurrentPage(force: true);
         var refreshHost = new Panel
         {
             Dock = DockStyle.Right, Width = 94, BackColor = Theme.Surface, Padding = new Padding(9, 2, 9, 2),
@@ -299,20 +299,22 @@ public class MainForm : Form
         }
     }
 
-    private void RefreshCurrentPage()
+    private void RefreshCurrentPage(bool force = false)
     {
         try
         {
             switch (_page)
             {
                 case 0:
-                    Tick();
+                    UpdateKpi();
+                    UpdateChips();
                     UpdateDashboardWidgets();
+                    if (force) UpdateTodoBadgeAsync();
                     break;
                 case 1: _maintPage.Refresh2(); break;
                 case 2: _devicePage.Refresh2(); break;
                 case 3: _failPage.Refresh2(); break;
-                case 5: _analysisPage.Refresh2(); break;
+                case 5: _analysisPage.Refresh2(force); break;
                 default: break;
             }
         }
@@ -340,7 +342,7 @@ public class MainForm : Form
             e.Handled = true;
             return;
         }
-        if (e.KeyCode == Keys.R) { RefreshCurrentPage(); e.Handled = true; }
+        if (e.KeyCode == Keys.R) { RefreshCurrentPage(force: true); e.Handled = true; }
     }
 
     private bool _forceExit;
@@ -394,7 +396,7 @@ public class MainForm : Form
         UpdateKpi();
         RefreshDeviceOnline();
         if (_page == 0) UpdateDashboardWidgets();
-        if (_tickCount % 10 == 1) UpdateTodoBadge();
+        if (_tickCount % 10 == 1) UpdateTodoBadgeAsync();
         UpdateStatusBar();
         if (_tickCount % 5 == 1) RefreshLiveStats();
         AutoRefreshMaintenance();
@@ -536,20 +538,45 @@ public class MainForm : Form
         }
     }
 
-    private void UpdateTodoBadge()
+    private volatile bool _todoBadgeBusy;
+
+    private void UpdateTodoBadgeAsync()
     {
-        try
+        if (_todoBadgeBusy || _engine?.Db == null) return;
+        _todoBadgeBusy = true;
+        var db = _engine.Db;
+        Task.Run(() =>
         {
-            _pendingTodo = _engine.Db.CountPendingTodos();
-            var counts = _engine.Db.CountMaintenanceByStatus();
-            _openMaint = counts.Where(kv => MaintenanceMeta.Normalize(kv.Key) != MaintenanceMeta.DoneStatus)
-                               .Sum(kv => kv.Value);
-            var top = _engine.Db.ListTodoView(null, null, 1).FirstOrDefault();
-            _todoTop = top == null ? "—" : $"{top.SortCount} 次";
-            if (_tabs.TabPages.Count > 1)
-                _tabs.TabPages[1].Text = _pendingTodo > 0 ? $"待办 / 维修 ({_pendingTodo})" : PageTitles[1];
-        }
-        catch (Exception ex) { Logger.Warning($"待办角标刷新失败: {ex.Message}"); }
+            try
+            {
+                int pending = db.CountPendingTodos();
+                var counts = db.CountMaintenanceByStatus();
+                int open = counts.Where(kv => MaintenanceMeta.Normalize(kv.Key) != MaintenanceMeta.DoneStatus)
+                    .Sum(kv => kv.Value);
+                var top = db.ListTodoView(null, null, 1).FirstOrDefault();
+                string todoTop = top == null ? "—" : $"{top.SortCount} 次";
+                if (!IsHandleCreated || IsDisposed) return;
+                BeginInvoke(() =>
+                {
+                    try
+                    {
+                        _pendingTodo = pending;
+                        _openMaint = open;
+                        _todoTop = todoTop;
+                        if (_tabs.TabPages.Count > 1)
+                            _tabs.TabPages[1].Text = _pendingTodo > 0 ? $"待办 / 维修 ({_pendingTodo})" : PageTitles[1];
+                        UpdateStatusBar();
+                    }
+                    catch (Exception ex) { Logger.Warning($"待办角标 UI 更新失败: {ex.Message}"); }
+                    finally { _todoBadgeBusy = false; }
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"待办角标刷新失败: {ex.Message}");
+                _todoBadgeBusy = false;
+            }
+        });
     }
 
     private void UpdateStatusBar()

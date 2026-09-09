@@ -2,10 +2,146 @@ using System.Globalization;
 
 namespace FctAggregator;
 
+public sealed class BackfillReport
+{
+    public long ScannedFiles;
+    public long InsertedRecords;
+    public long InsertedMeasurements;
+    public long InsertedFailItems;
+    public long TdmsRows;
+    public int SnFixed;
+    public bool Skipped;
+    public string? SkipReason;
+    public TimeSpan Elapsed;
+}
+
 /// <summary>规格06：backfill 子命令——为存量 PASS 文件补采测量值（按天水位增量 + INSERT OR IGNORE 幂等），并为历史 SN 缺失记录重读 XML 补 SN。</summary>
 public static class BackfillTool
 {
     public const string MetaWatermark = "backfill_last_day";
+
+    /// <summary>从 results_root 为存量 PASS/FAIL 补采测量值、失败项、TDMS（按天水位增量，幂等）。</summary>
+    public static BackfillReport RunMeasurementBackfill(
+        Database db, AppConfig cfg, Processor processor, int days,
+        Action<string>? onProgress = null, CancellationToken ct = default)
+    {
+        var report = new BackfillReport();
+        days = Math.Clamp(days, 1, 3650);
+        if (!cfg.AnalyzeCollectPass && !(cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(cfg.TdmsRoot)))
+        {
+            report.Skipped = true;
+            report.SkipReason = "analyze_collect_pass=false 且 TDMS 未启用";
+            return report;
+        }
+
+        var today = DateTime.Now.Date;
+        var from = today.AddDays(-(days - 1));
+        var wm = db.GetMeta(MetaWatermark);
+        if (DateTime.TryParseExact(wm, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var wmd) &&
+            wmd >= from && wmd < today)
+            from = wmd.AddDays(1);
+
+        var root = cfg.ResultsRoot;
+        if (!Directory.Exists(root))
+        {
+            report.Skipped = true;
+            report.SkipReason = $"results_root 不存在: {root}";
+            return report;
+        }
+
+        onProgress?.Invoke($"窗口 {from:yyyy-MM-dd} ~ {today:yyyy-MM-dd}");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        foreach (var cat in new[] { "Online", "Offline" })
+        {
+            var catDir = Path.Combine(root, cat);
+            if (!Directory.Exists(catDir)) continue;
+            foreach (var modelDir in Directory.GetDirectories(catDir).OrderBy(p => p, StringComparer.Ordinal))
+            {
+                foreach (var dateDir in Directory.GetDirectories(modelDir).OrderBy(p => p, StringComparer.Ordinal))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var dirName = Path.GetFileName(dateDir);
+                    if (dirName.Length != 8 || !DateTime.TryParseExact(dirName, "yyyyMMdd",
+                            CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)) continue;
+                    if (day < from || day > today) continue;
+
+                    var files = Directory.EnumerateFiles(dateDir, "*.xml", SearchOption.TopDirectoryOnly)
+                        .OrderBy(p => p, StringComparer.Ordinal).ToList();
+                    if (files.Count == 0) continue;
+
+                    long dayRecords = 0, dayMeasurements = 0, dayFailItems = 0, dayTdmsFiles = 0, dayTdmsRows = 0;
+                    for (int i = 0; i < files.Count; i += 100)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var chunk = files.Skip(i).Take(100).Select(Path.GetFullPath).ToList();
+                        var existing = db.GetExistingPaths(chunk);
+                        var ids = db.GetRecordIdsByPaths(chunk, "PASS");
+                        var failIds = db.GetRecordIdsByPaths(chunk, "FAIL");
+                        var newRecords = new List<TestRecord>();
+                        var measureRows = new List<(TestRecord, long)>();
+                        var failItemRows = new List<(TestRecord, long)>();
+                        foreach (var p in chunk)
+                        {
+                            report.ScannedFiles++;
+                            try
+                            {
+                                if (!existing.Contains(p))
+                                {
+                                    var rec = processor.ParseAndClassify(p);
+                                    if (rec != null) newRecords.Add(rec);
+                                }
+                                else if (ids.TryGetValue(p, out var rid))
+                                {
+                                    var rec = processor.ParseAndClassify(p);
+                                    if (rec != null && rec.Measurements.Count > 0)
+                                        measureRows.Add((rec, rid));
+                                }
+                                else if (failIds.TryGetValue(p, out var fid))
+                                {
+                                    var rec = processor.ParseAndClassify(p);
+                                    if (rec != null && rec.FailedTests.Count > 0)
+                                        failItemRows.Add((rec, fid));
+                                }
+                            }
+                            catch (Exception ex) { Logger.Warning($"[回填] 解析失败 {p}: {ex.Message}"); }
+                        }
+                        if (newRecords.Count > 0)
+                            dayRecords += db.BatchInsert(newRecords);
+                        if (measureRows.Count > 0)
+                        {
+                            db.InsertMeasurementsFor(measureRows);
+                            dayMeasurements += measureRows.Sum(r => r.Item1.Measurements.Count);
+                        }
+                        if (failItemRows.Count > 0)
+                        {
+                            db.InsertFailItemsFor(failItemRows);
+                            dayFailItems += failItemRows.Sum(r => r.Item1.FailedTests.Count);
+                        }
+                        if (cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(cfg.TdmsRoot))
+                        {
+                            try
+                            {
+                                var briefs = db.GetRecordBriefsByPaths(chunk);
+                                var (tf, tr) = TdmsFeatureCollector.CaptureBatch(db, cfg, briefs);
+                                dayTdmsFiles += tf;
+                                dayTdmsRows += tr;
+                            }
+                            catch (Exception ex) { Logger.Warning($"[回填] TDMS 特征补采失败: {ex.Message}"); }
+                        }
+                        if (report.ScannedFiles % 200 == 0) Thread.Sleep(100);
+                    }
+                    report.InsertedRecords += dayRecords;
+                    report.InsertedMeasurements += dayMeasurements;
+                    report.InsertedFailItems += dayFailItems;
+                    report.TdmsRows += dayTdmsRows;
+                    onProgress?.Invoke($"{day:yyyy-MM-dd} {Path.GetFileName(modelDir)}: 文件 {files.Count}，补测量 {dayMeasurements}");
+                    db.SetMeta(MetaWatermark, day.ToString("yyyy-MM-dd"));
+                }
+            }
+        }
+        report.Elapsed = sw.Elapsed;
+        return report;
+    }
 
     public static int Run(string[] args, string? dbPathOverride = null)
     {
@@ -43,113 +179,14 @@ public static class BackfillTool
             return 0;
         }
 
-        var today = DateTime.Now.Date;
-        var from = today.AddDays(-(days - 1));
-        var wm = db.GetMeta(MetaWatermark);
-        if (DateTime.TryParseExact(wm, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var wmd) &&
-            wmd >= from && wmd < today)
-            from = wmd.AddDays(1);
-
-        var root = cfg.ResultsRoot;
-        if (!Directory.Exists(root))
-        {
-            Console.WriteLine($"results_root 不存在: {root}");
-            return 1;
-        }
-
         Console.WriteLine($"测量值回填: {dbFile}");
-        Console.WriteLine($"窗口: {from:yyyy-MM-dd} ~ {today:yyyy-MM-dd}（--days {days}，已处理天数按水位跳过）");
-
-        long insertedRecords = 0, insertedMeasurements = 0, insertedFailItems = 0, scanned = 0;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        foreach (var cat in new[] { "Online", "Offline" })
+        var report = RunMeasurementBackfill(db, cfg, processor, days, msg => Console.WriteLine($"  {msg}"));
+        if (report.Skipped)
         {
-            var catDir = Path.Combine(root, cat);
-            if (!Directory.Exists(catDir)) continue;
-            foreach (var modelDir in Directory.GetDirectories(catDir).OrderBy(p => p, StringComparer.Ordinal))
-            {
-                foreach (var dateDir in Directory.GetDirectories(modelDir).OrderBy(p => p, StringComparer.Ordinal))
-                {
-                    var dirName = Path.GetFileName(dateDir);
-                    if (dirName.Length != 8 || !DateTime.TryParseExact(dirName, "yyyyMMdd",
-                            CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)) continue;
-                    if (day < from || day > today) continue;
-
-                    var files = Directory.EnumerateFiles(dateDir, "*.xml", SearchOption.TopDirectoryOnly)
-                        .OrderBy(p => p, StringComparer.Ordinal).ToList();
-                    if (files.Count == 0) continue;
-
-                    long dayRecords = 0, dayMeasurements = 0, dayFailItems = 0, dayTdmsFiles = 0, dayTdmsRows = 0;
-                    for (int i = 0; i < files.Count; i += 100)
-                    {
-                        var chunk = files.Skip(i).Take(100).Select(Path.GetFullPath).ToList();
-                        var existing = db.GetExistingPaths(chunk);
-                        var ids = db.GetRecordIdsByPaths(chunk, "PASS");
-                        var failIds = db.GetRecordIdsByPaths(chunk, "FAIL");
-                        var newRecords = new List<TestRecord>();
-                        var measureRows = new List<(TestRecord, long)>();
-                        var failItemRows = new List<(TestRecord, long)>();
-                        foreach (var p in chunk)
-                        {
-                            scanned++;
-                            try
-                            {
-                                if (!existing.Contains(p))
-                                {
-                                    var rec = processor.ParseAndClassify(p);
-                                    if (rec != null) newRecords.Add(rec);
-                                }
-                                else if (ids.TryGetValue(p, out var rid))
-                                {
-                                    var rec = processor.ParseAndClassify(p);
-                                    if (rec != null && rec.Measurements.Count > 0)
-                                        measureRows.Add((rec, rid));
-                                }
-                                else if (failIds.TryGetValue(p, out var fid))
-                                {
-                                    var rec = processor.ParseAndClassify(p);
-                                    if (rec != null && rec.FailedTests.Count > 0)
-                                        failItemRows.Add((rec, fid));
-                                }
-                            }
-                            catch (Exception ex) { Logger.Warning($"[回填] 解析失败 {p}: {ex.Message}"); }
-                        }
-                        if (newRecords.Count > 0)
-                            dayRecords += db.BatchInsert(newRecords);
-                        if (measureRows.Count > 0)
-                        {
-                            db.InsertMeasurementsFor(measureRows);
-                            dayMeasurements += measureRows.Sum(r => r.Item1.Measurements.Count);
-                        }
-                        if (failItemRows.Count > 0)
-                        {
-                            db.InsertFailItemsFor(failItemRows);
-                            dayFailItems += failItemRows.Sum(r => r.Item1.FailedTests.Count);
-                        }
-                        // 规格06期3：TDMS 特征补采档（PASS+FAIL 全量，UNIQUE 幂等；失败不影响测量值回填）
-                        if (cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(cfg.TdmsRoot))
-                        {
-                            try
-                            {
-                                var briefs = db.GetRecordBriefsByPaths(chunk);
-                                var (tf, tr) = TdmsFeatureCollector.CaptureBatch(db, cfg, briefs);
-                                dayTdmsFiles += tf;
-                                dayTdmsRows += tr;
-                            }
-                            catch (Exception ex) { Logger.Warning($"[回填] TDMS 特征补采失败: {ex.Message}"); }
-                        }
-                        if (scanned % 200 == 0) Thread.Sleep(100);
-                    }
-                    insertedRecords += dayRecords;
-                    insertedMeasurements += dayMeasurements;
-                    insertedFailItems += dayFailItems;
-                    Console.WriteLine($"  {day:yyyy-MM-dd} {Path.GetFileName(modelDir)}: 文件 {files.Count}，新记录 {dayRecords}，补测量 {dayMeasurements}，补失败项 {dayFailItems}{(dayTdmsRows > 0 ? $"，TDMS {dayTdmsRows} 行/{dayTdmsFiles} 文件" : "")}");
-                    db.SetMeta(MetaWatermark, day.ToString("yyyy-MM-dd"));
-                }
-            }
+            Console.WriteLine(report.SkipReason ?? "测量回填跳过");
+            return string.IsNullOrEmpty(report.SkipReason) || report.SkipReason.StartsWith("results_root") ? 1 : 0;
         }
-
-        Console.WriteLine($"回填完成: 扫描 {scanned} 文件，新记录 {insertedRecords}，补测量值 {insertedMeasurements} 行，补失败项 {insertedFailItems} 行，SN 补采 {snFixed} 条，耗时 {sw.Elapsed:hh\\:mm\\:ss}");
+        Console.WriteLine($"回填完成: 扫描 {report.ScannedFiles} 文件，新记录 {report.InsertedRecords}，补测量值 {report.InsertedMeasurements} 行，补失败项 {report.InsertedFailItems} 行，SN 补采 {snFixed} 条，耗时 {report.Elapsed:hh\\:mm\\:ss}");
         return 0;
     }
 

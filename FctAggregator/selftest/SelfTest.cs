@@ -34,8 +34,11 @@ class SelfTest
     }
 
     [STAThread]
-    static int Main()
+    static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--perf")
+            return PerfReport.Run(args);
+
         var work = Path.Combine(Path.GetTempPath(), "fct_agg_" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(work);
         var real = FindUp(Path.Combine("dist", "data", "fct.db"));
@@ -3197,6 +3200,18 @@ Argus 统一发布包  v{newer}
         var offBf = LearnBackfill.Run(offDb, new AppConfig { LearnNormalEnabled = false }, 30);
         Check(offBf == 0, "开关关：回填 no-op");
 
+        var winDb = new Database(Path.Combine(work, "win.db"));
+        winDb.BatchInsert(new[]
+        {
+            new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", TestDate = "20260722", Result = "PASS",
+                XmlPath = Path.Combine(work, "w1.xml"), BatchTimestamp = "2026-07-22 10:00:00",
+            },
+        });
+        Check(LearnPipeline.ResolveBackfillDays(winDb, 1) == 30, "UI 回填窗口：近 30 天");
+        Check(LearnPipeline.ResolveBackfillDays(winDb, 0) >= 30, "UI 回填窗口：自动覆盖最早 PASS");
+
         // ── P2: ReplayRunner 合成 4 周三指标 ──
         var rp = ReplayRunner.RunSynthetic(Path.Combine(work, "rp.db"));
         Check(rp.DetectionRate >= 0.80, $"回放异常检出率 ≥80%（实得 {rp.DetectionRate:P0}）");
@@ -3271,11 +3286,29 @@ Argus 统一发布包  v{newer}
             });
         }
         var chartNow = new DateTime(2026, 8, 28, 12, 0, 0);
-        var (zLabels, zSeries) = DeviationSeriesBuilder.Build(fieldDb, fieldCfg, 28, 5, 200, chartNow);
+        var (zLabels, zSeries, _) = DeviationSeriesBuilder.Build(fieldDb, fieldCfg, 3, 200, chartNow);
         Check(zLabels.Count >= 7 && zSeries.Count >= 1 && zSeries[0].Points.Count >= 1,
             "偏离折线：PASS 时间轴 + 至少一条 |z| 序列");
         Check(zSeries.Any(s => s.Points.Any(p => p.Point.Z > 1)),
             "偏离折线：评分周异常 PASS 的 |z| > 1");
+
+        var histDb = new Database(Path.Combine(work, "chart_hist.db"));
+        var histCfg = new AppConfig { LearnNormalEnabled = true, LearnNormalMinSamples = 2 };
+        for (int i = 0; i < 5; i++)
+            NormalModelStore.Observe(histDb, 2, "measurement", "G49", "T_HIST", 10.0 + i * 0.1, "2026-07-22 10:00:00");
+        var histPass = new TestRecord
+        {
+            StationId = "FCT1", Model = "G49", TestDate = "20260722", Result = "PASS",
+            XmlPath = Path.Combine(work, "hist.xml"), BatchTimestamp = "2026-07-22 10:00:00",
+            Measurements = new List<MeasurementRow> { new() { TestName = "T_HIST", Value = 10.5 } },
+        };
+        histDb.BatchInsert(new[] { histPass });
+        var (_, wallSeries, _) = DeviationSeriesBuilder.Build(histDb, histCfg, 1);
+        Check(wallSeries.Count >= 1, "偏离折线：7 天窗口锚最新 PASS 日期（非墙钟今天）");
+        var (autoLabels, autoSeries, autoHint) = DeviationSeriesBuilder.Build(histDb, histCfg, 0);
+        Check(autoSeries.Count >= 1 && autoLabels.Count >= 1,
+            $"偏离折线：自动窗口锚最新 PASS（实得 series={autoSeries.Count}）");
+        Check(string.IsNullOrEmpty(autoHint), "偏离折线：自动窗口有数据时无空提示");
 
         var snap = LearningSnapshot.Capture(scDb, voteCfg, scNow);
         Check(snap.Total >= 4 && snap.Ready >= 4, "P3 快照：覆盖率与表对拍（ready≥4）");

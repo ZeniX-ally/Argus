@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Compile Include="SelfTest.cs" />
+    <Compile Include="..\tools\PerfReport.cs" />
     <Compile Include="..\Core\**\*.cs" />
     <Compile Include="..\Db\**\*.cs" />
     <Compile Include="..\Mesh\**\*.cs" />
