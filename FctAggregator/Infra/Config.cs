@@ -19,6 +19,8 @@ public class AppConfig
     public string ParsersPath { get; set; } = "parsers.json";
     public int DbMaintenanceHour { get; set; } = 3;
     public string UpdateDir { get; set; } = "data/updates";
+    /// <summary>只读更新源（共享文件夹/UNC 盘），非空时替代 UpdateDir 供扫描，暂存/备份仍落本机 UpdateDir。</summary>
+    public string UpdateSource { get; set; } = "";
     public bool AutoUpdate { get; set; } = true;
 
     public bool LearnBaselineEnabled { get; set; } = false;
@@ -109,6 +111,7 @@ public class AppConfig
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var mh) && mh >= 0 && mh <= 23)
                     cfg.DbMaintenanceHour = mh;
                 if (root.TryGetProperty("auto_update", out v)) cfg.AutoUpdate = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("update_source", out v)) cfg.UpdateSource = (GetStringSafe(v) ?? "").Trim();
                 if (root.TryGetProperty("learn_baseline_enabled", out v)) cfg.LearnBaselineEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_resource_sampling_enabled", out v)) cfg.LearnResourceSamplingEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_priority_enabled", out v)) cfg.LearnPriorityEnabled = v.ValueKind == JsonValueKind.True;
@@ -235,7 +238,7 @@ public class AppConfig
                     "feishu_banner_img_key", "parsers_path",
                     "todo_spec_merge",
                     "db_maintenance_hour",
-                    "auto_update",
+                    "auto_update", "update_source",
                     "learn_baseline_enabled", "learn_resource_sampling_enabled", "learn_priority_enabled",
                     "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
                     "learn_baseline_sigma", "learn_baseline_min_samples", "learn_normal_enabled",
@@ -270,6 +273,7 @@ public class AppConfig
                 writer.WriteBoolean("todo_spec_merge", TodoSpecMerge);
                 writer.WriteNumber("db_maintenance_hour", DbMaintenanceHour);
                 writer.WriteBoolean("auto_update", AutoUpdate);
+                writer.WriteString("update_source", UpdateSource);
                 writer.WriteBoolean("learn_baseline_enabled", LearnBaselineEnabled);
                 writer.WriteBoolean("learn_resource_sampling_enabled", LearnResourceSamplingEnabled);
                 writer.WriteBoolean("learn_priority_enabled", LearnPriorityEnabled);

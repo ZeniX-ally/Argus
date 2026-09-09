@@ -52,7 +52,7 @@ public static class UpdateChecker
     {
         try
         {
-            var dir = ResolveUpdateDir(updateDir);
+            var dir = ResolveScanDir(updateDir);
             if (!Directory.Exists(dir)) return null;
             var prompted = PromptedVersions(db);
 
@@ -75,6 +75,15 @@ public static class UpdateChecker
         }
     }
 
+    public static string ResolveScanDir(string? updateDir = null)
+    {
+        // 调用方显式指定目录优先（老接口/测试）；否则看只读源，未配源则回落本地 update_dir
+        if (updateDir != null) return ResolveUpdateDir(updateDir);
+        var src = AppConfig.Instance.UpdateSource;
+        if (string.IsNullOrWhiteSpace(src)) return ResolveUpdateDir();
+        return Path.IsPathRooted(src) ? src : Path.Combine(AppConfig.BaseDir, src);
+    }
+
     public static string ResolveUpdateDir(string? updateDir = null)
     {
         var raw = updateDir ?? AppConfig.Instance.UpdateDir;
@@ -92,7 +101,7 @@ public static class UpdateChecker
     {
         try
         {
-            var dir = ResolveUpdateDir(updateDir);
+            var dir = ResolveScanDir(updateDir);
             var rel = Path.Combine(dir, "RELEASE.txt");
             if (!File.Exists(rel)) return "";
             var lines = File.ReadAllLines(rel, Encoding.UTF8);
@@ -314,7 +323,7 @@ public static class UpdateChecker
             catch {  }
         }
 
-        var keep = new[] { "station_id", "results_root", "webhook_url", "agg_token" };
+        var keep = new[] { "station_id", "results_root", "webhook_url", "agg_token", "update_source" };
         var used = new HashSet<string>();
         using var stream = new MemoryStream();
         using (var w = new System.Text.Json.Utf8JsonWriter(stream, new System.Text.Json.JsonWriterOptions { Indented = true }))

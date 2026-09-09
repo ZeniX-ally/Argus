@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$Zip,
@@ -509,7 +509,8 @@ if ($pkgHasConfig) {
                 'station_id', 'results_root', 'webhook_url', 'feishu_banner_img_key',
                 'fct_ini_path', 'log_level', 'todo_scan_days', 'db_maintenance_hour',
                 'notify_min_interval_sec', 'desktop_notify', 'auto_start',
-                'learn_resource_sampling_enabled', 'analyze_collect_pass'
+                'learn_resource_sampling_enabled', 'analyze_collect_pass',
+                'update_source'
             )
             $legacyDropped = @()
             foreach ($prop in $site.PSObject.Properties) {

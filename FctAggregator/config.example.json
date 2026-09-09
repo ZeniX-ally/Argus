@@ -13,6 +13,7 @@
     "parsers_path": "parsers.json",
     "todo_spec_merge": true,
     "auto_update": true,
+    "update_source": "",
     "learn_baseline_enabled": false,
     "learn_resource_sampling_enabled": false,
     "learn_priority_enabled": false,

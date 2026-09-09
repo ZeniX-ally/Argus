@@ -1321,6 +1321,34 @@ Argus 统一发布包  v{newer}
             try { Directory.Delete(base_, true); } catch { }
         }
 
+        // v3.35.5 只读更新源：update_source 指向共享盘时，扫描/RELEASE.txt 走只读源，暂存仍落本地 update_dir
+        var srcOnly = Path.Combine(root, "src_only");
+        Directory.CreateDirectory(srcOnly);
+        var srcZip = Path.Combine(srcOnly, "Argus-v9.9.9-update.zip");
+        using (var fs = File.Create(srcZip)) fs.Write(new byte[] { 0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 22);
+        File.WriteAllText(Path.Combine(srcOnly, "RELEASE.txt"),
+            "Argus 统一发布包  v9.9.9\n======\n版本特点：\n  · 支持共享文件夹只读热更（update_source）\n======\n",
+            System.Text.Encoding.UTF8);
+        Check(UpdateChecker.Scan(updDir, db) == null, "update_source: 未配只读源时扫描仍指向本地 update_dir");
+        var prevSource = AppConfig.Instance.UpdateSource;
+        try
+        {
+            AppConfig.Instance.UpdateSource = srcOnly;
+            var fromSrc = UpdateChecker.Scan(null, db);
+            Check(fromSrc != null && fromSrc.Version == new Version(9, 9, 9) &&
+                  string.Equals(Path.GetDirectoryName(fromSrc.ZipPath), srcOnly, StringComparison.OrdinalIgnoreCase),
+                  "update_source: 只读源优先生效，包路径取自源目录");
+            var srcNotes = UpdateChecker.GetReleaseNotes(new Version(9, 9, 9));
+            Check(srcNotes.Contains("共享文件夹只读热更") && srcNotes.Contains("update_source"),
+                  "update_source: RELEASE.txt 从只读源读取");
+            Check(string.Equals(UpdateChecker.ResolveScanDir().TrimEnd('\\'),
+                    srcOnly.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase),
+                  "update_source: ResolveScanDir 命中只读源");
+        }
+        finally { AppConfig.Instance.UpdateSource = prevSource; }
+        Check(UpdateChecker.Scan(null, db) == null,
+              "update_source: 恢复空值后回落本机 update_dir（不残留源状态）");
+
         try { Directory.Delete(root, true); } catch { }
     }
 

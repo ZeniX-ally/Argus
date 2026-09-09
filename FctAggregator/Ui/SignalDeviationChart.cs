@@ -24,8 +24,8 @@ public sealed class SignalDeviationChart : Control
     {
         _passLabels = passLabels ?? new List<string>();
         _series = series ?? new List<DeviationSeries>();
-        _emptyHint = series.Count == 0 ? emptyHint : null;
-        _statusHint = series.Count > 0 ? statusHint : null;
+        _emptyHint = series is null or { Count: 0 } ? emptyHint : null;
+        _statusHint = series is { Count: > 0 } ? statusHint : null;
         _hoverSeries = _hoverPass = -1;
         Invalidate();
     }
