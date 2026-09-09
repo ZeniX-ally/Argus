@@ -18,6 +18,7 @@ public class Engine
     private CancellationTokenSource _cts = new();
 
     private readonly ConcurrentDictionary<string, byte> _inFlight = new(); // 在途路径去重（Changed 高频连发防护）
+    private readonly ConcurrentDictionary<string, byte> _loggedUnknownDirs = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _retryQueueFile; // 重试队列落盘文件（Stop 写 / Start 读回，治退出即丢）
 
     private const int MaxStableRetries = 3;
@@ -162,7 +163,11 @@ public class Engine
                 var name = Path.GetFileName(d);
                   if (StationDetector.IsValidModel(name)) models.Add(name);
                   else if (name.Length >= 3 && name.Any(char.IsLetterOrDigit) && !name.StartsWith("."))
-                      Logger.Info($"[pending_review] 未知型号目录: {name} at {catDir}");
+                  {
+                      var key = catDir + "|" + name;
+                      if (_loggedUnknownDirs.TryAdd(key, 0))
+                          Logger.Warning($"[pending_review] 未知型号目录: {name} at {catDir}（只报一次，不入库、不计良率）");
+                  }
             }
         }
         return models.OrderBy(x => x).ToList();
@@ -222,7 +227,7 @@ public class Engine
                         if (rec != null)
                         {
                             records.Add(rec);
-                            Logger.Info($"[解析] {rec.Model} | {rec.Result} | {Path.GetFileName(p)}");
+                            Logger.Debug($"[解析] {rec.Model} | {rec.Result} | {Path.GetFileName(p)}");
                         }
                     }
                     catch (Exception ex) { Logger.Error($"[历史扫描] 解析失败: {p} | {ex.Message}"); }

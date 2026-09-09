@@ -16,7 +16,7 @@ Argus.exe upgrade
    可看到将覆盖/新增哪些文件、备份到哪、config 合并哪些字段；
 4. **执行**：确认后真正部署（自动停 Argus 进程（向导自身除外）→ 备份到 `<安装目录>\_backup_时间戳\`
    → 覆盖程序文件 + `runtimes\` 树 → config.json 合并更新（station_id / results_root /
-   webhook_url / agg_token 保留现场值）→ SHA256 逐文件校验）；
+   webhook_url 等白名单字段保留现场值，聚合遗留键丢弃）→ SHA256 逐文件校验）；
 5. **完成**：显示回滚命令，可一键退出并启动新版。
 
 ## 回滚

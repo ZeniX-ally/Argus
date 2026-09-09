@@ -18,25 +18,47 @@ public class DebugPanel : Panel
         Padding = new Padding(Theme.Gap);
         BackColor = Theme.Bg;
 
-        var bar = new FlowLayoutPanel
+        var side = new Panel
         {
-            Dock = DockStyle.Top, Height = 78, WrapContents = true, AutoScroll = false, BackColor = Theme.Bg,
+            Dock = DockStyle.Left, Width = 220, BackColor = Theme.Surface,
+            Padding = new Padding(8, 8, 8, 8),
         };
+        var nav = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+            WrapContents = false, AutoScroll = true, BackColor = Theme.Surface,
+            Padding = new Padding(0, 0, SystemInformation.VerticalScrollBarWidth, 0),
+        };
+        side.Controls.Add(nav);
 
+        int ChildWidth() => Math.Max(120, nav.ClientSize.Width - nav.Padding.Horizontal - 2);
+        void FitNav()
+        {
+            int w = ChildWidth();
+            foreach (Control c in nav.Controls) c.Width = w;
+        }
+        nav.Resize += (_, _) => FitNav();
+
+        bool firstTag = true;
         void AddTag(string t)
         {
-            bar.Controls.Add(new Label
+            nav.Controls.Add(new Label
             {
-                Text = t, AutoSize = true, ForeColor = Theme.Primary, Font = Theme.BodyBold,
-                Margin = new Padding(14, 9, 4, 0),
+                Text = t, AutoSize = false, Width = ChildWidth(), Height = 22,
+                ForeColor = Theme.TextFaint, Font = Theme.Tiny,
+                TextAlign = ContentAlignment.BottomLeft,
+                Margin = new Padding(0, firstTag ? 0 : 10, 0, 2),
             });
+            firstTag = false;
         }
-        void AddBtn(string t, Action a)
+        void AddBtn(string t, Action a, bool danger = false)
         {
-            var b = Theme.MakeButton(t, 104);
-            b.Margin = new Padding(2, 4, 2, 4);
+            var b = Theme.MakeButton(t, ChildWidth());
+            b.Width = ChildWidth();
+            b.Margin = new Padding(0, 0, 0, 4);
+            if (danger) b.ForeColor = Theme.Danger;
             b.Click += (_, _) => { try { a(); } catch (Exception ex) { Print($"错误: {ex.Message}"); } };
-            bar.Controls.Add(b);
+            nav.Controls.Add(b);
         }
 
         AddTag("测试");
@@ -50,16 +72,23 @@ public class DebugPanel : Panel
         AddTag("查询");
         AddBtn("最近10条FAIL", QueryFails);
         AddBtn("今日统计", QueryToday);
+        AddBtn("当月库统计", QueryMonth);
         AddBtn("最大SN", QueryMaxSn);
         AddTag("待办");
         AddBtn("待办登记", TodoSync);
         AddBtn("合并预览", TodoPreview);
         AddTag("配置");
         AddBtn("查看配置", ViewConfig);
+        AddBtn("残留检查", ProbeLeftover);
         AddBtn("桌面提示开关", ToggleDesktopNotify);
         AddBtn("开机自启", ToggleAutoStart);
+        AddTag("日志");
+        AddBtn("查看日志", ShowLogs);
+        AddBtn("导出日志", ExportLogs);
+        AddBtn("打开目录", OpenLogDir);
         AddTag("数据");
-        AddBtn("清空数据库", ClearDb);
+        AddBtn("清空数据库", ClearDb, danger: true);
+        FitNav();
 
         _output = new TextBox
         {
@@ -69,7 +98,7 @@ public class DebugPanel : Panel
         };
 
         Controls.Add(_output);
-        Controls.Add(bar);
+        Controls.Add(side);
     }
 
     private void Print(string text)
@@ -160,6 +189,17 @@ public class DebugPanel : Panel
         Print($"今日({DateTime.Now:yyyy-MM-dd}) 统计: PASS={d.Pass} FAIL={d.Fail} 中断={d.Interrupted} 良率={yield:F1}%");
     }
 
+    private void QueryMonth()
+    {
+        var ym = DateTime.Now.ToString("yyyyMM");
+        var m = _engine.Db.FetchMonthlyStats(_engine.ResolvedStationId, ym);
+        var den = m.Pass + m.Fail;
+        var y = den > 0 ? m.Pass * 100.0 / den : 0;
+        Print($"当月库内 {ym}（xml_path 去重 log 条数，不是 app.log 行数，debug 跳过不入库）");
+        Print($"  PASS={m.Pass} FAIL={m.Fail} 中断={m.Interrupted} 良率={y:F1}% 产品去重={m.TodayProductCount}");
+        Print("  公式: PASS/(PASS+FAIL)，中断不进分母。对账公司系统请对这组数字。");
+    }
+
     private void QueryMaxSn()
     {
         Print($"最大SN: {_engine.Db.MaxSn() ?? "(无)"}");
@@ -206,6 +246,19 @@ public class DebugPanel : Panel
         Print($"  todo_scan_days: {c.TodoScanDays}（待办只扫近 {c.TodoScanDays} 天；已登记的永久保留）");
     }
 
+    private void ProbeLeftover()
+    {
+        var hits = LeftoverAgg.Probe();
+        if (hits.Count == 0)
+        {
+            Print("未发现聚合残留服务 / ArgusAggWeb 防火墙 / config agg_*。");
+            return;
+        }
+        Print("发现残留（不自动删除）：");
+        foreach (var h in hits) Print("  " + h);
+        Print("处理：管理员 CMD 执行 sc stop <名> && sc delete <名>；防火墙 netsh advfirewall firewall delete rule name=ArgusAggWeb");
+    }
+
     private void TestDesktopNotify()
     {
         if (!DesktopNotifier.Enabled)
@@ -236,6 +289,38 @@ public class DebugPanel : Panel
             var ok = AutoStart.Enable();
             Print(ok ? "已开启开机自启(启动文件夹快捷方式)" : "开启失败(可能被杀毒拦截, 请手动把快捷方式拖到启动文件夹)");
         }
+    }
+
+    private void ShowLogs()
+    {
+        Print($"日志文件: {Logger.CurrentLogPath}");
+        Print(Logger.ReadTail());
+    }
+
+    private void ExportLogs()
+    {
+        using var dlg = new SaveFileDialog
+        {
+            Title = "导出运行日志",
+            Filter = "Zip 日志包|*.zip",
+            FileName = Logger.SuggestedExportName(),
+            OverwritePrompt = true,
+        };
+        if (dlg.ShowDialog() != DialogResult.OK) return;
+        var path = Logger.ExportZip(dlg.FileName);
+        Print($"已导出: {path}");
+        Logger.Info($"[日志] 已导出诊断包 {path}");
+    }
+
+    private void OpenLogDir()
+    {
+        Directory.CreateDirectory(Logger.LogDirectory);
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = Logger.LogDirectory,
+            UseShellExecute = true,
+        });
+        Print($"已打开: {Logger.LogDirectory}");
     }
 
     private void ClearDb()

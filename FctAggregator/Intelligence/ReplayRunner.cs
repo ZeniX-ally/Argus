@@ -13,7 +13,7 @@ public sealed class ReplayReport
 
 /// <summary>
 /// 历史回放：前 3 周喂学习器，后 1 周逐条评分，对照已知异常日判卷。
-/// selftest 走 RunSynthetic，不依赖现场库。
+/// selftest 走 RunSynthetic；现场库走 RunField（复制到临时库，不动原库）。
 /// </summary>
 public static class ReplayRunner
 {
@@ -47,7 +47,11 @@ public static class ReplayRunner
                     BatchTimestamp = d.AddHours(8 + k).ToString("yyyy-MM-dd HH:mm:ss"),
                 };
                 for (int i = 0; i < keys.Length; i++)
-                    rec.Measurements.Add(new MeasurementRow { TestName = keys[i], Value = means[i] });
+                    rec.Measurements.Add(new MeasurementRow
+                    {
+                        TestName = keys[i],
+                        Value = means[i] * (1.0 + 0.04 * (k - 3.5) / 3.5),
+                    });
                 NormalLearners.ObserveMeasurement(db, cfg, rec);
             }
         }
@@ -97,6 +101,106 @@ public static class ReplayRunner
             AnomalyDays = anomalyDates.Count,
             ScoreDays = scoreDays,
         };
+    }
+
+    /// <summary>
+    /// 现场库回放：复制到临时库 → 清模型/事件 → 3/4 训练 + 1/4 评分（评分周冻结入模）。
+    /// anomalyDates 为空时按评分周 FAIL 日峰推断异常日。
+    /// </summary>
+    public static ReplayReport RunField(string sourceDbPath, AppConfig cfg, int days = 28, IReadOnlyCollection<string>? anomalyDates = null)
+    {
+        days = Math.Clamp(days, 7, 365);
+        if (!File.Exists(sourceDbPath))
+            return new ReplayReport();
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"argus-replay-{Guid.NewGuid():N}.db");
+        try
+        {
+            try { new Database(sourceDbPath).CheckpointForCopy(); }
+            catch { /* 只读库或已关闭仍尝试复制 */ }
+            File.Copy(sourceDbPath, tempPath, true);
+            var db = new Database(tempPath);
+            db.ClearReplayLearningTables();
+
+            var range = db.GetPassMeasurementDateRange();
+            if (range == null)
+                return new ReplayReport();
+
+            if (!DateTime.TryParse(range.Value.Max, out var endDate))
+                return new ReplayReport();
+            if (!DateTime.TryParse(range.Value.Min, out var minDate))
+                minDate = endDate;
+
+            var startDate = endDate.AddDays(-(days - 1));
+            if (startDate < minDate) startDate = minDate;
+            int spanDays = Math.Max(1, (int)(endDate - startDate).TotalDays + 1);
+            int trainDays = Math.Max(1, spanDays * 3 / 4);
+            var trainEnd = startDate.AddDays(trainDays);
+            var scoreFrom = trainEnd;
+            var scoreTo = endDate;
+
+            var trainFromYmd = startDate.ToString("yyyy-MM-dd");
+            var trainToYmd = trainEnd.ToString("yyyy-MM-dd");
+            var scoreToYmd = scoreTo.ToString("yyyy-MM-dd");
+            var scoreFromYmd = scoreFrom.ToString("yyyy-MM-dd");
+
+            var rows = db.ListPassMeasurementsBetween(trainFromYmd, scoreTo.AddDays(1).ToString("yyyy-MM-dd"));
+            foreach (var grp in rows.GroupBy(r => r.RecordId))
+            {
+                var day = DayOf(grp.First().Ts);
+                if (day.Length == 0) continue;
+                if (string.CompareOrdinal(day, trainToYmd) < 0)
+                {
+                    var first = grp.First();
+                    var rec = new TestRecord
+                    {
+                        Model = first.Model, Result = "PASS", BatchTimestamp = first.Ts,
+                        Measurements = grp.Select(g => new MeasurementRow { TestName = g.TestName, Value = g.Value }).ToList(),
+                    };
+                    NormalLearners.ObserveMeasurement(db, cfg, rec);
+                }
+                else if (string.CompareOrdinal(day, scoreFromYmd) >= 0 && string.CompareOrdinal(day, scoreToYmd) <= 0)
+                {
+                    var first = grp.First();
+                    var samples = grp.Select(g => (g.TestName, g.Value)).ToList();
+                    if (DateTime.TryParse(first.Ts, out var ts))
+                        DeviationScorer.EvaluateWindow(db, cfg, NormalModelStore.SourceMeasurement, first.Model, first.Ts, samples, ts);
+                }
+            }
+
+            var anomalies = ResolveAnomalyDates(db, scoreFromYmd, scoreToYmd, anomalyDates);
+            return Run(db, cfg, trainEnd, scoreFrom, scoreTo, anomalies);
+        }
+        finally
+        {
+            try { File.Delete(tempPath); } catch { }
+        }
+    }
+
+    private static string DayOf(string ts)
+        => ts.Length >= 10 ? ts[..10] : "";
+
+    private static HashSet<string> ResolveAnomalyDates(Database db, string scoreFromYmd, string scoreToYmd, IReadOnlyCollection<string>? provided)
+    {
+        if (provided != null && provided.Count > 0)
+        {
+            return new HashSet<string>(
+                provided.Select(d => d.Length >= 10 ? d[..10] : d.Trim()),
+                StringComparer.Ordinal);
+        }
+        var fails = db.CountDailyFailsBetween(scoreFromYmd, scoreToYmd);
+        if (fails.Count == 0) return new HashSet<string>(StringComparer.Ordinal);
+        var vals = fails.Values.Select(v => (double)v).ToList();
+        double mean = vals.Average();
+        double var = vals.Count > 1 ? vals.Select(v => (v - mean) * (v - mean)).Average() : 0;
+        double std = Math.Sqrt(var);
+        double thr = mean + 2 * std;
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var kv in fails)
+        {
+            if (kv.Value >= Math.Max(1, thr)) set.Add(kv.Key);
+        }
+        return set;
     }
 
     public static ReplayReport Run(Database db, AppConfig cfg, DateTime trainEnd, DateTime scoreFrom, DateTime scoreTo, IReadOnlyCollection<string> anomalyDates)

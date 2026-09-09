@@ -78,6 +78,14 @@ public sealed class DeviceSampleRecorder : IDisposable
 
     public void Dispose() => Stop();
 
+    /// <summary>config 热加载后按当前开关启停采样线程（Instance 与 AppConfig.Instance 同引用）。</summary>
+    public static void ApplyConfig()
+    {
+        var inst = Instance;
+        if (inst._cfg.LearnResourceSamplingEnabled) inst.Start();
+        else inst.Stop();
+    }
+
     private void Loop()
     {
         while (!_stopping)

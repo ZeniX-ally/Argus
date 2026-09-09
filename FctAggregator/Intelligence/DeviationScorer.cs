@@ -47,6 +47,12 @@ public static class DeviationScorer
                 if (string.IsNullOrWhiteSpace(key) || !double.IsFinite(value)) continue;
                 var row = db.GetNormalModel(source, model ?? "", key);
                 if (row == null) continue;
+                if (string.Equals(source, NormalModelStore.SourceMeasurement, StringComparison.Ordinal)
+                    && !CpkAnalyzer.ShouldTreatAsProcess(key, new MeasureStatsRow
+                    {
+                        TestName = key, Mean = row.Mean, Sigma = row.Sigma, N = (int)Math.Min(int.MaxValue, row.N),
+                    }))
+                    continue;
                 var score = ScoreOne(row, value, now, cfg.LearnNormalStaleDays);
                 if (score is not { } s || s < cfg.LearnNormalEventScore) continue;
                 hits.Add((key, value, row.Mean, row.Sigma, s));

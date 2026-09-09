@@ -263,4 +263,26 @@ public static class G49ProductDictionary
         var s = section.Trim();
         return s.StartsWith("8.19") || s.StartsWith("8.20") || s.StartsWith("8.21");
     }
+
+    /// <summary>
+    /// 注入/通信/中断不是过程量：逼近限、低 CPK、正常态偏离投票一律跳过。
+    /// 测名带章节号（如 8.19.5 FLTM_DESAT_A(XCP)）走 IsInjectionSection，不依赖字典精确键。
+    /// </summary>
+    public static bool IsNonProcessSemantic(string? testName)
+    {
+        if (string.IsNullOrWhiteSpace(testName)) return false;
+        var parsed = FailReasonMerger.Parse(testName);
+        if (IsInjectionSection(parsed.Section) || IsInjectionSection(testName.Trim()))
+            return true;
+        if (parsed.SemanticType is FailSemanticType.Injection
+            or FailSemanticType.Communication
+            or FailSemanticType.Interrupted)
+            return true;
+        if (parsed.Section.StartsWith("7.2", StringComparison.Ordinal))
+            return true;
+        var dict = FindKnownSignal(parsed.SignalBase.Length > 0 ? parsed.SignalBase : testName.Trim());
+        return dict?.SemanticType is FailSemanticType.Injection
+            or FailSemanticType.Communication
+            or FailSemanticType.Interrupted;
+    }
 }

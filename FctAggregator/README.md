@@ -49,7 +49,7 @@ FctAggregator/
 ├── tools/                    打包与冒烟脚本（xlsx 长相新旧对比 xlsx_check/xlsxdump）
 ├── 更新日志.md               面向技术（改了什么、为什么、踩了什么坑）
 ├── 版本更新说明.md           面向使用（怎么点、看什么）
-└── TECHNICAL_DOCUMENTATION.md 架构、数据库、设计约定
+└── 更新日志.md / README.md    版本历史、工程说明（架构见 CODEBUDDY.md + docs/）
 ```
 
 ## 开发

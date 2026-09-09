@@ -10,7 +10,7 @@ Argus 是一套面向工厂 FCT（Functional Test，功能测试）工位的机�
 - **FAIL 列表与维修待办闭环**：FAIL 双视图分组、待办登记（只扫近一个月、同类合并、永久保留）、维修看板 4 状态机、人员名单/改名同步、12 列导出（CSV 注入防护）
 - **飞书推送**：FAIL 告警 / 待办状态变更，schema 2.0 交互卡片（可选，`webhook_url` 配置）
 - **本机分析**（规格 06）：漂移预警、CPK 低能力清单、fail_items 明细、失败多维归因、tester 效应量对比、TDMS 特征化（默认关）
-- **机台端自学习**（规格 05 + 正常态 P1）：G49 产品字典驱动故障归并、自基线良率预警、Welford/P² 正常态建模（`learn_*` 默认关）
+- **机台端自学习**（规格 05 + 正常态 P1）：G49 产品字典驱动故障归并、自基线良率预警、Welford/P² 正常态建模（`learn_normal_enabled` 默认开）
 - **工具箱**：FCT 取数打包（fetch）、TDMS 波形查看（tdms）、FAIL 排行导出（rank）
 - **无缝热升级**：检测更新包自动暂存，分离进程提交，失败自动回滚，不碰现场数据
 - **自检体系**：568 项断言全链路自检，临时目录隔离运行（不碰真实库）
@@ -78,7 +78,7 @@ Argus.exe backfill [--days N]  历史 PASS 测量值/失败明细/TDMS 回填（
 | `auto_update` | 无感热升级开关（默认开） |
 | `todo_scan_days` | 待办扫描窗口（默认 30 天） |
 | `analyze_*` | 规格 06 多元深分析开关/参数（采集默认开，TDMS 默认关） |
-| `learn_*` | 机台端自学习开关（默认关） |
+| `learn_*` | 机台端自学习：`learn_normal_enabled` 默认开，规格 05 其它键默认关 |
 
 完整键位见 `FctAggregator/config.example.json`。
 

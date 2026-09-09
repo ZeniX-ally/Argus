@@ -108,7 +108,7 @@ public sealed class FailListPanel : Panel
             Width = 140, DropDownStyle = ComboBoxStyle.DropDownList,
             Font = Theme.Body, Margin = new Padding(12, 2, 0, 0), Anchor = AnchorStyles.Left,
         };
-        _sort.Items.AddRange(new object[] { SortGroup, SortSn, SortTime });
+        _sort.Items.AddRange(new object[] { SortTime, SortGroup, SortSn });
         _sort.SelectedIndex = 0;
         _sort.SelectedIndexChanged += (_, _) => RebuildActiveView();
         bar.Controls.Add(_sort, 6, 0);
@@ -287,9 +287,7 @@ public sealed class FailListPanel : Panel
             else if (TimeMode)
             {
                 var counts = _groups.ToDictionary(g => g.FailItem, g => g.Count, StringComparer.OrdinalIgnoreCase);
-                var rows = _all.OrderByDescending(r => TimeUtil.Normalize(r.TestDate))
-                               .ThenByDescending(r => TimeUtil.Normalize(r.Timestamp))
-                               .ToList();
+                var rows = _all.OrderByDescending(DisplayTime).ToList();
                 int i = 0;
                 foreach (var f in rows)
                 {
@@ -392,10 +390,12 @@ public sealed class FailListPanel : Panel
             }
             else if (TimeMode)
             {
-                var rows = _all.OrderByDescending(r => TimeUtil.Normalize(r.TestDate))
-                               .ThenByDescending(r => TimeUtil.Normalize(r.Timestamp))
-                               .ToList();
-                foreach (var day in rows.GroupBy(r => TimeUtil.Normalize(r.TestDate)[..10]))
+                var rows = _all.OrderByDescending(DisplayTime).ToList();
+                foreach (var day in rows.GroupBy(r =>
+                {
+                    var t = DisplayTime(r);
+                    return t.Length >= 10 ? t[..10] : t;
+                }))
                 {
                     var dn = new TreeNode($"{day.Key}   [{day.Count()} 次]")
                     {

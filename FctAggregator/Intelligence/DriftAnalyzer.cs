@@ -51,7 +51,7 @@ public static class DriftAnalyzer
                                $"期望 {cfg.AnalyzeDriftSigma}σ 区间 [{Fmt(item.ExpectedLow)}, {Fmt(item.ExpectedHigh)}]";
                 result.Add(item);
             }
-            else if (t.Hilim.HasValue || t.Lolim.HasValue)
+            else if ((t.Hilim.HasValue || t.Lolim.HasValue) && ShouldWarnMargin(t, b))
             {
                 double margin = CpkAnalyzer.MarginRatio(t.Mean, t.Lolim, t.Hilim, sigmaEff);
                 if (margin < cfg.AnalyzeDriftWarnRatio)
@@ -69,6 +69,16 @@ public static class DriftAnalyzer
             .OrderByDescending(a => a.Kind == "drift" ? 1 : 0)
             .ThenByDescending(a => a.Score)
             .ToList();
+    }
+
+    /// <summary>
+    /// 逼近限只用于过程量（三相电流、温度采样等 σ 相对规格带足够大）。
+    /// 设定值/注入/通信：FCT 本来就要测出 spec 上下限规定的值，贴限是合格不是劣化。
+    /// </summary>
+    internal static bool ShouldWarnMargin(MeasureStatsRow today, MeasureStatsRow baseline)
+    {
+        if (baseline == null) return false;
+        return CpkAnalyzer.ShouldTreatAsProcess(today?.TestName ?? baseline.TestName, baseline);
     }
 
     internal static string UnitOf(MeasureStatsRow r) => string.IsNullOrWhiteSpace(r.Unit) ? "" : r.Unit;

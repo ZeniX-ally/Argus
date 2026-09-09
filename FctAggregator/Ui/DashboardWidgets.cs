@@ -241,103 +241,202 @@ public sealed class HourlyTrendChart : Control
     }
 }
 
-public sealed class TodayGaugePanel : Control
+public sealed class DeviceOnlinePanel : Panel
 {
-    private int _pass;
-    private int _fail;
-    private int _interrupted;
+    private readonly Label _title = new();
+    private readonly Label _head = new();
+    private readonly Label _foot = new();
+    private readonly Label _empty = new();
+    private readonly TableLayoutPanel _grid = new();
+    private int _layoutSig;
+    private string _dataSig = "";
 
-    public TodayGaugePanel()
+    public event Action? OpenDetails;
+
+    public DeviceOnlinePanel()
     {
         DoubleBuffered = true;
-        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         BackColor = Theme.Surface;
+        Padding = new Padding(8, 6, 8, 6);
+
+        var bar = new Panel { Dock = DockStyle.Top, Height = 32, BackColor = Theme.Surface, Cursor = Cursors.Hand };
+        _title.Text = "设备在线";
+        _title.Font = Theme.BodyBold;
+        _title.ForeColor = Theme.TextMain;
+        _title.AutoSize = false;
+        _title.Dock = DockStyle.Left;
+        _title.Width = 88;
+        _title.TextAlign = ContentAlignment.MiddleLeft;
+        _head.Font = Theme.Tiny;
+        _head.ForeColor = Theme.TextFaint;
+        _head.Dock = DockStyle.Fill;
+        _head.TextAlign = ContentAlignment.MiddleRight;
+        bar.Controls.Add(_head);
+        bar.Controls.Add(_title);
+        bar.Click += (_, _) => OpenDetails?.Invoke();
+        _title.Click += (_, _) => OpenDetails?.Invoke();
+        _head.Click += (_, _) => OpenDetails?.Invoke();
+
+        _foot.Dock = DockStyle.Bottom;
+        _foot.Height = 22;
+        _foot.Font = Theme.Tiny;
+        _foot.ForeColor = Theme.TextFaint;
+        _foot.TextAlign = ContentAlignment.MiddleLeft;
+        _foot.Cursor = Cursors.Hand;
+        _foot.Click += (_, _) => OpenDetails?.Invoke();
+
+        _grid.Dock = DockStyle.Fill;
+        _grid.BackColor = Theme.Surface;
+        _grid.Resize += (_, _) => RelayoutGrid();
+
+        _empty.Dock = DockStyle.Fill;
+        _empty.TextAlign = ContentAlignment.MiddleCenter;
+        _empty.Font = Theme.Body;
+        _empty.ForeColor = Theme.TextFaint;
+        _empty.Text = "FCT.ini 未登记 COM / USB";
+
+        Controls.Add(_grid);
+        Controls.Add(_foot);
+        Controls.Add(bar);
     }
 
-    public void SetData(int pass, int fail, int interrupted = 0)
+    public void SetData(FctIniData data)
     {
-        _pass = pass;
-        _fail = fail;
-        _interrupted = interrupted;
-        Invalidate();
+        data ??= new FctIniData();
+        var sig = Sig(data);
+        if (sig == _dataSig && _grid.Controls.Count == data.Devices.Count) return;
+        _dataSig = sig;
+
+        int comOn = data.Devices.Count(d => d.Type == "com" && d.Online);
+        int comOff = data.Devices.Count(d => d.Type == "com" && !d.Online);
+        int usb = data.Devices.Count(d => d.Type == "usb");
+        if (!data.Found)
+        {
+            _head.Text = "未找到 FCT.ini";
+            _head.ForeColor = Theme.Danger;
+            _foot.Text = "点击打开设备状态";
+            SyncCards(Array.Empty<DeviceInfo>(), data.Error ?? "未找到 FCT.ini，点击打开设备状态页");
+            return;
+        }
+
+        _head.ForeColor = comOff > 0 ? Theme.Danger : Theme.TextFaint;
+        _head.Text = comOff > 0 ? $"COM 掉线 {comOff}  ·  在线 {comOn}" : $"COM 在线 {comOn}  ·  USB {usb}";
+        _foot.Text = data.ExtraSystemComCount > 0
+            ? $"系统另有 {data.ExtraSystemComCount} 个 COM 未登记  ·  点击打开设备状态"
+            : "全部为 FCT.ini 登记项  ·  点击打开设备状态";
+
+        var list = data.Devices
+            .OrderBy(d => d.Type == "com" ? 0 : 1)
+            .ThenBy(d => d.Type == "com" && !d.Online ? 0 : 1)
+            .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        SyncCards(list, list.Count == 0 ? "FCT.ini 未登记 COM / USB" : null);
+    }
+
+    private static string Sig(FctIniData d)
+    {
+        var sb = new System.Text.StringBuilder(d.Found ? "1" : "0");
+        sb.Append('|').Append(d.Error ?? "").Append('|').Append(d.ExtraSystemComCount);
+        foreach (var x in d.Devices)
+            sb.Append('|').Append(x.Name).Append('/').Append(x.Port).Append('/').Append(x.Type).Append('/').Append(x.Online ? '1' : '0');
+        return sb.ToString();
+    }
+
+    private void SyncCards(IReadOnlyList<DeviceInfo> devs, string? emptyText)
+    {
+        if (devs.Count == 0)
+        {
+            while (_grid.Controls.Count > 0)
+            {
+                var last = _grid.Controls[_grid.Controls.Count - 1];
+                _grid.Controls.RemoveAt(_grid.Controls.Count - 1);
+                if (last != _empty) last.Dispose();
+            }
+            _empty.Text = emptyText ?? "FCT.ini 未登记 COM / USB";
+            if (_empty.Parent != _grid) _grid.Controls.Add(_empty);
+            _empty.Visible = true;
+            _layoutSig = 0;
+            RelayoutGrid();
+            return;
+        }
+
+        if (_empty.Parent == _grid)
+        {
+            _grid.Controls.Remove(_empty);
+            _empty.Visible = false;
+        }
+        while (_grid.Controls.Count > devs.Count)
+        {
+            var last = _grid.Controls[_grid.Controls.Count - 1];
+            _grid.Controls.RemoveAt(_grid.Controls.Count - 1);
+            last.Dispose();
+        }
+        for (int i = 0; i < devs.Count; i++)
+        {
+            if (i >= _grid.Controls.Count)
+            {
+                var card = new DeviceCard { Dock = DockStyle.Fill, Margin = new Padding(4) };
+                _grid.Controls.Add(card);
+            }
+            ((DeviceCard)_grid.Controls[i]).Bind(devs[i]);
+        }
+        _layoutSig = 0;
+        RelayoutGrid();
+    }
+
+    private void RelayoutGrid()
+    {
+        int n = 0;
+        foreach (Control c in _grid.Controls)
+            if (c is DeviceCard) n++;
+        if (n <= 0)
+        {
+            _grid.ColumnCount = 1;
+            _grid.RowCount = 1;
+            _grid.ColumnStyles.Clear();
+            _grid.RowStyles.Clear();
+            _grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            return;
+        }
+        int w = Math.Max(1, _grid.ClientSize.Width);
+        int h = Math.Max(1, _grid.ClientSize.Height);
+        int cols = n <= 2 ? 1 : Math.Clamp(w / 170, 1, 4);
+        if (cols > n) cols = n;
+        int rows = (n + cols - 1) / cols;
+        while (cols > 1 && rows > 0 && h / rows < 72)
+        {
+            cols--;
+            rows = (n + cols - 1) / cols;
+        }
+        int sig = n * 1000 + cols * 10 + rows;
+        if (sig == _layoutSig && _grid.ColumnCount == cols && _grid.RowCount == rows) return;
+        _layoutSig = sig;
+
+        _grid.SuspendLayout();
+        _grid.ColumnCount = cols;
+        _grid.RowCount = rows;
+        _grid.ColumnStyles.Clear();
+        _grid.RowStyles.Clear();
+        for (int c = 0; c < cols; c++)
+            _grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / cols));
+        for (int r = 0; r < rows; r++)
+            _grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / rows));
+        int i = 0;
+        foreach (Control ctl in _grid.Controls)
+        {
+            if (ctl is not DeviceCard) continue;
+            _grid.SetColumn(ctl, i % cols);
+            _grid.SetRow(ctl, i / cols);
+            i++;
+        }
+        _grid.ResumeLayout(true);
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
-        var g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-
-        Theme.DrawCard(g, ClientRectangle, null);
-
-        TextRenderer.DrawText(g, "当月综合良率", Theme.BodyBold,
-            new Rectangle(16, 12, 240, 24), Theme.TextMain,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-
-        int total = _pass + _fail;
-        double yieldRate = total > 0 ? (double)_pass / total * 100.0 : 0.0;
-
-        int gaugeY = 44;
-        int gaugeH = Height - gaugeY - 54;
-
-        Color yieldColor = total == 0 ? Theme.TextFaint : (yieldRate >= 98.0 ? Theme.Success : (yieldRate >= 95.0 ? Color.FromArgb(241, 196, 15) : Theme.Danger));
-        // 空数据时副标题按"暂无数据"提示，避免误报"需关注"（副标题绘制本身已用 TextFaint 色）
-        string yieldSub = total == 0 ? "质量状态: 暂无数据" : (yieldRate >= 98.0 ? "质量状态: 达标 (≥98%)" : "质量状态: 需关注");
-        DrawRingMeter(g, new Rectangle(0, gaugeY, Width, gaugeH),
-            yieldRate, total > 0 ? $"{yieldRate:F1}%" : "—",
-            yieldSub,
-            yieldColor);
-
-        int botY = Height - 48;
-        using var divPen = new Pen(Color.FromArgb(30, Theme.TextFaint), 1f);
-        g.DrawLine(divPen, 16, botY, Width - 16, botY);
-
-        int colW = (Width - 32) / 2;
-        DrawMetricItem(g, 16, botY + 6, colW, "当月总测试", $"{total} pcs");
-        DrawMetricItem(g, 16 + colW, botY + 6, colW, "当月测试中断", $"{_interrupted} 次");
-    }
-
-    private static void DrawRingMeter(Graphics g, Rectangle r, double percent, string centerText, string subText, Color arcColor)
-    {
-        const float penW = 8f;
-        const int subH = 16;
-        const int gap = 4;
-
-        int availH = r.Height - subH - gap * 2;
-        int size = Math.Min(r.Width - 24, availH);
-        if (size < 40) return;
-
-        int cx = r.X + (r.Width / 2);
-        int cy = r.Y + gap + (availH / 2);
-        var ringRect = new Rectangle(cx - size / 2, cy - size / 2, size, size);
-
-        using var bgPen = new Pen(Color.FromArgb(35, Theme.TextFaint), penW) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        g.DrawArc(bgPen, ringRect, 135, 270);
-
-        float sweep = (float)(Math.Clamp(percent, 0.0, 100.0) / 100.0 * 270.0);
-        if (sweep > 1)
-        {
-            using var arcPen = new Pen(arcColor, penW) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-            g.DrawArc(arcPen, ringRect, 135, sweep);
-        }
-
-        TextRenderer.DrawText(g, centerText, Theme.NumberMid,
-            new Rectangle(cx - size / 2, cy - 20, size, 40), Theme.TextMain,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-
-        TextRenderer.DrawText(g, subText, Theme.Tiny,
-            new Rectangle(r.X + 4, r.Bottom - subH - gap, r.Width - 8, subH), Theme.TextFaint,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-    }
-
-    private static void DrawMetricItem(Graphics g, int x, int y, int w, string label, string val)
-    {
-        TextRenderer.DrawText(g, label, Theme.Tiny,
-            new Rectangle(x, y, w, 14), Theme.TextFaint,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-        TextRenderer.DrawText(g, val, Theme.BodyBold,
-            new Rectangle(x, y + 14, w, 16), Theme.TextMain,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+        Theme.DrawCard(e.Graphics, ClientRectangle, null);
+        base.OnPaint(e);
     }
 }
 
@@ -383,13 +482,15 @@ public sealed class TopFailRankPanel : Control
             return;
         }
 
-        int rowH = Math.Max(32, (Height - startY - 12) / 5);
+        int slotH = Math.Max(40, (Height - startY - 12) / 5);
         int maxCount = _items.Count > 0 ? _items[0].Count : 1;
+        int y = startY;
 
         for (int i = 0; i < Math.Min(5, _items.Count); i++)
         {
             var it = _items[i];
-            int y = startY + (i * rowH);
+            bool hasHint = !string.IsNullOrEmpty(it.RootCauseHint);
+            int rowH = hasHint ? Math.Max(slotH, 48) : slotH;
 
             DrawBadge(g, 16, y + 4, i + 1);
 
@@ -405,8 +506,15 @@ public sealed class TopFailRankPanel : Control
                 new Rectangle(Width - 170, y + 4, 155, 18), Theme.TextFaint,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
+            if (hasHint)
+            {
+                TextRenderer.DrawText(g, $"↳ {it.RootCauseHint}", Theme.Tiny,
+                    new Rectangle(46, y + 22, Width - 62, 16), Theme.Warning,
+                    TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+            }
+
             int barX = 46;
-            int barY = y + 24;
+            int barY = y + (hasHint ? 38 : 24);
             int barMaxW = Width - barX - 16;
             int barH = 5;
 
@@ -417,6 +525,7 @@ public sealed class TopFailRankPanel : Control
             Color barCol = i == 0 ? Theme.Danger : (i == 1 ? Color.FromArgb(230, 126, 34) : Color.FromArgb(0, 180, 255));
             using var barFill = new SolidBrush(barCol);
             g.FillRectangle(barFill, barX, barY, fillW, barH);
+            y += rowH;
         }
     }
 
@@ -434,6 +543,57 @@ public sealed class TopFailRankPanel : Control
         TextRenderer.DrawText(g, rank.ToString(), Theme.Tiny,
             new Rectangle(x, y, 20, 20), Color.White,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+}
+
+/// <summary>总览页：自学习基线 / 章节群挂预警条（无预警时高度 0）。</summary>
+public sealed class LearnAlertStrip : Control
+{
+    private List<string> _lines = new();
+
+    public LearnAlertStrip()
+    {
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        BackColor = Theme.Bg;
+        Height = 0;
+        Visible = false;
+    }
+
+    public void SetAlerts(IReadOnlyList<string>? lines)
+    {
+        _lines = lines?.Where(s => !string.IsNullOrWhiteSpace(s)).ToList() ?? new List<string>();
+        if (_lines.Count == 0)
+        {
+            Height = 0;
+            Visible = false;
+        }
+        else
+        {
+            Height = Math.Min(80, 12 + _lines.Count * 22);
+            Visible = true;
+        }
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (_lines.Count == 0) return;
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new Rectangle(Theme.Gap, 4, Width - Theme.Gap * 2, Height - 8);
+        using var bg = new SolidBrush(Color.FromArgb(28, Theme.Warning));
+        using var border = new Pen(Color.FromArgb(80, Theme.Warning));
+        g.FillRectangle(bg, rect);
+        g.DrawRectangle(border, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
+        int y = rect.Y + 6;
+        foreach (var line in _lines.Take(3))
+        {
+            TextRenderer.DrawText(g, line, Theme.Small,
+                new Rectangle(rect.X + 10, y, rect.Width - 20, 20), Theme.TextMain,
+                TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+            y += 22;
+        }
     }
 }
 

@@ -20,9 +20,10 @@ public class MainForm : Form
     private readonly Dictionary<string, Label> _statValues = new();
     private SectionPanel _detailPanel = null!;
     private HourlyTrendChart _hourlyChart = null!;
-    private TodayGaugePanel _todayGauge = null!;
+    private DeviceOnlinePanel _deviceOnline = null!;
     private TopFailRankPanel _topFailRank = null!;
     private LiveAlertPanel _liveAlert = null!;
+    private LearnAlertStrip _learnAlertStrip = null!;
 
     private Panel _dashboardPage = null!;
     private DeviceStatusPanel _devicePage = null!;
@@ -74,6 +75,8 @@ public class MainForm : Form
         DesktopNotifier.Enabled = _cfg.DesktopNotify;
         DesktopNotifier.MinIntervalSeconds = _cfg.NotifyMinIntervalSec;
         DesktopNotifier.Activated += OnNotificationClicked;
+        DesktopNotifier.RestoreRequested += RestoreFromTray;
+        DesktopNotifier.ExitRequested += RequestExit;
         DesktopNotifier.Init();
 
         _timer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -236,13 +239,13 @@ public class MainForm : Form
             RowCount = 2,
             BackColor = Theme.Bg,
         };
-        mainGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
-        mainGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
+        mainGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54f));
+        mainGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46f));
         mainGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 52f));
         mainGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 48f));
 
         _hourlyChart = new HourlyTrendChart { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, Theme.Gap) };
-        _todayGauge = new TodayGaugePanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, Theme.Gap) };
+        _deviceOnline = new DeviceOnlinePanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 0) };
         _topFailRank = new TopFailRankPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, 0) };
         _liveAlert = new LiveAlertPanel { Dock = DockStyle.Fill, Margin = new Padding(0) };
 
@@ -250,17 +253,31 @@ public class MainForm : Form
         {
             ShowPage(3);
         };
+        _deviceOnline.OpenDetails += () => ShowPage(2);
+
+        var bottomLeft = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Bg,
+            Margin = new Padding(0),
+        };
+        bottomLeft.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+        bottomLeft.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+        bottomLeft.Controls.Add(_topFailRank, 0, 0);
+        bottomLeft.Controls.Add(_liveAlert, 1, 0);
 
         mainGrid.Controls.Add(_hourlyChart, 0, 0);
-        mainGrid.Controls.Add(_todayGauge, 1, 0);
-        mainGrid.Controls.Add(_topFailRank, 0, 1);
-        mainGrid.Controls.Add(_liveAlert, 1, 1);
+        mainGrid.Controls.Add(bottomLeft, 0, 1);
+        mainGrid.Controls.Add(_deviceOnline, 1, 0);
+        mainGrid.SetRowSpan(_deviceOnline, 2);
 
         _detailPanel = new SectionPanel("生产大屏监控") { Dock = DockStyle.Fill };
         _detailPanel.Content.Controls.Add(mainGrid);
         lower.Controls.Add(_detailPanel);
 
+        _learnAlertStrip = new LearnAlertStrip { Dock = DockStyle.Top };
+
         page.Controls.Add(lower);
+        page.Controls.Add(_learnAlertStrip);
         page.Controls.Add(kpiRow);
         lower.BringToFront();
         return page;
@@ -329,15 +346,39 @@ public class MainForm : Form
         if (e.KeyCode == Keys.R) { RefreshCurrentPage(); e.Handled = true; }
     }
 
+    private bool _forceExit;
+
+    private void RequestExit()
+    {
+        if (IsDisposed) return;
+        if (InvokeRequired) { BeginInvoke(RequestExit); return; }
+        _forceExit = true;
+        Close();
+    }
+
+    private void HideToTray()
+    {
+        Hide();
+        ShowInTaskbar = false;
+    }
+
+    private void RestoreFromTray()
+    {
+        if (IsDisposed) return;
+        if (InvokeRequired) { BeginInvoke(RestoreFromTray); return; }
+        ShowInTaskbar = true;
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Show();
+        Activate();
+        BringToFront();
+    }
+
     private void OnNotificationClicked()
     {
         try
         {
             if (InvokeRequired) { BeginInvoke(OnNotificationClicked); return; }
-            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
-            Show();
-            Activate();
-            BringToFront();
+            RestoreFromTray();
             ShowPage(1);
         }
         catch (Exception ex) { Logger.Warning($"提示点击处理失败: {ex.Message}"); }
@@ -354,6 +395,7 @@ public class MainForm : Form
         UpdateChips();
         UpdateProgress();
         UpdateKpi();
+        RefreshDeviceOnline();
         if (_page == 0) UpdateDashboardWidgets();
         if (_tickCount % 10 == 1) UpdateTodoBadge();
         UpdateStatusBar();
@@ -430,11 +472,15 @@ public class MainForm : Form
         SetKpi("today_product", s.TodayProductCount.ToString("N0"), $"累计 {s.ProductCount:N0}");
         SetKpi("today_pass", s.TodayPass.ToString("N0"));
         SetKpi("today_fail", s.TodayFail.ToString("N0"));
-        // 空数据时与良率仪表同口径：显示 "—" 而非误导性的 0.0%
         SetKpi("today_yield", s.TodayPass + s.TodayFail == 0 ? "—" : $"{s.TodayYield:F1}%");
         SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
+    }
 
-        _todayGauge?.SetData(s.MonthPass, s.MonthFail, s.MonthInterrupted);
+    private void RefreshDeviceOnline()
+    {
+        if (_deviceOnline == null) return;
+        try { _deviceOnline.SetData(FctIni.Snapshot(_cfg.FctIniPath)); }
+        catch (Exception ex) { Logger.Warning($"[总览] 设备在线刷新失败: {ex.Message}"); }
     }
 
     private volatile bool _dashUpdating = false;
@@ -455,6 +501,22 @@ public class MainForm : Form
                     var hourly = db.FetchDailyHourlyStats(string.Empty, todayYmd);
                     var topFails = db.FetchDailyTopFails(string.Empty, todayYmd, 5);
                     var alerts = db.FetchRecentFailAlerts(string.Empty, 10);
+                    var learnLines = new List<string>();
+                    if (_cfg.LearnBaselineEnabled)
+                    {
+                        var bs = LearningEngine.GetBaselineState(db);
+                        if (bs?.Alerts != null)
+                            foreach (var a in bs.Alerts.Take(2))
+                                learnLines.Add($"[基线] {a.Message}");
+                    }
+                    if (_cfg.LearnFailMergeEnabled)
+                    {
+                        var gs = LearningEngine.GetGroupAlerts(db);
+                        if (gs?.Alerts != null)
+                            foreach (var a in gs.Alerts.Take(2))
+                                learnLines.Add($"[§{a.Section}] {a.Hint}");
+                    }
+                    if (!IsHandleCreated || IsDisposed) return;
                     BeginInvoke(() =>
                     {
                         // 回调在 UI 线程执行，窗体关闭竞态时控件可能已 Dispose，兜底防未处理异常
@@ -463,6 +525,7 @@ public class MainForm : Form
                             _hourlyChart?.SetData(hourly);
                             _topFailRank?.SetData(topFails);
                             _liveAlert?.SetData(alerts);
+                            _learnAlertStrip?.SetAlerts(learnLines);
                         }
                         catch (Exception ex)
                         {
@@ -586,19 +649,30 @@ public class MainForm : Form
                 DesktopNotifier.NotifyRaw($"新版本 v{ver} 已安装，Argus 将在几秒后自动重启。");
                 UpdateChecker.ScheduleRestart(delaySeconds: 3);
                 var t = new System.Windows.Forms.Timer { Interval = 1500 };
-                t.Tick += (_, _) => { t.Stop(); t.Dispose(); Close(); };
+                t.Tick += (_, _) => { t.Stop(); t.Dispose(); RequestExit(); };
                 t.Start();
             });
         });
     }
 
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_DEVICECHANGE = 0x0219;
+        if (m.Msg == WM_DEVICECHANGE)
+        {
+            _devicePage?.NotifyHardwareChange();
+            if (IsHandleCreated && !IsDisposed) BeginInvoke(RefreshDeviceOnline);
+        }
+        base.WndProc(ref m);
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (e.CloseReason == CloseReason.UserClosing)
+        if (!_forceExit && e.CloseReason == CloseReason.UserClosing && DesktopNotifier.TrayReady)
         {
-            var confirm = MessageBox.Show("确定要退出吗？退出后将停止数据采集。", "确认退出",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
-            if (confirm != DialogResult.Yes) { e.Cancel = true; return; }
+            e.Cancel = true;
+            HideToTray();
+            return;
         }
         DesktopNotifier.Shutdown();
         base.OnFormClosing(e);

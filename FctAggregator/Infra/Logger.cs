@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
+using System.Text;
 
 namespace FctAggregator;
 
@@ -9,8 +11,13 @@ public static class Logger
     private static string _level = "INFO";
     private const int MaxGuiLogs = 5000;
 
+    public static string LogDirectory =>
+        Path.Combine(AppConfig.BaseDir, "logs");
+
     private static readonly string LogPath =
         Path.Combine(AppConfig.BaseDir, "logs", "app.log");
+
+    public static string CurrentLogPath => LogPath;
 
     private static long MaxLogBytes = 20L * 1024 * 1024;
     private const int MaxLogFiles = 7;
@@ -91,5 +98,125 @@ public static class Logger
     public static void ClearGuiLogs()
     {
         while (_guiLogs.TryDequeue(out _)) { }
+    }
+
+    /// <summary>读当前 app.log 尾部（UTF-8），供调试页预览。文件不存在返回提示串。</summary>
+    public static string ReadTail(int maxBytes = 120_000)
+    {
+        if (maxBytes < 1024) maxBytes = 1024;
+        lock (_fileLock)
+        {
+            if (!File.Exists(LogPath)) return "(尚无日志文件)";
+            using var fs = new FileStream(LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var len = fs.Length;
+            var take = (int)Math.Min(len, maxBytes);
+            fs.Seek(-take, SeekOrigin.End);
+            var buf = new byte[take];
+            var n = fs.Read(buf, 0, take);
+            var text = Encoding.UTF8.GetString(buf, 0, n);
+            if (len > maxBytes)
+            {
+                var nl = text.IndexOf('\n');
+                if (nl >= 0 && nl + 1 < text.Length) text = text[(nl + 1)..];
+                text = $"(仅显示末尾 {take} 字节)\n" + text;
+            }
+            return text;
+        }
+    }
+
+    /// <summary>打包 logs/ 下 app.log* + diagnostic.txt + 内存尾部。不含 config.json（防 webhook 泄露）。返回写出的 zip 绝对路径。</summary>
+    public static string ExportZip(string destZip)
+    {
+        if (string.IsNullOrWhiteSpace(destZip)) throw new ArgumentException("导出路径为空", nameof(destZip));
+        destZip = Path.GetFullPath(destZip);
+        if (!destZip.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            destZip += ".zip";
+        Directory.CreateDirectory(Path.GetDirectoryName(destZip)!);
+
+        var staging = Path.Combine(Path.GetTempPath(), "argus_logs_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(staging);
+        try
+        {
+            lock (_fileLock)
+            {
+                if (Directory.Exists(LogDirectory))
+                {
+                    foreach (var f in Directory.GetFiles(LogDirectory, "app.log*"))
+                    {
+                        try { File.Copy(f, Path.Combine(staging, Path.GetFileName(f)), overwrite: true); }
+                        catch { }
+                    }
+                }
+            }
+            File.WriteAllText(Path.Combine(staging, "diagnostic.txt"), BuildDiagnostic(), Encoding.UTF8);
+            var mem = SnapshotGuiLogs();
+            if (mem.Count > 0)
+                File.WriteAllLines(Path.Combine(staging, "gui-tail.txt"), mem.TakeLast(2000), Encoding.UTF8);
+
+            if (File.Exists(destZip)) File.Delete(destZip);
+            ZipFile.CreateFromDirectory(staging, destZip, CompressionLevel.SmallestSize, includeBaseDirectory: false);
+            return destZip;
+        }
+        finally
+        {
+            try { Directory.Delete(staging, recursive: true); } catch { }
+        }
+    }
+
+    public static string SuggestedExportName()
+    {
+        var sid = "";
+        try { sid = AppConfig.Instance.StationId; } catch { }
+        if (string.IsNullOrWhiteSpace(sid)) sid = "station";
+        foreach (var c in Path.GetInvalidFileNameChars()) sid = sid.Replace(c, '_');
+        return $"Argus-logs-{sid}-{DateTime.Now:yyyyMMdd-HHmmss}.zip";
+    }
+
+    internal static string BuildDiagnostic()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Argus diagnostic (no secrets)");
+        sb.AppendLine($"exported_at={DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        try
+        {
+            var ver = typeof(Logger).Assembly.GetName().Version;
+            sb.AppendLine($"version={ver}");
+        }
+        catch { sb.AppendLine("version=?"); }
+        sb.AppendLine($"os={Environment.OSVersion}");
+        sb.AppendLine($"pid={Environment.ProcessId}");
+        sb.AppendLine($"base_dir={AppConfig.BaseDir}");
+        sb.AppendLine($"log_file={LogPath}");
+        try
+        {
+            var c = AppConfig.Instance;
+            sb.AppendLine($"station_id={c.StationId}");
+            sb.AppendLine($"log_level={c.LogLevel}");
+            sb.AppendLine($"results_root={c.ResultsRoot}");
+            sb.AppendLine($"learn_normal_enabled={c.LearnNormalEnabled}");
+            sb.AppendLine($"analyze_tdms_enabled={c.AnalyzeTdmsEnabled}");
+            sb.AppendLine($"analyze_collect_pass={c.AnalyzeCollectPass}");
+            sb.AppendLine($"auto_update={c.AutoUpdate}");
+            sb.AppendLine($"webhook_configured={!string.IsNullOrWhiteSpace(c.WebhookUrl)}");
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"config_read_error={ex.Message}");
+        }
+        sb.AppendLine("log_files=");
+        if (Directory.Exists(LogDirectory))
+        {
+            foreach (var f in Directory.GetFiles(LogDirectory, "app.log*").OrderBy(x => x))
+            {
+                try
+                {
+                    var fi = new FileInfo(f);
+                    sb.AppendLine($"  {fi.Name} {fi.Length}B");
+                }
+                catch { }
+            }
+        }
+        else sb.AppendLine("  (none)");
+        return sb.ToString();
     }
 }

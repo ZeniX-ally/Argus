@@ -108,7 +108,7 @@ public class AnalysisPanel : Panel
         _groupEmpty = EmptyLabel("暂无章节群挂预警");
         _tdmsEmpty = EmptyLabel("TDMS 特征化未启用或无数据（需配置 tdms_root 并打开 analyze_tdms_enabled）");
 
-        var driftHost = SectionHost("规格带漂移 / 逼近规格限预警", _driftGrid, _driftEmpty);
+        var driftHost = SectionHost("规格带漂移 / 逼近规格限预警（仅过程量）", _driftGrid, _driftEmpty);
         var cpkHost = SectionHost("CPK 低能力清单（< 1.33）", _cpkGrid, _cpkEmpty);
         var attrHost = SectionHost("失败多维归因（治具 / 测试员 / 时段 异常桶）", _attrGrid, _attrEmpty);
         var effectHost = SectionHost("Tester 效应量对比（同测项均值差 / 合并σ）", _effectGrid, _effectEmpty);
@@ -158,6 +158,8 @@ public class AnalysisPanel : Panel
     public void Refresh2()
     {
         var db = _engine.Db;
+        try { AnalysisEngine.RunOnce(db, _engine.Config); }
+        catch (Exception ex) { Logger.Warning($"[分析] 刷新重算失败: {ex.Message}"); }
         var drift = AnalysisEngine.GetDriftState(db);
         var cpk = AnalysisEngine.GetCpkState(db);
         var attr = AnalysisEngine.GetAttributionState(db);

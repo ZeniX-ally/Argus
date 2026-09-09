@@ -29,7 +29,7 @@ public class AppConfig
     public int LearnBaselineWindowDays { get; set; } = 7;
     public double LearnBaselineSigma { get; set; } = 3.0;
     public int LearnBaselineMinSamples { get; set; } = 30;
-    public bool LearnNormalEnabled { get; set; } = false;
+    public bool LearnNormalEnabled { get; set; } = true;
     public int LearnNormalMinSamples { get; set; } = 30;
     public int LearnNormalStaleDays { get; set; } = 14;
     public int LearnNormalVoteSignals { get; set; } = 3;
@@ -41,7 +41,7 @@ public class AppConfig
     // 规格06 多元深分析（analyze_*）
     public bool AnalyzeCollectPass { get; set; } = true;
     public int AnalyzeMaxFileKb { get; set; } = 2048;
-    public int AnalyzeMaxTestsPerFile { get; set; } = 500;
+    public int AnalyzeMaxTestsPerFile { get; set; } = 1000;
     public bool AnalyzeDriftEnabled { get; set; } = true;
     public bool AnalyzeCpkEnabled { get; set; } = true;
     public int AnalyzeWindowDays { get; set; } = 7;
@@ -176,6 +176,34 @@ public class AppConfig
             }
         }
         return new AppConfig();
+    }
+
+    /// <summary>把 loaded 的字段拷到 this，保持对象引用不变（Engine/MainForm 持 Instance）。</summary>
+    public void CopyFrom(AppConfig src)
+    {
+        if (src == null || ReferenceEquals(src, this)) return;
+        foreach (var p in typeof(AppConfig).GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (!p.CanRead || !p.CanWrite) continue;
+            p.SetValue(this, p.GetValue(src));
+        }
+    }
+
+    /// <summary>热加载：读盘后原地写入 Instance，不 new 掉 Engine 手里的引用。</summary>
+    public static bool ReloadFromDisk()
+    {
+        try
+        {
+            var loaded = Load(false);
+            Instance.CopyFrom(loaded);
+            try { Logger.SetLevel(Instance.LogLevel); } catch { }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[配置] 热加载失败，保持旧值: {ex.Message}");
+            return false;
+        }
     }
 
     public bool Save()

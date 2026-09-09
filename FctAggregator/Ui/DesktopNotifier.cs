@@ -9,6 +9,10 @@ public static class DesktopNotifier
     public static int MinIntervalSeconds { get; set; } = 15;
 
     public static event Action? Activated;
+    public static event Action? RestoreRequested;
+    public static event Action? ExitRequested;
+
+    public static bool TrayReady => _icon != null;
 
     private static NotifyIcon? _icon;
     private static System.Windows.Forms.Timer? _timer;
@@ -35,13 +39,15 @@ public static class DesktopNotifier
                 BalloonTipIcon = ToolTipIcon.Warning,
             };
             _icon.BalloonTipClicked += (_, _) => Activated?.Invoke();
-            _icon.MouseDoubleClick += (_, _) => Activated?.Invoke();
+            _icon.MouseDoubleClick += (_, _) => (RestoreRequested ?? Activated)?.Invoke();
 
             var menu = new ContextMenuStrip();
-            menu.Items.Add("打开主窗口", null, (_, _) => Activated?.Invoke());
+            menu.Items.Add("打开主窗口", null, (_, _) => (RestoreRequested ?? Activated)?.Invoke());
             var toggle = new ToolStripMenuItem("桌面提示") { CheckOnClick = true, Checked = Enabled };
             toggle.CheckedChanged += (_, _) => Enabled = toggle.Checked;
             menu.Items.Add(toggle);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("退出", null, (_, _) => ExitRequested?.Invoke());
             _icon.ContextMenuStrip = menu;
 
             _timer = new System.Windows.Forms.Timer { Interval = 1000 };

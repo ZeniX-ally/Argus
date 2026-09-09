@@ -2,7 +2,7 @@
 
 > **本文件是任何 agent 参与本项目前必读、且流程层面仅需读的唯一 Spec。** CodeBuddy Code 每次会话自动加载本文件；其他 agent 工具请在动手前先读本文件。
 > **强制规章见 `AGENT_RULES.md`（仓库根，命令式硬性条款，任何改动前必读）。** 本文件是规章的依据与细节，规章与本文件冲突时以本文件为准（规章是本文件的提炼）。
-> 维护规则：全仓库流程规范**只维护这一个文件**。随每次发版更新 §0 版本快照；架构/历史细节一律走 §8 索引，不在此重复。最后更新：2026-09-08（v3.32.0）。
+> 维护规则：全仓库流程规范**只维护这一个文件**。随每次发版更新 §0 版本快照；架构/历史细节一律走 §8 索引，不在此重复。最后更新：2026-09-09（v3.34.0）。
 
 ---
 
@@ -10,12 +10,12 @@
 
 | 项 | 值 |
 |---|---|
-| 主程序 | FctAggregator **v3.32.0**（**纯单机工具**——v3.31.0 起删除聚合/互联/Web 看板，.NET 8 `net8.0-windows`，单 exe） |
+| 主程序 | FctAggregator **v3.34.0**（**纯单机工具**——v3.31.0 起删除聚合/互联/Web 看板，.NET 8 `net8.0-windows`，单 exe） |
 | 分发器 | FctDistributor **v1.9.2**（**2026-09-02 起独立仓库** `e:/FctDistributor`，与本仓库彻底分离：各自 git、各自发版、代码持副本） |
 | 数据层 | SQLite 单写者 + WAL 短租读；本机库幂等 Init（test_measurements/fail_items/tdms_features/normal_models/device_samples_local 等），**无 DbMigrator/无聚合库** |
-| 自检 | **594 项断言**（v3.32.0 正常态 P2～P4 后；提交前以 selftest 实跑 [OK] 计数为准），全绿是任何提交的硬门槛 |
-| 智能化 | 正常态自学习 P1～P4（模型底座 + 偏离评分/回填回放 + 自学习 Tab + 归因偏离证据，learn_* 默认关）+ 规格 06 多元深分析（TDMS 默认关）+ 无感热升级 + 客户端主页工业大屏 + 飞书卡片 JSON 2.0 |
-| 算法路线 | 正常态自学习 P1～P4 已交付（现场开关仍关）+ 规格 05/06 本机能力保留；规格 01～04 聚合侧实现已随 v3.31.0 删除 |
+| 自检 | **626 项断言**（v3.34.0 看板预警 + 现场回放后；提交前以 selftest 实跑 [OK] 计数为准），全绿是任何提交的硬门槛 |
+| 智能化 | 正常态自学习 P1～P4（模型底座 + 偏离评分/回填回放 + 自学习 Tab + 归因偏离证据，`learn_normal_enabled` 默认开；规格 05 `learn_baseline`/`learn_fail_merge` 等仍关）+ 规格 06 多元深分析（TDMS 默认关）+ 无感热升级 + 客户端主页工业大屏 + 飞书卡片 JSON 2.0 |
+| 算法路线 | 正常态自学习 P1～P4 已交付（`learn_normal_enabled` 默认开）+ 规格 05/06 本机能力保留；规格 01～04 聚合侧实现已随 v3.31.0 删除 |
 | 远程 | Gitea `http://192.168.1.16:3000/zenix/Argus.git`，分支 `main`；分发器独立远程 `zenix/FCT-Distributor.git` |
 | 近期结构变更 | 2026-09-08：v3.31.0 **纯单机化改造**（删除聚合/互联/Web 看板：`Agg/`、`Mesh/`、`public/`、`AggDatabase*.cs`、`DbMigrator.cs`、`Ui/AggCenterForm`、设备/预测/告警/布局类整目录删除；Engine/DbMaintenance/MainForm/Config/Program/FeishuNotifier 收窄本机链路；`config*.json`/发版脚本/四份文档去聚合残留；selftest 基线 **1148→568**）；2026-09-08：v3.30.1 审计 Critical 修复（C1 config.json untrack+导出密钥守卫 / C3 回滚 admin 门禁+只认 config_backups / C4 热升级旧进程原地换装 SwapIn+失败保留 pending+MarkPrompted 后置，+15 断言）；2026-09-08：v3.30.0 正常态自学习 P1（StreamingStats welford/P2 + normal_models 表 + NormalModelStore + 三学习器接入摄取链路，learn_* 默认关）+ SN 补采（ReadFactoryOnly 取 DUT SN 兜底 + BackfillMissingSn 启动自动/CLI 手动）+ 采集链路加固（Changed 订阅+在途去重+暂时性失败重试+重试队列落盘、历史扫描批量锁重试、mesh 离线周期扫描 IsPeerTimedOut、当月良率 SN 终检口径、TSV 清洗、config GetStringSafe、全局异常兜底）；2026-09-07：v3.29.0 规格 06 期 3（TDMS 特征化 FAIL+PASS 全采 + tdms_features 本机表幂等 Init + TdmsFeatureAnalyzer/TdmsFeatureCollector 实时队列与 backfill 补采 + AnalysisPanel TDMS 区，analyze_tdms_enabled 默认关）；2026-09-07：selftest 修复心跳轮询读撞文件锁 flaky（ReadTextSafe）；2026-09-05：v3.28.0 规格 06 期 2（fail_items 明细落表 value/value_text 双轨 + FailAttributor 多维归因 + FixtureComparator tester 效应量 + AnalysisPanel 归因/效应量/群挂 UI，analyze_* 新五键）；2026-09-05：v3.27.0 规格 06 期 1（PASS 测量值实时采集 analyze_collect_pass + test_measurements/fail_items 本机新表 + DriftAnalyzer/CpkAnalyzer + AnalysisPanel 深度分析页 + backfill CLI，本机库不走 DbMigrator 走幂等 Init）；2026-09-04：v3.26.3 开源准备（FallbackWebhookUrl 置空 + 全仓库注释剥离）；2026-09-04：v3.26.0 移除暗黑模式（Theme 固定浅色，ui_theme 废弃）+ 无感热升级（auto_update 默认开：自动暂存+托盘告知+分离进程重启提交，UpdateChecker.ScheduleRestart）；2026-09-04：v3.25.0 待办合并 spec 原理级（G49TodoRules 章节信号族+电源轨别名归并，todo_spec_merge 默认开）；2026-09-04：v3.24.3 UUT Status Err 全链路排除（纯 UUT F_ 降级 INTERRUPTED 不计 Fail/不推送，XmlParser 口径对齐）；2026-09-04：v3.24.2 飞书 webhook 写死兜底（Config.FallbackWebhookUrl，config 未配时机台端告警回落内置群）；2026-09-04：v3.24.1 飞书卡片抬头图（config feishu_banner_img_key，img 负 margin 贴 header，全告警卡统一）+ 主页大屏今日→当月综合良率（FetchMonthlyStats yyyymm 前缀）；2026-09-04：v3.24.0 规格 05 机台端自学习（G49ProductDictionary/FailReasonMerger/SelfBaseline/LearningEngine/DeviceSampleRecorder + v13 迁移 + learn_* 十键）+ 飞书卡片 2.0（FeishuCardV2）；2026-09-03：v3.23.3 客户端主页工业大屏看板升级；2026-09-03：v3.23.2 FAIL 记录文件名时间高精度识别 + 相同 SN 合并问题与树形分组折叠；2026-09-03：v3.23.1 部署脚本覆盖兜底与防关窗；2026-09-03：v3.23.0 暗黑模式双令牌；2026-09-02：FctDistributor 拆分独立仓库 |
 
@@ -27,7 +27,7 @@ e:/Argus-main/
 ├── CODEBUDDY.md              ← 本文件（唯一流程 Spec）
 ├── Argus.sln                 ← 两工程一键构建（FctAggregator + SelfTest；分发器已拆分，勿加回）
 ├── FctAggregator/            ← 主程序（**纯单机**，源码按域分组）
-│   ├── Program.cs            入口（子命令分发：GUI / fetch / tdms / rank / upgrade / backfill）
+│   ├── Program.cs            入口（子命令分发：GUI / fetch / tdms / rank / upgrade / backfill / learn / logs）
 │   ├── Core/                 采集引擎与数据模型（Engine/Processor/XmlParser/TestRecord/...）
 │   ├── Db/                   Database（本机库，幂等 Init）+ DbMaintenance（本机库维护器）
 │   ├── Intelligence/         本机分析与自学习（AnalysisEngine/LearningEngine/NormalLearners/FailAttributor/Drift·Cpk·Tdms Analyzer/ConfigValidator/...）
@@ -38,7 +38,7 @@ e:/Argus-main/
 │   ├── selftest/             SelfTest.cs（显式分组）+ SelfTest.csproj（目录通配编主源码）
 │   ├── tools/                打包/冒烟/诊断脚本（make_package.ps1、inidiag、xlsxdump）
 │   └── 更新日志.md           每版本一条目（自检/坑/明确不做 三段式）——先读最新 2 条再动手
-├── docs/                     总纲.md（主线）+ 算法优化/（4 规格）+ 项目开发与发布规范.md + 机台端通信规范.md（mesh/聚合协议文档，保留备查，代码已删）
+├── docs/                     README.md（索引）+ superpowers/（正常态 spec/plan）+ 算法优化/05 + archive/agg-era/（历史，勿作实现依据）
 ├── scripts/                  make_release.ps1（一键发版，自动读 csproj 版本，只出主程序 2 包：完整 + 更新）
 ├── Releases/                 历史发版 zip（忽略，禁删禁改）
 └── data/                     本地运行数据（全忽略，禁提交）
@@ -48,7 +48,7 @@ e:/FctDistributor/            ← 分发器独立仓库（2026-09-02 拆分；�
 
 ## 1.5 核心文件速查（按域，新 agent 快速定位）
 
-**入口**：`Program.cs` — 子命令分发（GUI / fetch / tdms / rank / upgrade / backfill）。
+**入口**：`Program.cs` — 子命令分发（GUI / fetch / tdms / rank / upgrade / backfill / learn / logs）。
 
 | 域 | 文件 → 职责（何时动它） |
 |---|---|
@@ -62,7 +62,7 @@ e:/FctDistributor/            ← 分发器独立仓库（2026-09-02 拆分；�
 | **selftest/** | `SelfTest.cs` 全部断言（显式分组；v3.31.0 起 568 项基线）· `SelfTest.csproj` 目录通配编主源码（无需为新文件改动） |
 | **脚本** | `scripts/make_release.ps1` 一键发版（只出主程序 2 包：完整+更新）· `FctAggregator/tools/make_package.ps1` 打包器 · `tools/smoke_{gui,notify,cli}.ps1` 冒烟 · `tools/snap_gui.ps1` 截图 · `tools/xlsx_check.ps1` xlsx 对比 · `tools/{deploy_update,upgrade_drill,diag_fctini}.ps1` · `tools/inidiag/`+`tools/xlsxdump/` 诊断工具（递归通配编主源码） |
 
-根级随包文件（**禁止移动**，打包脚本按根相对路径引用）：`config.json`、`config.example.json`、`parsers.example.json`、`app_icon.ico`、`启动.bat`、`更新日志.md`、`版本更新说明.md`、`TECHNICAL_DOCUMENTATION.md`、`packages.lock.json`。
+根级随包文件（**禁止移动**，打包脚本按根相对路径引用）：`config.json`、`config.example.json`、`parsers.example.json`、`app_icon.ico`、`启动.bat`、`更新日志.md`、`版本更新说明.md`、`packages.lock.json`。
 
 ## 1.6 任务路由表（要改什么 → 去哪里）
 
@@ -152,10 +152,10 @@ e:/FctDistributor/            ← 分发器独立仓库（2026-09-02 拆分；�
 
 | 要做什么 | 读哪个 |
 |---|---|
-| 架构/数据库/设计约定 | `FctAggregator/TECHNICAL_DOCUMENTATION.md` |
+| 文档总索引 | `docs/README.md` |
 | 工程目录与日常命令 | `FctAggregator/README.md` |
 | 版本历史、每版踩坑 | `FctAggregator/更新日志.md`（倒序，最新在前） |
-| 主线规划与算法路线 | `docs/总纲.md`、`docs/算法优化规格总览.md` |
-| 开发发版流程细则（人读版） | `docs/项目开发与发布规范.md` |
-| （历史）机台↔Web/mesh 契约 | `docs/机台端通信规范.md`（v3.31.0 起功能已删，文档保留备查） |
+| 正常态自学习设计 | `docs/superpowers/specs/2026-09-07-normal-state-learning-design.md` |
+| 规格 05 机台自学习 | `docs/算法优化/05-机台自学习.md` |
+| （历史）聚合/Web/Mesh 时代 | `docs/archive/agg-era/`（v3.31.0 起勿作实现依据） |
 | 发布产物说明 | `Releases/v{ver}/RELEASE.txt` |

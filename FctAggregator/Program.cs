@@ -69,6 +69,10 @@ static class Program
                     EnsureConsole();
                     return LearnCli.Run(rest);
 
+                case "logs":
+                    EnsureConsole();
+                    return LogsCli.Run(rest);
+
                 case "-h":
                 case "--help":
                 case "help":
@@ -135,6 +139,13 @@ static class Program
 
         var cfg = AppConfig.Instance;
         Logger.SetLevel(cfg.LogLevel);
+        try
+        {
+            var ver = typeof(Program).Assembly.GetName().Version;
+            Logger.Info($"Argus v{ver} 启动 pid={Environment.ProcessId} log={Logger.CurrentLogPath}");
+        }
+        catch { }
+        try { Task.Run(() => { try { LeftoverAgg.LogAtStartup(); } catch { } }); } catch { }
 
         try
         {
@@ -153,9 +164,11 @@ static class Program
         try
         {
             _configWatcher = new ConfigWatcher(Path.Combine(AppConfig.BaseDir, "config.json"));
-            _configWatcher.ConfigChanged += (sender, newCfg) =>
+            _configWatcher.ConfigChanged += (_, _) =>
             {
-                Logger.Info("[ConfigWatcher] 新配置已生效");
+                if (!AppConfig.ReloadFromDisk()) return;
+                try { DeviceSampleRecorder.ApplyConfig(); } catch { }
+                Logger.Info("[ConfigWatcher] 新配置已应用到运行中实例");
             };
         }
         catch (Exception ex)
@@ -218,7 +231,10 @@ FCT 工具套件 (Argus.exe)
   Argus.exe fetch --help       取数打包工具的命令行用法
   Argus.exe backfill [--days N]  存量 PASS 文件测量值补采（规格06，幂等可续跑）
   Argus.exe learn --backfill [--days N]  正常态模型历史回填（learn_normal_enabled）
-  Argus.exe learn --replay       合成回放三指标（检出/误报/覆盖）
+  Argus.exe learn --replay [--days N] [--anomaly-dates yyyy-MM-dd,...]  现场库回放三指标（复制临时库）
+  Argus.exe learn --replay --synthetic  合成回放三指标（selftest 口径）
+  Argus.exe logs --export [zip]  导出运行日志包（debug 用）
+  Argus.exe logs --tail          打印 app.log 末尾
   Argus.exe --help             本帮助
 
 三个工具也能在主程序左侧「工具箱」里直接点开。

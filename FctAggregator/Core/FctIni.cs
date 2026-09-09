@@ -19,10 +19,32 @@ public class FctIniData
     public List<(string Label, string Version)> FwVersions { get; set; } = new();
     public List<DeviceInfo> Devices { get; set; } = new();
     public List<(string Label, string File)> A2lFiles { get; set; } = new();
+    public DateTime ProbedAt { get; set; }
+    /// <summary>系统里有、但 FCT.ini 未登记的 COM 数量（不进设备卡，避免「未知设备」刷屏）。</summary>
+    public int ExtraSystemComCount { get; set; }
 }
 
 public static class FctIni
 {
+    private static readonly object _metaLock = new();
+    private static string _metaPath = "";
+    private static long _metaWrite;
+    private static long _metaLen;
+    private static FctIniData? _meta;
+    private static FctIniData? _miss;
+    private static DateTime _missUntil;
+
+    public static void Invalidate()
+    {
+        lock (_metaLock)
+        {
+            _meta = null;
+            _metaPath = "";
+            _miss = null;
+            _missUntil = default;
+        }
+    }
+
     public static HashSet<string> GetActiveComPorts()
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -52,6 +74,14 @@ public static class FctIni
         {
             foreach (var p in GetActiveComPorts()) set.Add(p);
         }
+        return set;
+    }
+
+    /// <summary>登记口是否当前挂在系统上。注册表 + GetPortNames 并集，任一侧见到即在线；不打开串口（避免抢 FTS）。</summary>
+    public static HashSet<string> ProbePresentComPorts()
+    {
+        var set = GetActiveComPorts();
+        foreach (var p in ScanSystemComPorts()) set.Add(p);
         return set;
     }
 
@@ -146,17 +176,122 @@ public static class FctIni
         return false;
     }
 
-    public static FctIniData Parse(string iniPath)
+    public static FctIniData Parse(string iniPath) => Snapshot(iniPath);
+
+    /// <summary>INI 按 mtime 缓存；每次只重探 COM 在线。列表只含 FCT.ini 登记设备。</summary>
+    public static FctIniData Snapshot(string iniPath)
     {
-        var tried = new List<string>();
-        string? found = null;
-        string? diag = null;
+        var meta = LoadMeta(iniPath);
+        var live = Clone(meta);
+        if (!live.Found)
+        {
+            live.ProbedAt = DateTime.Now;
+            return live;
+        }
+        var present = ProbePresentComPorts();
+        int extra = 0;
+        foreach (var p in present)
+        {
+            bool listed = false;
+            foreach (var d in live.Devices)
+            {
+                if (d.Type == "com" && d.Port.Equals(p, StringComparison.OrdinalIgnoreCase))
+                { listed = true; break; }
+            }
+            if (!listed) extra++;
+        }
+        live.ExtraSystemComCount = extra;
+        foreach (var d in live.Devices)
+        {
+            if (d.Type == "com" || d.Port.StartsWith("COM", StringComparison.OrdinalIgnoreCase))
+                d.Online = present.Contains(d.Port.ToUpperInvariant());
+            else
+                d.Online = false;
+        }
+        live.ProbedAt = DateTime.Now;
+        return live;
+    }
+
+    private static FctIniData Clone(FctIniData src)
+    {
+        var d = new FctIniData
+        {
+            Found = src.Found,
+            IniPath = src.IniPath,
+            Error = src.Error,
+            Models = new List<string>(src.Models),
+            FwVersions = new List<(string, string)>(src.FwVersions),
+            A2lFiles = new List<(string, string)>(src.A2lFiles),
+        };
+        foreach (var x in src.Devices)
+            d.Devices.Add(new DeviceInfo { Name = x.Name, Port = x.Port, Type = x.Type, Online = x.Online });
+        return d;
+    }
+
+    private static FctIniData LoadMeta(string iniPath)
+    {
+        lock (_metaLock)
+        {
+            if (_miss != null && DateTime.UtcNow < _missUntil)
+                return Clone(_miss);
+        }
+
+        var found = LocateIni(iniPath, out var diag, out var tried);
+        if (found == null)
+        {
+            var miss = new FctIniData { IniPath = iniPath };
+            var msg = "FCT.ini 未找到。已尝试常规路径与全盘自动识别:\n  " + string.Join("\n  ", tried);
+            if (diag != null) msg += "\n\n诊断: " + diag;
+            msg += "\n\n若测试软件装在非默认位置，请在 config.json 的 fct_ini_path 配置正确路径。";
+            miss.Error = msg;
+            lock (_metaLock)
+            {
+                _miss = miss;
+                _missUntil = DateTime.UtcNow.AddSeconds(15);
+            }
+            Logger.Warning("[设备状态] FCT.ini 未找到" + (diag != null ? " | " + diag : ""));
+            return miss;
+        }
+
+        long write = 0, len = 0;
+        try
+        {
+            var fi = new FileInfo(found);
+            write = fi.LastWriteTimeUtc.Ticks;
+            len = fi.Length;
+        }
+        catch { }
+
+        lock (_metaLock)
+        {
+            if (_meta != null && string.Equals(_metaPath, found, StringComparison.OrdinalIgnoreCase)
+                && _metaWrite == write && _metaLen == len)
+                return _meta;
+        }
+
+        var built = BuildMeta(found);
+        lock (_metaLock)
+        {
+            _meta = built;
+            _metaPath = found;
+            _metaWrite = write;
+            _metaLen = len;
+            _miss = null;
+        }
+        Logger.Info($"[设备状态] 使用 FCT.ini: {found}（登记设备 {built.Devices.Count}）");
+        return built;
+    }
+
+    private static string? LocateIni(string iniPath, out string? diag, out List<string> tried)
+    {
+        tried = new List<string>();
+        diag = null;
         foreach (var p in CandidatePaths(iniPath))
         {
             tried.Add(p);
             try
             {
-                if (File.Exists(p)) { found = p; break; }
+                if (File.Exists(p)) return p;
                 var dir = Path.GetDirectoryName(p);
                 if (dir != null && Directory.Exists(dir))
                 {
@@ -164,7 +299,7 @@ public static class FctIni
                     {
                         var match = Directory.EnumerateFiles(dir, "*.ini")
                             .FirstOrDefault(f => string.Equals(Path.GetFileName(f), "FCT.ini", StringComparison.OrdinalIgnoreCase));
-                        if (match != null) { found = match; break; }
+                        if (match != null) return match;
                     }
                     catch (Exception exDir) { diag = $"目录枚举失败({dir}): {exDir.GetType().Name} {exDir.Message}"; }
                 }
@@ -179,31 +314,16 @@ public static class FctIni
             }
         }
 
-        if (found == null)
-        {
-            Logger.Info("[设备状态] 常规路径未命中，自动识别 FCT.ini…");
-            found = AutoFindIni();
-            if (found != null) Logger.Info($"[设备状态] 自动识别到 FCT.ini: {found}");
-        }
+        Logger.Info("[设备状态] 常规路径未命中，自动识别 FCT.ini…");
+        var auto = AutoFindIni();
+        if (auto != null) Logger.Info($"[设备状态] 自动识别到 FCT.ini: {auto}");
+        return auto;
+    }
 
-        var d = new FctIniData { IniPath = found ?? iniPath };
-        if (found == null)
-        {
-            var msg = "FCT.ini 未找到。已尝试常规路径与全盘自动识别:\n  " + string.Join("\n  ", tried);
-            if (diag != null) msg += "\n\n诊断: " + diag;
-            msg += "\n\n若测试软件装在非默认位置，请在 config.json 的 fct_ini_path 配置正确路径。";
-            d.Error = msg;
-            Logger.Warning("[设备状态] FCT.ini 未找到" + (diag != null ? " | " + diag : ""));
-            return d;
-        }
-        iniPath = found;
-        Logger.Info($"[设备状态] 使用 FCT.ini: {iniPath}");
+    private static FctIniData BuildMeta(string iniPath)
+    {
+        var d = new FctIniData { IniPath = iniPath, Found = true };
         var sections = ParseIniFile(iniPath);
-        d.Found = true;
-
-        var active = GetActiveComPorts();
-        var systemPorts = ScanSystemComPorts();
-        var iniComMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         if (sections.TryGetValue("Resource Name", out var rn))
         {
@@ -218,39 +338,31 @@ public static class FctIni
                 else
                 {
                     var up = val.ToUpperInvariant();
-                    if (up.StartsWith("COM")) iniComMap[up] = key;
+                    if (up.StartsWith("COM"))
+                        d.Devices.Add(new DeviceInfo { Name = key, Port = up, Type = "com" });
                     else if (up.StartsWith("USB"))
-                        d.Devices.Add(new DeviceInfo { Name = key, Port = val, Type = "usb", Online = false });
+                        d.Devices.Add(new DeviceInfo { Name = key, Port = val, Type = "usb" });
                 }
             }
         }
-
-        var allPorts = new HashSet<string>(systemPorts, StringComparer.OrdinalIgnoreCase);
-        foreach (var p in iniComMap.Keys) allPorts.Add(p);
-        var comDevices = allPorts
-            .OrderBy(p => ComPortNum(p))
-            .Select(p => new DeviceInfo
-            {
-                Name = iniComMap.TryGetValue(p, out var n) ? n : "(未知设备)",
-                Port = p,
-                Type = "com",
-                Online = active.Contains(p),
-            }).ToList();
-
-        var usb = d.Devices.Where(x => x.Type == "usb").ToList();
-        d.Devices = comDevices.Concat(usb).ToList();
 
         if (sections.TryGetValue("A2L", out var a2l))
             foreach (var (key, val) in a2l)
                 if (!key.StartsWith(";") && !string.IsNullOrWhiteSpace(val))
                     d.A2lFiles.Add((key, val));
 
+        d.Devices = d.Devices
+            .OrderBy(x => x.Type == "com" ? 0 : 1)
+            .ThenBy(x => ComPortNum(x.Port))
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         return d;
     }
 
     private static int ComPortNum(string p)
     {
-        if (p.Length > 3 && int.TryParse(p[3..], out var n)) return n;
+        if (p.StartsWith("COM", StringComparison.OrdinalIgnoreCase) && p.Length > 3
+            && int.TryParse(p.AsSpan(3), out var n)) return n;
         return 9999;
     }
 

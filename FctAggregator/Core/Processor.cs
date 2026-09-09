@@ -75,8 +75,13 @@ public class Processor
         if (outp.Skipped)
         {
             // 审计 A4：Skipped 此前静默返回无痕消失——落 parse_failure_log 留痕（路径不匹配/未知前缀/debug 仍属永久性，不重试）
-            Logger.Warning($"[跳过] {outp.SkipReason ?? ""}: {path}");
-            _db?.LogParseFailure(path, "skip", outp.SkipReason ?? "", outp.StationId);
+            // debug 跳过是常态（F_/O_ 调试 XML），WARNING 会在历史扫描时刷几千行；改 DEBUG，INFO 级现场 log 不再被淹。
+            var reason = outp.SkipReason ?? "";
+            if (reason.Equals("debug", StringComparison.OrdinalIgnoreCase))
+                Logger.Debug($"[跳过] debug: {path}");
+            else
+                Logger.Warning($"[跳过] {reason}: {path}");
+            _db?.LogParseFailure(path, "skip", reason, outp.StationId);
             return null; // 永久性：不重试
         }
         if (outp.Error)

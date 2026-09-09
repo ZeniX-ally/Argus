@@ -1004,6 +1004,90 @@ public sealed partial class Database
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>复制库文件前合并 WAL，避免现场回放/备份读到半写入数据。</summary>
+    public void CheckpointForCopy()
+    {
+        if (!File.Exists(_dbPath)) return;
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
+    /// <summary>回放专用：清空正常态模型与偏离事件（不动 test_records）。</summary>
+    public void ClearReplayLearningTables()
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM normal_models; DELETE FROM deviation_events;";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>回放专用：PASS 测量在 [fromYmd, toYmdExclusive) 日期闭开区间。</summary>
+    public List<(long RecordId, string Model, string Ts, string TestName, double Value)> ListPassMeasurementsBetween(string fromYmd, string toYmdExclusive)
+    {
+        var list = new List<(long, string, string, string, double)>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT m.record_id, COALESCE(m.model,''), COALESCE(m.ts,''), m.test_name, m.value
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE r.result='PASS' AND m.value IS NOT NULL
+              AND substr(COALESCE(m.ts,''),1,10) >= @from
+              AND substr(COALESCE(m.ts,''),1,10) < @to
+            ORDER BY m.record_id, m.id";
+        cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
+        cmd.Parameters.AddWithValue("@to", toYmdExclusive ?? "");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetDouble(4)));
+        return list;
+    }
+
+    /// <summary>回放专用：取 PASS 测量日期范围（yyyy-MM-dd），无数据则 null。</summary>
+    public (string Min, string Max)? GetPassMeasurementDateRange()
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT MIN(substr(COALESCE(m.ts,''),1,10)), MAX(substr(COALESCE(m.ts,''),1,10))
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE r.result='PASS' AND m.value IS NOT NULL AND length(COALESCE(m.ts,'')) >= 10";
+        using var r = cmd.ExecuteReader();
+        if (!r.Read() || r.IsDBNull(0) || r.IsDBNull(1)) return null;
+        var min = r.GetString(0);
+        var max = r.GetString(1);
+        if (string.IsNullOrEmpty(min) || string.IsNullOrEmpty(max)) return null;
+        return (min, max);
+    }
+
+    /// <summary>回放专用：按日统计 FAIL 条数（test_date 或 batch_timestamp 前 10 位）。</summary>
+    public Dictionary<string, int> CountDailyFailsBetween(string fromYmd, string toYmdInclusive)
+    {
+        var dict = new Dictionary<string, int>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT substr(COALESCE(NULLIF(batch_timestamp,''), test_date, created_at),1,10) AS d, COUNT(*)
+            FROM test_records
+            WHERE result='FAIL'
+              AND substr(COALESCE(NULLIF(batch_timestamp,''), test_date, created_at),1,10) >= @from
+              AND substr(COALESCE(NULLIF(batch_timestamp,''), test_date, created_at),1,10) <= @to
+            GROUP BY d";
+        cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
+        cmd.Parameters.AddWithValue("@to", toYmdInclusive ?? "");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var d = r.GetString(0);
+            if (d.Length >= 10) dict[d[..10]] = r.GetInt32(1);
+        }
+        return dict;
+    }
+
     public List<(long RecordId, string Model, string Ts, string TestName, double Value)> ListPassMeasurementsAfter(long afterRecordId, string fromYmd)
     {
         var list = new List<(long, string, string, string, double)>();
@@ -1481,14 +1565,14 @@ public sealed partial class Database
         return s;
     }
 
-    /// <summary>当月统计（SN 终检口径）：每个产品（SN，空 SN 按 xml_path 兜底）只取当月最后一次测试结果，
-    /// 维修重测不再重复计入分母；良率 = 终检 PASS / (终检 PASS + 终检 FAIL)，中断不计分母。</summary>
+    /// <summary>当月统计（log 条数口径，与今日统计一致）：每条测试 log（xml_path 唯一）计一次，
+    /// 同路径重复入库只保留最新一条；良率 = PASS 条数 / (PASS + FAIL)，中断不计分母；
+    /// 产品数 = 当月去重 SN（空 SN 按 xml_path 兜底）。</summary>
     public StatsData FetchMonthlyStats(string stationId, string dateYm)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        // 8 位日期下 substr 前缀匹配 == 闭区间范围匹配（@to 上界取 "31"，不存在该日也不会越到下月），
-        // 范围谓词可走 idx_date 索引，避免 UI 定时器每 5 秒触发全表扫描
+        // 8 位日期下闭区间范围匹配（@to 上界取 "31"），可走 idx_date 索引
         var from = dateYm + "01";
         var to = dateYm + "31";
         var where = "WHERE (test_date >= @from AND test_date <= @to)";
@@ -1498,13 +1582,12 @@ public sealed partial class Database
                 COUNT(CASE WHEN result='PASS' THEN 1 END),
                 COUNT(CASE WHEN result='FAIL' THEN 1 END),
                 COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
-                COUNT(*)
+                COUNT(DISTINCT COALESCE(NULLIF(COALESCE(sn,''),''), xml_path))
             FROM (
-                SELECT result, ROW_NUMBER() OVER (
-                    PARTITION BY COALESCE(NULLIF(COALESCE(sn,''),''), xml_path)
-                    ORDER BY id DESC) AS rn
+                SELECT result, sn, xml_path
                 FROM test_records {where}
-            ) WHERE rn = 1";
+                GROUP BY xml_path
+            )";
         cmd.Parameters.AddWithValue("@from", from);
         cmd.Parameters.AddWithValue("@to", to);
         if (!string.IsNullOrEmpty(stationId))

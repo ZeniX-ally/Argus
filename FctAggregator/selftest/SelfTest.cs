@@ -1,5 +1,6 @@
 using FctAggregator;
 using Microsoft.Data.Sqlite;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -275,6 +276,35 @@ class SelfTest
             var hit2 = FctIni.SearchFtsTree(new DirectoryInfo(iniRoot), 8);
             Check(hit2 != null && hit2.EndsWith("fct.ini", StringComparison.OrdinalIgnoreCase),
                   "文件名大小写不敏感(fct.ini 也能识别)");
+        }
+
+        Console.WriteLine("\n【设备状态】INI 只列登记设备 / 缓存 / 不把系统多余 COM 画成未知");
+        {
+            FctIni.Invalidate();
+            var ini = Path.Combine(work, "fct_dev_status.ini");
+            File.WriteAllText(ini, """
+                [Resource Name]
+                8.2_SN=E3002781/E3002752
+                KL30_PSU=COM3
+                Scope=USB1
+                FW_Version_1=9.9.9
+                [A2L]
+                G49=D:\a.a2l
+                """);
+            var d1 = FctIni.Parse(ini);
+            Check(d1.Found && d1.Devices.Count == 2, $"设备列表仅 ini 登记项（实得 {d1.Devices.Count}）");
+            Check(d1.Devices.Any(x => x.Name == "KL30_PSU" && x.Type == "com" && x.Port == "COM3"), "COM 登记项带名称");
+            Check(d1.Devices.Any(x => x.Name == "Scope" && x.Type == "usb"), "USB 登记项");
+            Check(!d1.Devices.Any(x => x.Name.Contains("未知")), "系统其它 COM 不进列表当未知设备");
+            Check(d1.Models.Count == 2 && d1.FwVersions.Count == 1 && d1.A2lFiles.Count == 1, "型号/版本/A2L 仍解析");
+            Check(d1.ExtraSystemComCount >= 0, "ExtraSystemComCount 可算");
+            var snap2 = FctIni.Parse(ini);
+            Check(snap2.IniPath == d1.IniPath && snap2.Devices.Count == 2, "mtime 未变时二次 Snapshot 仍正确");
+            FctIni.Invalidate();
+            File.WriteAllText(ini, "[Resource Name]\nOnlyOne=COM8\n");
+            var devIniReload = FctIni.Parse(ini);
+            Check(devIniReload.Devices.Count == 1 && devIniReload.Devices[0].Name == "OnlyOne", "Invalidate 后读到新 ini");
+            FctIni.Invalidate();
         }
 
         Console.WriteLine("\n【旧库兼容】产线老库直开: 缺新表 + investigating/closed 状态 + 旧时间格式");
@@ -1189,7 +1219,8 @@ class SelfTest
         Console.WriteLine("\n【P6+P7+P2-A】设备监控（心跳轻量+5min全量+L1维度+采样滚动7天+FCT.ini）+ 无头服务化 + 数据拉取趋势/分布雏形");
         RunP6DeviceHeadlessFetcherTests(work);
 
-
+        Console.WriteLine("\n【日志导出】app.log 尾部预览 + zip 诊断包（不含 webhook）");
+        RunLogExportTests(work);
 
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
@@ -1446,24 +1477,38 @@ Argus 统一发布包  v{newer}
             bool paintOk = false;
             try
             {
-                using var gauge = new TodayGaugePanel { Bounds = new Rectangle(0, 0, 320, 240) };
-                gauge.SetData(0, 0, 0);
+                using var lamp = new DeviceOnlinePanel { Bounds = new Rectangle(0, 0, 320, 240) };
+                lamp.SetData(new FctIniData());
+                lamp.SetData(new FctIniData
+                {
+                    Found = true,
+                    Devices =
+                    {
+                        new DeviceInfo { Name = "电源", Port = "COM3", Type = "com", Online = true },
+                        new DeviceInfo { Name = "程控源", Port = "COM7", Type = "com", Online = false },
+                        new DeviceInfo { Name = "USB-CAN", Port = "USB", Type = "usb", Online = false },
+                    },
+                });
                 using var bmp = new Bitmap(320, 240);
                 using var g = Graphics.FromImage(bmp);
                 var onPaint = typeof(Control).GetMethod("OnPaint",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                onPaint!.Invoke(gauge, new object[] { new PaintEventArgs(g, new Rectangle(0, 0, 320, 240)) });
+                onPaint!.Invoke(lamp, new object[] { new PaintEventArgs(g, new Rectangle(0, 0, 320, 240)) });
                 paintOk = true;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"    (离屏绘制异常: {ex.GetType().Name}: {ex.Message})");
             }
-            Check(paintOk, "UI 稳定性: TodayGaugePanel 空数据 OnPaint 离屏绘制无异常");
+            Check(paintOk, "UI 稳定性: DeviceOnlinePanel 空数据/有设备 OnPaint 离屏绘制无异常");
         }
 
         {
             Check(new AppConfig().AutoUpdate, "无感热升级: config auto_update 缺省 true（自动暂存+自动重启）");
+            var cwLive = new AppConfig { LearnNormalEnabled = true };
+            cwLive.CopyFrom(new AppConfig { LearnNormalEnabled = false, DesktopNotify = false });
+            Check(!cwLive.LearnNormalEnabled && !cwLive.DesktopNotify,
+                "ConfigWatcher 热加载: CopyFrom 原地改实例（不换引用）");
             Check(UpdateChecker.ParseZipVersion("Argus-v3.26.0-update.zip") == new Version(3, 26, 0),
                 "无感热升级: 更新包文件名解析版本号");
         }
@@ -1609,8 +1654,8 @@ Argus 统一发布包  v{newer}
                         new TestRecord { StationId = "FCT1", TestDate = ym + "06", Result = "PASS", Sn = "  ", XmlPath = "re7.xml" },
                     });
                     var mRe = rdb.FetchMonthlyStats("", ym);
-                    Check(mRe.Pass == 3 && mRe.Fail == 1 && mRe.Interrupted == 0,
-                        $"FetchMonthlyStats: SN 终检口径重测去重 (F→F→P 记 1 PASS、P→F 记 1 FAIL、空 SN 按 xml_path 兜底; 实得 P={mRe.Pass},F={mRe.Fail},I={mRe.Interrupted})");
+                    Check(mRe.Pass == 4 && mRe.Fail == 3 && mRe.Interrupted == 0,
+                        $"FetchMonthlyStats: log 条数口径重测全计 (F→F→P 记 1P+2F、P→F 记 1P+1F、空 SN 按 xml_path 各计; 实得 P={mRe.Pass},F={mRe.Fail},I={mRe.Interrupted})");
                     Check(mRe.TodayProductCount == 4,
                         $"FetchMonthlyStats: 当月产品数=去重后 4 台 (实得 {mRe.TodayProductCount})");
                 }
@@ -2040,7 +2085,7 @@ Argus 统一发布包  v{newer}
 
                 AppConfig.Instance.AnalyzeMaxTestsPerFile = 2;
                 Check(parser.ParseMeasurements(passXml).Count == 2,
-                      "规格06: 单文件测项上限截断（500 默认可调）");
+                      "规格06: 单文件测项上限截断（1000 默认可调）");
                 AppConfig.Instance.AnalyzeMaxTestsPerFile = savedMaxTests;
 
                 Check(parser.ParseMeasurements("<broken").Count == 0,
@@ -2158,7 +2203,8 @@ Argus 统一发布包  v{newer}
             var b1 = MP("2026-09-04 08:00:00", new[]
             {
                 ("T_DRIFT", 9.9, (double?)9.0, (double?)11.0),
-                ("T_MARGIN", 10.9, (double?)null, (double?)11.0),
+                ("T_MARGIN", 10.50, (double?)9.0, (double?)11.0),
+                ("T_SETPOINT", 14.40, (double?)14.20, (double?)14.60),
                 ("T_CONST", 5.0, (double?)null, (double?)null),
                 ("T_ZERO", 1.0, (double?)null, (double?)null),
                 ("T_OK", 10.2, (double?)9.0, (double?)11.0),
@@ -2167,7 +2213,8 @@ Argus 统一发布包  v{newer}
             var b2 = MP("2026-09-04 09:00:00", new[]
             {
                 ("T_DRIFT", 10.1, (double?)9.0, (double?)11.0),
-                ("T_MARGIN", 10.9, (double?)null, (double?)11.0),
+                ("T_MARGIN", 10.90, (double?)9.0, (double?)11.0),
+                ("T_SETPOINT", 14.41, (double?)14.20, (double?)14.60),
                 ("T_CONST", 5.0, (double?)null, (double?)null),
                 ("T_ZERO", 1.0, (double?)null, (double?)null),
                 ("T_OK", 9.8, (double?)9.0, (double?)11.0),
@@ -2179,7 +2226,8 @@ Argus 统一发布包  v{newer}
                 todayRecs.Add(MP($"2026-09-05 {i + 6:00}:00:00", new[]
                 {
                     ("T_DRIFT", 10.5, (double?)9.0, (double?)11.0),
-                    ("T_MARGIN", 10.95, (double?)null, (double?)11.0),
+                    ("T_MARGIN", 10.85, (double?)9.0, (double?)11.0),
+                    ("T_SETPOINT", 14.40, (double?)14.20, (double?)14.60),
                     ("T_CONST", 5.0, (double?)null, (double?)null),
                     ("T_ZERO", 1.0, (double?)null, (double?)null),
                     ("T_OK", 10.0, (double?)9.0, (double?)11.0),
@@ -2231,8 +2279,10 @@ Argus 统一发布包  v{newer}
             Check(DriftAnalyzer.Compute(noRangeBase, noRangeToday, cfgC).Count == 0,
                   "规格06: 恒定值且无量程（σ_eff=0）安全跳过");
             var dMargin = driftAlerts.FirstOrDefault(a => a.TestName == "T_MARGIN");
-            Check(dMargin != null && dMargin.Kind == "margin" && Math.Abs(dMargin.Score - 0.15) < 0.03,
-                  $"规格06: 逼近规格限预警（单边限伪量程回退 |mean|→σ_eff≈0.109，余量比实得 {dMargin?.Score ?? -1}）");
+            Check(dMargin != null && dMargin.Kind == "margin" && dMargin.Score < 1.0,
+                  $"规格06: 有过程波动且贴限才逼近规格限（余量比实得 {dMargin?.Score ?? -1}）");
+            Check(driftAlerts.All(a => a.TestName != "T_SETPOINT"),
+                  "规格06: G49 设定值测项（σ≪规格带，如 KL30_FILT 14.4V±0.2V）不报逼近限");
             Check(driftAlerts.First().Kind == "drift" && driftAlerts.Last().Kind == "margin",
                   "规格06: 预警排序 drift 优先于 margin");
 
@@ -2242,8 +2292,10 @@ Argus 统一发布包  v{newer}
             Check(cpkOk.Level == "ok" && cpkOk.Cpk.HasValue && Math.Abs(cpkOk.Cpk.Value - 3.909) < 0.01,
                   $"规格06: CPK 双边限计算（实得 {cpkOk.Cpk}）");
             var cpkMargin = cpkItems.First(i => i.TestName == "T_MARGIN");
-            Check(cpkMargin.Level == "low" && cpkMargin.Lolim == null && cpkMargin.Cpk.HasValue,
-                  "规格06: 单边限（仅上限）CPK 判定");
+            Check(cpkMargin.Level == "low" && cpkMargin.Cpk.HasValue,
+                  "规格06: 有过程波动且贴限 → CPK 低能力");
+            Check(cpkItems.First(i => i.TestName == "T_SETPOINT").Level == "constant",
+                  "规格06: 设定值测项 σ/带宽 <2% 记 constant 不评 CPK");
             Check(cpkItems.First(i => i.TestName == "T_DRIFT").Level == "low",
                   "规格06: 低能力测项 Level=low 入清单");
             var cpkConst = cpkItems.First(i => i.TestName == "T_CONST");
@@ -2254,6 +2306,27 @@ Argus 统一发布包  v{newer}
                   "规格06: 无限值/零方差测项分类正确");
             Check(CpkAnalyzer.MarginRatio(0, null, null, 0) == double.MaxValue,
                   "规格06: MarginRatio σ=0 安全返回 MaxValue");
+            Check(!CpkAnalyzer.HasProcessVariation(new MeasureStatsRow { Mean = 14.4, Sigma = 0.005, Lolim = 14.2, Hilim = 14.6 }),
+                  "规格06: HasProcessVariation 拒绝 KL30_FILT 类设定值（σ/带宽<2%）");
+            Check(CpkAnalyzer.HasProcessVariation(new MeasureStatsRow { Mean = 10.7, Sigma = 0.28, Lolim = 9, Hilim = 11 }),
+                  "规格06: HasProcessVariation 接受过程量（σ/带宽≥2%）");
+            Check(G49ProductDictionary.IsNonProcessSemantic("8.19.5 FLTM_DESAT_A(XCP)")
+                  && G49ProductDictionary.IsNonProcessSemantic("8.20.2 ASC_B(XCP)")
+                  && G49ProductDictionary.IsNonProcessSemantic("7.2.1 linkStatus(XCP)")
+                  && !G49ProductDictionary.IsNonProcessSemantic("T_MARGIN"),
+                  "规格06: 注入章 8.19/8.20 与通信 7.2 识别为非过程量，普通测项不是");
+            var injRow = new MeasureStatsRow
+            {
+                Model = "M", TestName = "8.19.5 FLTM_DESAT_A(XCP)",
+                N = 40, Mean = 0.5, Sigma = 0.15, Lolim = 0, Hilim = 1,
+            };
+            Check(CpkAnalyzer.HasProcessVariation(injRow)
+                  && !CpkAnalyzer.ShouldTreatAsProcess(injRow.TestName, injRow),
+                  "规格06: 注入项即使 σ 大也不当过程量（语义门优先于波动门）");
+            Check(CpkAnalyzer.Compute(new List<MeasureStatsRow> { injRow })[0].Level == "constant",
+                  "规格06: 注入章测项不进 CPK 低能力（Level=constant）");
+            Check(!DriftAnalyzer.ShouldWarnMargin(injRow, injRow),
+                  "规格06: 注入章不报逼近规格限（IsInjectionSection 接到测名）");
 
             var dbA6n = new Database(Path.Combine(dirA6, "noop.db"));
             AnalysisEngine.RunOnce(dbA6n, new AppConfig
@@ -2913,11 +2986,11 @@ Argus 统一发布包  v{newer}
     {
         // ── Task3: config 默认关闭 ──
         var defCfg = new AppConfig();
-        Check(!defCfg.LearnNormalEnabled, "learn_normal_enabled 默认 false");
+        Check(defCfg.LearnNormalEnabled, "learn_normal_enabled 默认 true");
         Check(defCfg.LearnNormalMinSamples == 30 && defCfg.LearnNormalStaleDays == 14, "正常态默认参数 30/14");
         Check(defCfg.LearnNormalVoteSignals == 3 && defCfg.LearnNormalEventScore == 75 && defCfg.LearnNormalMaxEventsPerDay == 10,
             "正常态 P2 默认投票/分数/风暴 3/75/10");
-        Check(!defCfg.LearnNormalEnabled, "learn_normal_enabled 默认 false（P2 键不改变关默认）");
+        Check(defCfg.LearnNormalEnabled, "learn_normal_enabled 默认 true（P2 键不改变开默认）");
 
         // ── Task1: Welford 收敛对拍 ──
         var w = new Welford();
@@ -3039,10 +3112,11 @@ Argus 统一发布包  v{newer}
         };
         for (int i = 0; i < 8; i++)
         {
-            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "A", 10.0 + i * 0.01, "2026-09-01 10:00:00");
-            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "B", 20.0 + i * 0.01, "2026-09-01 10:00:00");
-            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "C", 30.0 + i * 0.01, "2026-09-01 10:00:00");
-            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "D", 40.0 + i * 0.01, "2026-09-01 10:00:00");
+            double d = (i - 3.5) * 0.25;
+            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "A", 10.0 + d, "2026-09-01 10:00:00");
+            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "B", 20.0 + d, "2026-09-01 10:00:00");
+            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "C", 30.0 + d, "2026-09-01 10:00:00");
+            NormalModelStore.Observe(scDb, 5, "measurement", "M1", "D", 40.0 + d, "2026-09-01 10:00:00");
         }
         var evSilent = DeviationScorer.EvaluateWindow(scDb, voteCfg, "measurement", "M1", "2026-09-08 12:00:00",
             new[] { ("A", 10.0), ("B", 20.0), ("C", 30.0), ("D", 40.0) }, scNow);
@@ -3065,6 +3139,36 @@ Argus 统一发布包  v{newer}
         var offVote = new AppConfig { LearnNormalEnabled = false, LearnNormalVoteSignals = 3, LearnNormalEventScore = 75 };
         Check(DeviationScorer.EvaluateWindow(scDb, offVote, "measurement", "M1", "2026-09-08 12:04:00",
             new[] { ("A", 16.0), ("B", 26.0), ("C", 36.0) }, scNow) == null, "开关关：评分 no-op");
+
+        var spDb = new Database(Path.Combine(work, "sp.db"));
+        var spCfg = new AppConfig
+        {
+            LearnNormalEnabled = true, LearnNormalVoteSignals = 3, LearnNormalEventScore = 75,
+            LearnNormalMaxEventsPerDay = 10, LearnNormalStaleDays = 14,
+        };
+        foreach (var key in new[] { "KL30_FILT_1", "P5V_CAN", "P3V3_DIG" })
+        {
+            for (int i = 0; i < 40; i++)
+                NormalModelStore.Observe(spDb, 30, "measurement", "G49", key, 14.400 + i * 1e-6, "2026-09-01 10:00:00");
+        }
+        var spEv = DeviationScorer.EvaluateWindow(spDb, spCfg, "measurement", "G49", "2026-09-08 12:10:00",
+            new[] { ("KL30_FILT_1", 14.401), ("P5V_CAN", 14.402), ("P3V3_DIG", 14.399) }, scNow);
+        Check(spEv == null && spDb.CountDeviationEventsOnDay("2026-09-08") == 0,
+            "正常态：G49 设定值（σ≪均值）不参与投票、不落偏离事件");
+        foreach (var key in new[] { "8.19.5 FLTM_DESAT_A(XCP)", "8.20.1 ASC_H(XCP)", "8.21.1 SBC_C(XCP)" })
+        {
+            for (int i = 0; i < 40; i++)
+                NormalModelStore.Observe(spDb, 30, "measurement", "G49", key, 0.50 + (i % 5) * 0.04, "2026-09-01 10:00:00");
+        }
+        var injEv = DeviationScorer.EvaluateWindow(spDb, spCfg, "measurement", "G49", "2026-09-08 12:11:00",
+            new[] { ("8.19.5 FLTM_DESAT_A(XCP)", 0.9), ("8.20.1 ASC_H(XCP)", 0.9), ("8.21.1 SBC_C(XCP)", 0.9) }, scNow);
+        Check(injEv == null, "正常态：注入章测名不参与偏离投票");
+
+        var live = new AppConfig { LearnNormalEnabled = true, AnalyzeTdmsEnabled = false, LogLevel = "INFO" };
+        var incoming = new AppConfig { LearnNormalEnabled = false, AnalyzeTdmsEnabled = true, LogLevel = "DEBUG" };
+        live.CopyFrom(incoming);
+        Check(!live.LearnNormalEnabled && live.AnalyzeTdmsEnabled && live.LogLevel == "DEBUG",
+            "Config.CopyFrom 把开关拷到同一实例（Engine 持引用可热加载）");
 
         // ── P2: 回填只学 PASS、幂等 ──
         var bfDb = new Database(Path.Combine(work, "bf.db"));
@@ -3102,6 +3206,63 @@ Argus 统一发布包  v{newer}
         Check(rp.ReadyCoverage >= 0.90, $"回放 ready 覆盖率 ≥90%（实得 {rp.ReadyCoverage:P0}）");
         Check(rp.Pass, "ReplayRunner 三指标同时达标");
 
+        var fieldDbPath = Path.Combine(work, "field.db");
+        var fieldDb = new Database(fieldDbPath);
+        {
+            string[] fKeys = { "S1", "S2", "S3", "S4", "S5" };
+            double[] fMeans = { 10, 20, 30, 40, 50 };
+            var fTrainStart = new DateTime(2026, 8, 1);
+            var fTrainEnd = fTrainStart.AddDays(21);
+            var fScoreEnd = fTrainEnd.AddDays(7);
+            var fAnomaly = new DateTime(2026, 8, 25);
+            var fieldRecs = new List<TestRecord>();
+            int sn = 0;
+            for (var d = fTrainStart; d < fTrainEnd; d = d.AddDays(1))
+            {
+                for (int k = 0; k < 8; k++)
+                {
+                    var ts = d.AddHours(8 + k).ToString("yyyy-MM-dd HH:mm:ss");
+                    var rec = new TestRecord
+                    {
+                        StationId = "FCT1", Model = "G49", Category = "Online",
+                        TestDate = d.ToString("yyyyMMdd"), Sn = $"F{sn++}", Result = "PASS",
+                        XmlPath = Path.Combine(work, $"field_{sn}.xml"), BatchTimestamp = ts,
+                    };
+                    for (int i = 0; i < fKeys.Length; i++)
+                        rec.Measurements.Add(new MeasurementRow
+                        {
+                            TestName = fKeys[i],
+                            Value = fMeans[i] * (1.0 + 0.04 * (k - 3.5) / 3.5),
+                        });
+                    fieldRecs.Add(rec);
+                }
+            }
+            for (var d = fTrainEnd; d < fScoreEnd; d = d.AddDays(1))
+            {
+                bool bad = d.Date == fAnomaly.Date;
+                var ts = d.AddHours(10).ToString("yyyy-MM-dd HH:mm:ss");
+                var rec = new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", Category = "Online",
+                    TestDate = d.ToString("yyyyMMdd"), Sn = $"F{sn++}", Result = "PASS",
+                    XmlPath = Path.Combine(work, $"field_score_{sn}.xml"), BatchTimestamp = ts,
+                };
+                for (int i = 0; i < fKeys.Length; i++)
+                    rec.Measurements.Add(new MeasurementRow { TestName = fKeys[i], Value = bad ? fMeans[i] + 6.0 : fMeans[i] });
+                fieldRecs.Add(rec);
+            }
+            fieldDb.BatchInsert(fieldRecs);
+            fieldDb.CheckpointForCopy();
+        }
+        var fieldCfg = new AppConfig
+        {
+            LearnNormalEnabled = true, LearnNormalMinSamples = 30, LearnNormalStaleDays = 14,
+            LearnNormalVoteSignals = 3, LearnNormalEventScore = 75, LearnNormalMaxEventsPerDay = 10,
+        };
+        var fr = ReplayRunner.RunField(fieldDbPath, fieldCfg, 28, new[] { "2026-08-25" });
+        Check(fr.Pass, "RunField 现场回放三指标达标");
+        Check(fr.DetectionRate >= 0.80, $"RunField 检出率 ≥80%（实得 {fr.DetectionRate:P0}）");
+
         var snap = LearningSnapshot.Capture(scDb, voteCfg, scNow);
         Check(snap.Total >= 4 && snap.Ready >= 4, "P3 快照：覆盖率与表对拍（ready≥4）");
         Check(snap.Events.Count >= 1, "P3 快照：偏离事件与表对拍");
@@ -3131,5 +3292,35 @@ Argus 统一发布包  v{newer}
         evCfg.LearnNormalEnabled = false;
         Check(FailAttributor.Run(evDb, evCfg, new DateTime(2026, 9, 8)).DeviationEvidence.Count == 0,
             "P4 开关关：不附偏离证据");
+    }
+
+    static void RunLogExportTests(string work)
+    {
+        var marker = "LOGEXPORT-" + Guid.NewGuid().ToString("N")[..8];
+        Logger.Info("[自检] " + marker);
+        var tail = Logger.ReadTail();
+        Check(tail.Contains(marker), "ReadTail 含刚写入的 INFO 行");
+        Check(File.Exists(Logger.CurrentLogPath), "app.log 落盘");
+
+        var zipPath = Path.Combine(work, "argus-logs-selftest.zip");
+        var got = Logger.ExportZip(zipPath);
+        Check(File.Exists(got) && new FileInfo(got).Length > 0, "ExportZip 写出非空 zip");
+
+        using (var zip = ZipFile.OpenRead(got))
+        {
+            var names = zip.Entries.Select(e => e.FullName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            Check(names.Contains("diagnostic.txt"), "zip 含 diagnostic.txt");
+            Check(names.Any(n => n.StartsWith("app.log", StringComparison.OrdinalIgnoreCase)), "zip 含 app.log*");
+            using var sr = new StreamReader(zip.GetEntry("diagnostic.txt")!.Open(), Encoding.UTF8);
+            var diag = sr.ReadToEnd();
+            Check(diag.Contains("webhook_configured=") && !diag.Contains("webhook_url="),
+                "diagnostic 只报 webhook 是否配置，不写 URL");
+            Check(diag.Contains("version=") && diag.Contains("base_dir="), "diagnostic 含版本与安装目录");
+        }
+
+        var emptyName = Logger.SuggestedExportName();
+        Check(emptyName.EndsWith(".zip") && emptyName.StartsWith("Argus-logs-"), "建议文件名 Argus-logs-*.zip");
+        Check(new AppConfig().AnalyzeMaxTestsPerFile == 1000, "默认 analyze_max_tests_per_file=1000（G49 超 500）");
+        Check(LeftoverAgg.QueryService("ArgusNoSuchService_xyz") == null, "残留探测：不存在的服务返回 null");
     }
 }
