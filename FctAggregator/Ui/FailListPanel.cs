@@ -25,6 +25,8 @@ public sealed class FailListPanel : Panel
     private bool _treeMode = false;
     private volatile bool _loadBusy;
     private int _loadGen;
+    // DisplayTime 内部要跑正则，而它被放进排序比较器会被反复求值：每次加载按记录缓存一次
+    private readonly Dictionary<FailRecord, string> _dispTimeCache = new();
     private System.Windows.Forms.Timer? _searchDebounce;
 
     private sealed class GroupData
@@ -188,7 +190,17 @@ public sealed class FailListPanel : Panel
             catch (Exception ex)
             {
                 Logger.Error($"FAIL 记录加载失败: {ex.Message}");
-                UiAsync.Post(this, () => _loadBusy = false);
+                // 原来这里是静默 return：界面继续挂着上一次的数据，用户会把它当最新数据读
+                UiAsync.Post(this, () =>
+                {
+                    try
+                    {
+                        if (IsDisposed) return;
+                        _countLabel.Text = $"加载失败：{ex.Message}（下方显示的仍是上一次的数据，不是最新）";
+                    }
+                    catch { }
+                    finally { _loadBusy = false; }
+                });
                 return;
             }
             UiAsync.Post(this, () =>
@@ -197,6 +209,7 @@ public sealed class FailListPanel : Panel
                 {
                     if (IsDisposed || gen != _loadGen) return;
                     _all = rows;
+                    _dispTimeCache.Clear();
                     ComputeGroups();
                     ComputeSnGroups();
                     RebuildActiveView();
@@ -250,11 +263,14 @@ public sealed class FailListPanel : Panel
             .ToList();
     }
 
-    private static string DisplayTime(FailRecord f)
+    private string DisplayTime(FailRecord f)
     {
+        if (_dispTimeCache.TryGetValue(f, out var cached)) return cached;
         var fnTime = TimeUtil.ExtractFileNameTime(f.XmlPath);
-        if (fnTime.Length > 0) return fnTime;
-        return TimeUtil.Normalize(f.Timestamp) is { Length: > 0 } t ? t : TimeUtil.Normalize(f.TestDate);
+        var t = fnTime.Length > 0 ? fnTime
+                : (TimeUtil.Normalize(f.Timestamp) is { Length: > 0 } n ? n : TimeUtil.Normalize(f.TestDate));
+        _dispTimeCache[f] = t;
+        return t;
     }
 
     private List<string> FilterKeys => _search.Text.Trim()

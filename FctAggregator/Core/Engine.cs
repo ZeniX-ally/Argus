@@ -325,8 +325,9 @@ public class Engine
 
     private void RefreshStats() => AppState.RefreshStats(_db, _stationId, _cfg.ResultsRoot);
 
-    /// <summary>审计 A2：入库热路径统计刷新节流（10s 一次）——RefreshStats 每条实时记录都全盘枚举 XML + 3 条聚合 SQL，
-    /// 网络共享时可秒级阻塞采集。KPI 实时性由 UI 周期 RefreshDbStats（库内轻量刷新）兜底，磁盘计数低频化。</summary>
+    /// <summary>审计 A2：入库热路径统计刷新节流（10s 一次）。RefreshStats 实际**只做库内聚合**——AppState.RefreshStats 会丢弃传进来的
+    /// resultsRoot 参数，不枚举磁盘；但一次要跑 6 条聚合 SQL，其中 FetchGlobalStats 是无日期条件的整表 COUNT，产量大时仍有开销。
+    /// 注意：历史扫描批循环与实时入库共用本字段的节流时间戳。</summary>
     private void RefreshStatsThrottled()
     {
         var nowTicks = DateTime.UtcNow.Ticks;
