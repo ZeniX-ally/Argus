@@ -1385,13 +1385,13 @@ Argus 统一发布包  v{newer}
         {
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_tr_date_result','idx_tm_daystr','idx_fi_daystr','idx_tf_daystr')";
+            cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_tr_date_result','idx_tm_ts','idx_fi_name_ts','idx_tf_ts')";
             using var r = cmd.ExecuteReader();
             while (r.Read()) idx.Add(r.GetString(0));
         }
         Check(idx.Contains("idx_tr_date_result"), "性能: test_records(test_date,result) 复合索引已建");
-        Check(idx.Contains("idx_tm_daystr") && idx.Contains("idx_fi_daystr") && idx.Contains("idx_tf_daystr"),
-              "性能: 三张明细表日期表达式索引已建");
+        Check(idx.Contains("idx_tm_ts") && idx.Contains("idx_fi_name_ts") && idx.Contains("idx_tf_ts"),
+              "性能: 明细表时间索引已建（瘦表，无路径冗余列）");
 
         // 2) 看板 top fails 走复合索引（等值前缀，计划确定）
         string planTopFails;
@@ -1421,11 +1421,10 @@ Argus 统一发布包  v{newer}
                 JOIN test_records r ON r.id = m.record_id
                 WHERE r.result='PASS' AND m.value IS NOT NULL
                   AND m.test_name IS NOT NULL AND m.test_name <> ''
-                  AND substr(COALESCE(m.ts,''),1,10) >= @from
-                  AND substr(COALESCE(m.ts,''),1,10) <= @to
+                  AND m.ts >= @from AND m.ts < @toExcl
                 ORDER BY m.test_name COLLATE NOCASE";
             cmd.Parameters.AddWithValue("@from", now.AddDays(-20).ToString("yyyy-MM-dd"));
-            cmd.Parameters.AddWithValue("@to", now.ToString("yyyy-MM-dd"));
+            cmd.Parameters.AddWithValue("@toExcl", now.AddDays(1).ToString("yyyy-MM-dd"));
             using var r = cmd.ExecuteReader();
             var sb = new System.Text.StringBuilder();
             while (r.Read()) sb.AppendLine(r.GetString(3));
@@ -1680,6 +1679,7 @@ Argus 统一发布包  v{newer}
                 new TestRecord
                 {
                     StationId = "FCT01",
+                    Category = "Online",
                     Sn = "SN_2026_001",
                     Model = "MODEL_A",
                     Result = "PASS",
@@ -1691,6 +1691,7 @@ Argus 统一发布包  v{newer}
                 new TestRecord
                 {
                     StationId = "FCT01",
+                    Category = "Online",
                     Sn = "SN_2026_002",
                     Model = "MODEL_A",
                     Result = "PASS",
@@ -1702,6 +1703,7 @@ Argus 统一发布包  v{newer}
                 new TestRecord
                 {
                     StationId = "FCT02",
+                    Category = "Online",
                     Sn = "SN_2026_003",
                     Model = "MODEL_B",
                     Result = "FAIL",
@@ -1714,6 +1716,7 @@ Argus 统一发布包  v{newer}
                 new TestRecord
                 {
                     StationId = "FCT01",
+                    Category = "Online",
                     Sn = "SN_2026_004",
                     Model = "MODEL_A",
                     Result = "FAIL",
@@ -1726,6 +1729,7 @@ Argus 统一发布包  v{newer}
                 new TestRecord
                 {
                     StationId = "FCT01",
+                    Category = "Online",
                     Sn = "SN_2026_005",
                     Model = "MODEL_A",
                     Result = "PASS",
@@ -1814,7 +1818,7 @@ Argus 统一发布包  v{newer}
             }
 
             {
-                // 产品数口径统一断言：空 SN 记录按 xml_path 兜底去重（与月度口径一致），不再被空串坍缩/NULL 丢失
+                // 今日 KPI 公司口径：Online + SN 终检；空 SN 按 xml_path 分区；总测试 = PASS+FAIL
                 var snDbPath = Path.Combine(Path.GetTempPath(), "argus_sn_fallback_" + DateTime.Now.Ticks + ".db");
                 try
                 {
@@ -1822,21 +1826,63 @@ Argus 统一发布包  v{newer}
                     var dStr = DateTime.Now.ToString("yyyyMMdd");
                     sdb.BatchInsert(new[]
                     {
-                        new TestRecord { StationId = "FCT1", TestDate = dStr, Result = "PASS", Sn = "SN-A", XmlPath = "p1.xml" },
-                        new TestRecord { StationId = "FCT1", TestDate = dStr, Result = "PASS", Sn = "", XmlPath = "p2.xml" },
-                        new TestRecord { StationId = "FCT1", TestDate = dStr, Result = "PASS", Sn = "   ", XmlPath = "p3.xml" },
-                        new TestRecord { StationId = "FCT1", TestDate = dStr, Result = "PASS", Sn = null, XmlPath = "p4.xml" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Result = "PASS", Sn = "SN-A", XmlPath = "p1.xml", BatchTimestamp = $"{dStr} 09:00:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Result = "PASS", Sn = "", XmlPath = "p2.xml", BatchTimestamp = $"{dStr} 09:01:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Result = "PASS", Sn = "   ", XmlPath = "p3.xml", BatchTimestamp = $"{dStr} 09:02:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Result = "PASS", Sn = null, XmlPath = "p4.xml", BatchTimestamp = $"{dStr} 09:03:00" },
                     });
                     var gStats = sdb.FetchGlobalStats("");
                     Check(gStats.ProductCount == 4,
                         $"FetchGlobalStats: 产品数空 SN 按 xml_path 兜底去重=4（旧口径空串坍缩为 1 且 NULL 不计；实得 {gStats.ProductCount}）");
                     var dStats = sdb.FetchDailyStats("", dStr);
-                    Check(dStats.TodayProductCount == 4,
-                        $"FetchDailyStats: 今日产品数空 SN 按 xml_path 兜底去重=4（与月度口径一致；实得 {dStats.TodayProductCount}）");
+                    Check(dStats.TodayProductCount == 4 && dStats.Pass == 4 && dStats.Fail == 0,
+                        $"FetchDailyStats: 空 SN 按 xml_path 终检 4 台 PASS（实得 总={dStats.TodayProductCount},P={dStats.Pass},F={dStats.Fail}）");
                     Check(gStats.Pass == 4 && dStats.Pass == 4,
-                        $"PASS 记录口径不变仍按条数计（实得 全局={gStats.Pass}, 今日={dStats.Pass}）");
+                        $"全局 PASS 仍按条数计（实得 全局={gStats.Pass}, 今日={dStats.Pass}）");
                 }
                 finally { try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(snDbPath); } catch { } }
+            }
+
+            {
+                var coDbPath = Path.Combine(Path.GetTempPath(), "argus_company_daily_" + DateTime.Now.Ticks + ".db");
+                try
+                {
+                    var cdb = new Database(coDbPath);
+                    var dStr = DateTime.Now.ToString("yyyyMMdd");
+                    cdb.BatchInsert(new[]
+                    {
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Sn = "SN-RT", Result = "PASS", XmlPath = "rt1.xml", BatchTimestamp = $"{dStr} 08:00:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Sn = "SN-RT", Result = "PASS", XmlPath = "rt2.xml", BatchTimestamp = $"{dStr} 10:00:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Sn = "SN-BF", Result = "PASS", XmlPath = "bf1.xml", BatchTimestamp = $"{dStr} 08:30:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Sn = "SN-BF", Result = "FAIL", XmlPath = "bf2.xml", FailReason = "KL30", BatchTimestamp = $"{dStr} 09:30:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Offline", TestDate = dStr, Sn = "SN-OFF", Result = "FAIL", XmlPath = "off.xml", FailReason = "KL15", BatchTimestamp = $"{dStr} 11:00:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Sn = "SN-REPASS", Result = "FAIL", XmlPath = "rp1.xml", FailReason = "KL30", BatchTimestamp = $"{dStr} 07:00:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Sn = "SN-REPASS", Result = "PASS", XmlPath = "rp2.xml", BatchTimestamp = $"{dStr} 12:00:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Offline", TestDate = dStr, Sn = "SN-OFFP", Result = "PASS", XmlPath = "offp.xml", BatchTimestamp = $"{dStr} 13:00:00" },
+                    });
+                    var co = cdb.FetchDailyStats("", dStr);
+                    Check(co.Pass == 1 && co.Fail == 3 && co.TodayProductCount == 4,
+                        $"FetchDailyStats 公司口径: FAIL优先+Offline PASS不计（实得 P={co.Pass},F={co.Fail},总={co.TodayProductCount}）");
+                    var byM = cdb.FetchDailyStatsByModel("", dStr);
+                    Check(byM.Count == 1 && byM[0].Pass == 1 && byM[0].Fail == 3,
+                        $"FetchDailyStatsByModel 与总计一致（实得 {byM.Count} 型号 P={byM.FirstOrDefault()?.Pass} F={byM.FirstOrDefault()?.Fail}）");
+                    var hz = cdb.FetchDailyHourlyStats("", dStr);
+                    Check(hz.Count == 24 && hz.Sum(x => x.Total) == co.TodayProductCount,
+                        $"小时图总量与 KPI 总测试一致（hourly={hz.Sum(x => x.Total)} kpi={co.TodayProductCount}）");
+                    Check(hz[7].Fail >= 1 && hz[9].Fail >= 1 && hz[11].Fail >= 1,
+                        $"小时图: FAIL 优先落到 7/9/11 时（7={hz[7].Fail} 9={hz[9].Fail} 11={hz[11].Fail}）");
+                    Check(hz[10].Pass >= 1, $"小时图: SN-RT 终检 PASS 在 10 时（实得 {hz[10].Pass}）");
+                    var top = cdb.FetchDailyTopFails("", dStr, 5);
+                    Check(top.Count >= 1 && top.Sum(x => x.Count) == co.Fail,
+                        $"Top5 频次合计等于 KPI FAIL（top={top.Sum(x => x.Count)} fail={co.Fail}）");
+                    var al = cdb.FetchRecentFailAlerts("", 10, dStr);
+                    Check(al.Count == co.Fail, $"播报流条数等于 KPI FAIL（al={al.Count} fail={co.Fail}）");
+                    var hzS = cdb.FetchDailyHourlyStats("FCT1", dStr);
+                    Check(hzS.Sum(x => x.Total) == co.TodayProductCount, "带 station_id 的小时图与 KPI 一致");
+                    Check(cdb.FetchDailyTopFails("FCT1", dStr, 5).Count >= 1, "带 station_id 的 Top5 有 FAIL");
+                    Check(cdb.FetchRecentFailAlerts("FCT1", 10, dStr).Count == co.Fail, "带 station_id 的播报流等于 KPI FAIL");
+                }
+                finally { try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(coDbPath); } catch { } }
             }
 
             {
@@ -2058,7 +2104,7 @@ Argus 统一发布包  v{newer}
                 seq3++;
                 return new TestRecord
                 {
-                    StationId = "FCT1", Sn = sn, Model = "E3002781", Result = result, FailReason = reason,
+                    StationId = "FCT1", Category = "Online", Sn = sn, Model = "E3002781", Result = result, FailReason = reason,
                     TestDate = d.ToString("yyyyMMdd"),
                     BatchTimestamp = $"{d:yyyy-MM-dd} {hour:00}:30:00",
                     XmlPath = $@"C:\t\s3_{seq3}.xml",
@@ -2347,6 +2393,118 @@ Argus 统一发布包  v{newer}
                   && sT.Lolim.HasValue && Math.Abs(sT.Lolim.Value - 9.0) < 1e-9
                   && sT.Hilim.HasValue && Math.Abs(sT.Hilim.Value - 11.0) < 1e-9,
                   "规格06: 样本σ（n−1 修正）与限值聚合正确");
+            Check(Database.IsWithinRetention(DateTime.Today.ToString("yyyyMMdd"), 30), "保留窗: 今天应保留");
+            Check(!Database.IsWithinRetention(DateTime.Today.AddDays(-40).ToString("yyyyMMdd"), 30), "保留窗: 40 天前应丢弃");
+            Check(new AppConfig().AnalyzeMeasureRetentionDays == 30, "默认测量保留 30 天（不再跟自学习全历史挂钩）");
+            var compactDbPath = Path.Combine(dirA6, "compact.db");
+            var cdb = new Database(compactDbPath);
+            cdb.BatchInsert(new[] { MP("2026-09-05 10:00:00", new[] { ("T_C", 1.0, (double?)null, (double?)null) }) });
+            Check(cdb.GetStorageStats().SlimSchema, "新库测量表为瘦结构（无 xml_path 冗余列）");
+            Check(cdb.GetStorageStats().Measurements >= 1, "瘦表仍能写入测量行");
+            var crep = cdb.CompactStorage(30, vacuum: true);
+            Check(cdb.GetStorageStats().Measurements >= 1, $"压缩后测量行仍在（{crep.Message}）");
+            var cstat = cdb.AggregateMeasurementStats("2026-09-05", "2026-09-06");
+            Check(cstat.Any(s => s.TestName == "T_C" && s.N >= 1), "瘦表聚合 JOIN test_records.model 仍可用");
+
+            Console.WriteLine("\n【存储优化】StorageOptimizer 监控与分类 …");
+            var optCfg = new AppConfig();
+            var optHealth = StorageOptimizer.Evaluate(cdb, optCfg);
+            Check(optHealth.Score >= 70, $"瘦库健康分应较高（实得 {optHealth.Score}）");
+            Check(optHealth.Tiers.Any(t => t.Table == "test_records" && t.Category == "核心"),
+                  "存储分层: test_records 归为核心");
+            Check(optHealth.Tiers.Any(t => t.Table == "test_measurements" && t.Category == "明细"),
+                  "存储分层: test_measurements 归为明细");
+            using (var pfConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={compactDbPath}"))
+            {
+                pfConn.Open();
+                using var ins = pfConn.CreateCommand();
+                ins.CommandText = "INSERT INTO parse_failure_log(xml_path,error_code,skip_reason,created_at) VALUES('old.xml','skip','t','2020-01-01 00:00:00')";
+                ins.ExecuteNonQuery();
+            }
+            Check(cdb.PurgeOldParseFailures(30) >= 1, "PurgeOldParseFailures 清旧留痕");
+            var light = StorageOptimizer.Run(cdb, optCfg, StorageOptimizeMode.Light);
+            Check(light.Mode == StorageOptimizeMode.Light && light.ScoreAfter >= light.ScoreBefore - 5,
+                  "轻量巡检不抛异常且评分稳定");
+            var deep = StorageOptimizer.Run(cdb, optCfg, StorageOptimizeMode.Deep);
+            Check(deep.Mode == StorageOptimizeMode.Deep && deep.ScoreAfter >= 60,
+                  $"深度优化完成（评分 {deep.ScoreAfter}）");
+            Check(!string.IsNullOrEmpty(cdb.GetMeta(StorageOptimizer.MetaLastRun)), "优化后写入 last_run meta");
+            Console.WriteLine("[存储优化] 组完成");
+
+            Console.WriteLine("\n【FTS备份】测试程序压缩备份 …");
+            var ftsWork = Path.Combine(dirA6, "fts_backup");
+            var ftsSrc = Path.Combine(ftsWork, "FTS");
+            var ftsDest = Path.Combine(ftsWork, "backup");
+            Directory.CreateDirectory(Path.Combine(ftsSrc, "Apps", "PEU", "Cfg"));
+            File.WriteAllText(Path.Combine(ftsSrc, "Apps", "PEU", "Cfg", "FCT.ini"),
+                "[Resource Name]\r\nFW_Version_1=1.0.0\r\n8.2_SN=E3002781\r\n");
+            File.WriteAllBytes(Path.Combine(ftsSrc, "Apps", "PEU", "payload.bin"), Enumerable.Repeat((byte)0xAB, 8192).ToArray());
+            var ftsDbPath = Path.Combine(ftsWork, "fts.db");
+            var ftsCfg = new AppConfig
+            {
+                FctProgramSourceRoot = ftsSrc,
+                FctProgramBackupDir = ftsDest,
+                FctProgramBackupKeep = 2,
+            };
+            var ftsDb = new Database(ftsDbPath);
+            var ftsRep = FctProgramBackup.Run(ftsDb, ftsCfg, "T1", FctProgramBackup.TriggerManual);
+            Check(ftsRep.Ok && ftsRep.Record != null && File.Exists(ftsRep.Record.ZipPath),
+                  $"FTS 备份生成 zip（{ftsRep.Message}）");
+            Check(ftsRep.Record!.FileCount >= 2, $"FTS 备份打包文件数 {ftsRep.Record.FileCount}");
+            Check(ftsRep.Record.ZipBytes > 0 && ftsRep.Record.ZipBytes < 8192 + 500,
+                  "FTS 高压缩后体积明显小于原始");
+            Check(ftsDb.ListFctProgramBackups(5).Count >= 1, "FTS 备份记录入库");
+            FctProgramBackup.Run(ftsDb, ftsCfg, "T1", FctProgramBackup.TriggerManual);
+            FctProgramBackup.Run(ftsDb, ftsCfg, "T1", FctProgramBackup.TriggerManual);
+            FctProgramBackup.PurgeOldArchives(ftsDb, ftsCfg, ftsDest);
+            Check(ftsDb.ListFctProgramBackups(10).Any(x => !x.ZipExists),
+                  "超保留份数删 zip 但数据库记录仍保留");
+            Check(new AppConfig().FctProgramBackupDir == @"D:\backup", "默认备份目录 D:\\backup");
+            Check(new AppConfig().FctProgramSourceRoot == @"C:\FTS", "默认源 C:\\FTS");
+            var schedDb = new Database(Path.Combine(ftsWork, "sched.db"));
+            Check(FctProgramBackup.ShouldRunScheduled(schedDb, ftsCfg), "本月尚无备份时应触发定时备份");
+            Check(!FctProgramBackup.ShouldRunScheduled(ftsDb, ftsCfg), "本月已有成功备份则跳过");
+
+            Console.WriteLine("\n【Seq监控】PEU Seq 快照与对比 …");
+            var seqRoot = Path.Combine(dirA6, "Seq");
+            Directory.CreateDirectory(seqRoot);
+            File.WriteAllText(Path.Combine(seqRoot, "test.seq"), "LINE1\nLINE2\n");
+            Check(FctSeqSnapshot.ScanDirectory(seqRoot).Count >= 1, "Seq 目录扫描");
+            FctSeqSnapshot.CaptureBaseline(seqRoot);
+            Check(FctSeqSnapshot.HasBaseline(), "Seq 基线已建立");
+            var manJson = File.ReadAllText(FctSeqSnapshot.BaselineManifestPath);
+            Check(manJson.Contains("test.seq", StringComparison.OrdinalIgnoreCase),
+                  $"Seq manifest 含 test.seq（{manJson.Length} 字节）");
+            Check(FctSeqSnapshot.LoadBaselineManifest().Count >= 1,
+                  $"Seq 基线 manifest 可读（{FctSeqSnapshot.LoadBaselineManifest().Count} 项）");
+            File.WriteAllText(Path.Combine(seqRoot, "test.seq"), "LINE1\nLINE2-CHANGED\n");
+            File.WriteAllText(Path.Combine(seqRoot, "new.seq"), "NEW\n");
+            var seqRep = FctSeqSnapshot.CompareToBaseline(seqRoot);
+            Check(seqRep.Modified >= 1 && seqRep.Added >= 1,
+                  $"Seq 对比检出修改与新增（~{seqRep.Modified} +{seqRep.Added}）");
+            Check(!string.IsNullOrEmpty(seqRep.Fingerprint()), "Seq 变更指纹非空");
+            var seqDb = new Database(Path.Combine(dirA6, "seq.db"));
+            seqDb.InsertFctSeqChangeLog(seqRep);
+            Check(seqDb.ListFctSeqChangeLogs(5).Count >= 1, "Seq 变更记录入库");
+            Check(new AppConfig().FctSeqRoot == @"C:\FTS\Apps\PEU\Seq", "默认 Seq 路径");
+            var discRoot = Path.Combine(dirA6, "FTS_named");
+            Directory.CreateDirectory(Path.Combine(discRoot, "Apps", "CustomerX", "Seq"));
+            File.WriteAllText(Path.Combine(discRoot, "Apps", "CustomerX", "Seq", "a.seq"), "X\n");
+            var disc = FctSeqSnapshot.DiscoverSeqRoots(discRoot);
+            Check(disc.Any(p => p.Contains("CustomerX", StringComparison.OrdinalIgnoreCase)),
+                  "按产品/机台文件夹名发现 Seq 目录");
+            var missCfg = new AppConfig
+            {
+                FctProgramSourceRoot = discRoot,
+                FctSeqRoot = Path.Combine(discRoot, "Apps", "PEU", "Seq"),
+            };
+            var resolved = FctSeqSnapshot.ResolveSeqRoot(missCfg, discoverFallback: true);
+            Check(resolved.Contains("CustomerX", StringComparison.OrdinalIgnoreCase),
+                  "配置的 PEU\\Seq 不存在时回退到发现的唯一 Seq");
+            Console.WriteLine("[Seq监控] 组完成");
+
+            Console.WriteLine("[FTS备份] 组完成");
+
             Console.WriteLine("[规格06] 存储组完成");
 
             Console.WriteLine("\n【规格06】分析器 漂移 + CPK …");
@@ -2918,15 +3076,16 @@ Argus 统一发布包  v{newer}
                 new() { GroupName = "8.11 Resolver Test", ChannelName = "RES_A", Section = "8.11", N = 3,
                         Min = 0.5, Max = 1.5, Mean = 1.0, Std = 0.5, First = 0.5, Last = 1.5 },
             };
-            dbT.InsertTdmsFeaturesFor(tdmsRec, 101, Path.Combine(tdmsDayDir, "SN001_0002.tdms"), tdmsFeatureRows);
+            var tdmsRid = dbT.InsertOneReturnId(tdmsRec);
+            dbT.InsertTdmsFeaturesFor(tdmsRec, tdmsRid, Path.Combine(tdmsDayDir, "SN001_0002.tdms"), tdmsFeatureRows);
             var tdmsRecent = dbT.GetRecentTdmsFeatures(10);
             Check(tdmsRecent.Count == 2, "期3: InsertTdmsFeaturesFor 落表 2 行");
             var r1 = tdmsRecent.First(x => x.ChannelName == "V1");
-            Check(r1.RecordId == 101 && r1.Model == "E3002781" && r1.Sn == "SN001"
+            Check(r1.RecordId == tdmsRid && r1.Model == "E3002781" && r1.Sn == "SN001"
                   && r1.GroupName == "03.2 电压" && r1.Section == "3.2" && r1.N == 5
                   && Math.Abs(r1.Mean!.Value - 3.0) < 1e-9 && r1.Ts == "2026-09-05 10:00:00",
-                  "期3: 特征行字段抽查（冗余列 record_id/model/sn/ts）");
-            dbT.InsertTdmsFeaturesFor(tdmsRec, 101, Path.Combine(tdmsDayDir, "SN001_0002.tdms"), tdmsFeatureRows);
+                  "期3: 特征行字段抽查（JOIN test_records 取 model/sn）");
+            dbT.InsertTdmsFeaturesFor(tdmsRec, tdmsRid, Path.Combine(tdmsDayDir, "SN001_0002.tdms"), tdmsFeatureRows);
             Check(dbT.GetTdmsFeatureSummary() == (2L, 1L, "2026-09-05 10:00:00"),
                   "期3: UNIQUE(record_id,group,channel) 幂等重插不变");
             var tdmsRecOld = new TestRecord
@@ -3062,11 +3221,16 @@ Argus 统一发布包  v{newer}
             var outA5 = regA4.Resolve(badPass, File.ReadAllText(badPass));
             Check(outA5 != null && outA5.Error && outA5.ErrorCode == "xml_malformed",
                   "审计A5: 截断 PASS 文件走 xml_malformed 不再静默入库污染良率");
-            // A2：单条入库返回 id，重复 xml_path 返回 0（免反查）
+            // A2：单条 upsert 返回 id；重复同内容不新建；结果变化则覆盖更新
             var recA2 = new TestRecord { StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905", Sn = "SN906", Result = "PASS", XmlPath = Path.Combine(clDir, "P_UNIT_SN906_20260905130600_0001.xml") };
-            var idA2 = clDbA4.InsertOneReturnId(recA2);
-            var idA2b = clDbA4.InsertOneReturnId(recA2);
-            Check(idA2 > 0 && idA2b == 0, $"审计A2: InsertOneReturnId 新记录返 id>0、重复返 0（实得 {idA2}/{idA2b}）");
+            var oA2 = clDbA4.UpsertTestRecord(recA2);
+            var oA2b = clDbA4.UpsertTestRecord(recA2);
+            Check(oA2.IsNew && oA2.RecordId > 0 && oA2b.RecordId == oA2.RecordId && !oA2b.IsNew && !oA2b.WasUpdated,
+                $"审计A2: Upsert 新插 id>0、重复同内容不更新（实得 {oA2.RecordId}/{oA2b.WasUpdated}）");
+            var recA2fail = new TestRecord { StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905", Sn = "SN906", Result = "FAIL", XmlPath = recA2.XmlPath, FailReason = "STEP_X", HasFailItems = true, FailedTests = { new FailedTest { Name = "STEP_X" } } };
+            var oA2c = clDbA4.UpsertTestRecord(recA2fail);
+            Check(oA2c.WasUpdated && oA2c.NeedsFailAlert && oA2c.RecordId == oA2.RecordId,
+                $"审计A2: PASS→FAIL 覆盖更新且 NeedsFailAlert（实得 updated={oA2c.WasUpdated} alert={oA2c.NeedsFailAlert}）");
             // M12：CPU 采样首次调用仅建立基线，返回 null（不再产 0.0 哨兵假样本）
             using (var samplerM12 = new DeviceSampleRecorder(new AppConfig()))
             {
@@ -3470,6 +3634,30 @@ Argus 统一发布包  v{newer}
         Check(autoSeries.Count >= 1 && autoLabels.Count >= 1,
             $"偏离折线：自动窗口锚最新 PASS（实得 series={autoSeries.Count}）");
         Check(string.IsNullOrEmpty(autoHint), "偏离折线：自动窗口有数据时无空提示");
+
+        var vis = DeviationSeriesBuilder.DefaultVisibleNames(new List<DeviationSeries>
+        {
+            new() { TestName = "A_LOW", Points = { (0, new PassDeviationPoint { Z = 1 }) } },
+            new() { TestName = "B_HIGH", Points = { (0, new PassDeviationPoint { Z = 9 }) } },
+            new() { TestName = "C_MID", Points = { (0, new PassDeviationPoint { Z = 3 }) } },
+            new() { TestName = "D_MID2", Points = { (0, new PassDeviationPoint { Z = 2 }) } },
+        }, 2);
+        Check(vis.Count == 2 && vis[0] == "B_HIGH" && vis[1] == "C_MID",
+            "偏离折线：默认勾选 |z| 最大的测项");
+        var fil = DeviationSeriesBuilder.Filter(
+            new List<DeviationSeries>
+            {
+                new() { TestName = "A_LOW" },
+                new() { TestName = "B_HIGH" },
+                new() { TestName = "C_MID" },
+            },
+            new[] { "a_low", "C_MID" });
+        Check(fil.Count == 2 && fil.All(s => s.TestName is "A_LOW" or "C_MID"),
+            "偏离折线：按测项名过滤（忽略大小写）");
+        Check(DeviationSeriesBuilder.Filter(new List<DeviationSeries> { new() { TestName = "A" } }, Array.Empty<string>()).Count == 0,
+            "偏离折线：未勾选则不画线");
+        Check(DeviationSeriesBuilder.SeriesColorHex("KL30") == DeviationSeriesBuilder.SeriesColorHex("kl30"),
+            "偏离折线：同测项颜色稳定");
 
         var snap = LearningSnapshot.Capture(scDb, voteCfg, scNow);
         Check(snap.Total >= 4 && snap.Ready >= 4, "P3 快照：覆盖率与表对拍（ready≥4）");

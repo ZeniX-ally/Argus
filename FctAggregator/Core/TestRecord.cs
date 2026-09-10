@@ -21,6 +21,16 @@ public class MeasurementRow
     public string? Rule { get; set; }
 }
 
+/// <summary>test_records 入库结果：新插 / 覆盖更新 / 是否需补推 FAIL 告警。</summary>
+public readonly struct IngestResult
+{
+    public long RecordId { get; init; }
+    public bool IsNew { get; init; }
+    public bool WasUpdated { get; init; }
+    public string? PreviousResult { get; init; }
+    public bool NeedsFailAlert { get; init; }
+}
+
 public class TestRecord
 {
     public string StationId { get; set; } = "";

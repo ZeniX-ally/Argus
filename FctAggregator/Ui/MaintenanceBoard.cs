@@ -70,50 +70,63 @@ public class MaintenanceBoard : Panel
         _customRange = custom;
         _todoFrom = from;
         _todoTo = to;
-        Reload();
     }
 
-    public void Reload()
+    public sealed class BoardSnapshot
     {
-        CardPreviewForm.CloseCurrent();
+        public List<TodoItem> Todos = new();
+        public Dictionary<string, int> Counts = new();
+        public Dictionary<string, List<MaintenanceRecord>> Columns = new();
+    }
+
+    public BoardSnapshot LoadSnapshot()
+    {
         if (!_customRange)
         {
             _todoFrom = DateTime.Today.AddDays(-Math.Max(1, AppConfig.Instance.TodoScanDays) + 1);
             _todoTo = DateTime.Today;
         }
-        try
+        var snap = new BoardSnapshot();
+        snap.Todos = LoadTodos();
+        var counts = _engine.Db.CountMaintenanceByStatus();
+        foreach (var kv in counts)
         {
-            var todos = LoadTodos();
-            PendingTodoCount = todos.Count;
-
-            var counts = _engine.Db.CountMaintenanceByStatus();
-            var normalized = new Dictionary<string, int>();
-            foreach (var kv in counts)
-            {
-                var key = MaintenanceMeta.Normalize(kv.Key);
-                normalized[key] = normalized.GetValueOrDefault(key) + kv.Value;
-            }
-
-            foreach (var def in MaintenanceMeta.Statuses)
-            {
-                var col = _columns[def.Key];
-                var rows = _engine.Db.ListMaintenance(def.Key, PerColumnLimit);
-                if (def.Key == MaintenanceMeta.DoneStatus)
-                {
-                    var legacy = _engine.Db.ListMaintenance(MaintenanceMeta.LegacyClosed, PerColumnLimit);
-                    if (legacy.Count > 0)
-                        rows = rows.Concat(legacy)
-                                   .OrderByDescending(m => string.IsNullOrEmpty(m.UpdatedAt) ? m.CreatedAt : m.UpdatedAt)
-                                   .Take(PerColumnLimit).ToList();
-                }
-                var mine = def.Key == MaintenanceMeta.DefaultStatus ? todos : new List<TodoItem>();
-                col.SetCards(rows, mine, normalized.GetValueOrDefault(def.Key));
-            }
+            var key = MaintenanceMeta.Normalize(kv.Key);
+            snap.Counts[key] = snap.Counts.GetValueOrDefault(key) + kv.Value;
         }
-        catch (Exception ex)
+        foreach (var def in MaintenanceMeta.Statuses)
         {
-            Logger.Error($"维修看板加载失败: {ex.Message}");
+            var rows = _engine.Db.ListMaintenance(def.Key, PerColumnLimit);
+            if (def.Key == MaintenanceMeta.DoneStatus)
+            {
+                var legacy = _engine.Db.ListMaintenance(MaintenanceMeta.LegacyClosed, PerColumnLimit);
+                if (legacy.Count > 0)
+                    rows = rows.Concat(legacy)
+                               .OrderByDescending(m => string.IsNullOrEmpty(m.UpdatedAt) ? m.CreatedAt : m.UpdatedAt)
+                               .Take(PerColumnLimit).ToList();
+            }
+            snap.Columns[def.Key] = rows;
         }
+        return snap;
+    }
+
+    public void ApplySnapshot(BoardSnapshot snap)
+    {
+        CardPreviewForm.CloseCurrent();
+        PendingTodoCount = snap.Todos.Count;
+        foreach (var def in MaintenanceMeta.Statuses)
+        {
+            var col = _columns[def.Key];
+            var rows = snap.Columns.GetValueOrDefault(def.Key) ?? new List<MaintenanceRecord>();
+            var mine = def.Key == MaintenanceMeta.DefaultStatus ? snap.Todos : new List<TodoItem>();
+            col.SetCards(rows, mine, snap.Counts.GetValueOrDefault(def.Key));
+        }
+    }
+
+    public void Reload()
+    {
+        try { ApplySnapshot(LoadSnapshot()); }
+        catch (Exception ex) { Logger.Error($"维修看板加载失败: {ex.Message}"); }
     }
 
     private List<TodoItem> LoadTodos()

@@ -195,7 +195,7 @@ public partial class UpgradeWizard : Form
                 "  · 停止正在运行的 Argus（含托盘，本向导除外）\n" +
                 "  · 备份程序文件与数据库（失败可回滚）\n" +
                 "  · 覆盖程序文件 + runtimes 运行时树\n" +
-                "  · config.json 合并更新（station_id / results_root / webhook_url / agg_token 保留现场值）\n" +
+                "  · config.json 合并更新（station_id / results_root / webhook_url 等现场键保留）\n" +
                 "  · data\\ 与 logs\\ 原样保留\n\n" +
                 "继续执行？",
                 "确认执行升级", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,

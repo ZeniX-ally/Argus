@@ -6,6 +6,7 @@ public sealed partial class Database
 {
     private readonly string _connString;
     private readonly string _dbPath;
+    private volatile bool _detailTablesFat;
 
     public event Action<MaintenanceRecord, string, string>? MaintenanceStatusChanged;
 
@@ -96,6 +97,12 @@ public sealed partial class Database
             {
                 cmdFix.CommandText = "ALTER TABLE test_records ADD COLUMN fixture_id TEXT;";
                 try { cmdFix.ExecuteNonQuery(); }
+                catch (SqliteException ex) when (ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase)) { }
+            }
+            using (var cmdAlert = conn.CreateCommand())
+            {
+                cmdAlert.CommandText = "ALTER TABLE test_records ADD COLUMN fail_alerted INTEGER NOT NULL DEFAULT 0;";
+                try { cmdAlert.ExecuteNonQuery(); }
                 catch (SqliteException ex) when (ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase)) { }
             }
 
@@ -240,11 +247,6 @@ public sealed partial class Database
                 CREATE TABLE IF NOT EXISTS test_measurements (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     record_id INTEGER NOT NULL,
-                    xml_path TEXT NOT NULL,
-                    station_id TEXT,
-                    model TEXT,
-                    sn TEXT,
-                    test_date TEXT,
                     ts TEXT,
                     test_name TEXT NOT NULL,
                     value REAL,
@@ -261,15 +263,9 @@ public sealed partial class Database
                 CREATE TABLE IF NOT EXISTS fail_items (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     record_id INTEGER NOT NULL,
-                    xml_path TEXT NOT NULL,
-                    station_id TEXT,
-                    model TEXT,
-                    sn TEXT,
-                    test_date TEXT,
                     ts TEXT,
                     fixture_id TEXT,
                     tester TEXT,
-                    panel_status TEXT,
                     hour INTEGER,
                     test_name TEXT NOT NULL,
                     value REAL,
@@ -281,12 +277,6 @@ public sealed partial class Database
                     UNIQUE(record_id, test_name)
                 );
                 CREATE INDEX IF NOT EXISTS idx_fi_name_ts ON fail_items(test_name, ts);
-                CREATE INDEX IF NOT EXISTS idx_fi_fixture_ts ON fail_items(fixture_id, ts);
-                CREATE INDEX IF NOT EXISTS idx_fi_tester_ts ON fail_items(tester, ts);
-                CREATE INDEX IF NOT EXISTS idx_fi_ts ON fail_items(ts);
-                -- v3.36.0 性能：日期窗口过滤用的表达式索引（与查询 substr(COALESCE(ts,''),1,10) 逐字一致，非 sargable 谓词可原地走索引）
-                CREATE INDEX IF NOT EXISTS idx_tm_daystr ON test_measurements(substr(COALESCE(ts,''),1,10));
-                CREATE INDEX IF NOT EXISTS idx_fi_daystr ON fail_items(substr(COALESCE(ts,''),1,10));
             ";
             cmd8.ExecuteNonQuery();
 
@@ -296,11 +286,6 @@ public sealed partial class Database
                 CREATE TABLE IF NOT EXISTS tdms_features (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     record_id INTEGER NOT NULL,
-                    xml_path TEXT NOT NULL,
-                    station_id TEXT,
-                    model TEXT,
-                    sn TEXT,
-                    test_date TEXT,
                     ts TEXT,
                     tdms_path TEXT NOT NULL,
                     group_name TEXT NOT NULL,
@@ -316,10 +301,7 @@ public sealed partial class Database
                     UNIQUE(record_id, group_name, channel_name)
                 );
                 CREATE INDEX IF NOT EXISTS idx_tf_ts ON tdms_features(ts);
-                CREATE INDEX IF NOT EXISTS idx_tf_model_ts ON tdms_features(model, ts);
                 CREATE INDEX IF NOT EXISTS idx_tf_channel_ts ON tdms_features(group_name, channel_name, ts);
-                -- v3.36.0 性能：TDMS 日期窗口过滤的表达式索引（同 test_measurements/fail_items 方案）
-                CREATE INDEX IF NOT EXISTS idx_tf_daystr ON tdms_features(substr(COALESCE(ts,''),1,10));
             ";
             cmd9.ExecuteNonQuery();
 
@@ -377,6 +359,9 @@ public sealed partial class Database
             using var cmdIdxTsDate = conn.CreateCommand();
             cmdIdxTsDate.CommandText = "CREATE INDEX IF NOT EXISTS idx_tr_tsdate ON test_records(batch_ts_date)";
             cmdIdxTsDate.ExecuteNonQuery();
+            _detailTablesFat = HasColumn(conn, "test_measurements", "xml_path");
+            if (_detailTablesFat)
+                Logger.Warning("[存储] 明细表仍含路径冗余列。请到调试工具「压缩数据库」，或等凌晨维护自动压缩。");
         }
         MigrateClosedStatus();
     }
@@ -594,12 +579,234 @@ public sealed partial class Database
         return inserted;
     }
 
-    /// <summary>审计 A2：单条入库并返回新记录 id（INSERT OR IGNORE 未命中即重复记录时返回 0），免上层反查。</summary>
-    public long InsertOneReturnId(TestRecord rec)
+    /// <summary>审计 A2：单条入库并返回记录 id（重复 xml_path 时按内容变化覆盖更新）。</summary>
+    public long InsertOneReturnId(TestRecord rec) => UpsertTestRecord(rec).RecordId;
+
+    /// <summary>按 xml_path 幂等入库：新记录插入；已存在且结果/尺寸/失败项变化则覆盖更新（修复半成品先入库）。</summary>
+    public IngestResult UpsertTestRecord(TestRecord rec)
     {
-        var ids = new List<long>(1);
-        BatchInsert(new[] { rec }, ids);
-        return ids.Count > 0 ? ids[0] : 0;
+        var list = new List<IngestResult>(1);
+        BatchUpsert(new[] { rec }, null, list);
+        if (list.Count > 0) return list[0];
+        var ids = GetRecordIdsByPaths(new[] { rec.XmlPath });
+        ids.TryGetValue(rec.XmlPath, out var rid);
+        return new IngestResult { RecordId = rid };
+    }
+
+    public bool IsFailAlerted(string xmlPath)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT fail_alerted FROM test_records WHERE xml_path = @p LIMIT 1";
+        cmd.Parameters.AddWithValue("@p", xmlPath);
+        using var r = cmd.ExecuteReader();
+        return r.Read() && !r.IsDBNull(0) && r.GetInt32(0) != 0;
+    }
+
+    public void MarkFailAlerted(string xmlPath)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE test_records SET fail_alerted = 1 WHERE xml_path = @p";
+        cmd.Parameters.AddWithValue("@p", xmlPath);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>今日 FAIL 且尚未推送告警的记录（补扫后批量补推）。</summary>
+    public List<TestRecord> ListTodayFailsNeedingAlert(string testDateYmd, string? stationId)
+    {
+        var list = new List<TestRecord>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE test_date = @d AND result = 'FAIL' AND COALESCE(fail_alerted, 0) = 0";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
+        cmd.CommandText = $@"
+            SELECT station_id, model, category, test_date, sn, result, xml_path,
+                   fail_reason, tester, panel_status, fixture_id, batch_timestamp, has_fail_items, file_size
+            FROM test_records {where} ORDER BY id";
+        cmd.Parameters.AddWithValue("@d", testDateYmd);
+        if (!string.IsNullOrEmpty(stationId)) cmd.Parameters.AddWithValue("@s", stationId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new TestRecord
+            {
+                StationId = r.GetString(0),
+                Model = r.IsDBNull(1) ? "" : r.GetString(1),
+                Category = r.IsDBNull(2) ? "" : r.GetString(2),
+                TestDate = r.GetString(3),
+                Sn = r.IsDBNull(4) ? null : r.GetString(4),
+                Result = r.IsDBNull(5) ? "" : r.GetString(5),
+                XmlPath = r.GetString(6),
+                FailReason = r.IsDBNull(7) ? null : r.GetString(7),
+                Tester = r.IsDBNull(8) ? null : r.GetString(8),
+                PanelStatus = r.IsDBNull(9) ? null : r.GetString(9),
+                FixtureId = r.IsDBNull(10) ? null : r.GetString(10),
+                BatchTimestamp = r.IsDBNull(11) ? null : r.GetString(11),
+                HasFailItems = !r.IsDBNull(12) && r.GetInt32(12) != 0,
+                FileSize = r.IsDBNull(13) ? null : r.GetInt64(13),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>批量 upsert（历史扫描/实时共用）。outcomes 与 insertedRows 二选一或同时填充。</summary>
+    public int BatchUpsert(IEnumerable<TestRecord> records, List<long>? insertedIds = null, List<IngestResult>? outcomes = null)
+    {
+        var list = records.ToList();
+        if (list.Count == 0) return 0;
+        using var conn = Open();
+        using var tx = conn.BeginTransaction();
+        int newCount = 0;
+        var touchedRows = new List<(TestRecord Rec, long Id)>();
+        var newRows = new List<(TestRecord Rec, long Id)>();
+        var localOutcomes = new List<IngestResult>();
+
+        using var sel = conn.CreateCommand();
+        sel.Transaction = tx;
+        sel.CommandText = @"SELECT id, result, COALESCE(file_size,0), COALESCE(has_fail_items,0), COALESCE(fail_alerted,0)
+                            FROM test_records WHERE xml_path = @p LIMIT 1";
+        var pSel = sel.Parameters.Add("@p", SqliteType.Text);
+
+        using var ins = conn.CreateCommand();
+        ins.Transaction = tx;
+        ins.CommandText = @"
+            INSERT INTO test_records
+            (station_id, model, category, test_date, sn, result, xml_path,
+             fail_reason, tester, panel_status, batch_timestamp, has_fail_items, file_size, fixture_id, fail_alerted)
+            VALUES (@station,@model,@cat,@date,@sn,@result,@path,
+                    @reason,@tester,@panel,@ts,@hasfail,@size,@fixture,0)
+            RETURNING id";
+        BindRecordParams(ins);
+
+        using var upd = conn.CreateCommand();
+        upd.Transaction = tx;
+        upd.CommandText = @"
+            UPDATE test_records SET
+                station_id=@station, model=@model, category=@cat, test_date=@date, sn=@sn,
+                result=@result, fail_reason=@reason, tester=@tester, panel_status=@panel,
+                batch_timestamp=@ts, has_fail_items=@hasfail, file_size=@size, fixture_id=@fixture
+            WHERE id=@id";
+        BindRecordParams(upd);
+        var pUpdId = upd.Parameters.Add("@id", SqliteType.Integer);
+
+        using var delFail = conn.CreateCommand();
+        delFail.Transaction = tx;
+        delFail.CommandText = "DELETE FROM fail_items WHERE record_id = @id";
+        var pDelFailId = delFail.Parameters.Add("@id", SqliteType.Integer);
+
+        foreach (var rec in list)
+        {
+            pSel.Value = rec.XmlPath;
+            long id = 0;
+            string? prevResult = null;
+            bool isNew = false, wasUpdated = false;
+            using (var r = sel.ExecuteReader())
+            {
+                if (!r.Read())
+                {
+                    SetRecordParamValues(ins, rec);
+                    using var ir = ins.ExecuteReader();
+                    if (!ir.Read()) continue;
+                    id = ir.GetInt64(0);
+                    isNew = true;
+                    newCount++;
+                }
+                else
+                {
+                    id = r.GetInt64(0);
+                    prevResult = r.IsDBNull(1) ? null : r.GetString(1);
+                    var oldSize = r.GetInt64(2);
+                    var oldHasFail = r.GetInt32(3) != 0;
+                    if (!ShouldRefreshRecord(prevResult, oldSize, oldHasFail, rec))
+                    {
+                        localOutcomes.Add(new IngestResult
+                        {
+                            RecordId = id, IsNew = false, WasUpdated = false, PreviousResult = prevResult,
+                            NeedsFailAlert = rec.Result == "FAIL" && r.GetInt32(4) == 0,
+                        });
+                        continue;
+                    }
+                    SetRecordParamValues(upd, rec);
+                    pUpdId.Value = id;
+                    upd.ExecuteNonQuery();
+                    wasUpdated = true;
+                    if (rec.Result == "FAIL")
+                    {
+                        pDelFailId.Value = id;
+                        delFail.ExecuteNonQuery();
+                    }
+                }
+            }
+
+            var needsAlert = rec.Result == "FAIL" &&
+                (isNew || !string.Equals(prevResult, "FAIL", StringComparison.OrdinalIgnoreCase));
+            localOutcomes.Add(new IngestResult
+            {
+                RecordId = id, IsNew = isNew, WasUpdated = wasUpdated, PreviousResult = prevResult,
+                NeedsFailAlert = needsAlert,
+            });
+            touchedRows.Add((rec, id));
+            if (isNew) newRows.Add((rec, id));
+            insertedIds?.Add(id);
+        }
+
+        tx.Commit();
+        outcomes?.AddRange(localOutcomes);
+        if (newRows.Count > 0) NotifyRecordsInserted(newRows);
+        if (touchedRows.Count > 0)
+        {
+            InsertMeasurementsFor(touchedRows);
+            InsertFailItemsFor(touchedRows.Where(t => t.Rec.Result == "FAIL").ToList());
+        }
+        return newCount;
+    }
+
+    private static bool ShouldRefreshRecord(string? prevResult, long oldSize, bool oldHasFail, TestRecord rec)
+    {
+        if (!string.Equals(prevResult, rec.Result, StringComparison.OrdinalIgnoreCase)) return true;
+        var newSize = rec.FileSize ?? 0;
+        if (newSize > oldSize) return true;
+        if (rec.Result == "FAIL" && rec.HasFailItems && !oldHasFail) return true;
+        if (rec.Result == "FAIL" && !string.IsNullOrWhiteSpace(rec.FailReason) &&
+            !string.Equals(prevResult, "FAIL", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private static void BindRecordParams(SqliteCommand cmd)
+    {
+        cmd.Parameters.Add("@station", SqliteType.Text);
+        cmd.Parameters.Add("@model", SqliteType.Text);
+        cmd.Parameters.Add("@cat", SqliteType.Text);
+        cmd.Parameters.Add("@date", SqliteType.Text);
+        cmd.Parameters.Add("@sn", SqliteType.Text);
+        cmd.Parameters.Add("@result", SqliteType.Text);
+        cmd.Parameters.Add("@path", SqliteType.Text);
+        cmd.Parameters.Add("@reason", SqliteType.Text);
+        cmd.Parameters.Add("@tester", SqliteType.Text);
+        cmd.Parameters.Add("@panel", SqliteType.Text);
+        cmd.Parameters.Add("@ts", SqliteType.Text);
+        cmd.Parameters.Add("@hasfail", SqliteType.Integer);
+        cmd.Parameters.Add("@size", SqliteType.Integer);
+        cmd.Parameters.Add("@fixture", SqliteType.Text);
+    }
+
+    private static void SetRecordParamValues(SqliteCommand cmd, TestRecord rec)
+    {
+        cmd.Parameters["@station"].Value = rec.StationId;
+        cmd.Parameters["@model"].Value = (object?)rec.Model ?? DBNull.Value;
+        cmd.Parameters["@cat"].Value = (object?)rec.Category ?? DBNull.Value;
+        cmd.Parameters["@date"].Value = rec.TestDate;
+        cmd.Parameters["@sn"].Value = (object?)rec.Sn ?? DBNull.Value;
+        cmd.Parameters["@result"].Value = rec.Result;
+        cmd.Parameters["@path"].Value = rec.XmlPath;
+        cmd.Parameters["@reason"].Value = (object?)rec.FailReason ?? DBNull.Value;
+        cmd.Parameters["@tester"].Value = (object?)rec.Tester ?? DBNull.Value;
+        cmd.Parameters["@panel"].Value = (object?)rec.PanelStatus ?? DBNull.Value;
+        cmd.Parameters["@ts"].Value = (object?)rec.BatchTimestamp ?? DBNull.Value;
+        cmd.Parameters["@hasfail"].Value = rec.HasFailItems ? 1 : 0;
+        cmd.Parameters["@size"].Value = (object?)rec.FileSize ?? DBNull.Value;
+        cmd.Parameters["@fixture"].Value = (object?)rec.FixtureId ?? DBNull.Value;
     }
 
     /// <summary>规格06：PASS 测量值批量入库（独立事务，失败仅告警不回滚主记录）。</summary>
@@ -613,16 +820,15 @@ public sealed partial class Database
             using var tx = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandText = @"
-                INSERT OR IGNORE INTO test_measurements
-                (record_id, xml_path, station_id, model, sn, test_date, ts, test_name, value, value_text, lolim, hilim, unit, rule)
-                VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @name, @value, @vtext, @lolim, @hilim, @unit, @rule)";
+            bool fat = _detailTablesFat;
+            cmd.CommandText = fat
+                ? @"INSERT OR IGNORE INTO test_measurements
+                    (record_id, xml_path, station_id, model, sn, test_date, ts, test_name, value, value_text, lolim, hilim, unit, rule)
+                    VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @name, @value, @vtext, @lolim, @hilim, @unit, @rule)"
+                : @"INSERT OR IGNORE INTO test_measurements
+                    (record_id, ts, test_name, value, value_text, lolim, hilim, unit, rule)
+                    VALUES (@rid, @ts, @name, @value, @vtext, @lolim, @hilim, @unit, @rule)";
             var pRid = cmd.Parameters.Add("@rid", SqliteType.Integer);
-            var pPath = cmd.Parameters.Add("@path", SqliteType.Text);
-            var pStation = cmd.Parameters.Add("@station", SqliteType.Text);
-            var pModel = cmd.Parameters.Add("@model", SqliteType.Text);
-            var pSn = cmd.Parameters.Add("@sn", SqliteType.Text);
-            var pDate = cmd.Parameters.Add("@date", SqliteType.Text);
             var pTs = cmd.Parameters.Add("@ts", SqliteType.Text);
             var pName = cmd.Parameters.Add("@name", SqliteType.Text);
             var pValue = cmd.Parameters.Add("@value", SqliteType.Real);
@@ -631,17 +837,17 @@ public sealed partial class Database
             var pHi = cmd.Parameters.Add("@hilim", SqliteType.Real);
             var pUnit = cmd.Parameters.Add("@unit", SqliteType.Text);
             var pRule = cmd.Parameters.Add("@rule", SqliteType.Text);
+            var pPath = fat ? cmd.Parameters.Add("@path", SqliteType.Text) : null;
+            var pStation = fat ? cmd.Parameters.Add("@station", SqliteType.Text) : null;
+            var pModel = fat ? cmd.Parameters.Add("@model", SqliteType.Text) : null;
+            var pSn = fat ? cmd.Parameters.Add("@sn", SqliteType.Text) : null;
+            var pDate = fat ? cmd.Parameters.Add("@date", SqliteType.Text) : null;
             foreach (var (rec, id) in withM)
             {
                 var ts = (object?)rec.BatchTimestamp ?? DBNull.Value;
                 foreach (var m in rec.Measurements)
                 {
                     pRid.Value = id;
-                    pPath.Value = rec.XmlPath;
-                    pStation.Value = (object?)rec.StationId ?? DBNull.Value;
-                    pModel.Value = (object?)rec.Model ?? DBNull.Value;
-                    pSn.Value = (object?)rec.Sn ?? DBNull.Value;
-                    pDate.Value = (object?)rec.TestDate ?? DBNull.Value;
                     pTs.Value = ts;
                     pName.Value = m.TestName;
                     pValue.Value = (object?)m.Value ?? DBNull.Value;
@@ -650,6 +856,14 @@ public sealed partial class Database
                     pHi.Value = (object?)m.Hilim ?? DBNull.Value;
                     pUnit.Value = (object?)m.Unit ?? DBNull.Value;
                     pRule.Value = (object?)m.Rule ?? DBNull.Value;
+                    if (fat)
+                    {
+                        pPath!.Value = rec.XmlPath ?? "";
+                        pStation!.Value = (object?)rec.StationId ?? DBNull.Value;
+                        pModel!.Value = (object?)rec.Model ?? DBNull.Value;
+                        pSn!.Value = (object?)rec.Sn ?? DBNull.Value;
+                        pDate!.Value = (object?)rec.TestDate ?? DBNull.Value;
+                    }
                     cmd.ExecuteNonQuery();
                 }
             }
@@ -692,20 +906,18 @@ public sealed partial class Database
             using var tx = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandText = @"
-                INSERT OR IGNORE INTO fail_items
-                (record_id, xml_path, station_id, model, sn, test_date, ts, fixture_id, tester, panel_status, hour, test_name, value, value_text, lolim, hilim, unit, rule)
-                VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @fixture, @tester, @panel, @hour, @name, @value, @vtext, @lolim, @hilim, @unit, @rule)";
+            bool fat = _detailTablesFat;
+            cmd.CommandText = fat
+                ? @"INSERT OR IGNORE INTO fail_items
+                    (record_id, xml_path, station_id, model, sn, test_date, ts, fixture_id, tester, hour, test_name, value, value_text, lolim, hilim, unit, rule)
+                    VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @fixture, @tester, @hour, @name, @value, @vtext, @lolim, @hilim, @unit, @rule)"
+                : @"INSERT OR IGNORE INTO fail_items
+                    (record_id, ts, fixture_id, tester, hour, test_name, value, value_text, lolim, hilim, unit, rule)
+                    VALUES (@rid, @ts, @fixture, @tester, @hour, @name, @value, @vtext, @lolim, @hilim, @unit, @rule)";
             var pRid = cmd.Parameters.Add("@rid", SqliteType.Integer);
-            var pPath = cmd.Parameters.Add("@path", SqliteType.Text);
-            var pStation = cmd.Parameters.Add("@station", SqliteType.Text);
-            var pModel = cmd.Parameters.Add("@model", SqliteType.Text);
-            var pSn = cmd.Parameters.Add("@sn", SqliteType.Text);
-            var pDate = cmd.Parameters.Add("@date", SqliteType.Text);
             var pTs = cmd.Parameters.Add("@ts", SqliteType.Text);
             var pFixture = cmd.Parameters.Add("@fixture", SqliteType.Text);
             var pTester = cmd.Parameters.Add("@tester", SqliteType.Text);
-            var pPanel = cmd.Parameters.Add("@panel", SqliteType.Text);
             var pHour = cmd.Parameters.Add("@hour", SqliteType.Integer);
             var pName = cmd.Parameters.Add("@name", SqliteType.Text);
             var pValue = cmd.Parameters.Add("@value", SqliteType.Real);
@@ -714,6 +926,11 @@ public sealed partial class Database
             var pHi = cmd.Parameters.Add("@hilim", SqliteType.Real);
             var pUnit = cmd.Parameters.Add("@unit", SqliteType.Text);
             var pRule = cmd.Parameters.Add("@rule", SqliteType.Text);
+            var pPath = fat ? cmd.Parameters.Add("@path", SqliteType.Text) : null;
+            var pStation = fat ? cmd.Parameters.Add("@station", SqliteType.Text) : null;
+            var pModel = fat ? cmd.Parameters.Add("@model", SqliteType.Text) : null;
+            var pSn = fat ? cmd.Parameters.Add("@sn", SqliteType.Text) : null;
+            var pDate = fat ? cmd.Parameters.Add("@date", SqliteType.Text) : null;
             static double? ParseNum(string? s) => string.IsNullOrWhiteSpace(s) ? null :
                 double.TryParse(s, System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : (double?)null;
@@ -729,17 +946,19 @@ public sealed partial class Database
                 foreach (var f in rec.FailedTests)
                 {
                     pRid.Value = id;
-                    pPath.Value = rec.XmlPath;
-                    pStation.Value = (object?)rec.StationId ?? DBNull.Value;
-                    pModel.Value = (object?)rec.Model ?? DBNull.Value;
-                    pSn.Value = (object?)rec.Sn ?? DBNull.Value;
-                    pDate.Value = (object?)rec.TestDate ?? DBNull.Value;
                     pTs.Value = ts;
                     pFixture.Value = (object?)rec.FixtureId ?? DBNull.Value;
                     pTester.Value = (object?)rec.Tester ?? DBNull.Value;
-                    pPanel.Value = (object?)rec.PanelStatus ?? DBNull.Value;
                     pHour.Value = hour;
                     pName.Value = f.Name;
+                    if (fat)
+                    {
+                        pPath!.Value = rec.XmlPath ?? "";
+                        pStation!.Value = (object?)rec.StationId ?? DBNull.Value;
+                        pModel!.Value = (object?)rec.Model ?? DBNull.Value;
+                        pSn!.Value = (object?)rec.Sn ?? DBNull.Value;
+                        pDate!.Value = (object?)rec.TestDate ?? DBNull.Value;
+                    }
                     pValue.Value = (object?)ParseNum(f.Value) ?? DBNull.Value;
                     pVText.Value = string.IsNullOrEmpty(f.Value) ? DBNull.Value : f.Value;
                     pLo.Value = (object?)ParseNum(f.Lolim) ?? DBNull.Value;
@@ -767,16 +986,15 @@ public sealed partial class Database
             using var tx = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandText = @"
-                INSERT OR IGNORE INTO tdms_features
-                (record_id, xml_path, station_id, model, sn, test_date, ts, tdms_path, group_name, channel_name, section, n, vmin, vmax, vmean, vstd, vfirst, vlast)
-                VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @tdms, @group, @channel, @section, @n, @vmin, @vmax, @vmean, @vstd, @vfirst, @vlast)";
+            bool fat = _detailTablesFat;
+            cmd.CommandText = fat
+                ? @"INSERT OR IGNORE INTO tdms_features
+                    (record_id, xml_path, station_id, model, sn, test_date, ts, tdms_path, group_name, channel_name, section, n, vmin, vmax, vmean, vstd, vfirst, vlast)
+                    VALUES (@rid, @path, @station, @model, @sn, @date, @ts, @tdms, @group, @channel, @section, @n, @vmin, @vmax, @vmean, @vstd, @vfirst, @vlast)"
+                : @"INSERT OR IGNORE INTO tdms_features
+                    (record_id, ts, tdms_path, group_name, channel_name, section, n, vmin, vmax, vmean, vstd, vfirst, vlast)
+                    VALUES (@rid, @ts, @tdms, @group, @channel, @section, @n, @vmin, @vmax, @vmean, @vstd, @vfirst, @vlast)";
             var pRid = cmd.Parameters.Add("@rid", SqliteType.Integer);
-            var pPath = cmd.Parameters.Add("@path", SqliteType.Text);
-            var pStation = cmd.Parameters.Add("@station", SqliteType.Text);
-            var pModel = cmd.Parameters.Add("@model", SqliteType.Text);
-            var pSn = cmd.Parameters.Add("@sn", SqliteType.Text);
-            var pDate = cmd.Parameters.Add("@date", SqliteType.Text);
             var pTs = cmd.Parameters.Add("@ts", SqliteType.Text);
             var pTdms = cmd.Parameters.Add("@tdms", SqliteType.Text);
             var pGroup = cmd.Parameters.Add("@group", SqliteType.Text);
@@ -789,17 +1007,25 @@ public sealed partial class Database
             var pVStd = cmd.Parameters.Add("@vstd", SqliteType.Real);
             var pVFirst = cmd.Parameters.Add("@vfirst", SqliteType.Real);
             var pVLast = cmd.Parameters.Add("@vlast", SqliteType.Real);
+            var pPath = fat ? cmd.Parameters.Add("@path", SqliteType.Text) : null;
+            var pStation = fat ? cmd.Parameters.Add("@station", SqliteType.Text) : null;
+            var pModel = fat ? cmd.Parameters.Add("@model", SqliteType.Text) : null;
+            var pSn = fat ? cmd.Parameters.Add("@sn", SqliteType.Text) : null;
+            var pDate = fat ? cmd.Parameters.Add("@date", SqliteType.Text) : null;
             var ts = (object?)rec.BatchTimestamp ?? DBNull.Value;
             foreach (var f in rows)
             {
                 pRid.Value = id;
-                pPath.Value = rec.XmlPath;
-                pStation.Value = (object?)rec.StationId ?? DBNull.Value;
-                pModel.Value = (object?)rec.Model ?? DBNull.Value;
-                pSn.Value = (object?)rec.Sn ?? DBNull.Value;
-                pDate.Value = (object?)rec.TestDate ?? DBNull.Value;
                 pTs.Value = ts;
                 pTdms.Value = tdmsPath;
+                if (fat)
+                {
+                    pPath!.Value = rec.XmlPath ?? "";
+                    pStation!.Value = (object?)rec.StationId ?? DBNull.Value;
+                    pModel!.Value = (object?)rec.Model ?? DBNull.Value;
+                    pSn!.Value = (object?)rec.Sn ?? DBNull.Value;
+                    pDate!.Value = (object?)rec.TestDate ?? DBNull.Value;
+                }
                 pGroup.Value = f.GroupName;
                 pChannel.Value = f.ChannelName;
                 pSection.Value = (object?)f.Section ?? DBNull.Value;
@@ -830,7 +1056,7 @@ public sealed partial class Database
         return cmd.ExecuteNonQuery();
     }
 
-    /// <summary>UI 用：最近 TDMS 通道特征（含冗余列，免回查 test_records）。</summary>
+    /// <summary>UI 用：最近 TDMS 通道特征（型号/SN 从 test_records JOIN）。</summary>
     public List<(long RecordId, string Model, string Sn, string GroupName, string ChannelName, string Section, int N, double? Min, double? Max, double? Mean, double? Std, string Ts)>
         GetRecentTdmsFeatures(int limit = 50)
     {
@@ -838,9 +1064,11 @@ public sealed partial class Database
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT record_id, COALESCE(model,''), COALESCE(sn,''), group_name, channel_name,
-                   COALESCE(section,''), COALESCE(n,0), vmin, vmax, vmean, vstd, COALESCE(ts,'')
-            FROM tdms_features ORDER BY id DESC LIMIT @n";
+            SELECT f.record_id, COALESCE(r.model,''), COALESCE(r.sn,''), f.group_name, f.channel_name,
+                   COALESCE(f.section,''), COALESCE(f.n,0), f.vmin, f.vmax, f.vmean, f.vstd, COALESCE(f.ts,'')
+            FROM tdms_features f
+            LEFT JOIN test_records r ON r.id = f.record_id
+            ORDER BY f.id DESC LIMIT @n";
         cmd.Parameters.AddWithValue("@n", Math.Max(1, limit));
         using var r = cmd.ExecuteReader();
         while (r.Read())
@@ -1055,11 +1283,10 @@ public sealed partial class Database
             JOIN test_records r ON r.id = m.record_id
             WHERE r.result='PASS' AND m.value IS NOT NULL
               AND m.test_name IS NOT NULL AND m.test_name <> ''
-              AND substr(COALESCE(m.ts,''),1,10) >= @from
-              AND substr(COALESCE(m.ts,''),1,10) <= @to
+              AND m.ts >= @from AND m.ts < @toExcl
             ORDER BY m.test_name COLLATE NOCASE";
         cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
-        cmd.Parameters.AddWithValue("@to", toYmdInclusive ?? "");
+        cmd.Parameters.AddWithValue("@toExcl", ToExclusiveIso(toYmdInclusive));
         using var r = cmd.ExecuteReader();
         while (r.Read()) list.Add(r.GetString(0));
         return list;
@@ -1074,12 +1301,11 @@ public sealed partial class Database
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         var sql = @"
-            SELECT m.record_id, COALESCE(m.model,''), COALESCE(m.ts,''), m.test_name, m.value
+            SELECT m.record_id, COALESCE(r.model,''), COALESCE(m.ts,''), m.test_name, m.value
             FROM test_measurements m
             JOIN test_records r ON r.id = m.record_id
             WHERE r.result='PASS' AND m.value IS NOT NULL
-              AND substr(COALESCE(m.ts,''),1,10) >= @from
-              AND substr(COALESCE(m.ts,''),1,10) <= @to";
+              AND m.ts >= @from AND m.ts < @toExcl";
         if (names is { Count: > 0 })
         {
             var ph = new List<string>();
@@ -1089,7 +1315,7 @@ public sealed partial class Database
         sql += " ORDER BY m.ts, m.record_id, m.id LIMIT @lim";
         cmd.CommandText = sql;
         cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
-        cmd.Parameters.AddWithValue("@to", toYmdInclusive ?? "");
+        cmd.Parameters.AddWithValue("@toExcl", ToExclusiveIso(toYmdInclusive));
         cmd.Parameters.AddWithValue("@lim", Math.Max(1, maxRows));
         if (names is { Count: > 0 })
             for (int i = 0; i < names.Count; i++)
@@ -1107,12 +1333,11 @@ public sealed partial class Database
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT m.record_id, COALESCE(m.model,''), COALESCE(m.ts,''), m.test_name, m.value
+            SELECT m.record_id, COALESCE(r.model,''), COALESCE(m.ts,''), m.test_name, m.value
             FROM test_measurements m
             JOIN test_records r ON r.id = m.record_id
             WHERE r.result='PASS' AND m.value IS NOT NULL
-              AND substr(COALESCE(m.ts,''),1,10) >= @from
-              AND substr(COALESCE(m.ts,''),1,10) < @to
+              AND m.ts >= @from AND m.ts < @to
             ORDER BY m.record_id, m.id";
         cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
         cmd.Parameters.AddWithValue("@to", toYmdExclusive ?? "");
@@ -1195,11 +1420,11 @@ public sealed partial class Database
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT m.record_id, COALESCE(m.model,''), COALESCE(m.ts,''), m.test_name, m.value
+            SELECT m.record_id, COALESCE(r.model,''), COALESCE(m.ts,''), m.test_name, m.value
             FROM test_measurements m
             JOIN test_records r ON r.id = m.record_id
             WHERE r.result='PASS' AND m.value IS NOT NULL AND m.record_id > @wm
-              AND substr(COALESCE(m.ts,''),1,10) >= @from
+              AND m.ts >= @from
             ORDER BY m.record_id, m.id";
         cmd.Parameters.AddWithValue("@wm", afterRecordId);
         cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
@@ -1215,11 +1440,11 @@ public sealed partial class Database
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT f.record_id, COALESCE(f.model,''), COALESCE(f.ts,''), f.group_name, f.channel_name, f.vmean, f.vstd, f.vmax
+            SELECT f.record_id, COALESCE(r.model,''), COALESCE(f.ts,''), f.group_name, f.channel_name, f.vmean, f.vstd, f.vmax
             FROM tdms_features f
             JOIN test_records r ON r.id = f.record_id
             WHERE r.result='PASS' AND f.record_id > @wm
-              AND substr(COALESCE(f.ts,''),1,10) >= @from
+              AND f.ts >= @from
             ORDER BY f.record_id, f.id";
         cmd.Parameters.AddWithValue("@wm", afterRecordId);
         cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
@@ -1259,10 +1484,11 @@ public sealed partial class Database
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT COALESCE(model,''), test_name, value
-            FROM fail_items
-            WHERE value IS NOT NULL AND substr(COALESCE(ts,''),1,10) >= @from
-            ORDER BY id DESC LIMIT 500";
+            SELECT COALESCE(r.model,''), f.test_name, f.value
+            FROM fail_items f
+            JOIN test_records r ON r.id = f.record_id
+            WHERE f.value IS NOT NULL AND f.ts >= @from
+            ORDER BY f.id DESC LIMIT 500";
         cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
         using var r = cmd.ExecuteReader();
         while (r.Read())
@@ -1388,7 +1614,7 @@ public sealed partial class Database
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT COALESCE(m.model,''), m.test_name, COALESCE(r.tester,''), COUNT(*),
+            SELECT COALESCE(r.model,''), m.test_name, COALESCE(r.tester,''), COUNT(*),
                    AVG(m.value), AVG(m.value*m.value),
                    MIN(m.lolim), MAX(m.hilim), MAX(m.unit)
             FROM test_measurements m
@@ -1428,11 +1654,12 @@ public sealed partial class Database
         using var conn = Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT COALESCE(model,''), test_name, COUNT(*), AVG(value), AVG(value*value),
-                   MIN(lolim), MAX(hilim), MAX(unit)
-            FROM test_measurements
-            WHERE ts >= @from AND ts < @to AND value IS NOT NULL
-            GROUP BY COALESCE(model,''), test_name";
+            SELECT COALESCE(r.model,''), m.test_name, COUNT(*), AVG(m.value), AVG(m.value*m.value),
+                   MIN(m.lolim), MAX(m.hilim), MAX(m.unit)
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE m.ts >= @from AND m.ts < @to AND m.value IS NOT NULL
+            GROUP BY 1, 2";
         cmd.Parameters.AddWithValue("@from", fromDay);
         cmd.Parameters.AddWithValue("@to", toDayExclusive);
         using var r = cmd.ExecuteReader();
@@ -1638,22 +1865,23 @@ public sealed partial class Database
         return s;
     }
 
+    /// <summary>今日 KPI（公司 FPY 口径）：同 SN 当日只要有 FAIL 就记 FAIL（复测 PASS 不抹掉不良）；
+    /// Offline PASS 不计（复测台），Offline FAIL 计入；空 SN 按 xml_path。总测试 = PASS+FAIL。</summary>
     public StatsData FetchDailyStats(string stationId, string dateYmd)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        var where = "WHERE test_date = @d";
-        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
         cmd.CommandText = $@"
+            WITH ranked AS (
+                {SnLatestCte(stationId)}
+            )
             SELECT
                 COUNT(CASE WHEN result='PASS' THEN 1 END),
                 COUNT(CASE WHEN result='FAIL' THEN 1 END),
                 COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
-                COUNT(DISTINCT COALESCE(NULLIF(COALESCE(sn,''),''), xml_path))
-            FROM test_records {where}";
-        cmd.Parameters.AddWithValue("@d", dateYmd);
-        if (!string.IsNullOrEmpty(stationId))
-            cmd.Parameters.AddWithValue("@s", stationId);
+                COUNT(CASE WHEN result IN ('PASS','FAIL') THEN 1 END)
+            FROM ranked WHERE rn = 1";
+        BindDayParams(cmd, stationId, dateYmd);
         using var r = cmd.ExecuteReader();
         var s = new StatsData();
         if (r.Read())
@@ -1666,7 +1894,74 @@ public sealed partial class Database
         return s;
     }
 
-    /// <summary>当月统计（log 条数口径，与今日统计一致）：每条测试 log（xml_path 唯一）计一次，
+    /// <summary>今日按型号拆分（与 FetchDailyStats 同一套 SN 终检口径）。</summary>
+    public List<ModelDayStat> FetchDailyStatsByModel(string stationId, string dateYmd)
+    {
+        var list = new List<ModelDayStat>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            WITH ranked AS (
+                {SnLatestCte(stationId)}
+            )
+            SELECT COALESCE(NULLIF(TRIM(model), ''), '(未知)'),
+                COUNT(CASE WHEN result='PASS' THEN 1 END),
+                COUNT(CASE WHEN result='FAIL' THEN 1 END),
+                COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END)
+            FROM ranked WHERE rn = 1
+            GROUP BY 1
+            ORDER BY 1";
+        BindDayParams(cmd, stationId, dateYmd);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var row = new ModelDayStat
+            {
+                Model = r.GetString(0),
+                Pass = r.GetInt32(1),
+                Fail = r.GetInt32(2),
+                Interrupted = r.GetInt32(3),
+            };
+            list.Add(row);
+        }
+        return list;
+    }
+
+    private static string SnLatestCte(string stationId)
+    {
+        var where = "WHERE test_date = @d AND NOT (result = 'PASS' AND COALESCE(category, '') = 'Offline')";
+        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
+        return $@"
+                SELECT id, result, model, sn, xml_path, fail_reason, station_id, tester,
+                       batch_timestamp, created_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY COALESCE(NULLIF(TRIM(sn), ''), xml_path)
+                        ORDER BY CASE result WHEN 'FAIL' THEN 0 WHEN 'PASS' THEN 1 ELSE 2 END,
+                                 REPLACE(COALESCE(NULLIF(batch_timestamp,''), created_at, ''), 'T', ' ') DESC,
+                                 id DESC
+                    ) AS rn
+                FROM test_records
+                {where}";
+    }
+
+    private static void BindDayParams(SqliteCommand cmd, string stationId, string dateYmd)
+    {
+        cmd.Parameters.AddWithValue("@d", dateYmd);
+        if (!string.IsNullOrEmpty(stationId))
+            cmd.Parameters.AddWithValue("@s", stationId);
+    }
+
+    private static string ToExclusiveIso(string? ymdInclusive)
+    {
+        var raw = (ymdInclusive ?? "").Replace("-", "").Trim();
+        if (raw.Length >= 8 && DateTime.TryParseExact(raw[..8], "yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var d))
+            return d.AddDays(1).ToString("yyyy-MM-dd");
+        return (ymdInclusive ?? "") + "\uFFFF";
+    }
+
+    /// <summary>当月统计（log 条数口径）：每条测试 log（xml_path 唯一）计一次，
     /// 同路径重复入库只保留最新一条；良率 = PASS 条数 / (PASS + FAIL)，中断不计分母；
     /// 产品数 = 当月去重 SN（空 SN 按 xml_path 兜底）。</summary>
     public StatsData FetchMonthlyStats(string stationId, string dateYm)
@@ -1777,37 +2072,55 @@ public sealed partial class Database
     {
         var items = new List<HourlyStatItem>();
         for (int h = 0; h < 24; h++)
-        {
             items.Add(new HourlyStatItem { Hour = h });
-        }
 
-        using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        var where = "WHERE test_date = @d";
-        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
-        cmd.CommandText = $@"
-            SELECT result, COALESCE(batch_timestamp,''), COALESCE(created_at,''), COALESCE(xml_path,'')
-            FROM test_records {where}";
-        cmd.Parameters.AddWithValue("@d", dateYmd);
-        if (!string.IsNullOrEmpty(stationId))
-            cmd.Parameters.AddWithValue("@s", stationId);
-
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
+        try
         {
-            var res = r.GetString(0);
-            var batchTs = r.GetString(1);
-            var created = r.GetString(2);
-            var xml = r.GetString(3);
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"
+                WITH ranked AS (
+                    {SnLatestCte(stationId)}
+                )
+                SELECT COALESCE(result,''), COALESCE(batch_timestamp,''), COALESCE(created_at,''), COALESCE(xml_path,'')
+                FROM ranked
+                WHERE rn = 1 AND result IN ('PASS','FAIL')";
+            BindDayParams(cmd, stationId, dateYmd);
 
-            int h = ExtractHourFromRecord(xml, batchTs, created);
-            if (h >= 0 && h < 24)
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
             {
-                if (string.Equals(res, "PASS", StringComparison.OrdinalIgnoreCase))
-                    items[h].Pass++;
-                else if (string.Equals(res, "FAIL", StringComparison.OrdinalIgnoreCase))
-                    items[h].Fail++;
+                try
+                {
+                    var res = r.GetString(0);
+                    var batchTs = r.GetString(1);
+                    var created = r.GetString(2);
+                    var xml = r.GetString(3);
+
+                    int h = -1;
+                    try { h = ExtractHourFromRecord(xml, batchTs, created); }
+                    catch { h = -1; }
+                    if (h < 0 || h > 23)
+                    {
+                        if (!TryHourFromRaw(created, out h) && !TryHourFromNormalized(created, out h))
+                            h = DateTime.Now.Hour;
+                    }
+                    if (h < 0 || h > 23) h = 0;
+
+                    if (string.Equals(res, "PASS", StringComparison.OrdinalIgnoreCase))
+                        items[h].Pass++;
+                    else if (string.Equals(res, "FAIL", StringComparison.OrdinalIgnoreCase))
+                        items[h].Fail++;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"[看板] 小时趋势单行解析失败: {ex.Message}");
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[看板] 小时趋势查询失败: {ex.Message}");
         }
         return items;
     }
@@ -1821,14 +2134,14 @@ public sealed partial class Database
 
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        var where = "WHERE test_date = @d AND result = 'FAIL'";
-        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
         cmd.CommandText = $@"
+            WITH ranked AS (
+                {SnLatestCte(stationId)}
+            )
             SELECT COALESCE(fail_reason,''), COALESCE(station_id,'')
-            FROM test_records {where}";
-        cmd.Parameters.AddWithValue("@d", dateYmd);
-        if (!string.IsNullOrEmpty(stationId))
-            cmd.Parameters.AddWithValue("@s", stationId);
+            FROM ranked
+            WHERE rn = 1 AND result = 'FAIL'";
+        BindDayParams(cmd, stationId, dateYmd);
 
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var stationDist = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
@@ -1838,6 +2151,8 @@ public sealed partial class Database
         using var r = cmd.ExecuteReader();
         while (r.Read())
         {
+            try
+            {
             var rawReason = r.GetString(0).Trim();
             var st = r.GetString(1).Trim();
             if (string.IsNullOrEmpty(rawReason)) rawReason = "未知测项错误";
@@ -1852,12 +2167,16 @@ public sealed partial class Database
                 var key = cleaned;
                 if (merge)
                 {
-                    key = FailReasonMerger.GetMergedKey(cleaned, true, level);
-                    if (!hints.ContainsKey(key))
+                    try
                     {
-                        var pr = FailReasonMerger.Parse(cleaned);
-                        if (!string.IsNullOrEmpty(pr.RootCauseHint)) hints[key] = pr.RootCauseHint;
+                        key = FailReasonMerger.GetMergedKey(cleaned, true, level);
+                        if (!hints.ContainsKey(key))
+                        {
+                            var pr = FailReasonMerger.Parse(cleaned);
+                            if (!string.IsNullOrEmpty(pr.RootCauseHint)) hints[key] = pr.RootCauseHint;
+                        }
                     }
+                    catch { key = cleaned; }
                 }
                 totalFailCount++;
                 counts[key] = counts.GetValueOrDefault(key) + 1;
@@ -1872,6 +2191,8 @@ public sealed partial class Database
                     mDict[st] = mDict.GetValueOrDefault(st) + 1;
                 }
             }
+            }
+            catch (Exception ex) { Logger.Warning($"[看板] Top5 单行解析失败: {ex.Message}"); }
         }
 
         var list = new List<TopFailItem>();
@@ -1895,20 +2216,34 @@ public sealed partial class Database
         return list;
     }
 
-    public List<LiveFailAlert> FetchRecentFailAlerts(string stationId, int limit = 10)
+    public List<LiveFailAlert> FetchRecentFailAlerts(string stationId, int limit = 10, string? dateYmd = null)
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        var where = "WHERE result = 'FAIL'";
-        if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
         cmd.CommandText = $@"
+            WITH ranked AS (
+                {SnLatestCte(stationId)}
+            )
             SELECT id, COALESCE(sn,''), COALESCE(station_id,''), COALESCE(model,''),
                    COALESCE(fail_reason,''), COALESCE(tester,''),
                    COALESCE(batch_timestamp,''), COALESCE(created_at,''), COALESCE(xml_path,'')
-            FROM test_records {where}
+            FROM ranked
+            WHERE rn = 1 AND result = 'FAIL'
             ORDER BY id DESC LIMIT @lim";
-        if (!string.IsNullOrEmpty(stationId))
-            cmd.Parameters.AddWithValue("@s", stationId);
+        if (!string.IsNullOrEmpty(dateYmd))
+            BindDayParams(cmd, stationId, dateYmd);
+        else
+        {
+            cmd.CommandText = $@"
+                SELECT id, COALESCE(sn,''), COALESCE(station_id,''), COALESCE(model,''),
+                       COALESCE(fail_reason,''), COALESCE(tester,''),
+                       COALESCE(batch_timestamp,''), COALESCE(created_at,''), COALESCE(xml_path,'')
+                FROM test_records
+                WHERE result = 'FAIL'{(string.IsNullOrEmpty(stationId) ? "" : " AND station_id = @s")}
+                ORDER BY id DESC LIMIT @lim";
+            if (!string.IsNullOrEmpty(stationId))
+                cmd.Parameters.AddWithValue("@s", stationId);
+        }
         cmd.Parameters.AddWithValue("@lim", limit);
 
         var list = new List<LiveFailAlert>();
@@ -1933,46 +2268,47 @@ public sealed partial class Database
 
     private static int ExtractHourFromRecord(string xmlPath, string batchTs, string createdAt)
     {
-        if (!string.IsNullOrEmpty(xmlPath))
-        {
-            var fileName = System.IO.Path.GetFileNameWithoutExtension(xmlPath);
-            var m = System.Text.RegularExpressions.Regex.Match(fileName, @"_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})");
-            if (m.Success && int.TryParse(m.Groups[4].Value, out var h) && h >= 0 && h <= 23)
-                return h;
-        }
-        if (!string.IsNullOrEmpty(batchTs))
-        {
-            var m = System.Text.RegularExpressions.Regex.Match(batchTs, @"[T\s](\d{2}):(\d{2})");
-            if (m.Success && int.TryParse(m.Groups[1].Value, out var h) && h >= 0 && h <= 23)
-                return h;
-        }
-        if (!string.IsNullOrEmpty(createdAt))
-        {
-            var m = System.Text.RegularExpressions.Regex.Match(createdAt, @"[T\s](\d{2}):(\d{2})");
-            if (m.Success && int.TryParse(m.Groups[1].Value, out var h) && h >= 0 && h <= 23)
-                return h;
-        }
+        if (TryHourFromNormalized(TimeUtil.ExtractFileNameTime(xmlPath), out var h)) return h;
+        if (TryHourFromNormalized(TimeUtil.Normalize(batchTs), out h)) return h;
+        if (TryHourFromRaw(batchTs, out h)) return h;
+        if (TryHourFromNormalized(TimeUtil.Normalize(createdAt), out h)) return h;
+        if (TryHourFromRaw(createdAt, out h)) return h;
         return -1;
+    }
+
+    private static bool TryHourFromNormalized(string ts, out int hour)
+    {
+        hour = -1;
+        if (string.IsNullOrEmpty(ts) || ts.Length < 13) return false;
+        return int.TryParse(ts.AsSpan(11, 2), out hour) && hour >= 0 && hour <= 23;
+    }
+
+    private static bool TryHourFromRaw(string ts, out int hour)
+    {
+        hour = -1;
+        if (string.IsNullOrEmpty(ts) || ts.Length < 10) return false;
+        int idx = ts.IndexOf('T');
+        if (idx < 0) idx = ts.IndexOf(' ');
+        if (idx < 0 || idx + 2 >= ts.Length) return false;
+        return int.TryParse(ts.AsSpan(idx + 1, 2), out hour) && hour >= 0 && hour <= 23;
     }
 
     public static string FormatLogTime(string xmlPath, string batchTs, string createdAt)
     {
-        if (!string.IsNullOrEmpty(xmlPath))
+        try
         {
-            var fileName = System.IO.Path.GetFileNameWithoutExtension(xmlPath);
-            var m = System.Text.RegularExpressions.Regex.Match(fileName, @"_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})");
-            if (m.Success)
+            if (!string.IsNullOrEmpty(xmlPath))
             {
-                return $"{m.Groups[1].Value}-{m.Groups[2].Value}-{m.Groups[3].Value} {m.Groups[4].Value}:{m.Groups[5].Value}:{m.Groups[6].Value}";
+                var fileName = System.IO.Path.GetFileNameWithoutExtension(xmlPath);
+                var fromFile = TimeUtil.ExtractFileNameTime(fileName);
+                if (!string.IsNullOrEmpty(fromFile)) return fromFile;
             }
+            var fromBatch = TimeUtil.Normalize(batchTs);
+            if (!string.IsNullOrEmpty(fromBatch)) return fromBatch;
+            var fromCreated = TimeUtil.Normalize(createdAt);
+            if (!string.IsNullOrEmpty(fromCreated)) return fromCreated;
         }
-        if (!string.IsNullOrEmpty(batchTs))
-        {
-            if (DateTime.TryParse(batchTs.Replace('T', ' '), out var dt))
-                return dt.ToString("yyyy-MM-dd HH:mm:ss");
-            return batchTs;
-        }
-        if (!string.IsNullOrEmpty(createdAt)) return createdAt;
+        catch { }
         return DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
     }
 
@@ -3085,6 +3421,13 @@ public class StatsData
 {
     public int Pass, Fail, Interrupted, Invalid, ProductCount;
     public int TodayProductCount;
+}
+
+public class ModelDayStat
+{
+    public string Model = "";
+    public int Pass, Fail, Interrupted;
+    public int Total => Pass + Fail;
 }
 
 public class FailRecord

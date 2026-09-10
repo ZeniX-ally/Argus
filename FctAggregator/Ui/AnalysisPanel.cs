@@ -12,11 +12,21 @@ public class AnalysisPanel : Panel
     private Label _tdmsEmpty = null!;
     private SignalDeviationChart _devChart = null!;
     private ComboBox _winDays = null!;
+    private CheckedListBox _itemList = null!;
+    private TextBox _itemSearch = null!;
+    private Label _itemCaption = null!;
     private LearningPanel _learnPanel = null!;
     private volatile bool _chartBusy;
     private volatile bool _dataBusy;
     private int _refreshGen;
     private long _lastDataRefreshTicks;
+    private List<string> _passLabels = new();
+    private List<DeviationSeries> _allSeries = new();
+    private readonly HashSet<string> _selectedItems = new(StringComparer.OrdinalIgnoreCase);
+    private bool _userPickedItems;
+    private bool _bindingItems;
+    private string? _chartEmptyHint;
+    private string? _chartStatusHint;
 
     public AnalysisPanel(Engine engine)
     {
@@ -79,14 +89,28 @@ public class AnalysisPanel : Panel
             ForeColor = Theme.TextFaint, Font = Theme.Tiny, TextAlign = ContentAlignment.MiddleLeft,
         });
         chartToolbar.Controls.Add(_winDays);
+
+        var chartLeft = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface };
+        chartLeft.Controls.Add(_devChart);
+        chartLeft.Controls.Add(chartToolbar);
+        _devChart.MinimumSize = new Size(200, 240);
+
+        var picker = BuildItemPicker();
+        var split = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Surface,
+        };
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 268));
+        split.Controls.Add(chartLeft, 0, 0);
+        split.Controls.Add(picker, 1, 0);
+
         var chartHost = new Panel
         {
-            Dock = DockStyle.Top, Height = 360, MinimumSize = new Size(0, 360),
+            Dock = DockStyle.Top, Height = 400, MinimumSize = new Size(0, 360),
             BackColor = Theme.Surface, Padding = new Padding(0, 0, 0, 8),
         };
-        chartHost.Controls.Add(_devChart);
-        chartHost.Controls.Add(chartToolbar);
-        _devChart.MinimumSize = new Size(200, 280);
+        chartHost.Controls.Add(split);
 
         _learnPanel = new LearningPanel(_engine, embedded: true) { Dock = DockStyle.Top, Height = 460 };
 
@@ -130,6 +154,163 @@ public class AnalysisPanel : Panel
         TextAlign = ContentAlignment.MiddleCenter, BackColor = Theme.Surface,
     };
 
+    private Panel BuildItemPicker()
+    {
+        var host = new Panel
+        {
+            Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(8, 6, 8, 6),
+        };
+        _itemCaption = new Label
+        {
+            Dock = DockStyle.Top, Height = 22, ForeColor = Theme.TextMain, Font = Theme.Small,
+            Text = "测项 0/0", TextAlign = ContentAlignment.MiddleLeft,
+        };
+        var btns = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top, Height = 34, FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false, BackColor = Theme.Surface, Padding = new Padding(0, 2, 0, 0),
+        };
+        var btnAll = Theme.MakeButton("全选", 56);
+        var btnTop = Theme.MakeButton("偏离最大", 80);
+        var btnNone = Theme.MakeButton("清空", 56);
+        btnAll.Height = btnTop.Height = btnNone.Height = 26;
+        btnAll.Click += (_, _) => SelectAllVisible();
+        btnTop.Click += (_, _) => SelectTopDeviations();
+        btnNone.Click += (_, _) => SelectNone();
+        btns.Controls.AddRange(new Control[] { btnAll, btnTop, btnNone });
+
+        _itemSearch = new TextBox
+        {
+            Dock = DockStyle.Top, Height = 24, Font = Theme.Small, PlaceholderText = "筛选测项…",
+        };
+        var searchDebounce = UiAsync.Debounce(_itemSearch, 180, RebuildItemList);
+        _itemSearch.TextChanged += (_, _) => { searchDebounce.Stop(); searchDebounce.Start(); };
+
+        _itemList = new CheckedListBox
+        {
+            Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false,
+            Font = Theme.Small, BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Theme.Surface, ForeColor = Theme.TextMain,
+        };
+        _itemList.ItemCheck += OnItemCheck;
+
+        host.Controls.Add(_itemList);
+        host.Controls.Add(_itemSearch);
+        host.Controls.Add(btns);
+        host.Controls.Add(_itemCaption);
+        return host;
+    }
+
+    private void OnItemCheck(object? sender, ItemCheckEventArgs e)
+    {
+        if (_bindingItems || e.Index < 0 || e.Index >= _itemList.Items.Count) return;
+        _userPickedItems = true;
+        var name = _itemList.Items[e.Index]?.ToString() ?? "";
+        if (e.NewValue == CheckState.Checked) _selectedItems.Add(name);
+        else _selectedItems.Remove(name);
+        BeginInvoke(PushChart);
+    }
+
+    private void SelectAllVisible()
+    {
+        _userPickedItems = true;
+        _bindingItems = true;
+        try
+        {
+            for (int i = 0; i < _itemList.Items.Count; i++)
+            {
+                var name = _itemList.Items[i]?.ToString() ?? "";
+                if (name.Length == 0) continue;
+                _selectedItems.Add(name);
+                _itemList.SetItemChecked(i, true);
+            }
+        }
+        finally { _bindingItems = false; }
+        PushChart();
+    }
+
+    private void SelectNone()
+    {
+        _userPickedItems = true;
+        _selectedItems.Clear();
+        RebuildItemList();
+        PushChart();
+    }
+
+    private void SelectTopDeviations()
+    {
+        _userPickedItems = true;
+        _selectedItems.Clear();
+        foreach (var n in DeviationSeriesBuilder.DefaultVisibleNames(_allSeries, 8))
+            _selectedItems.Add(n);
+        RebuildItemList();
+        PushChart();
+    }
+
+    private void ApplyChartData(List<string> labels, List<DeviationSeries> series, string? emptyHint, string? statusHint)
+    {
+        _passLabels = labels ?? new List<string>();
+        _allSeries = series ?? new List<DeviationSeries>();
+        _chartEmptyHint = emptyHint;
+        _chartStatusHint = statusHint;
+        var live = new HashSet<string>(_allSeries.Select(s => s.TestName), StringComparer.OrdinalIgnoreCase);
+        _selectedItems.RemoveWhere(n => !live.Contains(n));
+        if (!_userPickedItems || _selectedItems.Count == 0)
+        {
+            _selectedItems.Clear();
+            foreach (var n in DeviationSeriesBuilder.DefaultVisibleNames(_allSeries, 8))
+                _selectedItems.Add(n);
+        }
+        RebuildItemList();
+        PushChart();
+    }
+
+    private void RebuildItemList()
+    {
+        if (_itemList == null) return;
+        _bindingItems = true;
+        try
+        {
+            var q = (_itemSearch?.Text ?? "").Trim();
+            _itemList.BeginUpdate();
+            _itemList.Items.Clear();
+            foreach (var s in _allSeries)
+            {
+                if (q.Length > 0 && s.TestName.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                _itemList.Items.Add(s.TestName, _selectedItems.Contains(s.TestName));
+            }
+            _itemList.EndUpdate();
+        }
+        finally { _bindingItems = false; }
+        UpdateItemCaption();
+    }
+
+    private void UpdateItemCaption()
+    {
+        if (_itemCaption == null) return;
+        var shown = _itemList?.Items.Count ?? 0;
+        _itemCaption.Text = shown == _allSeries.Count
+            ? $"测项 已选 {_selectedItems.Count}/{_allSeries.Count}"
+            : $"测项 已选 {_selectedItems.Count}/{_allSeries.Count}（列出 {shown}）";
+    }
+
+    private void PushChart()
+    {
+        UpdateItemCaption();
+        var shown = DeviationSeriesBuilder.Filter(_allSeries, _selectedItems);
+        if (shown.Count == 0)
+        {
+            var hint = _allSeries.Count == 0
+                ? (_chartEmptyHint ?? "暂无数据")
+                : "请在右侧勾选要查看的测项";
+            _devChart.SetData(_passLabels, shown, hint, null);
+            return;
+        }
+        var st = $"显示 {shown.Count}/{_allSeries.Count} 项";
+        if (!string.IsNullOrWhiteSpace(_chartStatusHint)) st += "  ·  " + _chartStatusHint;
+        _devChart.SetData(_passLabels, shown, null, st);
+    }
+
     /// <param name="force">用户点刷新时 true，跳过节流。</param>
     public void Refresh2(bool force = false)
     {
@@ -158,14 +339,18 @@ public class AnalysisPanel : Panel
                 var snap = LearningSnapshot.Capture(db, cfg);
                 var tdms = AnalysisEngine.GetTdmsState(db);
                 var tdmsRows = db.GetRecentTdmsFeatures(50);
+                var measRows = db.CountPassMeasurementRows();
                 UiAsync.Post(this, () =>
                 {
-                    if (IsDisposed || gen != _refreshGen) return;
-                    ApplySummary(attr, snap, tdms);
-                    FillAttr(attr);
-                    FillTdmsRows(tdmsRows);
-                    _learnPanel.BindSnapshot(snap, db.CountPassMeasurementRows());
-                    _dataBusy = false;
+                    try
+                    {
+                        if (IsDisposed || gen != _refreshGen) return;
+                        ApplySummary(attr, snap, tdms);
+                        FillAttr(attr);
+                        FillTdmsRows(tdmsRows);
+                        _learnPanel.BindSnapshot(snap, measRows);
+                    }
+                    finally { if (gen == _refreshGen) _dataBusy = false; }
                 });
             }
             catch (Exception ex)
@@ -222,7 +407,7 @@ public class AnalysisPanel : Panel
             {
                 try
                 {
-                    if (!IsDisposed) _devChart?.SetData(labels, series, emptyHint, statusHint);
+                    if (!IsDisposed) ApplyChartData(labels, series, emptyHint, statusHint);
                 }
                 catch (Exception ex) { Logger.Warning($"[分析] 折线回写失败: {ex.Message}"); }
                 finally { _chartBusy = false; }

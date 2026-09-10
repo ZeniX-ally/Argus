@@ -24,7 +24,24 @@ internal static class UiAsync
     public static void Post(Control owner, Action action)
     {
         if (owner.IsDisposed) return;
-        if (owner.IsHandleCreated) owner.BeginInvoke(action);
-        else action();
+        void Queue()
+        {
+            if (owner.IsDisposed || !owner.IsHandleCreated) return;
+            try { owner.BeginInvoke(action); }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+        if (owner.IsHandleCreated) { Queue(); return; }
+        void OnCreated(object? s, EventArgs e)
+        {
+            owner.HandleCreated -= OnCreated;
+            Queue();
+        }
+        owner.HandleCreated += OnCreated;
+        if (owner.IsHandleCreated)
+        {
+            owner.HandleCreated -= OnCreated;
+            Queue();
+        }
     }
 }

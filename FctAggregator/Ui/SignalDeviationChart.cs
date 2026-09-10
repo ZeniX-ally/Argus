@@ -117,7 +117,7 @@ public sealed class SignalDeviationChart : Control
         for (int si = 0; si < _series.Count; si++)
         {
             var ser = _series[si];
-            var col = ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(si));
+            var col = ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(ser.TestName));
             var pts = new List<PointF>();
             foreach (var (xi, p) in ser.Points)
             {
@@ -187,7 +187,7 @@ public sealed class SignalDeviationChart : Control
         }
         for (int si = 0; si < _series.Count; si++)
         {
-            var col = ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(si));
+            var col = ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(_series[si].TestName));
             using var lb = new SolidBrush(col);
             g.FillRectangle(lb, legX, legY + si * 16, 8, 8);
             var shortName = _series[si].TestName.Length > 20 ? _series[si].TestName[..20] + "…" : _series[si].TestName;

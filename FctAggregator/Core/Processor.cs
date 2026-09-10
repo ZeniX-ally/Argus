@@ -92,7 +92,7 @@ public class Processor
             return null;
         }
 
-        return new TestRecord
+        var rec = new TestRecord
         {
             StationId = outp.StationId,
             Model = outp.Model,
@@ -111,5 +111,9 @@ public class Processor
             Measurements = outp.Measurements,
             FileSize = outp.FileSize,
         };
+        int keepDays = Math.Clamp(_cfg.AnalyzeMeasureRetentionDays, 7, 90);
+        if (rec.Measurements.Count > 0 && !Database.IsWithinRetention(rec.TestDate, keepDays))
+            rec.Measurements = new List<MeasurementRow>();
+        return rec;
     }
 }

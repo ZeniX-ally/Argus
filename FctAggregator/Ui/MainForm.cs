@@ -4,6 +4,10 @@ namespace FctAggregator;
 
 public class MainForm : Form
 {
+    private static readonly string AppVersion = typeof(MainForm).Assembly.GetName().Version is { } v
+        ? $"{v.Major}.{v.Minor}.{v.Build}"
+        : "0.0.0";
+
     private readonly Engine _engine;
     private readonly AppConfig _cfg;
 
@@ -17,8 +21,6 @@ public class MainForm : Form
     private Label _statusRight = null!;
 
     private readonly Dictionary<string, KpiCard> _kpi = new();
-    private readonly Dictionary<string, Label> _statValues = new();
-    private SectionPanel _detailPanel = null!;
     private HourlyTrendChart _hourlyChart = null!;
     private DeviceOnlinePanel _deviceOnline = null!;
     private TopFailRankPanel _topFailRank = null!;
@@ -29,6 +31,7 @@ public class MainForm : Form
     private DeviceStatusPanel _devicePage = null!;
     private MaintenancePanel _maintPage = null!;
     private FailListPanel _failPage = null!;
+    private BackupCodePanel _backupPage = null!;
     private DebugPanel _debugPage = null!;
     private AnalysisPanel _analysisPage = null!;
     private System.Windows.Forms.Timer _timer = null!;
@@ -36,11 +39,11 @@ public class MainForm : Form
 
     private static readonly string[] PageTitles =
     {
-        "总览", "待办 / 维修记录", "设备状态", "FAIL 记录", "调试工具", "分析",
+        "总览", "待办 / 维修记录", "设备状态", "FAIL 记录", "备份 / Seq", "调试工具", "分析",
         "TDMS 波形",
     };
 
-    private const int OwnPageCount = 6;
+    private const int OwnPageCount = 7;
 
     private static readonly (string key, string label, Func<Form> factory)[] Tools =
     {
@@ -51,13 +54,15 @@ public class MainForm : Form
 
     private int _page = 0;
 
-    private const int DebugPageIndex = 4;
+    private const int BackupPageIndex = 4;
+    private const int DebugPageIndex = 5;
 
     public MainForm(Engine engine, bool debugMode = false)
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        Text = "Argus";
+        UiBridge.MainForm = this;
+        Text = $"Argus v{AppVersion}";
         var wa = Screen.PrimaryScreen!.WorkingArea;
         Width = Math.Min(1408, wa.Width);
         Height = Math.Min(768, wa.Height);
@@ -82,6 +87,7 @@ public class MainForm : Form
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
         Tick();
+        _engine.StartSeqMonitor();
     }
 
     private void BuildUi()
@@ -133,7 +139,7 @@ public class MainForm : Form
         };
         _pageTitle = new Label
         {
-            Dock = DockStyle.Left, Width = 260, Text = PageTitles[0],
+            Dock = DockStyle.Left, Width = 280, Text = PageTitles[0],
             Font = Theme.PageTitle, ForeColor = Theme.TextMain, BackColor = Theme.Surface,
             Padding = new Padding(18, 0, 0, 0), TextAlign = ContentAlignment.MiddleLeft,
         };
@@ -162,10 +168,11 @@ public class MainForm : Form
         _devicePage = new DeviceStatusPanel(_cfg) { Dock = DockStyle.Fill };
         _maintPage = new MaintenancePanel(_engine) { Dock = DockStyle.Fill };
         _failPage = new FailListPanel(_engine) { Dock = DockStyle.Fill };
+        _backupPage = new BackupCodePanel(_engine) { Dock = DockStyle.Fill };
         _debugPage = new DebugPanel(_engine) { Dock = DockStyle.Fill };
         _analysisPage = new AnalysisPanel(_engine) { Dock = DockStyle.Fill };
 
-        Control[] pages = { _dashboardPage, _maintPage, _devicePage, _failPage, _debugPage, _analysisPage };
+        Control[] pages = { _dashboardPage, _maintPage, _devicePage, _failPage, _backupPage, _debugPage, _analysisPage };
         for (int i = 0; i < pages.Length; i++)
         {
             var tp = new TabPage(PageTitles[i]) { Dock = DockStyle.Fill, BackColor = Theme.Bg };
@@ -200,7 +207,8 @@ public class MainForm : Form
                 host.Ensure();
                 host.ActivateTool();
             }
-            RefreshCurrentPage();
+            // 切页立刻返回；刷新下一拍再跑，避免 SelectedIndexChanged 里同步打库/扫盘卡住 UI
+            BeginInvoke(() => RefreshCurrentPage());
         };
 
         KeyDown += OnShortcut;
@@ -221,7 +229,7 @@ public class MainForm : Form
             _kpi[key] = c;
             kpiRow.Controls.Add(c, col, 0);
         }
-        AddKpi("today_product", "今日产品数（SN 去重）", Theme.Primary, 0);
+        AddKpi("today_product", "今日总测试", Theme.Primary, 0);
         AddKpi("today_pass", "今日 PASS", Theme.Success, 1);
         AddKpi("today_fail", "今日 FAIL", Theme.Danger, 2);
         AddKpi("today_yield", "今日良率", Theme.Info, 3);
@@ -268,9 +276,9 @@ public class MainForm : Form
         mainGrid.Controls.Add(_deviceOnline, 1, 0);
         mainGrid.SetRowSpan(_deviceOnline, 2);
 
-        _detailPanel = new SectionPanel("生产大屏监控") { Dock = DockStyle.Fill };
-        _detailPanel.Content.Controls.Add(mainGrid);
-        lower.Controls.Add(_detailPanel);
+        var dashPanel = new SectionPanel("生产大屏监控") { Dock = DockStyle.Fill };
+        dashPanel.Content.Controls.Add(mainGrid);
+        lower.Controls.Add(dashPanel);
 
         _learnAlertStrip = new LearnAlertStrip { Dock = DockStyle.Top };
 
@@ -295,7 +303,7 @@ public class MainForm : Form
             _page = index;
             _pageTitle.Text = PageTitles[Math.Min(index, PageTitles.Length - 1)];
             if (index >= OwnPageCount) _toolPages[index - OwnPageCount].Ensure();
-            RefreshCurrentPage();
+            BeginInvoke(() => RefreshCurrentPage());
         }
     }
 
@@ -314,7 +322,8 @@ public class MainForm : Form
                 case 1: _maintPage.Refresh2(); break;
                 case 2: _devicePage.Refresh2(); break;
                 case 3: _failPage.Refresh2(); break;
-                case 5: _analysisPage.Refresh2(force); break;
+                case BackupPageIndex: _backupPage.Refresh2(); break;
+                case 6: _analysisPage.Refresh2(force); break;
                 default: break;
             }
         }
@@ -327,13 +336,13 @@ public class MainForm : Form
         int idx = e.KeyCode switch
         {
             Keys.D1 => 0, Keys.D2 => 1, Keys.D3 => 2,
-            Keys.D4 => 3, Keys.D5 => DebugPageIndex,
+            Keys.D4 => 3, Keys.D5 => BackupPageIndex, Keys.D6 => DebugPageIndex,
             _ => -1,
         };
         if (idx >= 0) { ShowPage(idx); e.Handled = true; return; }
         int tool = e.KeyCode switch
         {
-            Keys.D6 => 0,
+            Keys.D7 => 0,
             _ => -1,
         };
         if (tool >= 0)
@@ -468,7 +477,8 @@ public class MainForm : Form
             if (_kpi.TryGetValue(k, out var c)) c.Set(v, sub);
         }
 
-        SetKpi("today_product", s.TodayProductCount.ToString("N0"), $"累计 {s.ProductCount:N0}");
+        SetKpi("today_product", s.TodayProductCount.ToString("N0"),
+            string.IsNullOrEmpty(s.TodayModelLine) ? $"PASS+FAIL · 累计台次 {s.ProductCount:N0}" : s.TodayModelLine);
         SetKpi("today_pass", s.TodayPass.ToString("N0"));
         SetKpi("today_fail", s.TodayFail.ToString("N0"));
         SetKpi("today_yield", s.TodayPass + s.TodayFail == 0 ? "—" : $"{s.TodayYield:F1}%");
@@ -489,56 +499,49 @@ public class MainForm : Form
     {
         try
         {
-            if (_engine?.Db == null) return;
-            if (Environment.TickCount64 - _lastDashRun < 5000) return; // 5s 节流，避免每秒全量聚合与采集写库争抢
-            _lastDashRun = Environment.TickCount64;
-            if (_dashUpdating) return; // 上一轮查询未完成时跳过本轮，防止任务堆积
-            _dashUpdating = true;
-            var db = _engine.Db;
-            string todayYmd = DateTime.Now.ToString("yyyyMMdd");
-            Task.Run(() =>
-            {
-                try
-                {
-                    var hourly = db.FetchDailyHourlyStats(string.Empty, todayYmd);
-                    var topFails = db.FetchDailyTopFails(string.Empty, todayYmd, 5);
-                    var alerts = db.FetchRecentFailAlerts(string.Empty, 10);
-                    var learnLines = new List<string>();
-                    if (_cfg.LearnBaselineEnabled)
-                    {
-                        var bs = LearningEngine.GetBaselineState(db);
-                        if (bs?.Alerts != null)
-                            foreach (var a in bs.Alerts.Take(2))
-                                learnLines.Add($"[基线] {a.Message}");
-                    }
-                    if (!IsHandleCreated || IsDisposed) return;
-                    BeginInvoke(() =>
-                    {
-                        // 回调在 UI 线程执行，窗体关闭竞态时控件可能已 Dispose，兜底防未处理异常
-                        try
-                        {
-                            _hourlyChart?.SetData(hourly);
-                            _topFailRank?.SetData(topFails);
-                            _liveAlert?.SetData(alerts);
-                            _learnAlertStrip?.SetAlerts(learnLines);
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Warning($"主页大屏刷新回调异常: {ex.Message}");
-                        }
-                    });
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warning($"主页大屏组件更新失败: {ex.Message}");
-                }
-                finally { _dashUpdating = false; }
-            });
+            var s = AppState.Snapshot();
+            _hourlyChart?.SetData(s.Hourly);
+            _topFailRank?.SetData(s.TopFails);
+            _liveAlert?.SetData(s.Alerts);
+            MaybeRefreshLearnStrip();
         }
         catch (Exception ex)
         {
             Logger.Warning($"主页大屏组件更新失败: {ex.Message}");
         }
+    }
+
+    private void MaybeRefreshLearnStrip()
+    {
+        if (!_cfg.LearnBaselineEnabled || _engine?.Db == null) return;
+        if (_dashUpdating) return;
+        if (Environment.TickCount64 - _lastDashRun < 5000) return;
+        _dashUpdating = true;
+        _lastDashRun = Environment.TickCount64;
+        var db = _engine.Db;
+        Task.Run(() =>
+        {
+            var learnLines = new List<string>();
+            try
+            {
+                var bs = LearningEngine.GetBaselineState(db);
+                if (bs?.Alerts != null)
+                    foreach (var a in bs.Alerts.Take(2))
+                        learnLines.Add($"[基线] {a.Message}");
+            }
+            catch (Exception ex) { Logger.Warning($"[总览] 基线预警查询失败: {ex.Message}"); }
+            try
+            {
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke(() =>
+                {
+                    try { _learnAlertStrip?.SetAlerts(learnLines); }
+                    catch (Exception ex) { Logger.Warning($"主页基线条刷新失败: {ex.Message}"); }
+                });
+            }
+            catch (Exception ex) { Logger.Warning($"主页基线条调度失败: {ex.Message}"); }
+            finally { _dashUpdating = false; }
+        });
     }
 
     private volatile bool _todoBadgeBusy;
@@ -589,7 +592,7 @@ public class MainForm : Form
         var left = $"结果目录: {_cfg.ResultsRoot}     库: {db}     待办 {_pendingTodo} 条     未完成维修 {_openMaint} 条";
         if (s.Status == "error") left = "⚠ 结果目录不存在，数据采集未运行！  " + left;
         if (_statusLeft.Text != left) _statusLeft.Text = left;
-        var right = $"更新于 {DateTime.Now:HH:mm}     Ctrl+1~5 切页 / 6 TDMS / R 刷新";
+        var right = $"v{AppVersion}     更新于 {DateTime.Now:HH:mm}     Ctrl+1~6 切页 / 7 TDMS / R 刷新";
         if (_statusRight.Text != right) _statusRight.Text = right;
     }
 

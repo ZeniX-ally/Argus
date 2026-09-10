@@ -18,6 +18,26 @@ public class AppConfig
     public bool TodoSpecMerge { get; set; } = true;
     public string ParsersPath { get; set; } = "parsers.json";
     public int DbMaintenanceHour { get; set; } = 3;
+    /// <summary>自动存储优化（轻量巡检 + 凌晨深度清理/压缩）。</summary>
+    public bool DbStorageAutoOptimize { get; set; } = true;
+    /// <summary>轻量巡检间隔（小时）：WAL 合并 + 过期日志清理 + 健康评分。</summary>
+    public int DbStorageMonitorHours { get; set; } = 4;
+    /// <summary>库文件超过该大小（MB）或空洞率高时触发 VACUUM。</summary>
+    public int DbVacuumThresholdMb { get; set; } = 500;
+    /// <summary>parse_failure_log 保留天数。</summary>
+    public int DbParseFailureRetentionDays { get; set; } = 30;
+
+    /// <summary>FCT 测试程序根目录（默认 C:\FTS）。</summary>
+    public string FctProgramSourceRoot { get; set; } = @"C:\FTS";
+    /// <summary>测试程序压缩包输出目录（默认 D:\backup）。</summary>
+    public string FctProgramBackupDir { get; set; } = @"D:\backup";
+    public bool FctProgramBackupEnabled { get; set; } = true;
+    /// <summary>磁盘上保留的 zip 份数（数据库记录永久保留）。</summary>
+    public int FctProgramBackupKeep { get; set; } = 10;
+
+    /// <summary>PEU Seq 测试程序目录（默认 C:\FTS\Apps\PEU\Seq）。</summary>
+    public string FctSeqRoot { get; set; } = @"C:\FTS\Apps\PEU\Seq";
+    public bool FctSeqMonitorEnabled { get; set; } = true;
     public string UpdateDir { get; set; } = "data/updates";
     /// <summary>只读更新源（共享文件夹/UNC 盘），非空时替代 UpdateDir 供扫描，暂存/备份仍落本机 UpdateDir。</summary>
     public string UpdateSource { get; set; } = "";
@@ -50,7 +70,7 @@ public class AppConfig
     public int AnalyzeMinSamples { get; set; } = 30;
     public double AnalyzeDriftSigma { get; set; } = 3.0;
     public double AnalyzeDriftWarnRatio { get; set; } = 1.0;
-    public int AnalyzeMeasureRetentionDays { get; set; } = 90;
+    public int AnalyzeMeasureRetentionDays { get; set; } = 30;
     public int AnalyzeFailItemRetentionDays { get; set; } = 90;
     public bool AnalyzeTdmsEnabled { get; set; } = true;
     public string TdmsRoot { get; set; } = "";
@@ -110,6 +130,30 @@ public class AppConfig
                 if (root.TryGetProperty("db_maintenance_hour", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var mh) && mh >= 0 && mh <= 23)
                     cfg.DbMaintenanceHour = mh;
+                if (root.TryGetProperty("db_storage_auto_optimize", out v))
+                    cfg.DbStorageAutoOptimize = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("db_storage_monitor_hours", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var smh) && smh >= 1 && smh <= 24)
+                    cfg.DbStorageMonitorHours = smh;
+                if (root.TryGetProperty("db_vacuum_threshold_mb", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var vtm) && vtm >= 100)
+                    cfg.DbVacuumThresholdMb = vtm;
+                if (root.TryGetProperty("db_parse_failure_retention_days", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var pfr) && pfr >= 7)
+                    cfg.DbParseFailureRetentionDays = pfr;
+                if (root.TryGetProperty("fct_program_source_root", out v) && v.ValueKind == JsonValueKind.String)
+                    cfg.FctProgramSourceRoot = (GetStringSafe(v) ?? cfg.FctProgramSourceRoot).Trim();
+                if (root.TryGetProperty("fct_program_backup_dir", out v) && v.ValueKind == JsonValueKind.String)
+                    cfg.FctProgramBackupDir = (GetStringSafe(v) ?? cfg.FctProgramBackupDir).Trim();
+                if (root.TryGetProperty("fct_program_backup_enabled", out v))
+                    cfg.FctProgramBackupEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("fct_program_backup_keep", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var fpk) && fpk >= 1)
+                    cfg.FctProgramBackupKeep = fpk;
+                if (root.TryGetProperty("fct_seq_root", out v) && v.ValueKind == JsonValueKind.String)
+                    cfg.FctSeqRoot = (GetStringSafe(v) ?? cfg.FctSeqRoot).Trim();
+                if (root.TryGetProperty("fct_seq_monitor_enabled", out v))
+                    cfg.FctSeqMonitorEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("auto_update", out v)) cfg.AutoUpdate = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("update_source", out v)) cfg.UpdateSource = (GetStringSafe(v) ?? "").Trim();
                 if (root.TryGetProperty("learn_baseline_enabled", out v)) cfg.LearnBaselineEnabled = v.ValueKind == JsonValueKind.True;
@@ -237,7 +281,10 @@ public class AppConfig
                     "log_level", "desktop_notify", "notify_min_interval_sec", "todo_scan_days",
                     "feishu_banner_img_key", "parsers_path",
                     "todo_spec_merge",
-                    "db_maintenance_hour",
+                    "db_maintenance_hour", "db_storage_auto_optimize", "db_storage_monitor_hours",
+                    "db_vacuum_threshold_mb", "db_parse_failure_retention_days",
+                    "fct_program_source_root", "fct_program_backup_dir", "fct_program_backup_enabled",
+                    "fct_program_backup_keep", "fct_seq_root", "fct_seq_monitor_enabled",
                     "auto_update", "update_source",
                     "learn_baseline_enabled", "learn_resource_sampling_enabled", "learn_priority_enabled",
                     "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
@@ -272,6 +319,16 @@ public class AppConfig
                 writer.WriteString("parsers_path", ParsersPath);
                 writer.WriteBoolean("todo_spec_merge", TodoSpecMerge);
                 writer.WriteNumber("db_maintenance_hour", DbMaintenanceHour);
+                writer.WriteBoolean("db_storage_auto_optimize", DbStorageAutoOptimize);
+                writer.WriteNumber("db_storage_monitor_hours", DbStorageMonitorHours);
+                writer.WriteNumber("db_vacuum_threshold_mb", DbVacuumThresholdMb);
+                writer.WriteNumber("db_parse_failure_retention_days", DbParseFailureRetentionDays);
+                writer.WriteString("fct_program_source_root", FctProgramSourceRoot);
+                writer.WriteString("fct_program_backup_dir", FctProgramBackupDir);
+                writer.WriteBoolean("fct_program_backup_enabled", FctProgramBackupEnabled);
+                writer.WriteNumber("fct_program_backup_keep", FctProgramBackupKeep);
+                writer.WriteString("fct_seq_root", FctSeqRoot);
+                writer.WriteBoolean("fct_seq_monitor_enabled", FctSeqMonitorEnabled);
                 writer.WriteBoolean("auto_update", AutoUpdate);
                 writer.WriteString("update_source", UpdateSource);
                 writer.WriteBoolean("learn_baseline_enabled", LearnBaselineEnabled);

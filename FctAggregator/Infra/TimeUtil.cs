@@ -16,6 +16,9 @@ public static class TimeUtil
         if (ts.Length == 8 && ts.All(char.IsDigit)) return $"{ts[..4]}-{ts[4..6]}-{ts[6..8]} 00:00:00";
         if (ts.Length == 14 && ts.All(char.IsDigit)) return $"{ts[..4]}-{ts[4..6]}-{ts[6..8]} {ts[8..10]}:{ts[10..12]}:{ts[12..14]}";
         if (ts.Length == 17 && ts.All(char.IsDigit)) return $"{ts[..4]}-{ts[4..6]}-{ts[6..8]} {ts[8..10]}:{ts[10..12]}:{ts[12..14]}";
+        // 20260910 08:15:30 / 20260910T08:15:30（目录日+空格时间，TryParse 不认）
+        if (ts.Length >= 15 && ts[8] is ' ' or 'T' && ts.Take(8).All(char.IsDigit))
+            return Normalize($"{ts[..4]}-{ts[4..6]}-{ts[6..8]} {ts[9..]}");
         var m = IsoOffsetRe.Match(ts);
         if (m.Success) return Normalize(m.Groups[1].Value.Replace('T', ' '));
         if (DateTime.TryParse(ts, CultureInfo.InvariantCulture,
@@ -39,7 +42,9 @@ public static class TimeUtil
     public static string ExtractFileNameTime(string? pathOrFileName)
     {
         if (string.IsNullOrWhiteSpace(pathOrFileName)) return "";
-        var name = Path.GetFileNameWithoutExtension(pathOrFileName);
+        string name;
+        try { name = Path.GetFileNameWithoutExtension(pathOrFileName); }
+        catch { name = pathOrFileName; }
         var matches = FileTimeRe.Matches(name);
         foreach (Match m in matches)
         {

@@ -65,6 +65,8 @@ public class DebugPanel : Panel
         AddBtn("推送测试", TestPush);
         AddBtn("桌面提示测试", TestDesktopNotify);
         AddBtn("数据库状态", TestDbStatus);
+        AddBtn("存储诊断", StorageDiagnose);
+        AddBtn("智能优化", SmartOptimize);
         AddTag("检测");
         AddBtn("机台检测", TestStation);
         AddBtn("型号发现", TestModels);
@@ -129,9 +131,23 @@ public class DebugPanel : Panel
     {
         var total = _engine.Db.TotalRecords();
         var g = _engine.Db.FetchGlobalStats(_engine.ResolvedStationId);
+        var st = _engine.Db.GetStorageStats();
+        var health = StorageOptimizer.Evaluate(_engine.Db, _engine.Config);
         Print($"数据库记录总数: {total}");
         Print($"  PASS={g.Pass} FAIL={g.Fail} 中断={g.Interrupted} Invalid={g.Invalid}");
         Print($"  产品去重: {g.ProductCount}");
+        Print($"  {st.Format()}");
+        foreach (var line in health.FormatLines()) Print($"  {line}");
+        var last = _engine.Db.GetMeta(StorageOptimizer.MetaLastRun);
+        if (!string.IsNullOrEmpty(last))
+            Print($"  上次优化: {last}  评分 {_engine.Db.GetMeta(StorageOptimizer.MetaLastScore) ?? "?"}");
+    }
+
+    private void StorageDiagnose()
+    {
+        var health = StorageOptimizer.Evaluate(_engine.Db, _engine.Config);
+        Print("── 存储分层诊断 ──");
+        foreach (var line in health.FormatLines()) Print(line);
     }
 
     private void TestStation()
@@ -186,7 +202,9 @@ public class DebugPanel : Panel
         var today = DateTime.Now.ToString("yyyyMMdd");
         var d = _engine.Db.FetchDailyStats(_engine.ResolvedStationId, today);
         var yield = d.Pass + d.Fail > 0 ? d.Pass * 100.0 / (d.Pass + d.Fail) : 0;
-        Print($"今日({DateTime.Now:yyyy-MM-dd}) 统计: PASS={d.Pass} FAIL={d.Fail} 中断={d.Interrupted} 良率={yield:F1}%");
+        Print($"今日({DateTime.Now:yyyy-MM-dd}) 统计(公司口径 FAIL优先, Offline PASS不计): 总测试={d.TodayProductCount} PASS={d.Pass} FAIL={d.Fail} 中断={d.Interrupted} 良率={yield:F1}%");
+        foreach (var m in _engine.Db.FetchDailyStatsByModel(_engine.ResolvedStationId, today))
+            Print($"  型号 {m.Model}: PASS={m.Pass} FAIL={m.Fail} 中断={m.Interrupted} 合计={m.Total}");
     }
 
     private void QueryMonth()
@@ -321,6 +339,30 @@ public class DebugPanel : Panel
             UseShellExecute = true,
         });
         Print($"已打开: {Logger.LogDirectory}");
+    }
+
+    private void SmartOptimize()
+    {
+        var health = StorageOptimizer.Evaluate(_engine.Db, _engine.Config);
+        Print(health.FormatHeadline());
+        foreach (var a in health.PlannedActions) Print($"  计划: {a}");
+        var msg = "将按保留策略清理过期数据、重建瘦表并视情况 VACUUM。\n大库可能需要数分钟，期间请勿关软件。继续？";
+        if (MessageBox.Show(msg, "智能优化", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        Print("正在优化，请稍候…");
+        var db = _engine.Db;
+        var cfg = _engine.Config;
+        Task.Run(() =>
+        {
+            try
+            {
+                var rep = StorageOptimizer.Run(db, cfg, StorageOptimizeMode.Deep);
+                BeginInvoke(() => { foreach (var line in rep.FormatLines()) Print(line); });
+            }
+            catch (Exception ex)
+            {
+                BeginInvoke(() => Print($"优化失败: {ex.Message}"));
+            }
+        });
     }
 
     private void ClearDb()

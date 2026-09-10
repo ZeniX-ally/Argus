@@ -50,7 +50,7 @@ public class MaintenancePanel : Panel
         _filter = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 6, 4, 0) };
         _filter.Items.AddRange(MaintenanceMeta.FilterItems());
         _filter.SelectedIndex = 0;
-        _filter.SelectedIndexChanged += (_, _) => { if (_viewMode == "list") RefreshList(); };
+        _filter.SelectedIndexChanged += (_, _) => { if (_viewMode == "list") Refresh2(); };
         bar.Controls.Add(_filter);
 
         _rangeLabel = new Label
@@ -88,7 +88,7 @@ public class MaintenancePanel : Panel
         _board = new MaintenanceBoard(_engine) { Dock = DockStyle.Fill, Visible = true };
         _board.EditRequested += EditRecord;
         _board.ContextRequested += (m, anchor, at) => BuildRecordMenu(m).Show(anchor, at);
-        _board.Changed += () => { if (_viewMode == "list") RefreshList(); };
+        _board.Changed += () => { if (_viewMode == "list") Refresh2(); };
 
         _listHost = new Panel { Dock = DockStyle.Fill, Visible = false };
         _list = new ListView
@@ -113,6 +113,8 @@ public class MaintenancePanel : Panel
     }
 
     private string _viewMode = "board";
+    private volatile bool _refreshBusy;
+    private int _refreshGen;
 
     private void SetViewMode(string mode)
     {
@@ -147,8 +149,86 @@ public class MaintenancePanel : Panel
 
     public void Refresh2()
     {
-        if (_viewMode == "board") _board.Reload();
-        else RefreshList();
+        if (_refreshBusy) return;
+        _refreshBusy = true;
+        int gen = ++_refreshGen;
+        var view = _viewMode;
+        var filterZh = _filter.SelectedItem?.ToString() ?? "全部";
+        var statusKey = filterZh == "全部" ? "" : MaintenanceMeta.KeyOf(filterZh);
+        var db = _engine.Db;
+        Task.Run(() =>
+        {
+            try
+            {
+                if (view == "board")
+                {
+                    var snap = _board.LoadSnapshot();
+                    UiAsync.Post(this, () =>
+                    {
+                        try
+                        {
+                            if (IsDisposed || gen != _refreshGen) return;
+                            _board.ApplySnapshot(snap);
+                        }
+                        finally { if (gen == _refreshGen) _refreshBusy = false; }
+                    });
+                }
+                else
+                {
+                    var rows = LoadListRows(db, statusKey);
+                    UiAsync.Post(this, () =>
+                    {
+                        try
+                        {
+                            if (IsDisposed || gen != _refreshGen) return;
+                            FillList(rows);
+                        }
+                        finally { if (gen == _refreshGen) _refreshBusy = false; }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"维修页刷新失败: {ex.Message}");
+                UiAsync.Post(this, () => _refreshBusy = false);
+            }
+        });
+    }
+
+    private static List<MaintenanceRecord> LoadListRows(Database db, string statusKey)
+    {
+        var rows = db.ListMaintenance(statusKey, ListLimit);
+        if (statusKey == MaintenanceMeta.DoneStatus)
+        {
+            var legacy = db.ListMaintenance(MaintenanceMeta.LegacyClosed, ListLimit);
+            if (legacy.Count > 0)
+                rows = rows.Concat(legacy)
+                           .OrderByDescending(m => string.IsNullOrEmpty(m.UpdatedAt) ? m.CreatedAt : m.UpdatedAt)
+                           .Take(ListLimit).ToList();
+        }
+        return rows;
+    }
+
+    private void FillList(List<MaintenanceRecord> rows)
+    {
+        _list.BeginUpdate();
+        _list.Items.Clear();
+        _current.Clear();
+        foreach (var m in rows)
+        {
+            _current.Add(m);
+            var item = new ListViewItem(m.Id.ToString());
+            item.SubItems.Add(m.FailItem);
+            item.SubItems.Add(m.FailReason);
+            item.SubItems.Add(MaintenanceMeta.SeverityZhOf(m.Severity));
+            item.SubItems.Add(MaintenanceMeta.ZhOf(m.Status));
+            item.SubItems.Add(m.Resolver);
+            item.SubItems.Add(m.CreatedAt);
+            item.SubItems.Add(m.UpdatedAt);
+            item.Tag = m;
+            _list.Items.Add(item);
+        }
+        _list.EndUpdate();
     }
 
     public int PendingTodoCount => _board.PendingTodoCount;
@@ -168,46 +248,11 @@ public class MaintenancePanel : Panel
             _customTo = dlg.To;
             _board.SetTodoRange(_customFrom, _customTo, custom: true);
             Logger.Info($"[待办] 区间已设为 {_customFrom:yyyy-MM-dd} ~ {_customTo:yyyy-MM-dd}");
+            Refresh2();
             return;
         }
         _board.SetTodoRange(r.From, r.To);
-    }
-
-    private void RefreshList()
-    {
-        var filterZh = _filter.SelectedItem?.ToString() ?? "全部";
-        var statusKey = filterZh == "全部" ? "" : MaintenanceMeta.KeyOf(filterZh);
-        _list.BeginUpdate();
-        _list.Items.Clear();
-        _current.Clear();
-        try
-        {
-            var rows = _engine.Db.ListMaintenance(statusKey, ListLimit);
-            if (statusKey == MaintenanceMeta.DoneStatus)
-            {
-                var legacy = _engine.Db.ListMaintenance(MaintenanceMeta.LegacyClosed, ListLimit);
-                if (legacy.Count > 0)
-                    rows = rows.Concat(legacy)
-                               .OrderByDescending(m => string.IsNullOrEmpty(m.UpdatedAt) ? m.CreatedAt : m.UpdatedAt)
-                               .Take(ListLimit).ToList();
-            }
-            foreach (var m in rows)
-            {
-                _current.Add(m);
-                var item = new ListViewItem(m.Id.ToString());
-                item.SubItems.Add(m.FailItem);
-                item.SubItems.Add(m.FailReason);
-                item.SubItems.Add(MaintenanceMeta.SeverityZhOf(m.Severity));
-                item.SubItems.Add(MaintenanceMeta.ZhOf(m.Status));
-                item.SubItems.Add(m.Resolver);
-                item.SubItems.Add(m.CreatedAt);
-                item.SubItems.Add(m.UpdatedAt);
-                item.Tag = m;
-                _list.Items.Add(item);
-            }
-        }
-        catch (Exception ex) { Logger.Error($"维修记录加载失败: {ex.Message}"); }
-        finally { _list.EndUpdate(); }
+        Refresh2();
     }
 
     private void NewRecord()

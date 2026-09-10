@@ -8,6 +8,7 @@ public class Engine
     private readonly AppConfig _cfg;
     private readonly Database _db;
     private readonly DbMaintenance _maintenance;
+    private FctSeqMonitor? _seqMonitor;
     private readonly string _stationId;
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly object _watcherLock = new();
@@ -30,6 +31,8 @@ public class Engine
     public Database Db => _db;
     public string ResolvedStationId => _stationId;
     public AppConfig Config => _cfg;
+
+    public void StartSeqMonitor() => _seqMonitor = FctSeqMonitor.Start(_cfg, _db);
     public Engine(AppConfig cfg)
     {
         _cfg = cfg;
@@ -56,6 +59,20 @@ public class Engine
 
         Logger.Info($"服务启动 | station_id={(string.IsNullOrEmpty(sid) ? "Auto" : sid)} | results_root={cfg.ResultsRoot}");
         Logger.Info($"数据库: {dbFile}");
+        try
+        {
+            var st = _db.GetStorageStats();
+            Logger.Info($"[存储] {st.Format()}");
+            var health = StorageOptimizer.Evaluate(_db, _cfg);
+            Logger.Info($"[存储] {health.FormatHeadline()}");
+            if (health.Score < 70)
+            {
+                foreach (var issue in health.Issues.Take(3))
+                    Logger.Warning($"[存储] {issue}");
+                Logger.Warning("[存储] 请到「调试工具 → 智能优化」立即处理，或等待定时维护自动执行。");
+            }
+        }
+        catch { }
         Logger.Info($"Webhook: {(AppState.WebhookConfigured ? "已配置" : "未配置")}");
         Logger.Info($"FCT.ini: {FctIni.AutoFindIni() ?? "未找到(设备状态页将显示诊断)"} | config={cfg.FctIniPath}");
         Logger.Info($"程序目录(BaseDir): {AppConfig.BaseDir}");
@@ -106,18 +123,42 @@ public class Engine
         _modelRescanTimer = new System.Threading.Timer(_ => RescanModels(), null,
             TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 
-        if (models.Count > 0 && !_cfg.SkipHistoricalScan)
+        if (models.Count > 0)
         {
-            Task.Run(() => HistoricalScan(models, root));
+            RefreshStats();
+            Task.Run(() => RunStartupScans(models, root));
+        }
+    }
+
+    /// <summary>启动扫描：先今日目录（可覆盖重解析 + 补推 FAIL），再按需全量历史（跳过已入库路径）。</summary>
+    private void RunStartupScans(List<string> models, string root)
+    {
+        var today = DateTime.Now.ToString("yyyyMMdd");
+        Logger.Info($"[历史扫描] 优先补扫今日({today})目录（含已入库路径重解析）…");
+        HistoricalScan(models, root, today, reparseExisting: true, markScanComplete: false);
+        FlushTodayFailAlerts(today);
+        RefreshStats();
+
+        if (!_cfg.SkipHistoricalScan)
+        {
+            Logger.Info("[历史扫描] 今日补扫完成，开始全量历史扫描（已入库路径跳过）…");
+            HistoricalScan(models, root, onlyDate: null, reparseExisting: false, markScanComplete: true);
         }
         else
         {
-            // 开机只补今日：skip 历史全扫或当前无可扫型号时，至少把"程序打开前已产出的今日文件"扫入。
-            // 否则今日 KPI 只随实时事件增长，早于本次启动的文件不显示（线上反馈 v3.31.0 bug）。
-            var today = DateTime.Now.ToString("yyyyMMdd");
-            if (_cfg.SkipHistoricalScan) Logger.Info($"历史扫描已跳过，仅补扫今日({today})目录…");
-            Task.Run(() => HistoricalScan(models, root, today));
+            Logger.Info($"历史扫描已跳过全量，仅完成今日({today})补扫");
+            FinishHistoricalScan();
         }
+    }
+
+    private void FinishHistoricalScan()
+    {
+        AppState.SetScanProgress(phase: "done");
+        _initialScanComplete = true;
+        AppState.HistoricalScanComplete = true;
+        RefreshStats();
+        Logger.Info("历史扫描完成，FAIL 告警推送已启用");
+        StartAutoBackfillSn();
     }
 
     private void AutoBackfillSn()
@@ -141,6 +182,8 @@ public class Engine
     public void Stop()
     {
         try { DeviceSampleRecorder.Instance.Stop(); } catch { }
+        try { _seqMonitor?.Dispose(); } catch { }
+        _seqMonitor = null;
         _maintenance.Stop();
         _cts.Cancel();
         try { _retryThread?.Join(3000); } catch { }
@@ -173,16 +216,13 @@ public class Engine
         return models.OrderBy(x => x).ToList();
     }
 
-    private void HistoricalScan(List<string> models, string root, string? onlyDate = null)
+    private void HistoricalScan(List<string> models, string root, string? onlyDate = null,
+        bool reparseExisting = false, bool markScanComplete = true)
     {
         try
         {
-            var sid = _stationId;
-            if (string.IsNullOrEmpty(sid))
-            {
-                sid = "UNKNOWN";
-                Logger.Warning("[历史扫描] station_id 未配置且无法自动检测, 使用 UNKNOWN 继续扫描入库");
-            }
+            if (string.IsNullOrEmpty(_stationId))
+                Logger.Warning("[历史扫描] station_id 未配置且无法自动检测, 记录将使用解析器回落值");
             var processor = new Processor(_cfg, _stationId, Parsing.ParserRegistry.Instance, _db);
 
             AppState.SetScanProgress(phase: "scanning", total: 0, parsed: 0);
@@ -201,22 +241,22 @@ public class Engine
                     }
                 }
             AppState.SetScanProgress(total: allFiles.Count);
-            Logger.Info($"[历史扫描][扫描阶段完成] 总文件={allFiles.Count}");
+            Logger.Info($"[历史扫描][扫描阶段完成] 总文件={allFiles.Count} onlyDate={onlyDate ?? "ALL"} reparse={reparseExisting}");
 
             AppState.SetScanProgress(phase: "parsing", total: allFiles.Count, parsed: 0);
             const int batchSize = 100;
-            int processed = 0, totalInserted = 0;
+            int processed = 0, totalInserted = 0, totalUpdated = 0;
             for (int i = 0; i < allFiles.Count; i += batchSize)
             {
                 if (_cts.IsCancellationRequested) return;
                 var take = Math.Min(batchSize, allFiles.Count - i);
                 var batch = allFiles.GetRange(i, take).Select(Path.GetFullPath).ToList();
-                var existing = _db.GetExistingPaths(batch);
+                HashSet<string>? existing = reparseExisting ? null : _db.GetExistingPaths(batch);
 
                 var records = new List<TestRecord>();
                 foreach (var p in batch)
                 {
-                    if (existing.Contains(p))
+                    if (existing != null && existing.Contains(p))
                     {
                         processed++;
                         continue;
@@ -233,19 +273,34 @@ public class Engine
                     catch (Exception ex) { Logger.Error($"[历史扫描] 解析失败: {p} | {ex.Message}"); }
                     processed++;
                 }
-                try { totalInserted += _db.BatchInsert(records); }
+                var batchOutcomes = new List<IngestResult>();
+                try
+                {
+                    totalInserted += _db.BatchUpsert(records, null, batchOutcomes);
+                    totalUpdated += batchOutcomes.Count(o => o.WasUpdated);
+                }
                 catch (Exception ex)
                 {
-                    // 批量级保护：单批写锁冲突（database is locked）不中止整轮扫描，短等待后重试一次，再失败放弃该批继续下一批
                     Logger.Error($"[历史扫描] 批次入库失败(起始索引 {i}, {records.Count} 条): {ex.Message}，2s 后重试一次");
                     Thread.Sleep(2000);
-                    try { totalInserted += _db.BatchInsert(records); }
+                    try
+                    {
+                        batchOutcomes.Clear();
+                        totalInserted += _db.BatchUpsert(records, null, batchOutcomes);
+                        totalUpdated += batchOutcomes.Count(o => o.WasUpdated);
+                    }
                     catch (Exception ex2) { Logger.Error($"[历史扫描] 批次重试仍失败(起始索引 {i})，放弃该批继续: {ex2.Message}"); }
+                }
+                for (int ri = 0; ri < records.Count && ri < batchOutcomes.Count; ri++)
+                {
+                    var outcome = batchOutcomes[ri];
+                    if (outcome.RecordId <= 0) continue;
+                    AfterIngest(records[ri], outcome, pushFail: false);
                 }
                 AppState.SetScanProgress(parsed: processed);
                 RefreshStats();
             }
-            Logger.Info($"[历史扫描] 结束 | xml={allFiles.Count} | 插入={totalInserted}");
+            Logger.Info($"[历史扫描] 结束 | xml={allFiles.Count} | 新插入={totalInserted} | 覆盖更新={totalUpdated}");
             SyncTodos("历史扫描后");
         }
         catch (Exception ex)
@@ -254,13 +309,17 @@ public class Engine
         }
         finally
         {
-            AppState.SetScanProgress(phase: "done");
-            _initialScanComplete = true;
-            AppState.HistoricalScanComplete = true;
-            RefreshStats();
-            Logger.Info("历史扫描完成，FAIL 告警推送已启用");
-            StartAutoBackfillSn(); // 扫描结束后再补 SN，避免写锁竞争
+            if (markScanComplete) FinishHistoricalScan();
         }
+    }
+
+    private void FlushTodayFailAlerts(string todayYmd)
+    {
+        var pending = _db.ListTodayFailsNeedingAlert(todayYmd, string.IsNullOrEmpty(_stationId) ? null : _stationId);
+        if (pending.Count == 0) return;
+        Logger.Info($"[补推] 今日未推送 FAIL {pending.Count} 条，开始补发告警…");
+        foreach (var rec in pending)
+            TryPushFailAlert(rec, allowDuringScan: true);
     }
 
     private void RefreshStats() => AppState.RefreshStats(_db, _stationId, _cfg.ResultsRoot);
@@ -400,63 +459,69 @@ public class Engine
             }
         }
 
-        long insertedId = 0; // 审计 A2：复用入库返回 id，免去 TDMS 链路逐条反查
-        try
-        {
-            insertedId = _db.InsertOneReturnId(rec);
-            Logger.Info($"[入库] {rec.Model} | {rec.Result} | {Path.GetFileName(path)}");
-        }
+        IngestResult outcome;
+        try { outcome = _db.UpsertTestRecord(rec); }
         catch (Exception ex) { Logger.Error($"[错误] 入库失败: {path} | {ex.Message}"); return; }
+        if (outcome.RecordId <= 0) return;
 
-        // 审计：实时喂样推进回填水位（LearnBackfill.AdvanceWatermark 只增不降），
-        // 否则下次回填会把实时已喂过的记录再喂一遍，normal_models.n 双计。
-        long learnRid = insertedId > 0 ? insertedId
-            : _db.GetRecordIdsByPaths(new[] { Path.GetFullPath(path) }).Values.FirstOrDefault();
+        if (outcome.IsNew || outcome.WasUpdated)
+            Logger.Info($"[入库] {rec.Model} | {rec.Result} | {Path.GetFileName(path)}{(outcome.WasUpdated ? " (更新)" : "")}");
 
-        // 正常态：先评分再入模，避免当前点污染基线；开关关 no-op
-        DeviationScorer.EvaluateMeasurementRecord(_db, _cfg, rec);
-        NormalLearners.ObserveMeasurement(_db, _cfg, rec);
-        LearnBackfill.AdvanceWatermark(_db, LearnBackfill.MetaMeas, learnRid);
+        AfterIngest(rec, outcome, pushFail: true);
+        RefreshStatsThrottled();
 
-        // 规格06期3：TDMS 特征化实时入队（单消费者队列，不阻塞采集链路；开关关/tdms_root 空静默）
-        if (_cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(_cfg.TdmsRoot))
+        if (rec.Result == "FAIL") SyncTodos("实时");
+    }
+
+    private void AfterIngest(TestRecord rec, IngestResult outcome, bool pushFail)
+    {
+        if (outcome.IsNew || outcome.WasUpdated)
+        {
+            DeviationScorer.EvaluateMeasurementRecord(_db, _cfg, rec);
+            NormalLearners.ObserveMeasurement(_db, _cfg, rec);
+            LearnBackfill.AdvanceWatermark(_db, LearnBackfill.MetaMeas, outcome.RecordId);
+
+            if (_cfg.AnalyzeTdmsEnabled && !string.IsNullOrWhiteSpace(_cfg.TdmsRoot))
+            {
+                try { TdmsFeatureCollector.Enqueue(rec, outcome.RecordId); }
+                catch (Exception ex) { Logger.Warning($"[TDMS] 特征化入队失败: {ex.Message}"); }
+            }
+        }
+
+        if (!pushFail) return;
+        if (outcome.NeedsFailAlert || (rec.Result == "FAIL" && !_db.IsFailAlerted(rec.XmlPath)))
+            TryPushFailAlert(rec, allowDuringScan: false);
+    }
+
+    private void TryPushFailAlert(TestRecord rec, bool allowDuringScan)
+    {
+        if (rec.Result != "FAIL") return;
+        if (rec.StationId == "UNKNOWN")
+        {
+            Logger.Info($"[跳过推送-无机台号] FAIL / {rec.Model} / {rec.Sn}");
+            return;
+        }
+        if (!_initialScanComplete && !allowDuringScan)
+        {
+            Logger.Info($"[跳过推送-扫描中] FAIL / {rec.Model} / {rec.Sn}");
+            return;
+        }
+        if (_db.IsFailAlerted(rec.XmlPath)) return;
+
+        try { DesktopNotifier.NotifyFail(rec); }
+        catch (Exception ex) { Logger.Warning($"桌面提示失败: {ex.Message}"); }
+
+        var url = _cfg.WebhookUrl;
+        Task.Run(async () =>
         {
             try
             {
-                if (learnRid > 0) TdmsFeatureCollector.Enqueue(rec, learnRid);
+                await FeishuNotifier.SendFailAlert(url, rec);
+                _db.MarkFailAlerted(rec.XmlPath);
+                Logger.Info($"[飞书推送] FAIL / {rec.Model} / {rec.Sn}");
             }
-            catch (Exception ex) { Logger.Warning($"[TDMS] 特征化入队失败: {ex.Message}"); }
-        }
-
-        RefreshStatsThrottled();
-
-        if (rec.Result == "FAIL")
-        {
-            SyncTodos("实时");
-            if (rec.StationId == "UNKNOWN")
-                Logger.Info($"[跳过推送-无机台号] FAIL / {rec.Model} / {rec.Sn}");
-            else if (!_initialScanComplete)
-                Logger.Info($"[跳过推送-扫描中] FAIL / {rec.Model} / {rec.Sn}");
-            else
-            {
-                try { DesktopNotifier.NotifyFail(rec); }
-                catch (Exception ex) { Logger.Warning($"桌面提示失败: {ex.Message}"); }
-                try
-                {
-                    var url = _cfg.WebhookUrl;
-                    Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await FeishuNotifier.SendFailAlert(url, rec);
-                            Logger.Info($"[飞书推送] FAIL / {rec.Model} / {rec.Sn}");
-                        }
-                        catch (Exception ex) { Logger.Error($"[错误] 飞书推送失败: {Path.GetFileName(rec.XmlPath)} | {ex.Message}"); }
-                    });
-                }
-                catch (Exception ex) { Logger.Warning($"飞书推送任务启动失败: {ex.Message}"); }
-            }
-        }
+            catch (Exception ex) { Logger.Error($"[错误] 飞书推送失败: {Path.GetFileName(rec.XmlPath)} | {ex.Message}"); }
+        });
     }
 
     private bool WaitForStable(string path, int stableChecks = 0, int intervalMs = 500, int timeoutMs = 10000)

@@ -22,7 +22,7 @@ Argus.exe --help             # 全部子命令
 Argus.exe tdms x.tdms        # 直接看某个波形文件
 Argus.exe fetch --help       # 取数工具命令行
 ```
-主程序页快捷键与入口见窗口内状态栏提示（`Ctrl+1~5` 切页，其余工具走左侧导航/工具箱）。
+主程序页快捷键与入口见窗口内状态栏提示（`Ctrl+1~6` 切页，`Ctrl+7` TDMS）。
 
 ## 运行环境
 

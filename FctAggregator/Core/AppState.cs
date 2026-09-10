@@ -14,9 +14,12 @@ public static class AppState
     public static int ScanTotal = 0;
     public static int ScanParsed = 0;
 
-    public static int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount, XmlCount;
+    public static int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount;
     public static int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
-    public static int MonthPass, MonthFail, MonthInterrupted, MonthProductCount;
+    public static string TodayModelLine = "";
+    public static List<HourlyStatItem> Hourly = new();
+    public static List<TopFailItem> TopFails = new();
+    public static List<LiveFailAlert> Alerts = new();
 
     public static void SetStatus(string s) { lock (_lock) Status = s; }
 
@@ -38,39 +41,53 @@ public static class AppState
     public static void IncParseError() { lock (_lock) ParseError++; }
 
     public static void RefreshStats(Database db, string stationId, string resultsRoot)
-        => Refresh(db, stationId, resultsRoot, true);
+        => Refresh(db, stationId);
 
-    /// <summary>轻量刷新：只重算数据库统计（不含结果目录 XML 全盘扫描），供 UI 周期调用保证看板实时（跨日归零、无入库时也对齐库内最新值）。</summary>
+    /// <summary>轻量刷新：只重算数据库统计，供 UI 周期调用保证看板实时（跨日归零、无入库时也对齐库内最新值）。</summary>
     public static void RefreshDbStats(Database db, string stationId)
-        => Refresh(db, stationId, null, false);
+        => Refresh(db, stationId);
 
-    private static void Refresh(Database db, string stationId, string? resultsRoot, bool includeDiskScan)
+    private static void Refresh(Database db, string stationId)
     {
         var g = db.FetchGlobalStats(stationId);
         var today = DateTime.Now.ToString("yyyyMMdd");
         var d = db.FetchDailyStats(stationId, today);
-        var month = db.FetchMonthlyStats(stationId, DateTime.Now.ToString("yyyyMM"));
-        var xmlOnDisk = includeDiskScan && resultsRoot != null ? CountDiskXml(resultsRoot) : XmlCount;
+        var byModel = db.FetchDailyStatsByModel(stationId, today);
+        var modelLine = FormatModelLine(byModel);
+        List<HourlyStatItem> hourly;
+        List<TopFailItem> topFails;
+        List<LiveFailAlert> alerts;
+        try { hourly = db.FetchDailyHourlyStats(stationId, today); }
+        catch (Exception ex) { Logger.Warning($"[统计] 小时图查询失败: {ex.Message}"); hourly = new(); }
+        try { topFails = db.FetchDailyTopFails(stationId, today, 5); }
+        catch (Exception ex) { Logger.Warning($"[统计] Top5 查询失败: {ex.Message}"); topFails = new(); }
+        try { alerts = db.FetchRecentFailAlerts(stationId, 10, today); }
+        catch (Exception ex) { Logger.Warning($"[统计] 告警流查询失败: {ex.Message}"); alerts = new(); }
+        if (hourly.Sum(x => x.Total) == 0 && d.TodayProductCount > 0)
+            Logger.Warning($"[统计] KPI 有 {d.TodayProductCount} 台但看板小时图为 0（Top5={topFails.Count} 告警={alerts.Count}）");
         lock (_lock)
         {
             Pass = g.Pass; Fail = g.Fail; Interrupted = g.Interrupted;
             Invalid = g.Invalid; ProductCount = g.ProductCount;
-            XmlCount = xmlOnDisk;
             TodayPass = d.Pass; TodayFail = d.Fail; TodayInterrupted = d.Interrupted;
             TodayProductCount = d.TodayProductCount;
-            MonthPass = month.Pass; MonthFail = month.Fail; MonthInterrupted = month.Interrupted;
-            MonthProductCount = month.TodayProductCount;
+            TodayModelLine = modelLine;
+            Hourly = hourly;
+            TopFails = topFails;
+            Alerts = alerts;
         }
     }
 
-    public static int CountDiskXml(string resultsRoot)
+    private static string FormatModelLine(List<ModelDayStat> rows)
     {
-        try
+        if (rows == null || rows.Count == 0) return "";
+        return string.Join(" · ", rows.Select(r =>
         {
-            if (!Directory.Exists(resultsRoot)) return 0;
-            return Directory.EnumerateFiles(resultsRoot, "*.xml", SearchOption.AllDirectories).Count();
-        }
-        catch { return 0; }
+            var name = r.Model;
+            if (name.Length == 8 && name.StartsWith("E300", StringComparison.OrdinalIgnoreCase))
+                name = name[4..];
+            return $"{name} {r.Pass}P/{r.Fail}F/{r.Total}";
+        }));
     }
 
     public static StatsSnapshot Snapshot()
@@ -82,11 +99,13 @@ public static class AppState
                 StationId = StationId, Status = Status, ModelsCount = ModelsCount,
                 WebhookConfigured = WebhookConfigured, HistoricalScanComplete = HistoricalScanComplete,
                 Pass = Pass, Fail = Fail, Interrupted = Interrupted, Invalid = Invalid,
-                ParseError = ParseError, ProductCount = ProductCount, XmlCount = XmlCount,
+                ParseError = ParseError, ProductCount = ProductCount,
                 TodayPass = TodayPass, TodayFail = TodayFail, TodayInterrupted = TodayInterrupted,
                 TodayProductCount = TodayProductCount,
-                MonthPass = MonthPass, MonthFail = MonthFail, MonthInterrupted = MonthInterrupted,
-                MonthProductCount = MonthProductCount,
+                TodayModelLine = TodayModelLine,
+                Hourly = new List<HourlyStatItem>(Hourly),
+                TopFails = new List<TopFailItem>(TopFails),
+                Alerts = new List<LiveFailAlert>(Alerts),
             };
         }
     }
@@ -97,10 +116,12 @@ public class StatsSnapshot
     public string StationId = "", Status = "";
     public int ModelsCount;
     public bool WebhookConfigured, HistoricalScanComplete;
-    public int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount, XmlCount;
+    public int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount;
     public int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
-    public int MonthPass, MonthFail, MonthInterrupted, MonthProductCount;
+    public string TodayModelLine = "";
+    public List<HourlyStatItem> Hourly = new();
+    public List<TopFailItem> TopFails = new();
+    public List<LiveFailAlert> Alerts = new();
     public double YieldRate => Pass + Fail > 0 ? Pass * 100.0 / (Pass + Fail) : 0.0;
     public double TodayYield => TodayPass + TodayFail > 0 ? TodayPass * 100.0 / (TodayPass + TodayFail) : 0.0;
-    public double MonthYield => MonthPass + MonthFail > 0 ? MonthPass * 100.0 / (MonthPass + MonthFail) : 0.0;
 }

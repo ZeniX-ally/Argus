@@ -11,6 +11,7 @@ public sealed class DbMaintenance
     private Thread? _thread;
     private volatile bool _stopping;
     private DateTime _lastRunDate = DateTime.MinValue;
+    private DateTime _lastLightRunUtc = DateTime.MinValue;
 
     private DbMaintenance(Database db, AppConfig cfg, int hour)
     {
@@ -53,6 +54,16 @@ public sealed class DbMaintenance
                 RunNow();
                 _lastRunDate = now.Date;
             }
+            if (_cfg.DbStorageAutoOptimize)
+            {
+                var intervalH = Math.Clamp(_cfg.DbStorageMonitorHours, 1, 24);
+                if ((DateTime.UtcNow - _lastLightRunUtc).TotalHours >= intervalH)
+                {
+                    try { StorageOptimizer.Run(_db, _cfg, StorageOptimizeMode.Light); }
+                    catch (Exception ex) { Logger.Warning($"[库维护] 存储轻量巡检失败: {ex.Message}"); }
+                    _lastLightRunUtc = DateTime.UtcNow;
+                }
+            }
             for (int i = 0; i < 60 && !_stopping; i++)
                 try { Thread.Sleep(1000); } catch { }
         }
@@ -60,25 +71,6 @@ public sealed class DbMaintenance
 
     public void RunNow()
     {
-        try
-        {
-            var bak = _db.BackupDaily();
-            if (bak != null) Logger.Info($"[库维护] 每日备份完成: {Path.GetFileName(bak)}（保留 {Database.BackupKeepDays} 份）");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[库维护] 本机库每日备份失败（不影响运行）: {ex.Message}");
-        }
-        try
-        {
-            var retain = _cfg.LearnResourceRetentionDays;
-            var purged = _db.PurgeOldLocalDeviceSamples(retain);
-            if (purged > 0) Logger.Info($"[库维护] 本机设备采样清理: 删除 {purged} 条（保留 {retain} 天）");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[库维护] 本机设备采样清理失败: {ex.Message}");
-        }
         try
         {
             LearningEngine.RunOnce(_db, _cfg);
@@ -97,20 +89,47 @@ public sealed class DbMaintenance
         }
         try
         {
-            var retain = _cfg.AnalyzeMeasureRetentionDays;
-            if (_cfg.LearnNormalEnabled)
-                retain = Math.Max(retain, LearnPipeline.ResolveBackfillDays(_db, 0));
-            var purged = _db.PurgeOldMeasurements(retain);
-            if (purged > 0) Logger.Info($"[库维护] 测量值清理: 删除 {purged} 条（保留 {retain} 天）");
-            var retainFi = _cfg.AnalyzeFailItemRetentionDays;
-            var purgedFi = _db.PurgeOldFailItems(retainFi);
-            if (purgedFi > 0) Logger.Info($"[库维护] 失败项明细清理: 删除 {purgedFi} 条（保留 {retainFi} 天）");
-            var purgedTf = _db.PurgeOldTdmsFeatures(retain);
-            if (purgedTf > 0) Logger.Info($"[库维护] TDMS 特征清理: 删除 {purgedTf} 条（保留 {retain} 天）");
+            if (_cfg.DbStorageAutoOptimize)
+            {
+                var rep = StorageOptimizer.Run(_db, _cfg, StorageOptimizeMode.Deep);
+                Logger.Info($"[库维护] 存储深度优化: {rep.Summary}");
+            }
+            else
+            {
+                var retain = Math.Clamp(_cfg.AnalyzeMeasureRetentionDays, 7, 90);
+                _db.PurgeOldMeasurements(retain);
+                _db.PurgeOldFailItems(Math.Clamp(_cfg.AnalyzeFailItemRetentionDays, 7, 180));
+                _db.PurgeOldTdmsFeatures(retain);
+            }
         }
         catch (Exception ex)
         {
-            Logger.Warning($"[库维护] 测量值清理失败: {ex.Message}");
+            Logger.Warning($"[库维护] 存储优化失败: {ex.Message}");
+        }
+        try
+        {
+            var bak = _db.BackupDaily();
+            if (bak != null) Logger.Info($"[库维护] 每日备份完成: {Path.GetFileName(bak)}（保留 {Database.BackupKeepDays} 份）");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] 本机库每日备份失败（不影响运行）: {ex.Message}");
+        }
+        try
+        {
+            if (FctProgramBackup.ShouldRunScheduled(_db, _cfg))
+            {
+                var sid = string.IsNullOrEmpty(_cfg.StationId) ? "AUTO" : _cfg.StationId;
+                var rep = FctProgramBackup.Run(_db, _cfg, sid, FctProgramBackup.TriggerScheduled);
+                if (rep.Ok)
+                    Logger.Info($"[库维护] FTS 测试程序备份: {rep.Message}");
+                else
+                    Logger.Warning($"[库维护] FTS 测试程序备份: {rep.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[库维护] FTS 测试程序备份失败: {ex.Message}");
         }
     }
 }
