@@ -6,6 +6,7 @@ public class DebugPanel : Panel
 {
     private readonly Engine _engine;
     private TextBox _output = null!;
+    private volatile bool _busy;
 
     public DebugPanel(Engine engine)
     {
@@ -105,7 +106,35 @@ public class DebugPanel : Panel
 
     private void Print(string text)
     {
+        // 允许后台任务直接调 Print：统一在这里回到 UI 线程
+        if (InvokeRequired)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            try { UiAsync.Post(this, () => Print(text)); } catch { }
+            return;
+        }
         _output.AppendText($"[{DateTime.Now:HH:mm:ss}] {text}{Environment.NewLine}");
+    }
+
+    /// <summary>查库/遍历目录的按钮逻辑放后台跑，避免界面无响应；期间置忙 + 等待光标。</summary>
+    private void RunBusy(string busyText, Action work)
+    {
+        if (_busy) return;
+        _busy = true;
+        UseWaitCursor = true;
+        Print(busyText);
+        Task.Run(() =>
+        {
+            try { work(); }
+            catch (Exception ex) { Print($"操作失败: {ex.Message}"); }
+            finally
+            {
+                if (!IsDisposed && IsHandleCreated)
+                {
+                    try { UiAsync.Post(this, () => { _busy = false; UseWaitCursor = false; }); } catch { }
+                }
+            }
+        });
     }
 
     private void TestPush()
@@ -129,6 +158,8 @@ public class DebugPanel : Panel
 
     private void TestDbStatus()
     {
+        RunBusy("正在统计数据库（可能耗时）…", () =>
+        {
         var total = _engine.Db.TotalRecords();
         var g = _engine.Db.FetchGlobalStats(_engine.ResolvedStationId);
         var st = _engine.Db.GetStorageStats();
@@ -141,13 +172,17 @@ public class DebugPanel : Panel
         var last = _engine.Db.GetMeta(StorageOptimizer.MetaLastRun);
         if (!string.IsNullOrEmpty(last))
             Print($"  上次优化: {last}  评分 {_engine.Db.GetMeta(StorageOptimizer.MetaLastScore) ?? "?"}");
+        });
     }
 
     private void StorageDiagnose()
     {
+        RunBusy("正在做存储分层诊断…", () =>
+        {
         var health = StorageOptimizer.Evaluate(_engine.Db, _engine.Config);
         Print("── 存储分层诊断 ──");
         foreach (var line in health.FormatLines()) Print(line);
+        });
     }
 
     private void TestStation()
@@ -160,6 +195,8 @@ public class DebugPanel : Panel
 
     private void TestModels()
     {
+        RunBusy("正在扫描型号目录…", () =>
+        {
         var root = _engine.Config.ResultsRoot;
         if (!Directory.Exists(root)) { Print($"结果目录不存在: {root}"); return; }
         var found = new List<string>();
@@ -175,10 +212,14 @@ public class DebugPanel : Panel
         }
         Print($"发现型号目录 ({found.Count}):");
         foreach (var f in found) Print($"  {f}");
+        });
     }
 
     private void TestDevices()
     {
+        // FctIni.Parse 在路径配错时会触发全盘自动识别，绝不能放在 UI 线程上
+        RunBusy("正在读取 FCT.ini / 探测设备…", () =>
+        {
         var data = FctIni.Parse(_engine.Config.FctIniPath);
         if (!data.Found) { Print(data.Error ?? "FCT.ini 未找到"); return; }
         Print($"FCT.ini: {data.IniPath}");
@@ -187,6 +228,7 @@ public class DebugPanel : Panel
         Print("设备:");
         foreach (var dev in data.Devices)
             Print($"  {dev.Name,-16} {dev.Port,-10} {(dev.Type == "com" ? (dev.Online ? "在线" : "离线") : "USB")}");
+        });
     }
 
     private void QueryFails()
@@ -225,14 +267,19 @@ public class DebugPanel : Panel
 
     private void TodoSync()
     {
+        RunBusy("正在登记待办…", () =>
+        {
         var days = _engine.Config.TodoScanDays;
         var n = _engine.Db.SyncTodoItems(days);
         Print($"待办登记完成（扫描窗口 {days} 天）：新登记 {n} 条；当前未确认 {_engine.Db.CountPendingTodos()} 条");
         Print($"水位线(已并入的 test_records 最大 id): {_engine.Db.GetMeta("todo_sync_last_id") ?? "(未设置)"}");
+        });
     }
 
     private void TodoPreview()
     {
+        RunBusy("正在汇总故障项…", () =>
+        {
         var srcs = _engine.Db.FailItemSources("");
         var agg = FailItemPickerForm.Aggregate(srcs);
         if (agg.Count == 0) { Print("库里没有 FAIL 故障项。"); return; }
@@ -248,6 +295,7 @@ public class DebugPanel : Panel
                 foreach (var v in g) Print($"          · {v.Count}x {v.Item}");
         }
         if (groups.Count > 40) Print($"  …另有 {groups.Count - 40} 个大项未列出");
+        });
     }
 
     private void ViewConfig()

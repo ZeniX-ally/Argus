@@ -49,6 +49,7 @@ public static class FctIni
             _missUntil = default;
         }
         lock (_comLock) { _comCache = null; }
+        lock (_autoLock) { _autoMissUntil = default; }   // 允许手动"重新探测"再扫一次
     }
 
     public static HashSet<string> GetActiveComPorts()
@@ -109,11 +110,19 @@ public static class FctIni
     }
 
     private static string? _autoFound;
+    private static DateTime _autoMissUntil;
     private static readonly object _autoLock = new();
 
     public static string? AutoFindIni()
     {
-        lock (_autoLock) if (_autoFound != null) return _autoFound;
+        lock (_autoLock)
+        {
+            if (_autoFound != null) return _autoFound;
+            // 全盘深递归很贵，而调用方（每秒一次的 Snapshot）会反复触发：**失败结果也必须缓存**。
+            // 否则 FCT.ini 路径一配错，就等于每 15 秒（LoadMeta 的 miss 缓存时长）全盘重扫一次。
+            // 手动"重新探测"会走 Invalidate() 把这里清掉。
+            if (DateTime.UtcNow < _autoMissUntil) return null;
+        }
 
         foreach (var p in CandidatePaths(""))
             if (TryExists(p, out var real)) return CacheFound(real);
@@ -131,6 +140,8 @@ public static class FctIni
             var hit = SearchShallow(d.RootDirectory, 5);
             if (hit != null) return CacheFound(hit);
         }
+
+        lock (_autoLock) { _autoMissUntil = DateTime.UtcNow.AddMinutes(5); }
         return null;
     }
 

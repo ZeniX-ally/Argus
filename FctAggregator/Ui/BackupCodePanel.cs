@@ -387,8 +387,7 @@ public sealed class BackupCodePanel : Panel
             if (MessageBox.Show("Seq 监视目录已更改。是否按新目录重建基线快照？\n（不重建的话，对比会相对旧目录的基线。）",
                     "重建基线", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
-                try { FctSeqSnapshot.CaptureBaseline(seq); }
-                catch (Exception ex) { MessageBox.Show(ex.Message, "重建基线失败", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                RunSeqTask("正在按新目录重建基线快照…", () => FctSeqSnapshot.CaptureBaseline(seq), "重建基线失败");
             }
         }
         Refresh2();
@@ -454,20 +453,74 @@ public sealed class BackupCodePanel : Panel
         {
             if (MessageBox.Show("尚无基线快照，现在以当前目录建立基线？", "Seq",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            FctSeqSnapshot.CaptureBaseline(root);
-            Refresh2();
+            RunSeqTask("正在建立基线快照…", () => FctSeqSnapshot.CaptureBaseline(root), "建立基线失败");
             return;
         }
-        var report = FctSeqSnapshot.CompareToBaseline(root);
-        if (!report.HasChanges)
+
+        // 对比要对整目录逐个文件做 SHA256，必须离开 UI 线程
+        if (_busy) return;
+        _busy = true;
+        var prevStatus = _status.Text;
+        _status.Text = "正在对比 Seq 目录变更…";
+        UseWaitCursor = true;
+        Task.Run(() =>
         {
-            MessageBox.Show("相对基线无变更。", "Seq", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        UiBridge.ShowSeqChange(report, cfg, () =>
+            SeqChangeReport? report = null;
+            string? err = null;
+            try { report = FctSeqSnapshot.CompareToBaseline(root); }
+            catch (Exception ex) { err = ex.Message; }
+            PostUi(() =>
+            {
+                _busy = false;
+                UseWaitCursor = false;
+                _status.Text = prevStatus;
+                if (err != null)
+                {
+                    MessageBox.Show(err, "对比失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                if (report == null || !report.HasChanges)
+                {
+                    MessageBox.Show("相对基线无变更。", "Seq", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                UiBridge.ShowSeqChange(report, cfg, () =>
+                {
+                    FctSeqMonitor.Instance?.ResetAlertFingerprint();
+                    Refresh2();
+                });
+            });
+        });
+    }
+
+    /// <summary>后台线程回 UI 的安全提交（窗体已销毁/句柄未建时静默丢弃，避免 ObjectDisposedException）。</summary>
+    private void PostUi(Action act)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        try { BeginInvoke(act); } catch { }
+    }
+
+    /// <summary>整目录 SHA256 与复制很重，必须在后台跑；期间置忙、显示状态，完成后刷新。</summary>
+    private void RunSeqTask(string busyText, Action work, string failTitle)
+    {
+        if (_busy) return;
+        _busy = true;
+        var prev = _status.Text;
+        _status.Text = busyText;
+        UseWaitCursor = true;
+        Task.Run(() =>
         {
-            FctSeqMonitor.Instance?.ResetAlertFingerprint();
-            Refresh2();
+            string? err = null;
+            try { work(); }
+            catch (Exception ex) { err = ex.Message; }
+            PostUi(() =>
+            {
+                _busy = false;
+                UseWaitCursor = false;
+                _status.Text = prev;
+                if (err != null) MessageBox.Show(err, failTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Refresh2();
+            });
         });
     }
 
@@ -483,15 +536,10 @@ public sealed class BackupCodePanel : Panel
         if (MessageBox.Show($"将当前\n{root}\n保存为新基线快照，后续变更将相对此次对比。继续？",
                 "重建 Seq 基线", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return;
-        try
+        RunSeqTask("正在重建基线快照…", () =>
         {
             FctSeqSnapshot.CaptureBaseline(root);
             FctSeqMonitor.Instance?.ResetAlertFingerprint();
-            Refresh2();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(ex.Message, "失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
+        }, "失败");
     }
 }
