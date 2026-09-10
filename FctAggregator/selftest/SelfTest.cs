@@ -1847,6 +1847,19 @@ Argus 统一发布包  v{newer}
                         $"FetchDailyStats: 空 SN 按 xml_path 终检 4 台 PASS（实得 总={dStats.TodayProductCount},P={dStats.Pass},F={dStats.Fail}）");
                     Check(gStats.Pass == 4 && dStats.Pass == 4,
                         $"全局 PASS 仍按条数计（实得 全局={gStats.Pass}, 今日={dStats.Pass}）");
+
+                    // 空白 SN 归一：同一串空白 SN 出现在多条记录时，必须各自按 xml_path 计（与今日口径一致）
+                    sdb.BatchInsert(new[]
+                    {
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Result = "PASS", Sn = "WS-SN", XmlPath = "ws1.xml", BatchTimestamp = $"{dStr} 10:00:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Result = "PASS", Sn = "  ", XmlPath = "ws2.xml", BatchTimestamp = $"{dStr} 10:01:00" },
+                        new TestRecord { StationId = "FCT1", Category = "Online", TestDate = dStr, Result = "PASS", Sn = "  ", XmlPath = "ws3.xml", BatchTimestamp = $"{dStr} 10:02:00" },
+                    });
+                    var gWs = sdb.FetchGlobalStats("");
+                    // 全表：SN-A + p2/p3/p4.xml（空白与 NULL 各按 xml_path）+ WS-SN + ws2/ws3.xml = 7
+                    // 若 COUNT 里不做 TRIM，两条 "  " 会坍缩成 1 个 → 得 6
+                    Check(gWs.ProductCount == 7,
+                        $"FetchGlobalStats: 同一串空白 SN 的多条记录各自按 xml_path 计（不 TRIM 会坍缩成 1；实得 {gWs.ProductCount}）");
                 }
                 finally { try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); File.Delete(snDbPath); } catch { } }
             }
@@ -3323,6 +3336,13 @@ Argus 统一发布包  v{newer}
         Check(Math.Abs(w.Mean - mean) < 1e-9, $"Welford 均值收敛（{w.Mean:F6} vs {mean:F6}）");
         Check(Math.Abs(w.Sigma - std) < 1e-9, $"Welford 样本σ收敛（{w.Sigma:F6} vs {std:F6}）");
         Check(w.N == 1000, "Welford 计数正确");
+        // 浮点误差可能让 m2 成为极小负数 → Sqrt(负数)=NaN，而 NaN 参与比较全为 false，会让该测项静默不报警
+        var wNeg = new Welford();
+        wNeg.Restore(5, 1.0, -1e-12);
+        Check(!double.IsNaN(wNeg.Sigma) && wNeg.Sigma == 0, $"Welford: m2 因浮点误差为负时 σ 取 0 而非 NaN（实得 {wNeg.Sigma}）");
+        var wOne = new Welford();
+        wOne.Update(1.5);
+        Check(wOne.Sigma == 0, "Welford: 单样本 σ=0（n<2）");
 
         // ── Task1: P² 分位数近似 ──
         var p01 = new P2Quantile(0.01); var p50 = new P2Quantile(0.5); var p99 = new P2Quantile(0.99);

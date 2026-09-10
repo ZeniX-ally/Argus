@@ -7,6 +7,7 @@ public class DebugPanel : Panel
     private readonly Engine _engine;
     private TextBox _output = null!;
     private volatile bool _busy;
+    private int _printLines;   // 输出框只增不减会越来越慢，超过上限先清空
 
     public DebugPanel(Engine engine)
     {
@@ -113,6 +114,7 @@ public class DebugPanel : Panel
             try { UiAsync.Post(this, () => Print(text)); } catch { }
             return;
         }
+        if (++_printLines > 4000) { _output.Clear(); _printLines = 1; }
         _output.AppendText($"[{DateTime.Now:HH:mm:ss}] {text}{Environment.NewLine}");
     }
 

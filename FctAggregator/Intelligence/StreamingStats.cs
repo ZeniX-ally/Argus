@@ -17,8 +17,10 @@ public sealed class Welford
         _m2 += d * (x - Mean);
     }
 
-    /// <summary>样本标准差（n-1 口径），n&lt;2 时返回 0。</summary>
-    public double Sigma => N < 2 ? 0 : Math.Sqrt(_m2 / (N - 1));
+    /// <summary>样本标准差（n-1 口径），n&lt;2 时返回 0。
+    /// _m2 是浮点累加量，可能因误差成为极小负数 → Sqrt(负数)=NaN，而 NaN 参与比较全为 false，
+    /// 会让该测项静默不报警。故 m2 &lt;= 0 一律按 0 处理。</summary>
+    public double Sigma => N < 2 || _m2 <= 0 ? 0 : Math.Sqrt(_m2 / (N - 1));
 
     public (long n, double mean, double m2) Snapshot() => (N, Mean, _m2);
     public void Restore(long n, double mean, double m2) { N = n; Mean = mean; _m2 = m2; }

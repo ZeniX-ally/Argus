@@ -176,8 +176,13 @@ public static class AnalysisEngine
         var todayStr = today.ToString("yyyy-MM-dd");
         var baseStats = db.AggregateMeasurementStats(today.AddDays(-w).ToString("yyyy-MM-dd"), todayStr);
         // 审计 C-I3："今日"窗口原为 today 00:00~24:00——维护链默认凌晨 3 点执行时实为 00:00~03:00 部分天，
-        // 凌晨几个样本即可触发假漂移。改为严格"过去 24h"（now-24h ~ now），与基线窗口 [today-w, today) 零重叠。
-        var todayStats = db.AggregateMeasurementStats(nowTs.AddHours(-24).ToString("yyyy-MM-dd HH:mm:ss"), nowTs.ToString("yyyy-MM-dd HH:mm:ss"));
+        // 凌晨几个样本即可触发假漂移。改为严格"今日 00:00 ~ now"：基线是 [today-w, today)、今日是 [today, now]，
+        // 这才是真正零重叠。
+        // 注意：曾用过"过去 24h"（now-24h ~ now），但那与基线窗口重叠约 21 小时（now 取凌晨 3 点时尤为明显），
+        // 昨天那批样本会同时进基线与今日，把今日均值拉向基线、系统性削弱漂移检出。
+        var todayStats = db.AggregateMeasurementStats(
+            todayStr + " 00:00:00",
+            nowTs.AddSeconds(1).ToString("yyyy-MM-dd HH:mm:ss"));
         var alerts = DriftAnalyzer.Compute(baseStats, todayStats, cfg);
         var state = new DriftState
         {

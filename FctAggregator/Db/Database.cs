@@ -1848,7 +1848,7 @@ public sealed partial class Database
                 COUNT(CASE WHEN result='FAIL' THEN 1 END),
                 COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
                 COUNT(CASE WHEN result='INVALID' THEN 1 END),
-                COUNT(DISTINCT COALESCE(NULLIF(COALESCE(sn,''),''), xml_path))
+                COUNT(DISTINCT COALESCE(NULLIF(TRIM(COALESCE(sn,'')),''), xml_path))
             FROM test_records {where}";
         if (!string.IsNullOrEmpty(stationId))
             cmd.Parameters.AddWithValue("@s", stationId);
@@ -1978,7 +1978,7 @@ public sealed partial class Database
                 COUNT(CASE WHEN result='PASS' THEN 1 END),
                 COUNT(CASE WHEN result='FAIL' THEN 1 END),
                 COUNT(CASE WHEN result='INTERRUPTED' THEN 1 END),
-                COUNT(DISTINCT COALESCE(NULLIF(COALESCE(sn,''),''), xml_path))
+                COUNT(DISTINCT COALESCE(NULLIF(TRIM(COALESCE(sn,'')),''), xml_path))
             FROM (
                 SELECT result, sn, xml_path
                 FROM test_records {where}
