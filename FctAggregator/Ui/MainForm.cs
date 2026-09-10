@@ -66,7 +66,8 @@ public class MainForm : Form
         var wa = Screen.PrimaryScreen!.WorkingArea;
         Width = Math.Min(1408, wa.Width);
         Height = Math.Min(768, wa.Height);
-        MinimumSize = new Size(1200, 720);
+        // 低分屏（1024x768 机台）下 MinimumSize 若大于工作区，会把窗口强制撑出屏幕，右侧控件看不到
+        MinimumSize = new Size(Math.Min(1200, wa.Width), Math.Min(720, wa.Height));
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
         BackColor = Theme.Bg;

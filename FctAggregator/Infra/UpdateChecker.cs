@@ -94,7 +94,11 @@ public static class UpdateChecker
     {
         var cfg = AppConfig.Instance;
         var dbName = string.IsNullOrEmpty(cfg.StationId) ? "fct" : cfg.StationId;
-        return new Database(Path.Combine(AppConfig.BaseDir, "data", dbName + ".db"));
+        var path = Path.Combine(AppConfig.BaseDir, "data", dbName + ".db");
+        // 复用已打开的同一个库：Database 构造函数会跑整套建表/索引/迁移，只为读一个 meta 键不值得
+        var cur = Database.Current;
+        if (cur != null && string.Equals(cur.DbPath, path, StringComparison.OrdinalIgnoreCase)) return cur;
+        return new Database(path);
     }
 
     public static string GetReleaseNotes(Version ver, string? updateDir = null)

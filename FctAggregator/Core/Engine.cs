@@ -298,7 +298,8 @@ public class Engine
                     AfterIngest(records[ri], outcome, pushFail: false);
                 }
                 AppState.SetScanProgress(parsed: processed);
-                RefreshStats();
+                // 每批都全量重算统计会得到 批数 x 6 条聚合 SQL（含整表 COUNT）；改走 10s 节流，收尾由 FinishHistoricalScan 刷终值
+                RefreshStatsThrottled();
             }
             Logger.Info($"[历史扫描] 结束 | xml={allFiles.Count} | 新插入={totalInserted} | 覆盖更新={totalUpdated}");
             SyncTodos("历史扫描后");
@@ -461,7 +462,19 @@ public class Engine
 
         IngestResult outcome;
         try { outcome = _db.UpsertTestRecord(rec); }
-        catch (Exception ex) { Logger.Error($"[错误] 入库失败: {path} | {ex.Message}"); return; }
+        catch (Exception ex)
+        {
+            // 原来直接 return = 永久漏采（漏 FAIL 会让良率偏高、且现场无从发现）。改走与"解析暂时失败"同一条重试队列兜底。
+            Logger.Error($"[错误] 入库失败(将重试): {path} | {ex.Message}");
+            if (attempt < MaxStableRetries)
+            {
+                if (EnqueueRetry(path, attempt))
+                    Logger.Warning($"[重试] 入库失败，{StableRetryDelayMs / 1000}s 后重试({attempt + 1}/{MaxStableRetries}): {path}");
+            }
+            else
+                Logger.Warning($"[跳过] 入库持续失败，已达重试上限({MaxStableRetries}): {path}");
+            return;
+        }
         if (outcome.RecordId <= 0) return;
 
         if (outcome.IsNew || outcome.WasUpdated)

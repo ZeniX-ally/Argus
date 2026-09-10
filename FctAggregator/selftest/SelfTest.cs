@@ -307,6 +307,14 @@ class SelfTest
             File.WriteAllText(ini, "[Resource Name]\nOnlyOne=COM8\n");
             var devIniReload = FctIni.Parse(ini);
             Check(devIniReload.Devices.Count == 1 && devIniReload.Devices[0].Name == "OnlyOne", "Invalidate 后读到新 ini");
+
+            // COM 探测加了 2s 缓存（总览每秒、设备页 200ms 都会调）：缓存必须不改变对外语义
+            var cc1 = FctIni.ProbePresentComPorts();
+            var cc2 = FctIni.ProbePresentComPorts();
+            Check(cc1.SetEquals(cc2), "COM 探测两次调用结果一致（缓存不改变语义）");
+            cc1.Add("COM999");
+            var cc3 = FctIni.ProbePresentComPorts();
+            Check(!cc3.Contains("COM999"), "修改 ProbePresentComPorts 返回值不污染内部缓存（返回副本）");
             FctIni.Invalidate();
         }
 

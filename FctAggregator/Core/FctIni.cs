@@ -34,6 +34,11 @@ public static class FctIni
     private static FctIniData? _miss;
     private static DateTime _missUntil;
 
+    // COM 在线探测缓存：注册表 + 串口枚举是内核调用，而 UI 每秒（设备页 200ms）都会问一次
+    private static HashSet<string>? _comCache;
+    private static DateTime _comCacheUntil;
+    private static readonly object _comLock = new();
+
     public static void Invalidate()
     {
         lock (_metaLock)
@@ -43,6 +48,7 @@ public static class FctIni
             _miss = null;
             _missUntil = default;
         }
+        lock (_comLock) { _comCache = null; }
     }
 
     public static HashSet<string> GetActiveComPorts()
@@ -77,12 +83,20 @@ public static class FctIni
         return set;
     }
 
-    /// <summary>登记口是否当前挂在系统上。注册表 + GetPortNames 并集，任一侧见到即在线；不打开串口（避免抢 FTS）。</summary>
+    /// <summary>登记口是否当前挂在系统上。注册表 + GetPortNames 并集，任一侧见到即在线；不打开串口（避免抢 FTS）。
+    /// 结果缓存 2 秒：调用方（总览每秒 / 设备页每 200ms）频率远高于设备热插拔，没必要按那个频率做内核枚举。</summary>
     public static HashSet<string> ProbePresentComPorts()
     {
-        var set = GetActiveComPorts();
-        foreach (var p in ScanSystemComPorts()) set.Add(p);
-        return set;
+        lock (_comLock)
+        {
+            if (_comCache != null && DateTime.UtcNow < _comCacheUntil)
+                return new HashSet<string>(_comCache, StringComparer.OrdinalIgnoreCase);
+            var set = GetActiveComPorts();
+            foreach (var p in ScanSystemComPorts()) set.Add(p);
+            _comCache = set;
+            _comCacheUntil = DateTime.UtcNow.AddSeconds(2);
+            return new HashSet<string>(set, StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     private static IEnumerable<string> CandidatePaths(string configured)

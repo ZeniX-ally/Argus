@@ -367,13 +367,23 @@ public class DebugPanel : Panel
 
     private void ClearDb()
     {
-        if (MessageBox.Show("确定清空数据库？所有记录将删除。", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        // 只清本机台当前这个库：原来删 data\*.db 会把其它机台的库一起删掉，且漏删 -wal/-shm
+        var dbPath = _engine.Db.DbPath;
+        var msg = "确定清空数据库？所有记录都会丢失，需要重启后重新扫描。\r\n\r\n将删除：\r\n  " + dbPath
+                + "\r\n  " + dbPath + "-wal / -shm（如存在）\r\n\r\n注意：Argus 运行期间数据库文件被占用，删除会失败，需先完全退出 Argus。";
+        if (MessageBox.Show(msg, "确认清空数据库", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         try
         {
-            var dataDir = Path.Combine(AppConfig.BaseDir, "data");
-            foreach (var f in Directory.GetFiles(dataDir, "*.db")) File.Delete(f);
-            Print("数据库已清空，请重启软件重新扫描。");
+            // 先删主库：若被占用会先抛异常，不会走到删 wal/shm 那一步，避免只删伴生文件造成状态不一致
+            File.Delete(dbPath);
+            foreach (var suf in new[] { "-wal", "-shm" })
+                if (File.Exists(dbPath + suf)) File.Delete(dbPath + suf);
+            Print("数据库已清空，请完全退出并重启 Argus 重新扫描。");
         }
-        catch (Exception ex) { Print($"清空失败: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            Print($"清空失败: {ex.Message}");
+            Print($"原因通常是数据库正被 Argus 占用。请完全退出 Argus 后手动删除：{dbPath}（含 -wal / -shm）");
+        }
     }
 }
