@@ -662,7 +662,8 @@ public class MainForm : Form
             try { committed = UpdateChecker.TryCommitPending(db); }
             catch (Exception ex) { Logger.Warning($"[更新器] 提交异常: {ex.Message}"); committed = false; }
             var ver = info.Version; // 闭包内可空收窄丢失——提前取值
-            BeginInvoke(() =>
+            // 走 UiAsync.Post：它已处理"窗体已销毁/句柄未创建"，原来的裸 BeginInvoke 在关窗瞬间会抛
+            UiAsync.Post(this, () =>
             {
                 if (!committed)
                 {
