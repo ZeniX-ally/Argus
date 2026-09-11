@@ -53,7 +53,8 @@ public class FailItemDetail
         }
     }
 
-    private static string Num(double v) => Math.Abs(v) >= 1000 || (Math.Abs(v) > 0 && Math.Abs(v) < 0.001)
+    /// <summary>数值展示文案（与趋势图/限值同款：极大极小走科学计数）。导出小计的均值也复用它。</summary>
+    public static string Num(double v) => Math.Abs(v) >= 1000 || (Math.Abs(v) > 0 && Math.Abs(v) < 0.001)
         ? v.ToString("0.####E+0", CultureInfo.InvariantCulture)
         : v.ToString("0.####", CultureInfo.InvariantCulture);
 }

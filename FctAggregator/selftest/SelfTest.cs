@@ -3679,7 +3679,43 @@ Argus 统一发布包  v{newer}
                 "xlsx：单元格按文本落表（时间/测项名不被 Excel 乱解析）");
             Check(body.Contains("V_KL30") && body.Contains("3.29") && body.Contains("10.8") && body.Contains("14.4"),
                 "xlsx：项目/值/上下限均落表");
+            Check(body.Contains("小计：V_KL30") && body.Contains("s=\"2\""),
+                "xlsx：分组小计行已写出并套用加粗样式（style 2）");
         }
+
+        // ── 分组小计：每组「明细 → 小计行 → 空行」，末组不补空行 ──
+        var expRows = FailExporter.BuildRows(all);
+        var kinds = string.Concat(expRows.Select(r => r.Kind switch
+        {
+            FailExporter.FailRowKind.Detail => "D",
+            FailExporter.FailRowKind.Subtotal => "S",
+            _ => "B",
+        }));
+        Check(kinds == "DSBDSBDS", $"导出行序：三组各「明细+小计+空行」、末组不带空行（实得 {kinds}）");
+        Check(expRows.Count(r => r.Kind == FailExporter.FailRowKind.Subtotal) == 3,
+            "导出行序：每组恰好一个小计行");
+        var subVk = expRows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal && r.Cells[0].Contains("V_KL30"));
+        Check(subVk.Cells[0] == "小计：V_KL30" && subVk.Cells[2] == "失败 1 次",
+            $"小计行：项目名与失败次数（实得 '{subVk.Cells[0]}' / '{subVk.Cells[2]}'）");
+        var subCont = expRows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal && r.Cells[0].Contains("CONT"));
+        Check(subCont.Cells[1] == "—", $"小计行：整组无数值 → 均值写 —（实得 '{subCont.Cells[1]}'）");
+        Check(text.Contains("小计："), "CSV：分组小计行已写出");
+
+        var memRows = FailExporter.BuildRows(new[]
+        {
+            new FailItemDetail { TestName = "T_X", Value = 3.29, Ts = "t1" },
+            new FailItemDetail { TestName = "T_X", Value = 3.35, Ts = "t2" },
+            new FailItemDetail { TestName = "T_X", ValueText = "Open", Ts = "t3" },
+        });
+        var subX = memRows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal);
+        Check(subX.Cells[1] == "3.32" && subX.Cells[2] == "失败 3 次",
+            $"小计均值：只统计数值项（(3.29+3.35)/2=3.32，实得 {subX.Cells[1]} / {subX.Cells[2]}）");
+        var singleGroup = FailExporter.BuildRows(new[]
+        {
+            new FailItemDetail { TestName = "ONLY", Value = 1.5, Ts = "t" },
+        });
+        Check(singleGroup.Count == 2 && singleGroup[^1].Kind == FailExporter.FailRowKind.Subtotal,
+            "导出行序：单组时末尾不加空行");
 
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try { Directory.Delete(dir, true); } catch { }

@@ -2,7 +2,7 @@
 
 > **本文件是任何 agent 参与本项目前必读、且流程层面仅需读的唯一 Spec。** CodeBuddy Code 每次会话自动加载本文件；其他 agent 工具请在动手前先读本文件。
 > **强制规章见 `AGENT_RULES.md`（仓库根，命令式硬性条款，任何改动前必读）。** 本文件是规章的依据与细节，规章与本文件冲突时以本文件为准（规章是本文件的提炼）。
-> 维护规则：全仓库流程规范**只维护这一个文件**。随每次发版更新 §0 版本快照；架构/历史细节一律走 §8 索引，不在此重复。最后更新：2026-09-11（v3.39.1）。
+> 维护规则：全仓库流程规范**只维护这一个文件**。随每次发版更新 §0 版本快照；架构/历史细节一律走 §8 索引，不在此重复。最后更新：2026-09-11（v3.39.2）。
 
 ---
 
@@ -10,10 +10,10 @@
 
 | 项 | 值 |
 |---|---|
-| 主程序 | FctAggregator **v3.39.1**（**纯单机工具**——v3.31.0 起删除聚合/互联/Web 看板，.NET 8 `net8.0-windows`，单 exe） |
+| 主程序 | FctAggregator **v3.39.2**（**纯单机工具**——v3.31.0 起删除聚合/互联/Web 看板，.NET 8 `net8.0-windows`，单 exe） |
 | 分发器 | FctDistributor **v1.9.2**（**2026-09-02 起独立仓库** `e:/FctDistributor`，与本仓库彻底分离：各自 git、各自发版、代码持副本） |
 | 数据层 | SQLite 单写者 + WAL 短租读；本机库幂等 Init（test_measurements/fail_items/tdms_features/normal_models/device_samples_local 等），**无 DbMigrator/无聚合库** |
-| 自检 | **790 项断言**（v3.39.1 FAIL 明细 xlsx 导出后；提交前以 selftest 实跑 [OK] 计数为准），全绿是任何提交的硬门槛 |
+| 自检 | **798 项断言**（v3.39.2 FAIL 导出分组小计后；提交前以 selftest 实跑 [OK] 计数为准），全绿是任何提交的硬门槛 |
 | 智能化 | 正常态自学习 P1～P4（模型底座 + 偏离评分/回填回放 + 嵌入「分析」页 + 归因偏离证据，`learn_normal_enabled` 默认开；规格 05 `learn_baseline` 仍关、`learn_fail_merge` 群挂已从看板移除）+ 规格 06 分析（**PASS 测量值-时间趋势图 + 规格上下限参考带**（v3.37.0 替换原 |z| 折线）+ 时段归因 + TDMS 默认开；drift/CPK/tester 默认关）+ 无感热升级 + 客户端主页工业大屏 + 飞书卡片 JSON 2.0 |
 | 算法路线 | 正常态自学习 P1～P4 已交付（`learn_normal_enabled` 默认开）+ 规格 05/06 本机能力保留；规格 01～04 聚合侧实现已随 v3.31.0 删除 |
 | 远程 | Gitea `http://192.168.1.16:3000/zenix/Argus.git`，分支 `main`；分发器独立远程 `zenix/FCT-Distributor.git` |
@@ -55,11 +55,11 @@ e:/FctDistributor/            ← 分发器独立仓库（2026-09-02 拆分；�
 | **Core/** 采集引擎 | `Engine.cs`(29K) 后台引擎：型号发现/实时监控/历史扫描/重试队列/每日维护调度 · `Processor.cs` 单文件处理流水线（读前 512MB 硬上限、暂时性/永久性失败分类、解析责任链调度；**无独立 Classifier.cs——前缀分类/debug 判定在 `Parsing/DefaultResultParser.cs`**，该类 v3.31.0 删除）· `XmlParser.cs` BATCH XML 解析（深度/轻量/报告三模式）· `StationDetector.cs` 机台号 IP 映射/型号校验 · `TestRecord.cs` 数据模型 · `AppState.cs` 线程安全统计 · `FctIni.cs` FCT.ini 解析+COM 检测 · `BackfillTool.cs` 存量测量值/SN 补采（backfill CLI）· `FctProgramBackup.cs` C:\FTS 压缩备份 · `FctSeqMonitor.cs`/`FctSeqSnapshot.cs` Seq 目录变更监控与基线快照对比 |
 | **Db/** 数据层 | `Database.cs`(162K) **本机库**：建表/批量入库/统计/维修/待办 + 本机分析表（test_measurements/fail_items/tdms_features/normal_models，幂等 Init，**无 DbMigrator/无聚合库**）· `Database.{FctBackup,FctSeq,Storage,FailDetail}.cs` 同 partial 扩展（备份记录/Seq 变更表、存储盘点、FAIL 测项级明细查询）· `StorageOptimizer.cs` 存储分层健康评分 + 轻量/深度优化（VACUUM）· `DbMaintenance.cs` 每日维护器（备份+清本机采样+Learning/Analysis RunOnce+滚动清理+轻量巡检） |
 | **Intelligence/** 智能 | `AnalysisEngine.cs` 多元深分析引擎（漂移/CPK/归因/效应量/TDMS 快照）· `LearningEngine.cs`+`SelfBaseline.cs`+`FailReasonMerger.cs`+`G49ProductDictionary.cs`+`G49TodoRules.cs` 规格 05 自学习/待办归并 · `NormalLearners.cs`/`NormalModelStore.cs`/`StreamingStats.cs`(Welford/P²) 正常态自学习 P1 · `DeviationScorer.cs`/`DeviationSeriesBuilder.cs` 偏离评分与偏离序列（`DeviationSeriesBuilder` UI 已无引用但是探针依赖，勿删）· `LearnPipeline.cs`/`LearnBackfill.cs`/`LearnCli.cs`/`ReplayRunner.cs`/`LearningSnapshot.cs` 学习编排/水位回填/现场回放 · `FailAttributor.cs`/`FixtureComparator.cs` 多维归因/tester 效应量 · `DriftAnalyzer.cs`/`CpkAnalyzer.cs`/`TdmsFeatureAnalyzer.cs`/`TdmsFeatureCollector.cs` 分析器 · `MeasurementTrendBuilder.cs` 趋势分桶/归一化纯函数 · `ConfigValidator.cs` 配置校验 · `DeviceSampleRecorder.cs` 本机采样 |
-| **Ui/** WinForms | `MainForm.cs`(28K) 主窗口/TabControl 7 页导航/KPI · `Theme.cs` 视觉令牌单一来源 · `UiWidgets.cs` 自绘基础控件 · `DashboardWidgets.cs` 主页大屏（小时趋势/设备在线/TopFail/实时告警）· `UiAsync.cs` UI 异步刷新/防抖工具 · `MaintenanceBoard/Panel/Status/Exporter.cs` 维修看板/面板/状态机/导出 · `FailListPanel.cs`+`FailExporter.cs` FAIL 页（测项级明细：项目/值/限值）+XmlViewerForm+日/周/月/季度导出（**Excel 列宽预设** / CSV） · `DeviceStatusPanel.cs`/`DebugPanel.cs` 设备/调试页 · `AnalysisPanel.cs`+`MeasurementTrendChart.cs` 深度分析页与趋势图（规格06）· `LearningPanel.cs` 正常态自学习区 · `BackupCodePanel.cs`（备份/Seq 页）+`SeqChangeForm.cs` · `BoardCard.cs`/`CardPreview.cs`/`TodoCard.cs`/`TodoGrouping.cs`/`FailItemPicker.cs`/`ResolverManager.cs` 卡片交互/预览/待办/合并/故障项/维修人 · `SplashForm.cs`/`DesktopNotifier.cs`/`UpdatePromptForm.cs`/`AppIcon.cs` 启动/托盘/更新提示/图标 |
+| **Ui/** WinForms | `MainForm.cs`(28K) 主窗口/TabControl 7 页导航/KPI · `Theme.cs` 视觉令牌单一来源 · `UiWidgets.cs` 自绘基础控件 · `DashboardWidgets.cs` 主页大屏（小时趋势/设备在线/TopFail/实时告警）· `UiAsync.cs` UI 异步刷新/防抖工具 · `MaintenanceBoard/Panel/Status/Exporter.cs` 维修看板/面板/状态机/导出 · `FailListPanel.cs`+`FailExporter.cs` FAIL 页（测项级明细：项目/值/限值）+XmlViewerForm+日/周/月/季度导出（**Excel 列宽预设** / CSV；按项目分组、每组小计与空行分隔） · `DeviceStatusPanel.cs`/`DebugPanel.cs` 设备/调试页 · `AnalysisPanel.cs`+`MeasurementTrendChart.cs` 深度分析页与趋势图（规格06）· `LearningPanel.cs` 正常态自学习区 · `BackupCodePanel.cs`（备份/Seq 页）+`SeqChangeForm.cs` · `BoardCard.cs`/`CardPreview.cs`/`TodoCard.cs`/`TodoGrouping.cs`/`FailItemPicker.cs`/`ResolverManager.cs` 卡片交互/预览/待办/合并/故障项/维修人 · `SplashForm.cs`/`DesktopNotifier.cs`/`UpdatePromptForm.cs`/`AppIcon.cs` 启动/托盘/更新提示/图标 |
 | **Infra/** 横切 | `Config.cs` AppConfig 单例（新键 Load/Save/known-keys 三处同步）· `ConfigWatcher.cs` config.json 热重载 · `Logger.cs` 日志 · `TimeUtil.cs` 时间解析+自然周期（日/周/月/季度） · `CsvUtil.cs` CSV 写出+CWE-1236 防护（所有导出必走）· `Xlsx.cs` 手写 OOXML（各处导出共用）+ `TableStyles()` 共享表头/正文样式· `FeishuNotifier.cs`+`FeishuCardV2.cs` 飞书卡片 JSON 2.0 · `UpdateChecker.cs` 两阶段自更新 · `LeftoverAgg.cs` 聚合时代遗留服务/防火墙探测（只告警不自动删）· `LogsCli.cs` logs 子命令 |
 | **Parsing/** 解析 | `IResultParser.cs` 接口+注册表 · `ParserConfig.cs` 配置模型（路径/前缀规则） · `DefaultResultParser.cs` 内置兜底（**承载原 Classifier.cs 的路径/前缀分类+debug 判定**）· `ConfigurableResultParser.cs` parsers.json 驱动 |
 | **modules/**（各自 namespace，勿与主程序互改） | `FailRanker/`（XmlScanner/CsvExporter/XlsxExporter/XmlViewerForm）· `Fetcher/`（Scanner/Exporter/Packager/XlsxWriter/FileLocator/Diagnostics）· `TdmsViewer/`（TdmsDoc/WaveformPanel/Exporter/JsonDumper）· `Upgrader/`（UpgradeWizard，`upgrade` 子命令） |
-| **selftest/** | `SelfTest.cs` 全部断言（显式分组；v3.39.1 起 **790** 项基线）· `SelfTest.csproj` 目录通配编主源码（无需为新文件改动） |
+| **selftest/** | `SelfTest.cs` 全部断言（显式分组；v3.39.2 起 **798** 项基线）· `SelfTest.csproj` 目录通配编主源码（无需为新文件改动） |
 | **脚本** | `scripts/make_release.ps1` 一键发版（只出主程序 2 包：完整+更新）· `FctAggregator/tools/make_package.ps1` 打包器 · `tools/smoke_{gui,notify,cli}.ps1` 冒烟 · `tools/snap_gui.ps1` 截图 · `tools/xlsx_check.ps1` xlsx 对比 · `tools/{deploy_update,upgrade_drill,diag_fctini}.ps1` · `tools/inidiag/`+`tools/xlsxdump/` 诊断工具（递归通配编主源码） |
 
 根级随包文件（**禁止移动**，打包脚本按根相对路径引用）：`config.json`、`config.example.json`、`parsers.example.json`、`app_icon.ico`、`启动.bat`、`更新日志.md`、`版本更新说明.md`、`packages.lock.json`。
@@ -79,7 +79,7 @@ e:/FctDistributor/            ← 分发器独立仓库（2026-09-02 拆分；�
 | 备份 / Seq 代码管理 | `Core/FctProgramBackup.cs` + `Core/FctSeqMonitor.cs`/`FctSeqSnapshot.cs` + `Ui/BackupCodePanel.cs`/`SeqChangeForm.cs` + `Db/Database.{FctBackup,FctSeq}.cs` |
 | 库体积/存储优化 | `Db/StorageOptimizer.cs` + `Db/Database.Storage.cs` + `Db/DbMaintenance.cs` |
 | 升级向导 | `modules/Upgrader/UpgradeWizard.cs` + `Infra/UpdateChecker.cs` |
-| 自检断言 | `selftest/SelfTest.cs`（沿用显式分组注释风格，基线 790） |
+| 自检断言 | `selftest/SelfTest.cs`（沿用显式分组注释风格，基线 798） |
 | 打包/发版 | `scripts/make_release.ps1`（版本自动读 csproj）+ `tools/make_package.ps1` |
 
 ## 2. 代码概况与关键约束

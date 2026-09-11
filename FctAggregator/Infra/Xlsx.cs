@@ -39,15 +39,16 @@ public static class Xlsx
     public static Cell Empty(int style = 0) => new() { Text = "", Style = style };
 
     /// <summary>
-    /// 通用两档样式：style 0 = 正文（左对齐 + 细边框 + 自动换行），style 1 = 表头（加粗白字蓝底居中）。
-    /// 各导出器统一用它，避免每处各写一份样式 XML。
+    /// 通用三档样式：0 = 正文（左对齐 + 细边框 + 自动换行），1 = 表头（加粗白字蓝底居中），
+    /// 2 = 加粗正文（如分组小计行）。各导出器统一用它，避免每处各写一份样式 XML。
     /// </summary>
     public static string TableStyles() =>
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
         "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
-        "<fonts count=\"2\">" +
+        "<fonts count=\"3\">" +
         "<font><sz val=\"11\"/><name val=\"微软雅黑\"/></font>" +
         "<font><b/><sz val=\"11\"/><color rgb=\"FFFFFFFF\"/><name val=\"微软雅黑\"/></font>" +
+        "<font><b/><sz val=\"11\"/><name val=\"微软雅黑\"/></font>" +
         "</fonts>" +
         "<fills count=\"3\">" +
         "<fill><patternFill patternType=\"none\"/></fill>" +
@@ -62,11 +63,13 @@ public static class Xlsx
         "<diagonal/></border>" +
         "</borders>" +
         "<cellStyleXfs count=\"1\"><xf/></cellStyleXfs>" +
-        "<cellXfs count=\"2\">" +
+        "<cellXfs count=\"3\">" +
         "<xf fontId=\"0\" fillId=\"0\" borderId=\"1\" applyFont=\"1\" applyBorder=\"1\" applyAlignment=\"1\">" +
         "<alignment horizontal=\"left\" vertical=\"center\" wrapText=\"1\"/></xf>" +
         "<xf fontId=\"1\" fillId=\"2\" borderId=\"1\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\">" +
         "<alignment horizontal=\"center\" vertical=\"center\"/></xf>" +
+        "<xf fontId=\"2\" fillId=\"0\" borderId=\"1\" applyFont=\"1\" applyBorder=\"1\" applyAlignment=\"1\">" +
+        "<alignment horizontal=\"left\" vertical=\"center\" wrapText=\"1\"/></xf>" +
         "</cellXfs>" +
         "</styleSheet>";
 
