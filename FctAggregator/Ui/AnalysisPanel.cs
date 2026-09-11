@@ -10,22 +10,24 @@ public class AnalysisPanel : Panel
     private Label _attrEmpty = null!;
     private DataGridView _tdmsGrid = null!;
     private Label _tdmsEmpty = null!;
-    private SignalDeviationChart _devChart = null!;
-    private ComboBox _winDays = null!;
+    private MeasurementTrendChart _devChart = null!;
+    private DateTimePicker _dtFrom = null!;
+    private DateTimePicker _dtTo = null!;
     private CheckedListBox _itemList = null!;
     private TextBox _itemSearch = null!;
     private Label _itemCaption = null!;
     private LearningPanel _learnPanel = null!;
     private volatile bool _chartBusy;
     private volatile bool _dataBusy;
+    private volatile bool _rangeUserSet;
+    private bool _bindingRange;
     private int _refreshGen;
     private long _lastDataRefreshTicks;
-    private List<string> _passLabels = new();
-    private List<DeviationSeries> _allSeries = new();
+    private TrendResult? _trend;
+    private List<TrendSeries> _allSeries = new();
     private readonly HashSet<string> _selectedItems = new(StringComparer.OrdinalIgnoreCase);
     private bool _userPickedItems;
     private bool _bindingItems;
-    private string? _chartEmptyHint;
     private string? _chartStatusHint;
 
     public AnalysisPanel(Engine engine)
@@ -74,21 +76,32 @@ public class AnalysisPanel : Panel
         _attrEmpty = EmptyLabel("暂无时段归因快照（每日维护窗口自动计算）");
         _tdmsEmpty = EmptyLabel("TDMS 无数据（配置 tdms_root 后自动采集）");
 
-        _devChart = new SignalDeviationChart { Dock = DockStyle.Fill };
-        _winDays = new ComboBox
-        {
-            DropDownStyle = ComboBoxStyle.DropDownList, Width = 96, Left = 78, Top = 7,
-        };
-        _winDays.Items.AddRange(new object[] { "自动", "近 7 天", "近 14 天", "近 30 天", "近 90 天" });
-        _winDays.SelectedIndex = 0;
-        _winDays.SelectedIndexChanged += (_, _) => RefreshDeviationChart();
+        _devChart = new MeasurementTrendChart { Dock = DockStyle.Fill };
         var chartToolbar = new Panel { Dock = DockStyle.Top, Height = 36, BackColor = Theme.Surface };
         chartToolbar.Controls.Add(new Label
         {
-            Text = "时间窗口", Left = 12, Top = 10, Width = 60, Height = 20,
+            Text = "时间范围", Left = 12, Top = 10, Width = 60, Height = 20,
             ForeColor = Theme.TextFaint, Font = Theme.Tiny, TextAlign = ContentAlignment.MiddleLeft,
         });
-        chartToolbar.Controls.Add(_winDays);
+        _dtFrom = MakeDatePicker(74);
+        _dtTo = MakeDatePicker(204);
+        _dtFrom.Value = DateTime.Today.AddDays(-29);
+        _dtTo.Value = DateTime.Today;
+        _dtFrom.ValueChanged += (_, _) => MarkRangeTouched();
+        _dtTo.ValueChanged += (_, _) => MarkRangeTouched();
+        chartToolbar.Controls.Add(_dtFrom);
+        chartToolbar.Controls.Add(new Label
+        {
+            Text = "~", Left = 190, Top = 10, Width = 12, Height = 20,
+            ForeColor = Theme.TextFaint, Font = Theme.Small, TextAlign = ContentAlignment.MiddleCenter,
+        });
+        chartToolbar.Controls.Add(_dtTo);
+        var btnApply = Theme.MakeButton("应用", 52);
+        btnApply.Height = 26;
+        btnApply.Left = 324;
+        btnApply.Top = 5;
+        btnApply.Click += (_, _) => { MarkRangeTouched(); RefreshTrendChart(); };
+        chartToolbar.Controls.Add(btnApply);
 
         var chartLeft = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface };
         chartLeft.Controls.Add(_devChart);
@@ -154,6 +167,33 @@ public class AnalysisPanel : Panel
         TextAlign = ContentAlignment.MiddleCenter, BackColor = Theme.Surface,
     };
 
+    private static DateTimePicker MakeDatePicker(int left) => new()
+    {
+        Format = DateTimePickerFormat.Custom,
+        CustomFormat = "yyyy-MM-dd",
+        Width = 112,
+        Left = left,
+        Top = 6,
+    };
+
+    /// <summary>用户一旦自己动过日期，就不再自动跟随库内最新 PASS 日期。</summary>
+    private void MarkRangeTouched()
+    {
+        if (!_bindingRange) _rangeUserSet = true;
+    }
+
+    private void SyncRangePickers(DateTime from, DateTime to)
+    {
+        _bindingRange = true;
+        try
+        {
+            if (to < from) from = to;
+            if (_dtFrom.Value.Date != from.Date) _dtFrom.Value = from.Date;
+            if (_dtTo.Value.Date != to.Date) _dtTo.Value = to.Date;
+        }
+        finally { _bindingRange = false; }
+    }
+
     private Panel BuildItemPicker()
     {
         var host = new Panel
@@ -171,11 +211,11 @@ public class AnalysisPanel : Panel
             WrapContents = false, BackColor = Theme.Surface, Padding = new Padding(0, 2, 0, 0),
         };
         var btnAll = Theme.MakeButton("全选", 56);
-        var btnTop = Theme.MakeButton("偏离最大", 80);
+        var btnTop = Theme.MakeButton("波动最大", 80);
         var btnNone = Theme.MakeButton("清空", 56);
         btnAll.Height = btnTop.Height = btnNone.Height = 26;
         btnAll.Click += (_, _) => SelectAllVisible();
-        btnTop.Click += (_, _) => SelectTopDeviations();
+        btnTop.Click += (_, _) => SelectTopVolatile();
         btnNone.Click += (_, _) => SelectNone();
         btns.Controls.AddRange(new Control[] { btnAll, btnTop, btnNone });
 
@@ -237,28 +277,27 @@ public class AnalysisPanel : Panel
         PushChart();
     }
 
-    private void SelectTopDeviations()
+    private void SelectTopVolatile()
     {
         _userPickedItems = true;
         _selectedItems.Clear();
-        foreach (var n in DeviationSeriesBuilder.DefaultVisibleNames(_allSeries, 8))
+        foreach (var n in MeasurementTrendBuilder.TopVolatileNames(_allSeries, 8))
             _selectedItems.Add(n);
         RebuildItemList();
         PushChart();
     }
 
-    private void ApplyChartData(List<string> labels, List<DeviationSeries> series, string? emptyHint, string? statusHint)
+    private void ApplyTrendData(TrendResult? trend, List<TrendSeries> series, string? statusHint)
     {
-        _passLabels = labels ?? new List<string>();
-        _allSeries = series ?? new List<DeviationSeries>();
-        _chartEmptyHint = emptyHint;
+        _trend = trend;
+        _allSeries = series ?? new List<TrendSeries>();
         _chartStatusHint = statusHint;
         var live = new HashSet<string>(_allSeries.Select(s => s.TestName), StringComparer.OrdinalIgnoreCase);
         _selectedItems.RemoveWhere(n => !live.Contains(n));
         if (!_userPickedItems || _selectedItems.Count == 0)
         {
             _selectedItems.Clear();
-            foreach (var n in DeviationSeriesBuilder.DefaultVisibleNames(_allSeries, 8))
+            foreach (var n in MeasurementTrendBuilder.TopVolatileNames(_allSeries, 8))
                 _selectedItems.Add(n);
         }
         RebuildItemList();
@@ -297,18 +336,16 @@ public class AnalysisPanel : Panel
     private void PushChart()
     {
         UpdateItemCaption();
-        var shown = DeviationSeriesBuilder.Filter(_allSeries, _selectedItems);
+        var shown = MeasurementTrendBuilder.Filter(_allSeries, _selectedItems);
         if (shown.Count == 0)
         {
-            var hint = _allSeries.Count == 0
-                ? (_chartEmptyHint ?? "暂无数据")
-                : "请在右侧勾选要查看的测项";
-            _devChart.SetData(_passLabels, shown, hint, null);
+            var hint = _allSeries.Count == 0 ? null : "请在右侧勾选要查看的测项";
+            _devChart.SetData(_trend, shown, hint, null);
             return;
         }
         var st = $"显示 {shown.Count}/{_allSeries.Count} 项";
         if (!string.IsNullOrWhiteSpace(_chartStatusHint)) st += "  ·  " + _chartStatusHint;
-        _devChart.SetData(_passLabels, shown, null, st);
+        _devChart.SetData(_trend, shown, null, st);
     }
 
     /// <param name="force">用户点刷新时 true，跳过节流。</param>
@@ -320,7 +357,7 @@ public class AnalysisPanel : Panel
             if (now - _lastDataRefreshTicks < 2500) return;
         }
         _lastDataRefreshTicks = Environment.TickCount64;
-        RefreshDeviationChart();
+        RefreshTrendChart();
         RefreshDataAsync(force);
     }
 
@@ -375,41 +412,49 @@ public class AnalysisPanel : Panel
             : "暂无分析数据——先采集 PASS 或点「回填历史」。";
     }
 
-    private void RefreshDeviationChart()
+    private void RefreshTrendChart()
     {
         if (_chartBusy) return;
         _chartBusy = true;
-        int winIdx = _winDays?.SelectedIndex ?? 0;
         var db = _engine.Db;
-        var cfg = _engine.Config;
+        bool autoRange = !_rangeUserSet;
+        var from = _dtFrom.Value.Date;
+        var to = _dtTo.Value.Date;
+        // 桶数上限随图宽自适应：分桶即降采样，点数不会超过图宽能分辨的密度
+        int maxBuckets = Math.Clamp(_devChart.Width / 3, 60, 300);
         Task.Run(() =>
         {
-            List<string> labels = new();
-            List<DeviationSeries> series = new();
-            string? emptyHint = null;
-            string? statusHint = null;
+            TrendResult trend;
             try
             {
-                var built = DeviationSeriesBuilder.Build(db, cfg, winIdx);
-                labels = built.PassLabels;
-                series = built.Series;
-                if (built.Series.Count == 0)
-                    emptyHint = built.EmptyHint;
-                else
-                    statusHint = built.EmptyHint;
+                if (autoRange)
+                {
+                    var rg = db.GetPassMeasurementDateRange();
+                    if (rg is { } r && DateTime.TryParseExact(r.Max, "yyyy-MM-dd",
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.None, out var maxD))
+                    {
+                        to = maxD;
+                        from = maxD.AddDays(-29);
+                    }
+                }
+                trend = MeasurementTrendBuilder.Build(db, from, to, maxBuckets);
             }
             catch (Exception ex)
             {
-                emptyHint = "折线构建失败：" + ex.Message;
-                Logger.Warning($"[分析] 偏离折线构建失败: {ex.Message}");
+                Logger.Warning($"[分析] 趋势图构建失败: {ex.Message}");
+                trend = new TrendResult { From = from, ToExclusive = to.AddDays(1) };
+                trend.Hint = "趋势构建失败：" + ex.Message;
             }
             UiAsync.Post(this, () =>
             {
                 try
                 {
-                    if (!IsDisposed) ApplyChartData(labels, series, emptyHint, statusHint);
+                    if (IsDisposed) return;
+                    if (!_rangeUserSet) SyncRangePickers(trend.From, trend.ToExclusive.AddDays(-1));
+                    ApplyTrendData(trend, trend.Series, null);
                 }
-                catch (Exception ex) { Logger.Warning($"[分析] 折线回写失败: {ex.Message}"); }
+                catch (Exception ex) { Logger.Warning($"[分析] 趋势回写失败: {ex.Message}"); }
                 finally { _chartBusy = false; }
             });
         });

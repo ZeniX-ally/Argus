@@ -1236,6 +1236,9 @@ class SelfTest
         Console.WriteLine("\n【日志导出】app.log 尾部预览 + zip 诊断包（不含 webhook）");
         RunLogExportTests(work);
 
+        Console.WriteLine("\n【分析页趋势图】测量值归一化 / 时间分桶 / 桶宽自适应 / 单边限合成");
+        RunMeasurementTrendTests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -3315,6 +3318,143 @@ Argus 统一发布包  v{newer}
             => new FctAggregator.Parsing.ParseOutput { Skipped = true, SkipReason = "stub" };
     }
 
+
+    static void RunMeasurementTrendTests(string work)
+    {
+        // ── 桶宽自适应（分桶即降采样）──
+        Check(MeasurementTrendBuilder.ChooseBucketSeconds(TimeSpan.FromDays(30), 300) == 10800,
+            "趋势桶宽：30 天 / 上限 300 桶 → 3 小时档");
+        Check(MeasurementTrendBuilder.CountBuckets(TimeSpan.FromDays(30), 10800) == 240,
+            "趋势桶数：30 天按 3 小时桶 = 240（不超上限）");
+        Check(MeasurementTrendBuilder.ChooseBucketSeconds(TimeSpan.FromDays(1), 300) == 300,
+            "趋势桶宽：1 天 / 上限 300 桶 → 5 分钟档");
+        Check(MeasurementTrendBuilder.ChooseBucketSeconds(TimeSpan.FromDays(3650), 300) == 1209600,
+            "趋势桶宽：超长跨度回落到 14 天档（不外溢 nice 序列）");
+        Check(MeasurementTrendBuilder.ChooseBucketSeconds(TimeSpan.Zero, 300) == 60,
+            "趋势桶宽：零跨度取最小档不抛异常");
+
+        // ── 归一化 ──
+        Check(MeasurementTrendBuilder.Normalize(15, 10, 20) == 0.5, "归一化：带中心 = 0.5");
+        Check(MeasurementTrendBuilder.Normalize(10, 10, 20) == 0, "归一化：贴下限 = 0");
+        Check(MeasurementTrendBuilder.Normalize(20, 10, 20) == 1, "归一化：贴上限 = 1");
+        Check(MeasurementTrendBuilder.Normalize(30, 10, 20) == 2, "归一化：超上限 = 2（带宽倍数）");
+        Check(MeasurementTrendBuilder.Normalize(5, 10, 20) == -0.5, "归一化：低于下限为负");
+        Check(double.IsNaN(MeasurementTrendBuilder.Normalize(10, 20, 20)),
+            "归一化：零宽规格带返回 NaN（不除零）");
+
+        // ── 基准带：双侧 / 单边 / 退化 / 无 ──
+        var bandTwo = MeasurementTrendBuilder.ResolveBand(10, 20, 5, 30);
+        Check(bandTwo.HasValue && bandTwo!.Value.Low == 10 && bandTwo.Value.High == 20
+              && !bandTwo.Value.LowSynthetic && !bandTwo.Value.HighSynthetic,
+            "基准带：双侧限直接用规格带");
+        var bandLow = MeasurementTrendBuilder.ResolveBand(10, null, 5, 8);
+        Check(bandLow.HasValue && bandLow!.Value.Low == 10 && bandLow.Value.High == 13 && bandLow.Value.HighSynthetic,
+            "基准带：只有下限 → 上限按窗口量程合成（10~13）");
+        var bandHigh = MeasurementTrendBuilder.ResolveBand(null, 20, 5, 8);
+        Check(bandHigh.HasValue && bandHigh!.Value.Low == 17 && bandHigh.Value.High == 20 && bandHigh.Value.LowSynthetic,
+            "基准带：只有上限 → 下限按窗口量程合成（17~20）");
+        var bandDegenerate = MeasurementTrendBuilder.ResolveBand(10, 10, 0, 4);
+        Check(bandDegenerate.HasValue && bandDegenerate!.Value.Low == 8 && bandDegenerate.Value.High == 12,
+            "基准带：上下限相等（退化规格带）→ 以该值为中心用量程撑开");
+        var bandSpread = MeasurementTrendBuilder.ResolveBand(null, null, 5, 8);
+        Check(bandSpread.HasValue && bandSpread!.Value.Low == 5 && bandSpread.Value.High == 8
+              && bandSpread.Value.LowSynthetic && bandSpread.Value.HighSynthetic,
+            "基准带：无限值但有量程 → 双端都按量程合成");
+        Check(MeasurementTrendBuilder.ResolveBand(null, null, null, null) == null,
+            "基准带：全空 → null（跳过该测项）");
+        Check(MeasurementTrendBuilder.ResolveBand(10, null, 5, 5) == null,
+            "基准带：单边限但窗口量程为 0 → null（不造基准）");
+
+        // ── 轴文案 ──
+        Check(MeasurementTrendBuilder.FormatBucketLabel(new DateTime(2026, 9, 1), 2, 86400) == "09-03",
+            "桶标签：按天桶只到日期");
+        Check(MeasurementTrendBuilder.FormatBucketLabel(new DateTime(2026, 9, 1), 3, 3600) == "09-01 03:00",
+            "桶标签：按小时桶含时分");
+        Check(MeasurementTrendChart.FormatBucketSpan(300) == "5 分钟"
+              && MeasurementTrendChart.FormatBucketSpan(10800) == "3 小时"
+              && MeasurementTrendChart.FormatBucketSpan(86400) == "1 天",
+            "桶宽文案：分钟 / 小时 / 天");
+
+        // ── 端到端：入库 → 分桶 → 归一化 ──
+        var trDb = new Database(Path.Combine(work, "trend.db"));
+        var recs = new List<TestRecord>();
+        void AddRec(string key, string ts, string item, double value, double? lo, double? hi)
+        {
+            recs.Add(new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", Category = "Online",
+                TestDate = ts[..10].Replace("-", ""), Sn = key, Result = "PASS",
+                XmlPath = Path.Combine(work, $"trend_{key}.xml"), BatchTimestamp = ts,
+                Measurements = new List<MeasurementRow>
+                {
+                    new() { TestName = item, Value = value, Lolim = lo, Hilim = hi, Unit = "V" },
+                },
+            });
+        }
+        AddRec("a", "2026-09-01 08:00:00", "T_V", 10.5, 10, 13);
+        AddRec("b", "2026-09-01 20:00:00", "T_V", 11.5, 10, 13);
+        AddRec("c", "2026-09-02 09:00:00", "T_V", 10.0, 10, 13);
+        AddRec("d", "2026-09-01 10:00:00", "T_ONE", 7.0, 5, null);
+        AddRec("e", "2026-09-02 10:00:00", "T_ONE", 9.0, 5, null);
+        AddRec("f", "2026-09-01 12:00:00", "T_NOLIM", 3.0, null, null);
+        AddRec("g", "2026-09-01 12:00:00", "T_GAP", 1.0, 0, 2);
+        AddRec("h", "2026-09-03 12:00:00", "T_GAP", 1.0, 0, 2);
+        trDb.BatchInsert(recs);
+
+        var t2 = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2);
+        Check(t2.BucketSeconds == 86400 && t2.BucketCount == 2,
+            $"趋势分桶：2 天窗口按天分桶（实得 {t2.BucketSeconds}s × {t2.BucketCount}）");
+        Check(t2.AllItemNames.Count == 4, $"趋势测项：窗口内 4 个 PASS 测项（实得 {t2.AllItemNames.Count}）");
+        Check(t2.Series.Count == 3 && t2.SkippedNoBand == 1,
+            $"趋势：3 条可绘 / 1 个测项无限值无量程被跳过（实得 {t2.Series.Count}/{t2.SkippedNoBand}）");
+
+        var tv = t2.Series.FirstOrDefault(s => s.TestName == "T_V");
+        Check(tv != null && tv!.Points.Count == 2, $"趋势：T_V 两天各 1 桶（实得 {tv?.Points.Count ?? -1}）");
+        Check(tv != null && tv!.Points[0].N == 2 && Math.Abs(tv.Points[0].MeanValue - 11.0) < 1e-9,
+            "趋势：同桶 2 条样本取段内均值 11.0");
+        Check(tv != null && Math.Abs(tv!.Points[0].Norm - 1.0 / 3.0) < 1e-9,
+            $"趋势：均值 11 对限值 10~13 归一化为 1/3（实得 {tv?.Points[0].Norm:F4}）");
+        Check(tv != null && tv!.Points[1].Norm == 0 && tv.MinNorm == 0 && Math.Abs(tv.MaxNorm - 1.0 / 3.0) < 1e-9,
+            "趋势：极差保留供「波动最大」排序");
+
+        var tone = t2.Series.FirstOrDefault(s => s.TestName == "T_ONE");
+        Check(tone != null && tone!.IsSingleSided && tone.HighSynthetic && tone.BandLow == 5 && tone.BandHigh == 7,
+            "趋势：单边限测项按窗口量程合成缺失端（5~7）");
+        Check(tone != null && Math.Abs(tone!.Points[0].Norm - 1.0) < 1e-9 && Math.Abs(tone.Points[1].Norm - 2.0) < 1e-9,
+            "趋势：合成带宽下归一化 = 1 / 2");
+
+        var t3 = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 3), 3);
+        var gap = t3.Series.FirstOrDefault(s => s.TestName == "T_GAP");
+        Check(gap != null && gap!.Points.Select(p => p.Bucket).SequenceEqual(new[] { 0, 2 }),
+            "趋势：中间空桶不插值，折线按桶号断开（桶 0 与 2）");
+
+        var only = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2,
+            new[] { "t_one" });
+        Check(only.Series.Count == 1 && only.Series[0].TestName == "T_ONE",
+            "趋势：构建时按测项名过滤（忽略大小写）");
+
+        // ── 勾选 / 排序 / 查询口径 ──
+        Check(MeasurementTrendBuilder.Filter(t2.Series, Array.Empty<string>()).Count == 0,
+            "趋势：未勾选任何测项则不画线");
+        var fil = MeasurementTrendBuilder.Filter(t2.Series, new[] { "t_v" });
+        Check(fil.Count == 1 && fil[0].TestName == "T_V", "趋势：按测项名过滤（忽略大小写）");
+        var top = MeasurementTrendBuilder.TopVolatileNames(t2.Series, 1);
+        Check(top.Count == 1 && top[0] == "T_ONE",
+            $"趋势：默认勾选波动最大的测项（实得 {(top.Count > 0 ? top[0] : "-")}）");
+
+        var rows = trDb.QueryPassTrendBuckets("2026-09-01 00:00:00", "2026-09-03 00:00:00", 86400, null);
+        var vRows = rows.Where(r => r.TestName == "T_V").OrderBy(r => r.Bucket).ToList();
+        Check(vRows.Count == 2 && vRows[0].Bucket == 0 && vRows[0].N == 2,
+            "趋势查询：桶 0 对齐区间起点，同日 08:00 与 20:00 归同桶");
+        Check(rows.All(r => r.Bucket >= 0), "趋势查询：窗口外的点不会产生负桶");
+
+        var empty = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 1, 1), new DateTime(2026, 1, 5), 60);
+        Check(empty.IsEmpty && !string.IsNullOrWhiteSpace(empty.Hint), "趋势：空窗口给出空态提示而非抛异常");
+        var blankDb = new Database(Path.Combine(work, "trend_blank.db"));
+        var reversed = MeasurementTrendBuilder.Build(blankDb, new DateTime(2026, 9, 5), new DateTime(2026, 9, 1), 60);
+        Check(reversed.IsEmpty && reversed.ToExclusive > reversed.From,
+            "趋势：起止日期倒置时自动纠正为至少 1 天");
+    }
 
     static void RunNormalStateTests(string work)
     {

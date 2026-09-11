@@ -1326,6 +1326,112 @@ public sealed partial class Database
         return list;
     }
 
+    /// <summary>
+    /// 趋势图：窗口内测项级统计（限值/量程/单位），用于归一化基准。
+    /// 限值取 MAX(lolim)/MIN(hilim)（行间限值变化时取最保守的内侧带）；NULL 行被聚合忽略。
+    /// </summary>
+    public List<TrendItemStat> QueryPassTrendItemStats(
+        string fromIso, string toIsoExclusive, IEnumerable<string>? testNames = null)
+    {
+        var list = new List<TrendItemStat>();
+        var names = NamesOrNull(testNames);
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var sql = @"
+            SELECT m.test_name, MAX(m.lolim), MIN(m.hilim), MIN(m.value), MAX(m.value),
+                   COALESCE(MAX(m.unit),''), COUNT(*)
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE r.result='PASS' AND m.value IS NOT NULL
+              AND m.ts >= @from AND m.ts < @to";
+        if (names != null) sql += $" AND m.test_name COLLATE NOCASE IN ({Placeholders(names.Count)})";
+        sql += " GROUP BY m.test_name ORDER BY m.test_name COLLATE NOCASE";
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@from", fromIso ?? "");
+        cmd.Parameters.AddWithValue("@to", toIsoExclusive ?? "");
+        BindNames(cmd, names);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new TrendItemStat
+            {
+                TestName = r.GetString(0),
+                Lolim = r.IsDBNull(1) ? null : r.GetDouble(1),
+                Hilim = r.IsDBNull(2) ? null : r.GetDouble(2),
+                MinValue = r.IsDBNull(3) ? null : r.GetDouble(3),
+                MaxValue = r.IsDBNull(4) ? null : r.GetDouble(4),
+                Unit = r.GetString(5),
+                N = r.GetInt64(6),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 趋势图：按时间桶聚合段内原始均值（桶宽秒，桶 0 = 区间起点）。
+    /// 桶序号用 strftime('%s', …) 整数分秒后除以桶宽，两端都在 SQL 内同一下取整口径，
+    /// 避免 C# 侧换算把「本地时间」当「UTC」导致按天分桶错位。
+    /// </summary>
+    public List<TrendBucketRow> QueryPassTrendBuckets(
+        string fromIso, string toIsoExclusive, long bucketSeconds, IEnumerable<string>? testNames = null)
+    {
+        var list = new List<TrendBucketRow>();
+        var names = NamesOrNull(testNames);
+        long sec = Math.Max(60, bucketSeconds);
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var sql = @"
+            SELECT m.test_name,
+                   CAST((CAST(strftime('%s', m.ts) AS INTEGER) - CAST(strftime('%s', @from) AS INTEGER)) / @sec AS INTEGER) AS b,
+                   AVG(m.value), COUNT(*)
+            FROM test_measurements m
+            JOIN test_records r ON r.id = m.record_id
+            WHERE r.result='PASS' AND m.value IS NOT NULL
+              AND m.ts >= @from AND m.ts < @to
+              AND strftime('%s', m.ts) IS NOT NULL";
+        if (names != null) sql += $" AND m.test_name COLLATE NOCASE IN ({Placeholders(names.Count)})";
+        sql += " GROUP BY m.test_name, b ORDER BY m.test_name COLLATE NOCASE, b";
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@from", fromIso ?? "");
+        cmd.Parameters.AddWithValue("@to", toIsoExclusive ?? "");
+        cmd.Parameters.AddWithValue("@sec", sec);
+        BindNames(cmd, names);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            if (r.IsDBNull(1)) continue;
+            list.Add(new TrendBucketRow
+            {
+                TestName = r.GetString(0),
+                Bucket = r.GetInt32(1),
+                MeanValue = r.GetDouble(2),
+                N = r.GetInt64(3),
+            });
+        }
+        return list;
+    }
+
+    private static List<string>? NamesOrNull(IEnumerable<string>? testNames)
+    {
+        var names = testNames?.Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return names is { Count: > 0 } ? names : null;
+    }
+
+    private static string Placeholders(int n)
+    {
+        var parts = new string[n];
+        for (int i = 0; i < n; i++) parts[i] = "@n" + i;
+        return string.Join(",", parts);
+    }
+
+    private static void BindNames(SqliteCommand cmd, List<string>? names)
+    {
+        if (names == null) return;
+        for (int i = 0; i < names.Count; i++)
+            cmd.Parameters.AddWithValue($"@n{i}", names[i]);
+    }
+
     /// <summary>回放专用：PASS 测量在 [fromYmd, toYmdExclusive) 日期闭开区间。</summary>
     public List<(long RecordId, string Model, string Ts, string TestName, double Value)> ListPassMeasurementsBetween(string fromYmd, string toYmdExclusive)
     {
