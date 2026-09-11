@@ -3490,6 +3490,33 @@ Argus 统一发布包  v{newer}
         AnalysisPanel.PruneSelection(prunedNull, null);
         Check(prunedNull.Count == 0, "勾选剪枝：live 为 null → 清空且不抛异常");
 
+        // ── 端到端：模拟 UI 刷新序列（首次全量取桶 → 选中若干 → 改日期只取勾选） ──
+        var full3 = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 3), 3);
+        var picked = MeasurementTrendBuilder.TopVolatileNames(full3.Series, 8);
+        var incr = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 3), 3,
+            null, picked);
+        Check(incr.AllItemNames.Count == full3.AllItemNames.Count && incr.AllItemNames.Count == 4,
+            $"刷新序列：只取勾选桶后测项清单不缩水（实得 {incr.AllItemNames.Count}，全量 {full3.AllItemNames.Count}）");
+        Check(incr.Series.Count > 0
+              && incr.Series.All(s => picked.Contains(s.TestName, StringComparer.OrdinalIgnoreCase)),
+            "刷新序列：只取勾选桶后系列是勾选子集");
+        Check(incr.Series.Count == full3.Series.Count,
+            $"刷新序列：勾选覆盖全部可绘测项时系列数与全量一致（实得 {incr.Series.Count}）");
+
+        // ── 端到端：换日期后必须换成新区间的数据（旧区间数据不得残留） ──
+        var narrow = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 2), new DateTime(2026, 9, 2), 60);
+        Check(narrow.From == new DateTime(2026, 9, 2) && narrow.ToExclusive == new DateTime(2026, 9, 3),
+            "换日期：区间严格用新选择（From / ToExclusive 跟随）");
+        Check(!narrow.AllItemNames.Contains("T_GAP"),
+            "换日期：9/2 单日窗口内 T_GAP 无数据 → 不出现（旧区间数据未残留）");
+
+        // ── 桶查询下推：只取指定测项时行数应显著减少（UI「只勾几条」提速的前提） ──
+        var allBucketRows = trDb.QueryPassTrendBuckets("2026-09-01 00:00:00", "2026-09-04 00:00:00", 86400, null);
+        var fewBucketRows = trDb.QueryPassTrendBuckets("2026-09-01 00:00:00", "2026-09-04 00:00:00", 86400,
+            new[] { "T_ONE" });
+        Check(fewBucketRows.Count > 0 && fewBucketRows.Count < allBucketRows.Count,
+            $"桶查询下推：指定测项后行数减少（全部 {allBucketRows.Count} 行 → 单项 {fewBucketRows.Count} 行）");
+
         // ── 勾选 / 排序 / 查询口径 ──
         Check(MeasurementTrendBuilder.Filter(t2.Series, Array.Empty<string>()).Count == 0,
             "趋势：未勾选任何测项则不画线");

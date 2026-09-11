@@ -106,7 +106,7 @@ public sealed class MeasurementTrendChart : Control
         var sub = _data == null
             ? ""
             : $"{_data.From:MM-dd} ~ {_data.ToExclusive.AddDays(-1):MM-dd} · 桶宽 {FormatBucketSpan(_data.BucketSeconds)}" +
-              $" · 已绘 {_series.Count}/{_data.Series.Count} 条";
+              $" · 已绘 {_series.Count} 条";
         if (_data != null && _data.SingleSidedCount > 0)
             sub += $" · 含 {_data.SingleSidedCount} 个单边限测项（缺失端按窗口数据量程合成）";
         if (!string.IsNullOrWhiteSpace(_data?.Hint)) sub += "  ·  " + _data!.Hint;

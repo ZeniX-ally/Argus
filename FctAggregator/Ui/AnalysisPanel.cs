@@ -19,6 +19,8 @@ public class AnalysisPanel : Panel
     private LearningPanel _learnPanel = null!;
     private int _chartGen;
     private bool _fetchAllBuckets;
+    private bool _bucketLoadedAll;
+    private readonly HashSet<string> _bucketLoaded = new(StringComparer.OrdinalIgnoreCase);
     private volatile bool _dataBusy;
     private volatile bool _rangeUserSet;
     private bool _bindingRange;
@@ -250,8 +252,7 @@ public class AnalysisPanel : Panel
         if (e.NewValue == CheckState.Checked) _selectedItems.Add(name);
         else _selectedItems.Remove(name);
         // 平时只对勾选项取桶数据：新勾的测项若还没桶数据，补一次查询
-        bool missing = e.NewValue == CheckState.Checked
-                       && !_allSeries.Any(s => string.Equals(s.TestName, name, StringComparison.OrdinalIgnoreCase));
+        bool missing = e.NewValue == CheckState.Checked && !_bucketLoadedAll && !_bucketLoaded.Contains(name);
         if (missing) RefreshTrendChart();
         else BeginInvoke(PushChart);
     }
@@ -360,7 +361,7 @@ public class AnalysisPanel : Panel
             _devChart.SetData(_trend, shown, hint, null);
             return;
         }
-        var st = $"显示 {shown.Count}/{_trend?.AllItemNames.Count ?? 0} 项";
+        var st = $"已选 {_selectedItems.Count}/{_trend?.AllItemNames.Count ?? 0} 项";
         if (!string.IsNullOrWhiteSpace(_chartStatusHint)) st += "  ·  " + _chartStatusHint;
         _devChart.SetData(_trend, shown, null, st);
     }
@@ -446,6 +447,11 @@ public class AnalysisPanel : Panel
         _fetchAllBuckets = false;
         var wanted = allBuckets ? null : _selectedItems.ToList();
         int selectedCount = _selectedItems.Count;
+        // 记住本次取桶覆盖了哪些测项，供勾选变化时判断「要不要补查」。
+        // 不能用 _allSeries 判断：它按「有基准带」过滤，无限值被跳过的测项会被误判成"没取过"，每次勾选都白查一次。
+        _bucketLoadedAll = wanted == null;
+        _bucketLoaded.Clear();
+        if (wanted != null) foreach (var n in wanted) _bucketLoaded.Add(n);
         Task.Run(() =>
         {
             TrendResult trend;
