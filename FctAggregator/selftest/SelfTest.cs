@@ -1239,6 +1239,9 @@ class SelfTest
         Console.WriteLine("\n【分析页趋势图】测量值归一化 / 时间分桶 / 桶宽自适应 / 单边限合成");
         RunMeasurementTrendTests(work);
 
+        Console.WriteLine("\n【FAIL 明细导出】自然周期 / 测项级明细（老记录退回）/ CSV 列与转义");
+        RunFailDetailExportTests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -3538,6 +3541,129 @@ Argus 统一发布包  v{newer}
         var reversed = MeasurementTrendBuilder.Build(blankDb, new DateTime(2026, 9, 5), new DateTime(2026, 9, 1), 60);
         Check(reversed.IsEmpty && reversed.ToExclusive > reversed.From,
             "趋势：起止日期倒置时自动纠正为至少 1 天");
+    }
+
+    /// <summary>FAIL 页测项级明细 + 自然周期导出（v3.39.0）。</summary>
+    static void RunFailDetailExportTests(string work)
+    {
+        // ── 自然周期边界（today 注入，不依赖运行当天是周几）──
+        var wed = new DateTime(2026, 9, 9);   // 2026-09-11 是周五 → 09-09 周三、09-07 周一、09-13 周日
+        var rDay = TimeUtil.NaturalRange(TimeUtil.NaturalPeriod.Day, wed);
+        Check(rDay.From == wed && rDay.ToInclusive == wed, "自然周期：日 = 当天");
+        var rWeek = TimeUtil.NaturalRange(TimeUtil.NaturalPeriod.Week, wed);
+        Check(rWeek.From == new DateTime(2026, 9, 7) && rWeek.ToInclusive == wed,
+            $"自然周期：周 = 本周一至今（实得 {rWeek.From:yyyy-MM-dd}）");
+        var rMonth = TimeUtil.NaturalRange(TimeUtil.NaturalPeriod.Month, wed);
+        Check(rMonth.From == new DateTime(2026, 9, 1) && rMonth.ToInclusive == wed, "自然周期：月 = 本月 1 号至今");
+        var rQ = TimeUtil.NaturalRange(TimeUtil.NaturalPeriod.Quarter, wed);
+        Check(rQ.From == new DateTime(2026, 7, 1) && rQ.ToInclusive == wed,
+            $"自然周期：季度 = 本季度首日（9 月属 Q3 → 07-01，实得 {rQ.From:yyyy-MM-dd}）");
+        Check(TimeUtil.NaturalRange(TimeUtil.NaturalPeriod.Quarter, new DateTime(2026, 1, 15)).From == new DateTime(2026, 1, 1)
+              && TimeUtil.NaturalRange(TimeUtil.NaturalPeriod.Quarter, new DateTime(2026, 12, 31)).From == new DateTime(2026, 10, 1),
+            "自然周期：季度边界（1 月 → Q1 首日 / 12 月 → Q4 首日）");
+        var mon = new DateTime(2026, 9, 7);
+        Check(TimeUtil.NaturalRange(TimeUtil.NaturalPeriod.Week, mon).From == mon,
+            "自然周期：当天恰为周一时，周区间起点 = 当天");
+        Check(TimeUtil.NaturalRange(TimeUtil.NaturalPeriod.Week, new DateTime(2026, 9, 13)).From == new DateTime(2026, 9, 7),
+            "自然周期：周日仍属本周（起点是本周一，不是下周一）");
+        Check(TimeUtil.NaturalPeriodName(TimeUtil.NaturalPeriod.Quarter) == "本季度"
+              && TimeUtil.NaturalPeriodName(TimeUtil.NaturalPeriod.Day) == "今日",
+            "自然周期：名称文案");
+
+        // ── 测项级明细 ──
+        var dir = Path.Combine(work, "faildetail_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var db = new Database(Path.Combine(dir, "local.db"));
+        int seq = 0;
+        void AddFail(string sn, string ts, string day, string reason,
+            params (string name, string val, string lo, string hi, string unit)[] items)
+        {
+            seq++;
+            db.BatchInsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "E3002781", Result = "FAIL", Sn = sn,
+                    TestDate = day, BatchTimestamp = ts, XmlPath = $@"C:\t\fd_{seq}.xml", FailReason = reason,
+                    FailedTests = items.Select(i => new FailedTest
+                    { Name = i.name, Value = i.val, Lolim = i.lo, Hilim = i.hi, Unit = i.unit }).ToList(),
+                },
+            });
+        }
+        AddFail("SN1", "2026-09-05 08:30:00", "20260905", "V_KL30;CONT",
+            ("V_KL30", "3.29", "10.8", "14.4", "V"), ("CONT", "Open", "", "", ""));
+        // 老记录：库里只有汇总原因，没有 fail_items 明细
+        seq++;
+        db.BatchInsert(new[]
+        {
+            new TestRecord
+            {
+                StationId = "FCT1", Model = "E3002781", Result = "FAIL", Sn = "SN9",
+                TestDate = "20260905", BatchTimestamp = "2026-09-05 09:00:00",
+                XmlPath = $@"C:\t\fd_old_{seq}.xml", FailReason = "老记录汇总原因",
+            },
+        });
+        AddFail("SN2", "2026-08-01 08:00:00", "20260801", "OUT_OF_RANGE",
+            ("T_OUT", "1", "0", "2", "V"));
+
+        var all = db.QueryFailItemDetails("FCT1", "20260901", "20260930");
+        Check(all.Count == 3, $"FAIL 明细：9 月区间 3 行（2 项明细 + 1 条老记录），实得 {all.Count}");
+        Check(all.Count(r => r.HasDetail) == 2 && all.Count(r => !r.HasDetail) == 1,
+            "FAIL 明细：无 fail_items 的老记录仍出现，且 HasDetail=false");
+        var vk = all.FirstOrDefault(r => r.TestName == "V_KL30");
+        Check(vk != null && vk!.ValueDisplay == "3.29" && vk.LimitDisplay == "10.8 ~ 14.4V" && vk.HasDetail,
+            $"FAIL 明细：值取原串、限值拼单位（实得 值='{vk?.ValueDisplay}' 限值='{vk?.LimitDisplay}'）");
+        var cont = all.FirstOrDefault(r => r.TestName == "CONT");
+        Check(cont != null && cont!.ValueDisplay == "Open" && cont.LimitDisplay == "",
+            "FAIL 明细：非数值项值取 value_text、无限值则 limit 留空");
+        var old = all.FirstOrDefault(r => !r.HasDetail);
+        Check(old != null && old!.TestName == "老记录汇总原因" && old.ValueDisplay == "" && old.LimitDisplay == "",
+            "FAIL 明细：老记录项目退回 fail_reason、值/limit 留空");
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string prev = "";
+        bool contiguous = true;
+        foreach (var r in all)
+        {
+            if (string.Equals(r.TestName, prev, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!seen.Add(r.TestName)) { contiguous = false; break; }
+            prev = r.TestName;
+        }
+        Check(contiguous, "FAIL 明细：同项目的行在结果里连续（默认按相同项排序）");
+        var aug = db.QueryFailItemDetails("FCT1", "20260801", "20260831");
+        Check(aug.Count == 1 && aug[0].LimitDisplay == "0 ~ 2V",
+            $"FAIL 明细：日期闭区间过滤 + 双限拼接（实得 {aug.Count} 行 / '{aug.FirstOrDefault()?.LimitDisplay}'）");
+
+        // ── 最近 N 条记录展开（屏幕表格口径：不限日期） ──
+        var recent = db.QueryFailItemDetails("FCT1", recentRecords: 10);
+        Check(recent.Count == 4 && recent.Any(r => r.TestName == "T_OUT"),
+            $"FAIL 明细：recentRecords 模式不限日期、含更早记录（3 条记录展开 4 行，实得 {recent.Count}）");
+
+        // ── CSV 导出 ──
+        var csv = Path.Combine(dir, "out.csv");
+        var n = FailExporter.ExportCsv(csv, TimeUtil.NaturalPeriod.Month,
+            new DateTime(2026, 9, 1), new DateTime(2026, 9, 30), all);
+        var text = File.ReadAllText(csv);
+        Check(n == 3 && text.Contains("FAIL 明细导出（本月）") && text.Contains("范围,2026-09-01 ~ 2026-09-30"),
+            "CSV：标题与周期范围行正确");
+        Check(text.Contains("型号,SN,测试Fail时间,项目,值,下限,上限,单位"), "CSV：表头 8 列（限值拆下限/上限/单位便于透视）");
+        Check(text.Contains("3.29") && text.Contains("10.8") && text.Contains("14.4"), "CSV：值与上下限落表");
+
+        var inj = Path.Combine(dir, "inj.csv");
+        FailExporter.ExportCsv(inj, TimeUtil.NaturalPeriod.Day, DateTime.Today, DateTime.Today,
+            new[] { new FailItemDetail { TestName = "=cmd|calc", Sn = "+1", Model = "M", Ts = "t" } });
+        var injText = File.ReadAllText(inj);
+        Check(injText.Contains("'=cmd|calc") && injText.Contains("'+1"),
+            "CSV：以 = / + 开头的单元格加前导单引号（CWE-1236）");
+
+        var q = Path.Combine(dir, "q.csv");
+        FailExporter.ExportCsv(q, TimeUtil.NaturalPeriod.Day, DateTime.Today, DateTime.Today,
+            new[] { new FailItemDetail { TestName = "A,B", Sn = "he\"llo", Model = "M", Ts = "t" } });
+        var qText = File.ReadAllText(q);
+        Check(qText.Contains("\"A,B\"") && qText.Contains("\"he\"\"llo\""),
+            "CSV：逗号与引号按 RFC 4180 转义");
+
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        try { Directory.Delete(dir, true); } catch { }
     }
 
     static void RunNormalStateTests(string work)

@@ -9,6 +9,40 @@ public static class TimeUtil
         @"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?\s*([+-]\d{2}:?\d{2}|Z)$",
         RegexOptions.Compiled);
 
+    /// <summary>FAIL 导出的自然周期口径。</summary>
+    public enum NaturalPeriod { Day, Week, Month, Quarter }
+
+    /// <summary>
+    /// 自然周期区间（**含首尾**，`today` 由调用方注入以便直测）：
+    /// 日=当天；周=本周一至今（ISO 习惯，与现场排班一致）；月=本月 1 号至今；季度=本季度首日（1/4/7/10 月）至今。
+    /// </summary>
+    public static (DateTime From, DateTime ToInclusive) NaturalRange(NaturalPeriod p, DateTime today)
+    {
+        var d = today.Date;
+        switch (p)
+        {
+            case NaturalPeriod.Week:
+                int dow = ((int)d.DayOfWeek + 6) % 7;   // 周一=0 … 周日=6
+                return (d.AddDays(-dow), d);
+            case NaturalPeriod.Month:
+                return (new DateTime(d.Year, d.Month, 1), d);
+            case NaturalPeriod.Quarter:
+                int qm = ((d.Month - 1) / 3) * 3 + 1;
+                return (new DateTime(d.Year, qm, 1), d);
+            default:
+                return (d, d);
+        }
+    }
+
+    /// <summary>自然周期名（导出文件名与菜单用）。</summary>
+    public static string NaturalPeriodName(NaturalPeriod p) => p switch
+    {
+        NaturalPeriod.Week => "本周",
+        NaturalPeriod.Month => "本月",
+        NaturalPeriod.Quarter => "本季度",
+        _ => "今日",
+    };
+
     public static string Normalize(string? ts)
     {
         if (string.IsNullOrWhiteSpace(ts)) return "";

@@ -1,0 +1,132 @@
+using System.Globalization;
+using Microsoft.Data.Sqlite;
+
+namespace FctAggregator;
+
+/// <summary>
+/// 测项级 FAIL 明细（一个失败项一行）：FAIL 页表格与导出共用。
+/// 老记录（v3.28 前采集、无 fail_items 明细）也会出现——项目退回 fail_reason 汇总串、值/limit 留空。
+/// </summary>
+public class FailItemDetail
+{
+    public string Model = "";
+    public string Sn = "";
+    /// <summary>测试 FAIL 时间（fail_items.ts 优先，退回 batch_timestamp）。</summary>
+    public string Ts = "";
+    /// <summary>失败项目（无明细的老记录退回 fail_reason 汇总串）。</summary>
+    public string TestName = "";
+    /// <summary>失败证据原串（优先用于展示）。</summary>
+    public string ValueText = "";
+    public double? Value;
+    public double? LoLim;
+    public double? HiLim;
+    public string Unit = "";
+    public string XmlPath = "";
+    /// <summary>是否来自 fail_items 明细（false = 老记录，值是退回的汇总串）。</summary>
+    public bool HasDetail;
+
+    /// <summary>值文案：失败证据原串优先，其次格式化数值（沿用图表同款极值转科学计数规则），都没有给空串。</summary>
+    public string ValueDisplay
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(ValueText)) return ValueText;
+            if (!Value.HasValue) return "";
+            var a = Math.Abs(Value.Value);
+            return a > 0 && a < 0.001
+                ? Value.Value.ToString("0.####E+0", CultureInfo.InvariantCulture)
+                : Value.Value.ToString("0.####", CultureInfo.InvariantCulture);
+        }
+    }
+
+    /// <summary>限值文案：双侧「下限 ~ 上限」，单边只给一边，都没有给空串（后缀单位）。</summary>
+    public string LimitDisplay
+    {
+        get
+        {
+            var u = string.IsNullOrWhiteSpace(Unit) ? "" : Unit;
+            if (LoLim.HasValue && HiLim.HasValue)
+                return $"{Num(LoLim.Value)} ~ {Num(HiLim.Value)}{u}";
+            if (LoLim.HasValue) return $"\u2265 {Num(LoLim.Value)}{u}";
+            if (HiLim.HasValue) return $"\u2264 {Num(HiLim.Value)}{u}";
+            return "";
+        }
+    }
+
+    private static string Num(double v) => Math.Abs(v) >= 1000 || (Math.Abs(v) > 0 && Math.Abs(v) < 0.001)
+        ? v.ToString("0.####E+0", CultureInfo.InvariantCulture)
+        : v.ToString("0.####", CultureInfo.InvariantCulture);
+}
+
+public sealed partial class Database
+{
+    /// <summary>
+    /// 测项级 FAIL 明细。两种用法：
+    /// ① 屏幕表格：<paramref name="recentRecords"/> &gt; 0 —— 先取最近 N 条 FAIL 记录再展开其失败项（保持"最近"语义）；
+    /// ② 导出：传 <paramref name="fromYmd"/> / <paramref name="toYmdInclusive"/> —— 取该 <b>test_date 闭区间</b>的全部 FAIL
+    ///    （8 位目录日期，与 FAIL 页 KPI 同口径，保证导出的数字与界面能对上）。
+    /// 结果按「项目（忽略大小写）→ 时间倒序」排序，即默认的"相同项聚合"。
+    /// </summary>
+    public List<FailItemDetail> QueryFailItemDetails(
+        string stationId = "", string? fromYmd = null, string? toYmdInclusive = null,
+        int recentRecords = 0, int maxRows = 200000)
+    {
+        var list = new List<FailItemDetail>();
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        bool byStation = !string.IsNullOrEmpty(stationId);
+        var conds = new List<string>();
+
+        if (recentRecords > 0)
+        {
+            var sub = "SELECT id FROM test_records WHERE result='FAIL'";
+            if (byStation) sub += " AND station_id=@s";
+            sub += " ORDER BY id DESC LIMIT @recent";
+            conds.Add($"r.id IN ({sub})");
+            cmd.Parameters.AddWithValue("@recent", Math.Max(1, recentRecords));
+        }
+        else
+        {
+            conds.Add("r.result='FAIL'");
+            if (byStation) conds.Add("r.station_id=@s");
+            if (!string.IsNullOrWhiteSpace(fromYmd)) conds.Add("r.test_date >= @from");
+            if (!string.IsNullOrWhiteSpace(toYmdInclusive)) conds.Add("r.test_date <= @to");
+        }
+        if (byStation) cmd.Parameters.AddWithValue("@s", stationId);
+        if (!string.IsNullOrWhiteSpace(fromYmd)) cmd.Parameters.AddWithValue("@from", fromYmd);
+        if (!string.IsNullOrWhiteSpace(toYmdInclusive)) cmd.Parameters.AddWithValue("@to", toYmdInclusive);
+
+        cmd.CommandText = $@"
+            SELECT r.model, r.sn,
+                   COALESCE(NULLIF(fi.ts,''), r.batch_timestamp, r.test_date) AS ts,
+                   COALESCE(NULLIF(fi.test_name,''), r.fail_reason, '') AS item,
+                   fi.value_text, fi.value, fi.lolim, fi.hilim, COALESCE(fi.unit,''),
+                   COALESCE(r.xml_path,''), CASE WHEN fi.id IS NULL THEN 0 ELSE 1 END
+            FROM test_records r
+            LEFT JOIN fail_items fi ON fi.record_id = r.id
+            WHERE {string.Join(" AND ", conds)}
+            ORDER BY item COLLATE NOCASE, ts DESC
+            LIMIT @max";
+        cmd.Parameters.AddWithValue("@max", Math.Max(1, maxRows));
+
+        using var rd = cmd.ExecuteReader();
+        while (rd.Read())
+        {
+            list.Add(new FailItemDetail
+            {
+                Model = rd.IsDBNull(0) ? "" : rd.GetString(0),
+                Sn = rd.IsDBNull(1) ? "" : rd.GetString(1),
+                Ts = rd.IsDBNull(2) ? "" : rd.GetString(2),
+                TestName = rd.IsDBNull(3) ? "" : rd.GetString(3),
+                ValueText = rd.IsDBNull(4) ? "" : rd.GetString(4),
+                Value = rd.IsDBNull(5) ? null : rd.GetDouble(5),
+                LoLim = rd.IsDBNull(6) ? null : rd.GetDouble(6),
+                HiLim = rd.IsDBNull(7) ? null : rd.GetDouble(7),
+                Unit = rd.IsDBNull(8) ? "" : rd.GetString(8),
+                XmlPath = rd.IsDBNull(9) ? "" : rd.GetString(9),
+                HasDetail = !rd.IsDBNull(10) && rd.GetInt64(10) != 0,
+            });
+        }
+        return list;
+    }
+}
