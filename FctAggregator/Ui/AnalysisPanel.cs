@@ -17,7 +17,8 @@ public class AnalysisPanel : Panel
     private TextBox _itemSearch = null!;
     private Label _itemCaption = null!;
     private LearningPanel _learnPanel = null!;
-    private volatile bool _chartBusy;
+    private int _chartGen;
+    private bool _fetchAllBuckets;
     private volatile bool _dataBusy;
     private volatile bool _rangeUserSet;
     private bool _bindingRange;
@@ -248,7 +249,11 @@ public class AnalysisPanel : Panel
         var name = _itemList.Items[e.Index]?.ToString() ?? "";
         if (e.NewValue == CheckState.Checked) _selectedItems.Add(name);
         else _selectedItems.Remove(name);
-        BeginInvoke(PushChart);
+        // 平时只对勾选项取桶数据：新勾的测项若还没桶数据，补一次查询
+        bool missing = e.NewValue == CheckState.Checked
+                       && !_allSeries.Any(s => string.Equals(s.TestName, name, StringComparison.OrdinalIgnoreCase));
+        if (missing) RefreshTrendChart();
+        else BeginInvoke(PushChart);
     }
 
     private void SelectAllVisible()
@@ -266,7 +271,7 @@ public class AnalysisPanel : Panel
             }
         }
         finally { _bindingItems = false; }
-        PushChart();
+        RefreshTrendChart();   // 勾选集合变大 → 需要补取这些测项的桶数据
     }
 
     private void SelectNone()
@@ -281,10 +286,21 @@ public class AnalysisPanel : Panel
     {
         _userPickedItems = true;
         _selectedItems.Clear();
-        foreach (var n in MeasurementTrendBuilder.TopVolatileNames(_allSeries, 8))
-            _selectedItems.Add(n);
-        RebuildItemList();
-        PushChart();
+        // 波动最大要基于全量桶数据算：清空勾选 + 本次全取，ApplyTrendData 会自动重选 Top8
+        _fetchAllBuckets = true;
+        RefreshTrendChart();
+    }
+
+    /// <summary>
+    /// 勾选剪枝：只保留「窗口内仍存在的测项」。
+    /// 传入的 liveNames 必须是窗口内**全部**测项（<see cref="TrendResult.AllItemNames"/>）——
+    /// 不能用已取桶数据的系列来判定：只勾少数测项时系列天然缺项，会把用户勾选误剔掉。
+    /// </summary>
+    public static void PruneSelection(HashSet<string> selected, IEnumerable<string>? liveNames)
+    {
+        if (selected == null) return;
+        var live = new HashSet<string>(liveNames ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        selected.RemoveWhere(n => !live.Contains(n));
     }
 
     private void ApplyTrendData(TrendResult? trend, List<TrendSeries> series, string? statusHint)
@@ -292,8 +308,7 @@ public class AnalysisPanel : Panel
         _trend = trend;
         _allSeries = series ?? new List<TrendSeries>();
         _chartStatusHint = statusHint;
-        var live = new HashSet<string>(_allSeries.Select(s => s.TestName), StringComparer.OrdinalIgnoreCase);
-        _selectedItems.RemoveWhere(n => !live.Contains(n));
+        PruneSelection(_selectedItems, _trend?.AllItemNames);
         if (!_userPickedItems || _selectedItems.Count == 0)
         {
             _selectedItems.Clear();
@@ -313,10 +328,11 @@ public class AnalysisPanel : Panel
             var q = (_itemSearch?.Text ?? "").Trim();
             _itemList.BeginUpdate();
             _itemList.Items.Clear();
-            foreach (var s in _allSeries)
+            // 列表用「窗口内出现过的全部测项」（不受只取部分桶数据影响）
+            foreach (var name in _trend?.AllItemNames ?? new List<string>())
             {
-                if (q.Length > 0 && s.TestName.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                _itemList.Items.Add(s.TestName, _selectedItems.Contains(s.TestName));
+                if (q.Length > 0 && name.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                _itemList.Items.Add(name, _selectedItems.Contains(name));
             }
             _itemList.EndUpdate();
         }
@@ -327,10 +343,11 @@ public class AnalysisPanel : Panel
     private void UpdateItemCaption()
     {
         if (_itemCaption == null) return;
+        var total = _trend?.AllItemNames.Count ?? 0;
         var shown = _itemList?.Items.Count ?? 0;
-        _itemCaption.Text = shown == _allSeries.Count
-            ? $"测项 已选 {_selectedItems.Count}/{_allSeries.Count}"
-            : $"测项 已选 {_selectedItems.Count}/{_allSeries.Count}（列出 {shown}）";
+        _itemCaption.Text = shown == total
+            ? $"测项 已选 {_selectedItems.Count}/{total}"
+            : $"测项 已选 {_selectedItems.Count}/{total}（列出 {shown}）";
     }
 
     private void PushChart()
@@ -339,11 +356,11 @@ public class AnalysisPanel : Panel
         var shown = MeasurementTrendBuilder.Filter(_allSeries, _selectedItems);
         if (shown.Count == 0)
         {
-            var hint = _allSeries.Count == 0 ? null : "请在右侧勾选要查看的测项";
+            var hint = _trend?.AllItemNames.Count is not > 0 ? null : "请在右侧勾选要查看的测项";
             _devChart.SetData(_trend, shown, hint, null);
             return;
         }
-        var st = $"显示 {shown.Count}/{_allSeries.Count} 项";
+        var st = $"显示 {shown.Count}/{_trend?.AllItemNames.Count ?? 0} 项";
         if (!string.IsNullOrWhiteSpace(_chartStatusHint)) st += "  ·  " + _chartStatusHint;
         _devChart.SetData(_trend, shown, null, st);
     }
@@ -414,14 +431,21 @@ public class AnalysisPanel : Panel
 
     private void RefreshTrendChart()
     {
-        if (_chartBusy) return;
-        _chartBusy = true;
+        // 代际模型：每次请求都自增代际并真的发起查询，回调只应用「最新一代」的结果。
+        // 不用「忙就丢弃」的悲观锁——过去那种写法会把用户点「应用」的请求静默扔掉，
+        // 并且解锁只发生在异步回调里，一旦回调没执行（Post 被静默丢弃）就永久卡死。
+        int gen = ++_chartGen;
         var db = _engine.Db;
         bool autoRange = !_rangeUserSet;
         var from = _dtFrom.Value.Date;
         var to = _dtTo.Value.Date;
         // 桶数上限随图宽自适应：分桶即降采样，点数不会超过图宽能分辨的密度
         int maxBuckets = Math.Clamp(_devChart.Width / 3, 60, 300);
+        // 只取「当前勾选测项」的桶数据（差一两个数量级）；未勾选或需要算「波动最大」时取全部
+        bool allBuckets = _fetchAllBuckets || _selectedItems.Count == 0;
+        _fetchAllBuckets = false;
+        var wanted = allBuckets ? null : _selectedItems.ToList();
+        int selectedCount = _selectedItems.Count;
         Task.Run(() =>
         {
             TrendResult trend;
@@ -438,7 +462,7 @@ public class AnalysisPanel : Panel
                         from = maxD.AddDays(-29);
                     }
                 }
-                trend = MeasurementTrendBuilder.Build(db, from, to, maxBuckets);
+                trend = MeasurementTrendBuilder.Build(db, from, to, maxBuckets, null, wanted);
             }
             catch (Exception ex)
             {
@@ -446,16 +470,21 @@ public class AnalysisPanel : Panel
                 trend = new TrendResult { From = from, ToExclusive = to.AddDays(1) };
                 trend.Hint = "趋势构建失败：" + ex.Message;
             }
+            Logger.Info($"[分析] 趋势 gen={gen} 范围={trend.From:yyyy-MM-dd}~{trend.ToExclusive.AddDays(-1):yyyy-MM-dd}" +
+                        $" 桶宽={trend.BucketSeconds}s 桶数={trend.BucketCount}" +
+                        $" 测项={trend.AllItemNames.Count} 系列={trend.Series.Count} 跳过={trend.SkippedNoBand}" +
+                        $" 勾选={selectedCount} 取桶={(wanted == null ? "全部" : wanted.Count.ToString())}" +
+                        (string.IsNullOrWhiteSpace(trend.Hint) ? "" : $" 提示={trend.Hint}"));
             UiAsync.Post(this, () =>
             {
                 try
                 {
                     if (IsDisposed) return;
+                    if (gen != _chartGen) return;   // 过期结果：丢弃，绝不覆盖最新一代
                     if (!_rangeUserSet) SyncRangePickers(trend.From, trend.ToExclusive.AddDays(-1));
                     ApplyTrendData(trend, trend.Series, null);
                 }
                 catch (Exception ex) { Logger.Warning($"[分析] 趋势回写失败: {ex.Message}"); }
-                finally { _chartBusy = false; }
             });
         });
     }

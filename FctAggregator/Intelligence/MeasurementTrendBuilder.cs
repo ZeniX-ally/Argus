@@ -130,10 +130,21 @@ public static class MeasurementTrendBuilder
 
     private static bool IsFinite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
 
-    /// <summary>构建趋势（X 为 [fromDate, toDateInclusive] 日期闭区间，桶对齐区间起点）。</summary>
+    /// <summary>
+    /// 构建趋势（X 为 [fromDate, toDateInclusive] 日期闭区间，桶对齐区间起点）。
+    /// </summary>
+    /// <param name="listNames">
+    /// 参与测项清单（<see cref="TrendResult.AllItemNames"/>）的测项；null = 窗口内全部。
+    /// UI 右侧勾选列表要用它，所以通常传 null（列全）。
+    /// </param>
+    /// <param name="bucketNames">
+    /// 需要取出时间桶数据的测项；null = 全部。
+    /// 只勾选少数测项时传勾选项，可把桶查询从「全部测项 × 桶数」降到「勾选项 × 桶数」（差一两个数量级），
+    /// **不影响** <see cref="TrendResult.AllItemNames"/>（清单仍是全量）。
+    /// </param>
     public static TrendResult Build(
         Database db, DateTime fromDate, DateTime toDateInclusive, int maxBuckets,
-        IEnumerable<string>? testNames = null)
+        IEnumerable<string>? listNames = null, IEnumerable<string>? bucketNames = null)
     {
         var from = fromDate.Date;
         var toExclusive = toDateInclusive.Date.AddDays(1);
@@ -153,15 +164,16 @@ public static class MeasurementTrendBuilder
         var fromIso = from.ToString("yyyy-MM-dd HH:mm:ss");
         var toIso = toExclusive.ToString("yyyy-MM-dd HH:mm:ss");
 
-        var stats = db.QueryPassTrendItemStats(fromIso, toIso, testNames);
+        var stats = db.QueryPassTrendItemStats(fromIso, toIso, listNames);
         if (stats.Count == 0)
         {
-            result.Hint = $"窗口 {from:yyyy-MM-dd}~{toExclusive.AddDays(-1):yyyy-MM-dd} 内无 PASS 测量——请调整日期或先回填历史。";
+            result.Hint = $"窗口 {from:yyyy-MM-dd}~{toExclusive.AddDays(-1):yyyy-MM-dd} 内 test_measurements 无 PASS 测量值" +
+                          "（FAIL 记录与良率不受影响）——可调整日期，或先点「回填历史」补采。";
             return result;
         }
         result.AllItemNames = stats.Select(s => s.TestName).ToList();
 
-        var rows = db.QueryPassTrendBuckets(fromIso, toIso, bucketSeconds, testNames);
+        var rows = db.QueryPassTrendBuckets(fromIso, toIso, bucketSeconds, bucketNames);
         var byName = new Dictionary<string, List<TrendBucketRow>>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in rows)
         {

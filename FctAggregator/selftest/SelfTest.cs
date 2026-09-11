@@ -3468,6 +3468,28 @@ Argus 统一发布包  v{newer}
         Check(only.Series.Count == 1 && only.Series[0].TestName == "T_ONE",
             "趋势：构建时按测项名过滤（忽略大小写）");
 
+        // ── 只对部分测项取桶数据（UI 只勾几条时用；不得影响测项清单） ──
+        var partial = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2,
+            null, new[] { "t_one" });
+        Check(partial.Series.Count == 1 && partial.Series[0].TestName == "T_ONE",
+            "趋势取桶：只对指定测项取桶数据 → 系列只含它");
+        Check(partial.AllItemNames.Count == 4,
+            $"趋势取桶：测项清单不受影响（仍为窗口内全部 4 项，实得 {partial.AllItemNames.Count}）");
+        Check(partial.Series[0].Points.Count == only.Series[0].Points.Count,
+            "趋势取桶：同一测项的桶点与全量构建一致");
+
+        // ── 勾选剪枝（必须按「窗口内全部测项」判定，不能用已取桶的系列） ──
+        var pruned = new HashSet<string>(new[] { "A", "B", "C" }, StringComparer.OrdinalIgnoreCase);
+        AnalysisPanel.PruneSelection(pruned, new[] { "b", "d" });
+        Check(pruned.Count == 1 && pruned.Contains("B"),
+            "勾选剪枝：只保留窗口内仍存在的测项（大小写不敏感）");
+        var prunedEmpty = new HashSet<string>(new[] { "A" }, StringComparer.OrdinalIgnoreCase);
+        AnalysisPanel.PruneSelection(prunedEmpty, Array.Empty<string>());
+        Check(prunedEmpty.Count == 0, "勾选剪枝：窗口内全无 → 清空（随后回落默认 Top8）");
+        var prunedNull = new HashSet<string>(new[] { "A" }, StringComparer.OrdinalIgnoreCase);
+        AnalysisPanel.PruneSelection(prunedNull, null);
+        Check(prunedNull.Count == 0, "勾选剪枝：live 为 null → 清空且不抛异常");
+
         // ── 勾选 / 排序 / 查询口径 ──
         Check(MeasurementTrendBuilder.Filter(t2.Series, Array.Empty<string>()).Count == 0,
             "趋势：未勾选任何测项则不画线");
