@@ -14,6 +14,7 @@ public sealed class MeasurementTrendChart : Control
     private string? _statusHint;
     private int _hoverSeries = -1;
     private int _hoverBucket = -1;
+    private int _hoverX = -1;
 
     public MeasurementTrendChart()
     {
@@ -29,15 +30,26 @@ public sealed class MeasurementTrendChart : Control
         _series = series ?? new List<TrendSeries>();
         _emptyHint = series is null or { Count: 0 } ? emptyHint : null;
         _statusHint = series is { Count: > 0 } ? statusHint : null;
-        _hoverSeries = _hoverBucket = -1;
+        _hoverSeries = _hoverBucket = _hoverX = -1;
         Invalidate();
     }
+
+    /// <summary>绘图区（与 OnPaint 同口径，避免两处硬编码漂移）。</summary>
+    private (int Left, int Right, int Top, int Bottom) PlotRect()
+        => (56, Width - 24, 54, Height - 42);
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        if (!TryHit(e.X, e.Y, out var si, out var bi)) { ClearHover(); return; }
-        if (_hoverSeries != si || _hoverBucket != bi) { _hoverSeries = si; _hoverBucket = bi; Invalidate(); }
+        var (l, r, t, b) = PlotRect();
+        if (e.X < l || e.X > r || e.Y < t || e.Y > b) { ClearHover(); return; }
+        // 垂直线以鼠标为准；数据命中失败时仍保留垂直线（只是不弹 tooltip）
+        TryHit(e.X, e.Y, out var si, out var bi);
+        if (_hoverX != e.X || _hoverSeries != si || _hoverBucket != bi)
+        {
+            _hoverX = e.X; _hoverSeries = si; _hoverBucket = bi;
+            Invalidate();
+        }
     }
 
     protected override void OnMouseLeave(EventArgs e)
@@ -48,8 +60,8 @@ public sealed class MeasurementTrendChart : Control
 
     private void ClearHover()
     {
-        if (_hoverSeries == -1) return;
-        _hoverSeries = _hoverBucket = -1;
+        if (_hoverX < 0 && _hoverSeries == -1) return;
+        _hoverSeries = _hoverBucket = _hoverX = -1;
         Invalidate();
     }
 
@@ -83,7 +95,7 @@ public sealed class MeasurementTrendChart : Control
         TextRenderer.DrawText(g, sub, Theme.Tiny,
             new Rectangle(16, 30, Width - 32, 16), Theme.TextFaint, TextFormatFlags.EndEllipsis);
 
-        int chartLeft = 56, chartRight = Width - 24, chartTop = 54, chartBottom = Height - 42;
+        var (chartLeft, chartRight, chartTop, chartBottom) = PlotRect();
         int chartW = chartRight - chartLeft, chartH = chartBottom - chartTop;
         if (chartW < 40 || chartH < 40) return;
 
@@ -177,8 +189,23 @@ public sealed class MeasurementTrendChart : Control
                 TextFormatFlags.HorizontalCenter);
         }
 
-        if (_hoverSeries >= 0 && _hoverBucket >= 0)
-            DrawTooltip(g, XOf(_hoverBucket), YOf(FindPoint(_hoverSeries, _hoverBucket)!.Norm));
+        // 鼠标纵向参考线（以鼠标 X 为准，不吸附桶位）
+        if (_hoverX >= chartLeft && _hoverX <= chartRight)
+        {
+            using var crossPen = new Pen(Color.FromArgb(150, Theme.TextSub), 1f) { DashStyle = DashStyle.Dot };
+            g.DrawLine(crossPen, _hoverX, chartTop, _hoverX, chartBottom);
+        }
+
+        // 命中点高亮环 + tooltip（锚在鼠标 X 旁、数据点高度）
+        if (_hoverSeries >= 0 && _hoverBucket >= 0 && FindPoint(_hoverSeries, _hoverBucket) is { } hp)
+        {
+            float px = XOf(hp.Bucket), py = YOf(hp.Norm);
+            using var ringBrush = new SolidBrush(Theme.Surface);
+            using var ringPen = new Pen(ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(_series[_hoverSeries].TestName)), 2f);
+            g.FillEllipse(ringBrush, px - 4f, py - 4f, 8f, 8f);
+            g.DrawEllipse(ringPen, px - 4f, py - 4f, 8f, 8f);
+            DrawTooltip(g, _hoverX, py);
+        }
     }
 
     private static void FlushSeg(Graphics g, Pen pen, Brush dotBrush, List<PointF> seg, bool drawDots, int dotR)
@@ -239,7 +266,21 @@ public sealed class MeasurementTrendChart : Control
         return null;
     }
 
-    private void DrawTooltip(Graphics g, float x, float y)
+    /// <summary>
+    /// tooltip 摆放（纯函数，可直测）：默认贴在鼠标右上方；右侧/顶部空间不足时翻边，最后夹进控件内。
+    /// </summary>
+    public static Rectangle PlaceTooltip(Size tipSize, int mouseX, int mouseY, int controlWidth, int controlHeight)
+    {
+        int x = mouseX + 10;
+        int y = mouseY - tipSize.Height - 10;
+        if (x + tipSize.Width > controlWidth - 4) x = mouseX - tipSize.Width - 10;
+        if (y < 4) y = mouseY + 14;
+        x = Math.Clamp(x, 4, Math.Max(4, controlWidth - tipSize.Width - 4));
+        y = Math.Clamp(y, 4, Math.Max(4, controlHeight - tipSize.Height - 4));
+        return new Rectangle(x, y, tipSize.Width, tipSize.Height);
+    }
+
+    private void DrawTooltip(Graphics g, int mouseX, float anchorY)
     {
         var ser = _series[_hoverSeries];
         var p = FindPoint(_hoverSeries, _hoverBucket);
@@ -258,11 +299,10 @@ public sealed class MeasurementTrendChart : Control
                   $"{band}\n相对位置 {pos}";
 
         var sz = TextRenderer.MeasureText(tip, Theme.Small);
-        var rect = new Rectangle((int)x + 8, (int)y - sz.Height - 8, sz.Width + 12, sz.Height + 8);
-        if (rect.Right > Width - 8) rect.X = (int)x - rect.Width - 8;
-        if (rect.Y < 4) rect.Y = 4;
-        using var bg = new SolidBrush(Color.FromArgb(240, 30, 34, 42));
-        using var pen = new Pen(Color.FromArgb(120, Theme.Primary));
+        var padded = new Size(sz.Width + 12, sz.Height + 8);
+        var rect = PlaceTooltip(padded, mouseX, (int)anchorY, Width, Height);
+        using var bg = new SolidBrush(Theme.Surface);
+        using var pen = new Pen(Theme.CardBorder);
         g.FillRectangle(bg, rect);
         g.DrawRectangle(pen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
         TextRenderer.DrawText(g, tip, Theme.Small, rect, Theme.TextMain,
@@ -278,7 +318,7 @@ public sealed class MeasurementTrendChart : Control
     {
         seriesIndex = bucketIndex = -1;
         if (_data == null || _series.Count == 0) return false;
-        int chartLeft = 56, chartRight = Width - 24, chartTop = 54, chartBottom = Height - 42;
+        var (chartLeft, chartRight, chartTop, chartBottom) = PlotRect();
         if (mx < chartLeft || mx > chartRight || my < chartTop || my > chartBottom) return false;
 
         int bucketCount = _data.BucketCount;

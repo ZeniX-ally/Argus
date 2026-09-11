@@ -3375,6 +3375,21 @@ Argus 统一发布包  v{newer}
               && MeasurementTrendChart.FormatBucketSpan(86400) == "1 天",
             "桶宽文案：分钟 / 小时 / 天");
 
+        // ── 悬停 tooltip 摆放（以鼠标为准，越界翻边 / 兜底夹边） ──
+        var tipSz = new Size(200, 80);
+        var tipMid = MeasurementTrendChart.PlaceTooltip(tipSz, 400, 300, 900, 400);
+        Check(tipMid.X == 410 && tipMid.Y == 210,
+            "tooltip 摆放：空间充足时贴鼠标右上（x+10 / y-高-10）");
+        var tipRight = MeasurementTrendChart.PlaceTooltip(tipSz, 860, 300, 900, 400);
+        Check(tipRight.X == 650 && tipRight.Right <= 900,
+            "tooltip 摆放：右边界不足时翻到鼠标左侧且不溢出");
+        var tipTop = MeasurementTrendChart.PlaceTooltip(tipSz, 400, 60, 900, 400);
+        Check(tipTop.Y == 74,
+            "tooltip 摆放：顶部不足时翻到鼠标下方（y+14）");
+        var tipTiny = MeasurementTrendChart.PlaceTooltip(tipSz, 20, 20, 100, 50);
+        Check(tipTiny.X == 4 && tipTiny.Y == 4,
+            "tooltip 摆放：控件比 tooltip 还小时夹到左上角且不抛异常");
+
         // ── 端到端：入库 → 分桶 → 归一化 ──
         var trDb = new Database(Path.Combine(work, "trend.db"));
         var recs = new List<TestRecord>();
