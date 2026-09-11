@@ -12,6 +12,7 @@
 | [`算法优化/05-机台自学习.md`](算法优化/05-机台自学习.md) | 规格 05 机台自学习 |
 | [`../FctAggregator/README.md`](../FctAggregator/README.md) | 工程目录与日常命令 |
 | [`../FctAggregator/更新日志.md`](../FctAggregator/更新日志.md) | 版本历史与踩坑 |
+| [`Argus-全面调试报告-20260910.md`](Argus-全面调试报告-20260910.md) | 全面调试报告（性能/算法/UI，含修复进度表） |
 
 ## 历史归档
 

@@ -9,11 +9,11 @@ Argus 是一套面向工厂 FCT（Functional Test，功能测试）工位的机�
 - **测试数据采集**：扫描 FCT 结果 XML / INI，解析 PASS/FAIL/INTERRUPTED 记录、治具（fixture）归属、不良项明细、测量值（PASS 也采）
 - **FAIL 列表与维修待办闭环**：FAIL 双视图分组、待办登记（只扫近一个月、同类合并、永久保留）、维修看板 4 状态机、人员名单/改名同步、12 列导出（CSV 注入防护）
 - **飞书推送**：FAIL 告警 / 待办状态变更，schema 2.0 交互卡片（可选，`webhook_url` 配置）
-- **本机分析**（规格 06）：漂移预警、CPK 低能力清单、fail_items 明细、失败多维归因、tester 效应量对比、TDMS 特征化（默认关）
+- **本机分析**（规格 06）：PASS 趋势图（测量值 vs 时间 + 规格上下限参考带）、漂移预警、CPK 低能力清单、fail_items 明细、失败多维归因、tester 效应量对比、TDMS 特征化（默认关）
 - **机台端自学习**（规格 05 + 正常态 P1）：G49 产品字典驱动故障归并、自基线良率预警、Welford/P² 正常态建模（`learn_normal_enabled` 默认开）
 - **工具箱**：FCT 取数打包（fetch）、TDMS 波形查看（tdms）、FAIL 排行导出（rank）
 - **无缝热升级**：检测更新包自动暂存，分离进程提交，失败自动回滚，不碰现场数据
-- **自检体系**：568 项断言全链路自检，临时目录隔离运行（不碰真实库）
+- **自检体系**：741 项断言全链路自检，临时目录隔离运行（不碰真实库）
 
 ## 环境要求
 
@@ -29,7 +29,7 @@ cd Argus-main
 dotnet build Argus.sln -c Release   # 0 警告 0 错误为提交门槛
 ```
 
-运行自检（568 项断言，使用临时目录隔离，不碰真实数据）：
+运行自检（741 项断言，使用临时目录隔离，不碰真实数据）：
 
 ```powershell
 cd FctAggregator\selftest\bin\Release\net8.0-windows
@@ -100,7 +100,7 @@ Argus-main/
 │   ├── Infra/              # Config/Logger/TimeUtil/Xlsx/CsvUtil/FeishuNotifier
 │   ├── Parsing/            # 插件式 XML 解析器
 │   ├── modules/            # fetch / tdms / rank 工具箱
-│   ├── selftest/           # 568 项断言自检工程
+│   ├── selftest/           # 741 项断言自检工程
 │   └── tools/              # 打包 / 冒烟 / 诊断脚本
 ├── scripts/                # make_release.ps1 一键发布
 ├── docs/                   # 设计文档（含历史 mesh/聚合协议文档备查）

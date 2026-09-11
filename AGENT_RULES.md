@@ -1,4 +1,4 @@
-# Argus 主程序仓库 · Agent 强制规章（v1.0，2026-09-02）
+# Argus 主程序仓库 · Agent 强制规章（v1.1，2026-09-11）
 
 > **本文件是硬性规章，不是参考文档。** 任何 AI agent 在本仓库工作前，必须完整阅读本文件
 > 并逐条遵守；违反任一条 = 本次任务失败，需回滚后重做。
@@ -31,9 +31,9 @@
 ## §2 提交前硬门槛（六查，逐项过，缺一不可）
 
 1. `dotnet build Argus.sln -c Release` **0 警告 0 错误**
-2. selftest **全绿**且断言数 ≥ 基线（568，只增不减；v3.31.0 纯单机化裁剪后新基线）
+2. selftest **全绿**且断言数 ≥ 基线（**741**，只增不减；v3.37.0 起）
 3. `git status` 只含预期文件（无 bin/obj/data/临时文件混入）
-4. 兼容性铁律未被破坏：老库自动迁移 / config 缺省可运行
+4. 兼容性铁律未被破坏：老机台库直开自动补表（Database 构造幂等 Init）/ config 缺省可运行
 5. 更新日志已写（坑必须记录——是给下一个 agent 的）
 6. 版本号策略正确：功能 minor / 修复 patch / 纯结构不升版本
 
@@ -46,10 +46,9 @@
 3. 禁止提交 bin/obj、data/、logs/、Releases/、截图、临时文件（勿 force-add）
 4. 禁止改动 Releases/、历史发版、更新日志旧条目、.gitignore 兼容性条目
 5. **禁止随意写脚本落盘**：一次性验证不创建文件；沉淀脚本只放 `tools/` 或 `scripts/`
-6. 禁止拆分巨文件（WebAggServer/Database/MainForm 保持整体）；新代码放对应域新文件
-7. 禁止绕过 DbMigrator 直接改表；禁止绕过 Config.cs 三处同步直接加配置键
-8. 禁止修改旧 region（A/B/C/Lite-*）；新路由集中单一新 region，鉴权+audit 与既有端点同规格
-9. 分发器已独立仓库（e:/FctDistributor）：本仓库不维护其源码；Xlsx.cs/StationDetector.cs/AppIcon.cs 为两侧副本，**改一侧必须同步另一侧**（无自动比对，靠纪律）
+6. 禁止拆分巨文件（Database/MainForm 保持整体）；新代码放对应域新文件
+7. 禁止绕过 Database.Init 幂等 `CREATE TABLE IF NOT EXISTS` 直接改表（v3.31.0 起已无 DbMigrator）；禁止绕过 Config.cs 三处同步直接加配置键
+8. 分发器已独立仓库（e:/FctDistributor）：本仓库不维护其源码；Xlsx.cs/StationDetector.cs/AppIcon.cs 为两侧副本，**改一侧必须同步另一侧**（无自动比对，靠纪律）
 
 ---
 
