@@ -39,7 +39,7 @@ public class MainForm : Form
 
     private static readonly string[] PageTitles =
     {
-        "总览", "待办 / 维修记录", "设备状态", "FAIL 记录", "备份 / Seq", "调试工具", "分析",
+        "总览", "待办 / 维修记录", "设备状态", "FAIL 记录", "备份", "调试工具", "分析",
         "TDMS 波形",
     };
 
@@ -61,7 +61,6 @@ public class MainForm : Form
     {
         _engine = engine;
         _cfg = AppConfig.Instance;
-        UiBridge.MainForm = this;
         Text = $"Argus v{AppVersion}";
         var wa = Screen.PrimaryScreen!.WorkingArea;
         Width = Math.Min(1408, wa.Width);
@@ -88,7 +87,6 @@ public class MainForm : Form
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
         Tick();
-        _engine.StartSeqMonitor();
     }
 
     private void BuildUi()

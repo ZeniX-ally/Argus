@@ -42,7 +42,13 @@ public sealed class TrendSeries
     public long Samples { get; set; }
     public double MinNorm { get; set; }
     public double MaxNorm { get; set; }
+    /// <summary>PASS 桶点（实线）。</summary>
     public List<TrendPoint> Points { get; set; } = new();
+    /// <summary>FAIL 桶点（虚线，同限值归一化；只有 value 为数字的失败项才进来）。</summary>
+    public List<TrendPoint> FailPoints { get; set; } = new();
+    /// <summary>FAIL 样本数（桶内计数之和）。</summary>
+    public long FailSamples { get; set; }
+    public bool HasFail => FailPoints.Count > 0;
 
     /// <summary>单边限（缺失的那一端按窗口数据量程合成）。</summary>
     public bool IsSingleSided => LowSynthetic || HighSynthetic;
@@ -62,6 +68,9 @@ public sealed class TrendResult
 
     public bool IsEmpty => Series.Count == 0;
     public int SingleSidedCount => Series.Count(s => s.IsSingleSided);
+    /// <summary>FAIL 样本总数（图例/副标题展示用）。</summary>
+    public long FailSamplesTotal => Series.Sum(s => s.FailSamples);
+    public bool HasAnyFail => Series.Any(s => s.HasFail);
 }
 
 /// <summary>
@@ -185,6 +194,18 @@ public static class MeasurementTrendBuilder
             list.Add(r);
         }
 
+        // FAIL 失败项桶（同区间/同桶宽），按测项名索引后叠到对应曲线上
+        var failByName = new Dictionary<string, List<TrendBucketRow>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in db.QueryFailTrendBuckets(fromIso, toIso, bucketSeconds, bucketNames))
+        {
+            if (!failByName.TryGetValue(r.TestName, out var flist))
+            {
+                flist = new List<TrendBucketRow>();
+                failByName[r.TestName] = flist;
+            }
+            flist.Add(r);
+        }
+
         int skipped = 0;
         foreach (var st in stats)
         {
@@ -210,6 +231,19 @@ public static class MeasurementTrendBuilder
                 ser.Points.Add(new TrendPoint { Bucket = r.Bucket, Norm = norm, MeanValue = r.MeanValue, N = r.N });
                 if (norm < minN) minN = norm;
                 if (norm > maxN) maxN = norm;
+            }
+            // FAIL 虚线：同测项同限值归一化；其极值同样纳入纵轴范围，否则"掉坑"会画到视野外
+            if (failByName.TryGetValue(st.TestName, out var failBucketRows))
+            {
+                foreach (var r in failBucketRows.OrderBy(x => x.Bucket))
+                {
+                    var norm = Normalize(r.MeanValue, ser.BandLow, ser.BandHigh);
+                    if (!IsFinite(norm)) continue;
+                    ser.FailPoints.Add(new TrendPoint { Bucket = r.Bucket, Norm = norm, MeanValue = r.MeanValue, N = r.N });
+                    ser.FailSamples += r.N;
+                    if (norm < minN) minN = norm;
+                    if (norm > maxN) maxN = norm;
+                }
             }
             if (ser.Points.Count == 0) continue;
             ser.MinNorm = minN;

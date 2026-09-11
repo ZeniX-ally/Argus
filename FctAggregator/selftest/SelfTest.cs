@@ -2492,44 +2492,6 @@ Argus 统一发布包  v{newer}
             Check(FctProgramBackup.ShouldRunScheduled(schedDb, ftsCfg), "本月尚无备份时应触发定时备份");
             Check(!FctProgramBackup.ShouldRunScheduled(ftsDb, ftsCfg), "本月已有成功备份则跳过");
 
-            Console.WriteLine("\n【Seq监控】PEU Seq 快照与对比 …");
-            var seqRoot = Path.Combine(dirA6, "Seq");
-            Directory.CreateDirectory(seqRoot);
-            File.WriteAllText(Path.Combine(seqRoot, "test.seq"), "LINE1\nLINE2\n");
-            Check(FctSeqSnapshot.ScanDirectory(seqRoot).Count >= 1, "Seq 目录扫描");
-            FctSeqSnapshot.CaptureBaseline(seqRoot);
-            Check(FctSeqSnapshot.HasBaseline(), "Seq 基线已建立");
-            var manJson = File.ReadAllText(FctSeqSnapshot.BaselineManifestPath);
-            Check(manJson.Contains("test.seq", StringComparison.OrdinalIgnoreCase),
-                  $"Seq manifest 含 test.seq（{manJson.Length} 字节）");
-            Check(FctSeqSnapshot.LoadBaselineManifest().Count >= 1,
-                  $"Seq 基线 manifest 可读（{FctSeqSnapshot.LoadBaselineManifest().Count} 项）");
-            File.WriteAllText(Path.Combine(seqRoot, "test.seq"), "LINE1\nLINE2-CHANGED\n");
-            File.WriteAllText(Path.Combine(seqRoot, "new.seq"), "NEW\n");
-            var seqRep = FctSeqSnapshot.CompareToBaseline(seqRoot);
-            Check(seqRep.Modified >= 1 && seqRep.Added >= 1,
-                  $"Seq 对比检出修改与新增（~{seqRep.Modified} +{seqRep.Added}）");
-            Check(!string.IsNullOrEmpty(seqRep.Fingerprint()), "Seq 变更指纹非空");
-            var seqDb = new Database(Path.Combine(dirA6, "seq.db"));
-            seqDb.InsertFctSeqChangeLog(seqRep);
-            Check(seqDb.ListFctSeqChangeLogs(5).Count >= 1, "Seq 变更记录入库");
-            Check(new AppConfig().FctSeqRoot == @"C:\FTS\Apps\PEU\Seq", "默认 Seq 路径");
-            var discRoot = Path.Combine(dirA6, "FTS_named");
-            Directory.CreateDirectory(Path.Combine(discRoot, "Apps", "CustomerX", "Seq"));
-            File.WriteAllText(Path.Combine(discRoot, "Apps", "CustomerX", "Seq", "a.seq"), "X\n");
-            var disc = FctSeqSnapshot.DiscoverSeqRoots(discRoot);
-            Check(disc.Any(p => p.Contains("CustomerX", StringComparison.OrdinalIgnoreCase)),
-                  "按产品/机台文件夹名发现 Seq 目录");
-            var missCfg = new AppConfig
-            {
-                FctProgramSourceRoot = discRoot,
-                FctSeqRoot = Path.Combine(discRoot, "Apps", "PEU", "Seq"),
-            };
-            var resolved = FctSeqSnapshot.ResolveSeqRoot(missCfg, discoverFallback: true);
-            Check(resolved.Contains("CustomerX", StringComparison.OrdinalIgnoreCase),
-                  "配置的 PEU\\Seq 不存在时回退到发现的唯一 Seq");
-            Console.WriteLine("[Seq监控] 组完成");
-
             Console.WriteLine("[FTS备份] 组完成");
 
             Console.WriteLine("[规格06] 存储组完成");
@@ -3437,6 +3399,24 @@ Argus 统一发布包  v{newer}
         AddRec("f", "2026-09-01 12:00:00", "T_NOLIM", 3.0, null, null);
         AddRec("g", "2026-09-01 12:00:00", "T_GAP", 1.0, 0, 2);
         AddRec("h", "2026-09-03 12:00:00", "T_GAP", 1.0, 0, 2);
+        // FAIL 记录：趋势图叠虚线的数据源（只有"失败的那个测项"会进 fail_items）
+        void AddFailRec(string key, string ts, string item, string value, string lo, string hi)
+        {
+            recs.Add(new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", Category = "Online",
+                TestDate = ts[..10].Replace("-", ""), Sn = key, Result = "FAIL",
+                XmlPath = Path.Combine(work, $"trend_fail_{key}.xml"), BatchTimestamp = ts, FailReason = item,
+                FailedTests = new List<FailedTest>
+                {
+                    new() { Name = item, Value = value, Lolim = lo, Hilim = hi, Unit = "V" },
+                },
+            });
+        }
+        AddFailRec("fa", "2026-09-01 09:00:00", "T_V", "3.5", "10", "13");
+        AddFailRec("fd", "2026-09-02 11:00:00", "T_V", "3.8", "10", "13");
+        AddFailRec("fb", "2026-09-02 10:00:00", "T_ONE", "Open", "5", "");
+        AddFailRec("fc", "2026-09-01 11:00:00", "T_ONLYFAIL", "1.0", "0", "2");
         trDb.BatchInsert(recs);
 
         var t2 = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2);
@@ -3452,8 +3432,8 @@ Argus 统一发布包  v{newer}
             "趋势：同桶 2 条样本取段内均值 11.0");
         Check(tv != null && Math.Abs(tv!.Points[0].Norm - 1.0 / 3.0) < 1e-9,
             $"趋势：均值 11 对限值 10~13 归一化为 1/3（实得 {tv?.Points[0].Norm:F4}）");
-        Check(tv != null && tv!.Points[1].Norm == 0 && tv.MinNorm == 0 && Math.Abs(tv.MaxNorm - 1.0 / 3.0) < 1e-9,
-            "趋势：极差保留供「波动最大」排序");
+        Check(tv != null && tv!.Points[1].Norm == 0 && Math.Abs(tv.MaxNorm - 1.0 / 3.0) < 1e-9 && tv.MinNorm < 0,
+            "趋势：极差保留供「波动最大」排序（PASS 侧 MaxNorm=1/3；MinNorm 已含 FAIL 极值 <0）");
 
         var tone = t2.Series.FirstOrDefault(s => s.TestName == "T_ONE");
         Check(tone != null && tone!.IsSingleSided && tone.HighSynthetic && tone.BandLow == 5 && tone.BandHigh == 7,
@@ -3465,6 +3445,25 @@ Argus 统一发布包  v{newer}
         var gap = t3.Series.FirstOrDefault(s => s.TestName == "T_GAP");
         Check(gap != null && gap!.Points.Select(p => p.Bucket).SequenceEqual(new[] { 0, 2 }),
             "趋势：中间空桶不插值，折线按桶号断开（桶 0 与 2）");
+
+        // ── FAIL 虚线叠加（v3.40.0） ──
+        var t5 = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2);
+        var tv5 = t5.Series.First(s => s.TestName == "T_V");
+        Check(tv5.Points.Count == 2 && tv5.FailPoints.Count == 2 && tv5.FailSamples == 2,
+            $"FAIL 叠加：T_V 两桶 PASS 2 点 + FAIL 2 点（实得 {tv5.Points.Count}/{tv5.FailPoints.Count}）");
+        Check(Math.Abs(tv5.Points[0].MeanValue - 11.0) < 1e-9,
+            "FAIL 叠加：FAIL 不污染 PASS 桶均值（桶 0 仍为 PASS 均值 11.0）");
+        Check(Math.Abs(tv5.FailPoints[0].MeanValue - 3.5) < 1e-9
+              && Math.Abs(tv5.FailPoints[0].Norm - (3.5 - 10) / 3.0) < 1e-9,
+            "FAIL 叠加：失败值按同测项限值归一化（3.5 对 10~13 → 负相对位置）");
+        Check(tv5.MinNorm < 0,
+            $"FAIL 叠加：FAIL 极值纳入纵轴范围（MinNorm={tv5.MinNorm:F2} < 0，掉坑不会被画到视野外）");
+        Check(!t5.Series.Any(s => s.TestName == "T_ONLYFAIL"),
+            "FAIL 叠加：只有 FAIL 没有 PASS 的测项不建系列（趋势图以正常态为基准）");
+        var tone5 = t5.Series.First(s => s.TestName == "T_ONE");
+        Check(!tone5.HasFail, "FAIL 叠加：非数值失败项（value_text=Open）不进虚线");
+        Check(t5.HasAnyFail && t5.FailSamplesTotal == 2,
+            $"FAIL 叠加：汇总失败样本数（实得 {t5.FailSamplesTotal}）");
 
         var only = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2,
             new[] { "t_one" });
@@ -3526,8 +3525,8 @@ Argus 统一发布包  v{newer}
         var fil = MeasurementTrendBuilder.Filter(t2.Series, new[] { "t_v" });
         Check(fil.Count == 1 && fil[0].TestName == "T_V", "趋势：按测项名过滤（忽略大小写）");
         var top = MeasurementTrendBuilder.TopVolatileNames(t2.Series, 1);
-        Check(top.Count == 1 && top[0] == "T_ONE",
-            $"趋势：默认勾选波动最大的测项（实得 {(top.Count > 0 ? top[0] : "-")}）");
+        Check(top.Count == 1 && top[0] == "T_V",
+            $"趋势：默认勾选波动最大的测项（含 FAIL 极值后 T_V 最大，实得 {(top.Count > 0 ? top[0] : "-")}）");
 
         var rows = trDb.QueryPassTrendBuckets("2026-09-01 00:00:00", "2026-09-03 00:00:00", 86400, null);
         var vRows = rows.Where(r => r.TestName == "T_V").OrderBy(r => r.Bucket).ToList();

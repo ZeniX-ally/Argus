@@ -305,6 +305,14 @@ public sealed partial class Database
             ";
             cmd9.ExecuteNonQuery();
 
+            // v3.40.0：Seq 代码管理（变更监控 / 基线对比）已整块移除，把旧库里遗留的变更记录表一并清掉。
+            // 幂等：首次启动真正删表，之后 DROP IF EXISTS 是 no-op。
+            using (var cmdSeq = conn.CreateCommand())
+            {
+                cmdSeq.CommandText = "DROP TABLE IF EXISTS fct_seq_change_log";
+                cmdSeq.ExecuteNonQuery();
+            }
+
             // 正常态自学习底座：每 (source, model, signal_key) 一行增量模型（Welford+P² 状态持久化在 qstate）
             using var cmd10 = conn.CreateCommand();
             cmd10.CommandText = @"
@@ -1391,6 +1399,50 @@ public sealed partial class Database
               AND strftime('%s', m.ts) IS NOT NULL";
         if (names != null) sql += $" AND m.test_name COLLATE NOCASE IN ({Placeholders(names.Count)})";
         sql += " GROUP BY m.test_name, b ORDER BY m.test_name COLLATE NOCASE, b";
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("@from", fromIso ?? "");
+        cmd.Parameters.AddWithValue("@to", toIsoExclusive ?? "");
+        cmd.Parameters.AddWithValue("@sec", sec);
+        BindNames(cmd, names);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            if (r.IsDBNull(1)) continue;
+            list.Add(new TrendBucketRow
+            {
+                TestName = r.GetString(0),
+                Bucket = r.GetInt32(1),
+                MeanValue = r.GetDouble(2),
+                N = r.GetInt64(3),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 趋势图：**FAIL 失败项**的按桶均值。与 PASS 桶完全同口径（同区间、同桶宽、段内 AVG），
+    /// 便于两条线画在同一纵轴上直接比较。
+    /// 只取 <c>value</c> 能解析成数字的失败项——value_text 文本项（如 CONT=Open）没有数值可归一化，跳过。
+    /// </summary>
+    public List<TrendBucketRow> QueryFailTrendBuckets(
+        string fromIso, string toIsoExclusive, long bucketSeconds, IEnumerable<string>? testNames = null)
+    {
+        var list = new List<TrendBucketRow>();
+        var names = NamesOrNull(testNames);
+        long sec = Math.Max(60, bucketSeconds);
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var sql = @"
+            SELECT fi.test_name,
+                   CAST((CAST(strftime('%s', fi.ts) AS INTEGER) - CAST(strftime('%s', @from) AS INTEGER)) / @sec AS INTEGER) AS b,
+                   AVG(fi.value), COUNT(*)
+            FROM fail_items fi
+            JOIN test_records r ON r.id = fi.record_id
+            WHERE r.result='FAIL' AND fi.value IS NOT NULL
+              AND fi.ts >= @from AND fi.ts < @to
+              AND strftime('%s', fi.ts) IS NOT NULL";
+        if (names != null) sql += $" AND fi.test_name COLLATE NOCASE IN ({Placeholders(names.Count)})";
+        sql += " GROUP BY fi.test_name, b ORDER BY fi.test_name COLLATE NOCASE, b";
         cmd.CommandText = sql;
         cmd.Parameters.AddWithValue("@from", fromIso ?? "");
         cmd.Parameters.AddWithValue("@to", toIsoExclusive ?? "");

@@ -8,7 +8,6 @@ public class Engine
     private readonly AppConfig _cfg;
     private readonly Database _db;
     private readonly DbMaintenance _maintenance;
-    private FctSeqMonitor? _seqMonitor;
     private readonly string _stationId;
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly object _watcherLock = new();
@@ -32,7 +31,6 @@ public class Engine
     public string ResolvedStationId => _stationId;
     public AppConfig Config => _cfg;
 
-    public void StartSeqMonitor() => _seqMonitor = FctSeqMonitor.Start(_cfg, _db);
     public Engine(AppConfig cfg)
     {
         _cfg = cfg;
@@ -182,8 +180,6 @@ public class Engine
     public void Stop()
     {
         try { DeviceSampleRecorder.Instance.Stop(); } catch { }
-        try { _seqMonitor?.Dispose(); } catch { }
-        _seqMonitor = null;
         _maintenance.Stop();
         _cts.Cancel();
         try { _retryThread?.Join(3000); } catch { }

@@ -35,9 +35,6 @@ public class AppConfig
     /// <summary>磁盘上保留的 zip 份数（数据库记录永久保留）。</summary>
     public int FctProgramBackupKeep { get; set; } = 10;
 
-    /// <summary>PEU Seq 测试程序目录（默认 C:\FTS\Apps\PEU\Seq）。</summary>
-    public string FctSeqRoot { get; set; } = @"C:\FTS\Apps\PEU\Seq";
-    public bool FctSeqMonitorEnabled { get; set; } = true;
     public string UpdateDir { get; set; } = "data/updates";
     /// <summary>只读更新源（共享文件夹/UNC 盘），非空时替代 UpdateDir 供扫描，暂存/备份仍落本机 UpdateDir。</summary>
     public string UpdateSource { get; set; } = "";
@@ -150,10 +147,6 @@ public class AppConfig
                 if (root.TryGetProperty("fct_program_backup_keep", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var fpk) && fpk >= 1)
                     cfg.FctProgramBackupKeep = fpk;
-                if (root.TryGetProperty("fct_seq_root", out v) && v.ValueKind == JsonValueKind.String)
-                    cfg.FctSeqRoot = (GetStringSafe(v) ?? cfg.FctSeqRoot).Trim();
-                if (root.TryGetProperty("fct_seq_monitor_enabled", out v))
-                    cfg.FctSeqMonitorEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("auto_update", out v)) cfg.AutoUpdate = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("update_source", out v)) cfg.UpdateSource = (GetStringSafe(v) ?? "").Trim();
                 if (root.TryGetProperty("learn_baseline_enabled", out v)) cfg.LearnBaselineEnabled = v.ValueKind == JsonValueKind.True;
@@ -284,7 +277,7 @@ public class AppConfig
                     "db_maintenance_hour", "db_storage_auto_optimize", "db_storage_monitor_hours",
                     "db_vacuum_threshold_mb", "db_parse_failure_retention_days",
                     "fct_program_source_root", "fct_program_backup_dir", "fct_program_backup_enabled",
-                    "fct_program_backup_keep", "fct_seq_root", "fct_seq_monitor_enabled",
+                    "fct_program_backup_keep",
                     "auto_update", "update_source",
                     "learn_baseline_enabled", "learn_resource_sampling_enabled", "learn_priority_enabled",
                     "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
@@ -327,8 +320,6 @@ public class AppConfig
                 writer.WriteString("fct_program_backup_dir", FctProgramBackupDir);
                 writer.WriteBoolean("fct_program_backup_enabled", FctProgramBackupEnabled);
                 writer.WriteNumber("fct_program_backup_keep", FctProgramBackupKeep);
-                writer.WriteString("fct_seq_root", FctSeqRoot);
-                writer.WriteBoolean("fct_seq_monitor_enabled", FctSeqMonitorEnabled);
                 writer.WriteBoolean("auto_update", AutoUpdate);
                 writer.WriteString("update_source", UpdateSource);
                 writer.WriteBoolean("learn_baseline_enabled", LearnBaselineEnabled);

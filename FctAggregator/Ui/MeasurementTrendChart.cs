@@ -109,6 +109,8 @@ public sealed class MeasurementTrendChart : Control
               $" · 已绘 {_series.Count} 条";
         if (_data != null && _data.SingleSidedCount > 0)
             sub += $" · 含 {_data.SingleSidedCount} 个单边限测项（缺失端按窗口数据量程合成）";
+        if (_data != null && _data.HasAnyFail)
+            sub += $" · 虚线 = FAIL（{_data.FailSamplesTotal} 个失败样本）";
         if (!string.IsNullOrWhiteSpace(_data?.Hint)) sub += "  ·  " + _data!.Hint;
         if (!string.IsNullOrWhiteSpace(_statusHint)) sub += "  ·  " + _statusHint;
         TextRenderer.DrawText(g, sub, Theme.Tiny,
@@ -173,30 +175,23 @@ public sealed class MeasurementTrendChart : Control
         DrawLegend(g, chartRight, chartTop);
 
         float lineW = _series.Count switch { <= 12 => 2f, <= 40 => 1.5f, _ => 1f };
-        int dotR = _series.Count <= 40 ? 2 : 1;
-        bool drawDots = _series.Count <= 60 && bucketCount <= 400;
         for (int si = 0; si < _series.Count; si++)
         {
             var ser = _series[si];
             var col = ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(ser.TestName));
             int alpha = _series.Count > 40 ? 120 : 200;
-            using var linePen = new Pen(Color.FromArgb(alpha, col), si == _hoverSeries ? lineW + 1f : lineW);
-            using var dotBrush = new SolidBrush(col);
+            float w = si == _hoverSeries ? lineW + 1f : lineW;
 
-            // 空桶不能插值连过去，按连续桶号切段分别绘制
-            var seg = new List<PointF>();
-            int prevBucket = int.MinValue;
-            foreach (var p in ser.Points)
+            // PASS：实线（只连线、不画散点——点一多反而看不清趋势）
+            using (var linePen = new Pen(Color.FromArgb(alpha, col), w))
+                DrawSeriesLine(g, linePen, ser.Points, XOf, YOf);
+
+            // FAIL：同一测项颜色的虚线，便于一眼对上"是哪条线在失败"
+            if (ser.HasFail)
             {
-                if (seg.Count > 0 && p.Bucket != prevBucket + 1)
-                {
-                    FlushSeg(g, linePen, dotBrush, seg, drawDots, dotR);
-                    seg.Clear();
-                }
-                seg.Add(new PointF(XOf(p.Bucket), YOf(p.Norm)));
-                prevBucket = p.Bucket;
+                using var failPen = new Pen(Color.FromArgb(alpha, col), w) { DashStyle = DashStyle.Dash };
+                DrawSeriesLine(g, failPen, ser.FailPoints, XOf, YOf);
             }
-            FlushSeg(g, linePen, dotBrush, seg, drawDots, dotR);
         }
 
         int labelStep = bucketCount <= 12 ? 1 : Math.Max(1, bucketCount / 10);
@@ -216,7 +211,7 @@ public sealed class MeasurementTrendChart : Control
         }
 
         // 命中点高亮环 + tooltip（锚在鼠标 X 旁、数据点高度）
-        if (_hoverSeries >= 0 && _hoverBucket >= 0 && FindPoint(_hoverSeries, _hoverBucket) is { } hp)
+        if (_hoverSeries >= 0 && _hoverBucket >= 0 && FindAnyPoint(_hoverSeries, _hoverBucket) is { } hp)
         {
             float px = XOf(hp.Bucket), py = YOf(hp.Norm);
             using var ringBrush = new SolidBrush(Theme.Surface);
@@ -227,18 +222,35 @@ public sealed class MeasurementTrendChart : Control
         }
     }
 
-    private static void FlushSeg(Graphics g, Pen pen, Brush dotBrush, List<PointF> seg, bool drawDots, int dotR)
+    /// <summary>画一条折线：空桶不插值（按连续桶号切段）；孤点画个极小标记，避免整段凭空消失。</summary>
+    private static void DrawSeriesLine(Graphics g, Pen pen, List<TrendPoint> points,
+        Func<int, float> xOf, Func<double, float> yOf)
+    {
+        if (points.Count == 0) return;
+        var seg = new List<PointF>();
+        int prevBucket = int.MinValue;
+        foreach (var p in points)
+        {
+            if (seg.Count > 0 && p.Bucket != prevBucket + 1)
+            {
+                FlushSeg(g, pen, seg);
+                seg.Clear();
+            }
+            seg.Add(new PointF(xOf(p.Bucket), yOf(p.Norm)));
+            prevBucket = p.Bucket;
+        }
+        FlushSeg(g, pen, seg);
+    }
+
+    private static void FlushSeg(Graphics g, Pen pen, List<PointF> seg)
     {
         if (seg.Count == 0) return;
         if (seg.Count == 1)
         {
-            g.FillEllipse(dotBrush, seg[0].X - 3, seg[0].Y - 3, 6, 6);
+            g.DrawEllipse(pen, seg[0].X - 1.5f, seg[0].Y - 1.5f, 3f, 3f);
             return;
         }
         g.DrawLines(pen, seg.ToArray());
-        if (drawDots)
-            foreach (var pt in seg)
-                g.FillEllipse(dotBrush, pt.X - dotR, pt.Y - dotR, dotR * 2, dotR * 2);
     }
 
     private static void DrawLimitLine(Graphics g, int left, int right, float y, string label, Color col)
@@ -285,6 +297,17 @@ public sealed class MeasurementTrendChart : Control
         return null;
     }
 
+    private TrendPoint? FindFailPoint(int si, int bucket)
+    {
+        if (si < 0 || si >= _series.Count) return null;
+        foreach (var p in _series[si].FailPoints)
+            if (p.Bucket == bucket) return p;
+        return null;
+    }
+
+    /// <summary>悬停命中：该桶的 PASS 点优先，没有则退 FAIL 点。</summary>
+    private TrendPoint? FindAnyPoint(int si, int bucket) => FindPoint(si, bucket) ?? FindFailPoint(si, bucket);
+
     /// <summary>
     /// tooltip 摆放（纯函数，可直测）：默认贴在鼠标右上方；右侧/顶部空间不足时翻边，最后夹进控件内。
     /// </summary>
@@ -302,7 +325,9 @@ public sealed class MeasurementTrendChart : Control
     private void DrawTooltip(Graphics g, int mouseX, float anchorY)
     {
         var ser = _series[_hoverSeries];
-        var p = FindPoint(_hoverSeries, _hoverBucket);
+        var passP = FindPoint(_hoverSeries, _hoverBucket);
+        var failP = FindFailPoint(_hoverSeries, _hoverBucket);
+        var p = passP ?? failP;
         if (p == null) return;
         var when = MeasurementTrendBuilder.BucketTime(_data!.From, p.Bucket, _data.BucketSeconds);
         var unit = string.IsNullOrWhiteSpace(ser.Unit) ? "" : " " + ser.Unit;
@@ -314,7 +339,8 @@ public sealed class MeasurementTrendChart : Control
         var band = $"限值 {Fmt(ser.BandLow)}{unit} ~ {Fmt(ser.BandHigh)}{unit}" +
                    (ser.IsSingleSided ? "（单边合成）" : "");
         var tip = $"{when:MM-dd HH:mm}  {ser.TestName}\n" +
-                  $"段内均值 {Fmt(p.MeanValue)}{unit}  ·  {p.N} 个样本\n" +
+                  (passP == null ? "" : $"PASS 均值 {Fmt(passP.MeanValue)}{unit}  ·  {passP.N} 个样本\n") +
+                  (failP == null ? "" : $"FAIL 均值 {Fmt(failP.MeanValue)}{unit}  ·  {failP.N} 个失败项\n") +
                   $"{band}\n相对位置 {pos}";
 
         var sz = TextRenderer.MeasureText(tip, Theme.Small);

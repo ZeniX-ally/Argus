@@ -168,7 +168,6 @@ static class Program
             {
                 if (!AppConfig.ReloadFromDisk()) return;
                 try { DeviceSampleRecorder.ApplyConfig(); } catch { }
-                try { engine.StartSeqMonitor(); } catch { }
                 Logger.Info("[ConfigWatcher] 新配置已应用到运行中实例");
             };
         }
