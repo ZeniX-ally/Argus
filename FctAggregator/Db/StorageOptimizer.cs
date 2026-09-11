@@ -132,7 +132,7 @@ public static class StorageOptimizer
         }
 
         // Deep：滚动清理 → 瘦表重建 → 按需 VACUUM → 备份前已压缩
-        var retainM = Math.Clamp(cfg.AnalyzeMeasureRetentionDays, 7, 90);
+        var retainM = LearnPipeline.EffectiveMeasureRetentionDays(cfg, db);
         var retainFi = Math.Clamp(cfg.AnalyzeFailItemRetentionDays, 7, 180);
         var retainDev = Math.Clamp(cfg.LearnResourceRetentionDays, 7, 90);
 
@@ -201,7 +201,7 @@ public static class StorageOptimizer
     private static List<StorageTier> BuildTiers(Database db, AppConfig cfg)
     {
         var inv = db.GetStorageInventory();
-        int retainM = Math.Clamp(cfg.AnalyzeMeasureRetentionDays, 7, 90);
+        int retainM = LearnPipeline.EffectiveMeasureRetentionDays(cfg, db);
         int retainFi = Math.Clamp(cfg.AnalyzeFailItemRetentionDays, 7, 180);
         int retainDev = Math.Clamp(cfg.LearnResourceRetentionDays, 7, 90);
         int retainPf = Math.Clamp(cfg.DbParseFailureRetentionDays, 7, 180);

@@ -65,7 +65,7 @@ public static class TdmsFeatureCollector
     public static int CaptureOne(Database? db, AppConfig cfg, TestRecord rec, long recordId)
     {
         if (!cfg.AnalyzeTdmsEnabled || string.IsNullOrWhiteSpace(cfg.TdmsRoot)) return 0;
-        if (!Database.IsWithinRetention(rec.TestDate, Math.Clamp(cfg.AnalyzeMeasureRetentionDays, 7, 90)))
+        if (!Database.IsWithinRetention(rec.TestDate, LearnPipeline.EffectiveMeasureRetentionDays(cfg, db)))
         { Interlocked.Increment(ref FilesSkipped); return 0; }
         var sn = rec.Sn ?? "";
         if (string.IsNullOrWhiteSpace(sn) || recordId <= 0) { Interlocked.Increment(ref FilesSkipped); return 0; }

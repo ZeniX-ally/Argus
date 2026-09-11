@@ -263,6 +263,28 @@ public class LearningPanel : Panel
         if (status != null) _summary.Text = status;
     }
 
+    /// <summary>回填窗口大于配置保留期时提示写入 config，避免补完又被每日清理删掉。</summary>
+    private bool EnsureRetentionCoversBackfill()
+    {
+        var cfg = AppConfig.Instance;
+        int days = LearnPipeline.EffectiveMeasureRetentionDays(cfg, _engine.Db, WindowIndex);
+        int configured = Math.Clamp(cfg.AnalyzeMeasureRetentionDays,
+            LearnPipeline.MeasureRetentionMin, LearnPipeline.MeasureRetentionMax);
+        if (configured >= days) return true;
+        var ans = MessageBox.Show(
+            $"当前 analyze_measure_retention_days = {configured}，小于本次回填/维护窗口 {days} 天。\n" +
+            "若不提高，库维护会继续删除更早的 test_measurements，分析页自定义日期仍会缺旧段。\n\n" +
+            $"是否改为 {days} 并保存 config.json？",
+            "测量保留期", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+        if (ans == DialogResult.Cancel) return false;
+        if (ans == DialogResult.Yes)
+        {
+            cfg.AnalyzeMeasureRetentionDays = days;
+            cfg.Save();
+        }
+        return true;
+    }
+
     private void StartBackfill()
     {
         if (_busy) return;
@@ -279,6 +301,7 @@ public class LearningPanel : Panel
                     "自学习", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
                 return;
         }
+        if (!EnsureRetentionCoversBackfill()) return;
 
         SetBusy(true, "正在回填（补采 XML → 训练模型）…");
         var progress = new Progress<string>(msg => BeginInvoke(() => _summary.Text = msg));

@@ -40,8 +40,12 @@ public sealed class TrendSeries
     public bool LowSynthetic { get; set; }
     public bool HighSynthetic { get; set; }
     public long Samples { get; set; }
+    /// <summary>PASS+FAIL 极值（给「波动最大」排序）。纵轴视野不要用这个——FAIL 掉坑会把 PASS 挤成一条线。</summary>
     public double MinNorm { get; set; }
     public double MaxNorm { get; set; }
+    /// <summary>仅 PASS 极值，给纵轴。</summary>
+    public double PassMinNorm { get; set; }
+    public double PassMaxNorm { get; set; }
     /// <summary>PASS 桶点（实线）。</summary>
     public List<TrendPoint> Points { get; set; } = new();
     /// <summary>FAIL 桶点（虚线，同限值归一化；只有 value 为数字的失败项才进来）。</summary>
@@ -176,8 +180,11 @@ public static class MeasurementTrendBuilder
         var stats = db.QueryPassTrendItemStats(fromIso, toIso, listNames);
         if (stats.Count == 0)
         {
+            var avail = db.GetPassMeasurementDateRange();
             result.Hint = $"窗口 {from:yyyy-MM-dd}~{toExclusive.AddDays(-1):yyyy-MM-dd} 内 test_measurements 无 PASS 测量值" +
-                          "（FAIL 记录与良率不受影响）——可调整日期，或先点「回填历史」补采。";
+                          (avail is { } a
+                              ? $"。库内测量实际为 {a.Min}～{a.Max}，把时间范围改到这段，或点「回填历史」补更早数据。"
+                              : "。库内尚无测量缓存——点「回填历史」从 XML 补采。");
             return result;
         }
         result.AllItemNames = stats.Select(s => s.TestName).ToList();
@@ -224,6 +231,7 @@ public static class MeasurementTrendBuilder
                 Samples = st.N,
             };
             double minN = double.MaxValue, maxN = double.MinValue;
+            double passMin = double.MaxValue, passMax = double.MinValue;
             foreach (var r in bucketRows.OrderBy(x => x.Bucket))
             {
                 var norm = Normalize(r.MeanValue, ser.BandLow, ser.BandHigh);
@@ -231,8 +239,10 @@ public static class MeasurementTrendBuilder
                 ser.Points.Add(new TrendPoint { Bucket = r.Bucket, Norm = norm, MeanValue = r.MeanValue, N = r.N });
                 if (norm < minN) minN = norm;
                 if (norm > maxN) maxN = norm;
+                if (norm < passMin) passMin = norm;
+                if (norm > passMax) passMax = norm;
             }
-            // FAIL 虚线：同测项同限值归一化；其极值同样纳入纵轴范围，否则"掉坑"会画到视野外
+            // FAIL 虚线：同测项同限值归一化。极值进 MinNorm（波动排序），不进 PassMin/Max（纵轴）
             if (failByName.TryGetValue(st.TestName, out var failBucketRows))
             {
                 foreach (var r in failBucketRows.OrderBy(x => x.Bucket))
@@ -248,6 +258,8 @@ public static class MeasurementTrendBuilder
             if (ser.Points.Count == 0) continue;
             ser.MinNorm = minN;
             ser.MaxNorm = maxN;
+            ser.PassMinNorm = passMin;
+            ser.PassMaxNorm = passMax;
             result.Series.Add(ser);
         }
 
@@ -257,6 +269,7 @@ public static class MeasurementTrendBuilder
             result.Hint = result.Series.Count == 0
                 ? $"{skipped} 个测项既无双侧限值、窗口内也无数据量程，无法定位到规格带。"
                 : $"另有 {skipped} 个测项无限值且无量程，已跳过。";
+        AppendSparseHint(result);
         return result;
     }
 
@@ -294,5 +307,27 @@ public static class MeasurementTrendBuilder
     {
         var t = BucketTime(from, bucket, bucketSeconds);
         return bucketSeconds >= 86400 ? t.ToString("MM-dd") : t.ToString("MM-dd HH:mm");
+    }
+
+    /// <summary>所选窗口远宽于实际有点区间时提示：前段空是缺测量，不是图画坏了。</summary>
+    internal static void AppendSparseHint(TrendResult result)
+    {
+        if (result == null || result.Series.Count == 0 || result.BucketCount < 8) return;
+        int minB = int.MaxValue, maxB = int.MinValue;
+        foreach (var ser in result.Series)
+        {
+            foreach (var p in ser.Points)
+            {
+                if (p.Bucket < minB) minB = p.Bucket;
+                if (p.Bucket > maxB) maxB = p.Bucket;
+            }
+        }
+        if (minB == int.MaxValue) return;
+        int span = maxB - minB + 1;
+        if (span >= result.BucketCount * 0.6) return;
+        var a = BucketTime(result.From, minB, result.BucketSeconds);
+        var b = BucketTime(result.From, maxB, result.BucketSeconds);
+        var extra = $"测量实际落在 {a:yyyy-MM-dd}～{b:yyyy-MM-dd}；所选窗口其余时段无 test_measurements（已清理或未回填），点「回填历史」补采。";
+        result.Hint = string.IsNullOrWhiteSpace(result.Hint) ? extra : extra + " " + result.Hint;
     }
 }

@@ -67,7 +67,7 @@ public class AppConfig
     public int AnalyzeMinSamples { get; set; } = 30;
     public double AnalyzeDriftSigma { get; set; } = 3.0;
     public double AnalyzeDriftWarnRatio { get; set; } = 1.0;
-    public int AnalyzeMeasureRetentionDays { get; set; } = 30;
+    public int AnalyzeMeasureRetentionDays { get; set; } = 90;
     public int AnalyzeFailItemRetentionDays { get; set; } = 90;
     public bool AnalyzeTdmsEnabled { get; set; } = true;
     public string TdmsRoot { get; set; } = "";

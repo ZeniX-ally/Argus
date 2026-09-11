@@ -96,7 +96,7 @@ public sealed class DbMaintenance
             }
             else
             {
-                var retain = Math.Clamp(_cfg.AnalyzeMeasureRetentionDays, 7, 90);
+                var retain = LearnPipeline.EffectiveMeasureRetentionDays(_cfg, _db);
                 _db.PurgeOldMeasurements(retain);
                 _db.PurgeOldFailItems(Math.Clamp(_cfg.AnalyzeFailItemRetentionDays, 7, 180));
                 _db.PurgeOldTdmsFeatures(retain);

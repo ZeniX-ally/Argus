@@ -3,6 +3,28 @@ namespace FctAggregator;
 /// <summary>自学习 UI/CLI 编排：磁盘补采测量值 → 正常态入模 →（可选）现场回放。</summary>
 public static class LearnPipeline
 {
+    public const int MeasureRetentionMin = 7;
+    /// <summary>测量/TDMS 明细滚动保留上限（与回填窗口下拉一致，避免「回填 180 天、清理只留 30 天」）。</summary>
+    public const int MeasureRetentionMax = 365;
+
+    /// <summary>
+    /// 库维护与入库裁剪用：配置保留期与（自学习/分析开启时的）回填窗口下限取较大值，上限 <see cref="MeasureRetentionMax"/>。
+    /// 实现 v3.35.2 意图且避免 v3.36.10 前「跟全库最早 PASS 无限保留」撑爆库。
+    /// </summary>
+    public static int EffectiveMeasureRetentionDays(AppConfig cfg, Database? db, int backfillWindowIndex = 0)
+    {
+        int r = Math.Clamp(cfg.AnalyzeMeasureRetentionDays, MeasureRetentionMin, MeasureRetentionMax);
+        if (!cfg.LearnNormalEnabled && !cfg.AnalyzeCollectPass) return r;
+        int window;
+        if (backfillWindowIndex > 0)
+            window = Math.Clamp(ResolveBackfillDays(db!, backfillWindowIndex), MeasureRetentionMin, MeasureRetentionMax);
+        else if (db != null)
+            window = Math.Clamp(ResolveBackfillDays(db, 0), MeasureRetentionMin, MeasureRetentionMax);
+        else
+            return r;
+        return Math.Max(r, window);
+    }
+
     /// <summary>窗口下拉：0=自动，1=30，2=90，3=180，4=365。</summary>
     public static int ResolveBackfillDays(Database db, int windowIndex)
     {

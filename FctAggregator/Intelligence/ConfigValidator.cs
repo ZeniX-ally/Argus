@@ -17,6 +17,9 @@ public static class ConfigValidator
             errs.Add($"db_vacuum_threshold_mb 越界: {cfg.DbVacuumThresholdMb}");
         if (cfg.DbParseFailureRetentionDays < 7 || cfg.DbParseFailureRetentionDays > 365)
             errs.Add($"db_parse_failure_retention_days 越界: {cfg.DbParseFailureRetentionDays}");
+        if (cfg.AnalyzeMeasureRetentionDays < LearnPipeline.MeasureRetentionMin ||
+            cfg.AnalyzeMeasureRetentionDays > LearnPipeline.MeasureRetentionMax)
+            errs.Add($"analyze_measure_retention_days 越界: {cfg.AnalyzeMeasureRetentionDays}（允许 {LearnPipeline.MeasureRetentionMin}～{LearnPipeline.MeasureRetentionMax}）");
         if (string.IsNullOrWhiteSpace(cfg.FctProgramSourceRoot))
             errs.Add("fct_program_source_root 为空");
         if (string.IsNullOrWhiteSpace(cfg.FctProgramBackupDir))

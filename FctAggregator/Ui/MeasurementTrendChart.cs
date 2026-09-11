@@ -75,6 +75,51 @@ public sealed class MeasurementTrendChart : Control
     }
 
     /// <summary>
+    /// 纵轴：规格带 [0,1] + **仅 PASS** 极值。FAIL 掉坑不撑轴，否则 PASS 挤成一条线。
+    /// </summary>
+    public static (double Lo, double Hi) AxisRange(IReadOnlyList<TrendSeries>? series)
+    {
+        double lo = 0, hi = 1;
+        if (series != null)
+        {
+            foreach (var ser in series)
+            {
+                if (ser.Points.Count == 0) continue;
+                if (ser.PassMinNorm < lo) lo = ser.PassMinNorm;
+                if (ser.PassMaxNorm > hi) hi = ser.PassMaxNorm;
+            }
+        }
+        double pad = Math.Max(0.05, (hi - lo) * 0.05);
+        return (lo - pad, hi + pad);
+    }
+
+    /// <summary>
+    /// 横轴绘图区间：有点太靠窗口一端时缩到数据（两侧各留 1 桶）。覆盖 ≥60% 则用全窗口。
+    /// </summary>
+    public static (int FromBucket, int ToBucket) PlotBucketRange(IReadOnlyList<TrendSeries>? series, int bucketCount)
+    {
+        if (bucketCount <= 1) return (0, Math.Max(0, bucketCount - 1));
+        int last = bucketCount - 1;
+        int minB = int.MaxValue, maxB = int.MinValue;
+        if (series != null)
+        {
+            foreach (var ser in series)
+            {
+                foreach (var p in ser.Points)
+                {
+                    if (p.Bucket < minB) minB = p.Bucket;
+                    if (p.Bucket > maxB) maxB = p.Bucket;
+                }
+            }
+        }
+        if (minB == int.MaxValue) return (0, last);
+        minB = Math.Max(0, minB - 1);
+        maxB = Math.Min(last, maxB + 1);
+        if (maxB - minB + 1 >= bucketCount * 0.6) return (0, last);
+        return (minB, maxB);
+    }
+
+    /// <summary>
     /// 纵轴口径：所有曲线共享同一规格带时直接用**实际值**（选单条测项时必然如此），
     /// 否则只能退回归一化相对位置（各测项量纲/量程不同，共用一个实际值轴没有意义）。
     /// </summary>
@@ -133,19 +178,12 @@ public sealed class MeasurementTrendChart : Control
         }
 
         int bucketCount = _data.BucketCount;
-        // 纵轴：保证 0（下限）与 1（上限）都在视野内，再按数据极值向外留 5% 余量
-        double lo = 0, hi = 1;
-        foreach (var ser in _series)
-        {
-            if (ser.MinNorm < lo) lo = ser.MinNorm;
-            if (ser.MaxNorm > hi) hi = ser.MaxNorm;
-        }
-        double pad = Math.Max(0.05, (hi - lo) * 0.05);
-        lo -= pad;
-        hi += pad;
+        var (lo, hi) = AxisRange(_series);
+        var (x0, x1) = PlotBucketRange(_series, bucketCount);
+        int xSpan = Math.Max(1, x1 - x0);
 
         float YOf(double norm) => chartBottom - (float)((norm - lo) / (hi - lo) * chartH);
-        float XOf(int bucket) => bucketCount <= 1 ? chartLeft : chartLeft + (float)bucket / (bucketCount - 1) * chartW;
+        float XOf(int bucket) => chartLeft + (float)(bucket - x0) / xSpan * chartW;
 
         // 合格带 [0, 1]
         float yHigh = YOf(1), yLow = YOf(0);
@@ -174,6 +212,8 @@ public sealed class MeasurementTrendChart : Control
 
         DrawLegend(g, chartRight, chartTop);
 
+        var plotClip = new Rectangle(chartLeft, chartTop, chartW, chartH);
+        g.SetClip(plotClip);
         float lineW = _series.Count switch { <= 12 => 2f, <= 40 => 1.5f, _ => 1f };
         for (int si = 0; si < _series.Count; si++)
         {
@@ -193,9 +233,10 @@ public sealed class MeasurementTrendChart : Control
                 DrawSeriesLine(g, failPen, ser.FailPoints, XOf, YOf);
             }
         }
+        g.ResetClip();
 
-        int labelStep = bucketCount <= 12 ? 1 : Math.Max(1, bucketCount / 10);
-        for (int b = 0; b < bucketCount; b += labelStep)
+        int labelStep = Math.Max(1, xSpan / 10);
+        for (int b = x0; b <= x1; b += labelStep)
         {
             var lbl = MeasurementTrendBuilder.FormatBucketLabel(_data.From, b, _data.BucketSeconds);
             TextRenderer.DrawText(g, lbl, Theme.Tiny,
@@ -213,7 +254,8 @@ public sealed class MeasurementTrendChart : Control
         // 命中点高亮环 + tooltip（锚在鼠标 X 旁、数据点高度）
         if (_hoverSeries >= 0 && _hoverBucket >= 0 && FindAnyPoint(_hoverSeries, _hoverBucket) is { } hp)
         {
-            float px = XOf(hp.Bucket), py = YOf(hp.Norm);
+            float px = XOf(hp.Bucket);
+            float py = Math.Clamp(YOf(hp.Norm), chartTop, chartBottom);
             using var ringBrush = new SolidBrush(Theme.Surface);
             using var ringPen = new Pen(ColorFromHex(DeviationSeriesBuilder.SeriesColorHex(_series[_hoverSeries].TestName)), 2f);
             g.FillEllipse(ringBrush, px - 4f, py - 4f, 8f, 8f);
@@ -367,9 +409,11 @@ public sealed class MeasurementTrendChart : Control
         if (mx < chartLeft || mx > chartRight || my < chartTop || my > chartBottom) return false;
 
         int bucketCount = _data.BucketCount;
-        float xSlot = bucketCount <= 1 ? 0 : (float)(chartRight - chartLeft) / (bucketCount - 1);
-        int slot = xSlot <= 0 ? 0 : (int)Math.Round((mx - chartLeft) / xSlot);
-        slot = Math.Clamp(slot, 0, bucketCount - 1);
+        var (x0, x1) = PlotBucketRange(_series, bucketCount);
+        int xSpan = Math.Max(1, x1 - x0);
+        float xSlot = (float)(chartRight - chartLeft) / xSpan;
+        int slot = xSlot <= 0 ? x0 : x0 + (int)Math.Round((mx - chartLeft) / xSlot);
+        slot = Math.Clamp(slot, x0, x1);
 
         // 优先命中该桶上的任意曲线点
         for (int si = 0; si < _series.Count; si++)

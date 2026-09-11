@@ -2422,7 +2422,17 @@ Argus 统一发布包  v{newer}
                   "规格06: 样本σ（n−1 修正）与限值聚合正确");
             Check(Database.IsWithinRetention(DateTime.Today.ToString("yyyyMMdd"), 30), "保留窗: 今天应保留");
             Check(!Database.IsWithinRetention(DateTime.Today.AddDays(-40).ToString("yyyyMMdd"), 30), "保留窗: 40 天前应丢弃");
-            Check(new AppConfig().AnalyzeMeasureRetentionDays == 30, "默认测量保留 30 天（不再跟自学习全历史挂钩）");
+            Check(new AppConfig().AnalyzeMeasureRetentionDays == 90, "默认测量保留 90 天");
+            Check(LearnPipeline.EffectiveMeasureRetentionDays(new AppConfig { AnalyzeMeasureRetentionDays = 30 }, null) == 30,
+                  "测量有效保留：无库时仅用配置");
+            Check(LearnPipeline.EffectiveMeasureRetentionDays(
+                      new AppConfig { AnalyzeMeasureRetentionDays = 30, LearnNormalEnabled = true, AnalyzeCollectPass = true },
+                      null) == 30,
+                  "测量有效保留：无库时不抬高");
+            Check(LearnPipeline.EffectiveMeasureRetentionDays(
+                      new AppConfig { AnalyzeMeasureRetentionDays = 30, LearnNormalEnabled = true, AnalyzeCollectPass = true },
+                      null, 3) == 180,
+                  "测量有效保留：回填 180 天下限抬高配置");
             var compactDbPath = Path.Combine(dirA6, "compact.db");
             var cdb = new Database(compactDbPath);
             cdb.BatchInsert(new[] { MP("2026-09-05 10:00:00", new[] { ("T_C", 1.0, (double?)null, (double?)null) }) });
@@ -3456,14 +3466,50 @@ Argus 统一发布包  v{newer}
         Check(Math.Abs(tv5.FailPoints[0].MeanValue - 3.5) < 1e-9
               && Math.Abs(tv5.FailPoints[0].Norm - (3.5 - 10) / 3.0) < 1e-9,
             "FAIL 叠加：失败值按同测项限值归一化（3.5 对 10~13 → 负相对位置）");
-        Check(tv5.MinNorm < 0,
-            $"FAIL 叠加：FAIL 极值纳入纵轴范围（MinNorm={tv5.MinNorm:F2} < 0，掉坑不会被画到视野外）");
+        Check(tv5.MinNorm < 0 && tv5.PassMinNorm >= 0,
+            $"FAIL 叠加：MinNorm 含掉坑供排序（{tv5.MinNorm:F2}）；PassMinNorm 不被 FAIL 拉低（{tv5.PassMinNorm:F2}）");
+        var axisFail = MeasurementTrendChart.AxisRange(new List<TrendSeries> { tv5 });
+        Check(axisFail.Lo >= -0.2 && axisFail.Hi <= 1.3,
+            $"纵轴：FAIL 掉坑不撑视野（Lo={axisFail.Lo:F2} Hi={axisFail.Hi:F2}）");
         Check(!t5.Series.Any(s => s.TestName == "T_ONLYFAIL"),
             "FAIL 叠加：只有 FAIL 没有 PASS 的测项不建系列（趋势图以正常态为基准）");
         var tone5 = t5.Series.First(s => s.TestName == "T_ONE");
         Check(!tone5.HasFail, "FAIL 叠加：非数值失败项（value_text=Open）不进虚线");
         Check(t5.HasAnyFail && t5.FailSamplesTotal == 2,
             $"FAIL 叠加：汇总失败样本数（实得 {t5.FailSamplesTotal}）");
+
+        var emptyWin = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 6, 1), new DateTime(2026, 6, 30), 60);
+        Check(emptyWin.Series.Count == 0 && (emptyWin.Hint ?? "").Contains("库内测量实际为"),
+            "空窗口：提示库内测量实际日期，而不是只说无数据");
+        var wideWin = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 8, 1), new DateTime(2026, 9, 2), 60);
+        Check(wideWin.Series.Count > 0 && (wideWin.Hint ?? "").Contains("测量实际落在"),
+            "宽窗口：前段无测量时提示实际有点日期");
+
+        var sparseSer = new TrendSeries
+        {
+            TestName = "S", BandLow = 10, BandHigh = 13,
+            PassMinNorm = 0.3, PassMaxNorm = 0.4,
+            Points = Enumerable.Range(90, 10).Select(b => new TrendPoint { Bucket = b, Norm = 0.35 }).ToList(),
+        };
+        var plotZoom = MeasurementTrendChart.PlotBucketRange(new List<TrendSeries> { sparseSer }, 100);
+        Check(plotZoom.FromBucket >= 88 && plotZoom.ToBucket <= 99 && plotZoom.FromBucket > 0,
+            $"横轴：数据只在窗口尾部时缩到有点区间（实得 {plotZoom.FromBucket}~{plotZoom.ToBucket}）");
+        var plotFull = MeasurementTrendChart.PlotBucketRange(new List<TrendSeries>
+        {
+            new() { Points = new List<TrendPoint> { new() { Bucket = 0 }, new() { Bucket = 99 } } },
+        }, 100);
+        Check(plotFull.FromBucket == 0 && plotFull.ToBucket == 99,
+            "横轴：数据覆盖全窗口时不缩放");
+        var axisPass = MeasurementTrendChart.AxisRange(new List<TrendSeries>
+        {
+            new()
+            {
+                PassMinNorm = 0.2, PassMaxNorm = 0.8, MinNorm = -20, MaxNorm = 8,
+                Points = new List<TrendPoint> { new() { Norm = 0.2 }, new() { Norm = 0.8 } },
+            },
+        });
+        Check(axisPass.Lo > -0.5 && axisPass.Hi < 1.5,
+            $"纵轴：只用 PASS 极值+规格带（实得 {axisPass.Lo:F2}~{axisPass.Hi:F2}）");
 
         var only = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2,
             new[] { "t_one" });
