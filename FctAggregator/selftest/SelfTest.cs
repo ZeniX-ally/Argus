@@ -3390,6 +3390,26 @@ Argus 统一发布包  v{newer}
         Check(tipTiny.X == 4 && tipTiny.Y == 4,
             "tooltip 摆放：控件比 tooltip 还小时夹到左上角且不抛异常");
 
+        // ── 纵轴口径：共享规格带时用实际值，多带才退回相对位置 ──
+        var axA = new TrendSeries { TestName = "A", BandLow = 10.8, BandHigh = 11.33 };
+        var axB = new TrendSeries { TestName = "B", BandLow = 10.8, BandHigh = 11.33 };
+        var axC = new TrendSeries { TestName = "C", BandLow = 0, BandHigh = 5 };
+        Check(MeasurementTrendChart.UseActualValueAxis(new List<TrendSeries> { axA }),
+            "纵轴口径：单条曲线 → 实际值");
+        Check(MeasurementTrendChart.UseActualValueAxis(new List<TrendSeries> { axA, axB }),
+            "纵轴口径：多条但共享同一规格带 → 仍用实际值");
+        Check(!MeasurementTrendChart.UseActualValueAxis(new List<TrendSeries> { axA, axC }),
+            "纵轴口径：多条规格带不同 → 退回相对位置");
+        Check(!MeasurementTrendChart.UseActualValueAxis(null)
+              && !MeasurementTrendChart.UseActualValueAxis(new List<TrendSeries>()),
+            "纵轴口径：null / 空集合 → 不用实际值且不抛异常");
+        Check(MeasurementTrendChart.FormatAxisValue(0, axA, true) == "10.8"
+              && MeasurementTrendChart.FormatAxisValue(1, axA, true) == "11.33"
+              && MeasurementTrendChart.FormatAxisValue(2.5, axA, true) == "12.125",
+            "轴标签：0→下限、1→上限、2.5→超限后的实际值");
+        Check(MeasurementTrendChart.FormatAxisValue(0.7, axA, false) == "0.7",
+            "轴标签：多带时输出相对位置本身");
+
         // ── 端到端：入库 → 分桶 → 归一化 ──
         var trDb = new Database(Path.Combine(work, "trend.db"));
         var recs = new List<TestRecord>();

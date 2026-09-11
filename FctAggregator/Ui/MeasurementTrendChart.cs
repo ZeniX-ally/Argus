@@ -74,6 +74,20 @@ public sealed class MeasurementTrendChart : Control
         return $"{seconds / 3600} 小时";
     }
 
+    /// <summary>
+    /// 纵轴口径：所有曲线共享同一规格带时直接用**实际值**（选单条测项时必然如此），
+    /// 否则只能退回归一化相对位置（各测项量纲/量程不同，共用一个实际值轴没有意义）。
+    /// </summary>
+    public static bool UseActualValueAxis(List<TrendSeries>? series)
+        => series is { Count: > 0 }
+           && series.All(s => s.BandLow == series[0].BandLow && s.BandHigh == series[0].BandHigh);
+
+    /// <summary>纵轴刻度文案：actual=true 时把相对位置反算回实际值，否则输出相对位置本身。</summary>
+    public static string FormatAxisValue(double norm, TrendSeries series, bool actual)
+        => actual
+            ? Fmt(series.BandLow + norm * (series.BandHigh - series.BandLow))
+            : norm.ToString("F1");
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
@@ -81,8 +95,13 @@ public sealed class MeasurementTrendChart : Control
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         Theme.DrawCard(g, ClientRectangle, null);
 
-        TextRenderer.DrawText(g, "测项趋势（纵轴 = 相对规格带位置：0=下限，1=上限）", Theme.BodyBold,
-            new Rectangle(16, 10, 520, 22), Theme.TextMain, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+        bool actualAxis = UseActualValueAxis(_series);
+        string axisUnit = _series.Count > 0 && !string.IsNullOrWhiteSpace(_series[0].Unit) ? " " + _series[0].Unit : "";
+        var title = actualAxis
+            ? $"测项趋势（纵轴 = 实际值{axisUnit}；红虚线 = 规格上限 / 下限）"
+            : "测项趋势（纵轴 = 规格带相对位置：0=下限，1=上限）";
+        TextRenderer.DrawText(g, title, Theme.BodyBold,
+            new Rectangle(16, 10, 620, 22), Theme.TextMain, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
         var sub = _data == null
             ? ""
@@ -137,7 +156,7 @@ public sealed class MeasurementTrendChart : Control
             float y = chartBottom - chartH * (i / 4f);
             g.DrawLine(gridPen, chartLeft, y, chartRight, y);
             double v = lo + (hi - lo) * (i / 4.0);
-            TextRenderer.DrawText(g, v.ToString("F1"), Theme.Tiny,
+            TextRenderer.DrawText(g, FormatAxisValue(v, _series[0], actualAxis), Theme.Tiny,
                 new Rectangle(4, (int)y - 8, chartLeft - 8, 16), Theme.TextFaint,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
         }
