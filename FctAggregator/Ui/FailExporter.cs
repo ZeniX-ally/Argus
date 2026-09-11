@@ -30,7 +30,36 @@ public static class FailExporter
     private static string NumOrEmpty(double? v)
         => v.HasValue ? v.Value.ToString("0.####", CultureInfo.InvariantCulture) : "";
 
-    /// <summary>导出当前周期的 FAIL 明细；返回写入的行数。</summary>
+    /// <summary>xlsx 列宽（字符）：按各列内容量级预设，免去打开后手动"自动调整列宽"。</summary>
+    private static readonly double[] XlsxWidths = { 14, 24, 20, 46, 12, 10, 10, 8 };
+
+    /// <summary>
+    /// 导出 xlsx（手写 OOXML）：**列宽已按内容调好**、首行表头加粗并冻结、所有单元格按文本落表
+    /// （避免 Excel 把时间/测项名自作主张解析成日期或数字）。返回写入的数据行数（不含表头）。
+    /// </summary>
+    public static int ExportXlsx(string path, IEnumerable<FailItemDetail> rows)
+    {
+        var list = rows as ICollection<FailItemDetail> ?? rows.ToList();
+        var sh = new FctShared.Xlsx.Sheet { Name = "FAIL明细", FreezeRows = 1 };
+        sh.ColWidths.AddRange(XlsxWidths);
+
+        var head = new List<FctShared.Xlsx.Cell>(Headers.Length);
+        foreach (var h in Headers) head.Add(FctShared.Xlsx.T(h, 1));
+        sh.Rows.Add(head);
+
+        foreach (var d in list)
+        {
+            var vals = RowOf(d);
+            var row = new List<FctShared.Xlsx.Cell>(vals.Length);
+            foreach (var v in vals) row.Add(FctShared.Xlsx.T(v, 0));
+            sh.Rows.Add(row);
+        }
+
+        FctShared.Xlsx.Write(path, new[] { sh }, FctShared.Xlsx.TableStyles());
+        return list.Count;
+    }
+
+    /// <summary>导出当前周期的 FAIL 明细（CSV）；返回写入的行数。</summary>
     public static int ExportCsv(
         string path, TimeUtil.NaturalPeriod period, DateTime from, DateTime toInclusive,
         IEnumerable<FailItemDetail> rows)

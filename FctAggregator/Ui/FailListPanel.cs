@@ -91,16 +91,24 @@ public sealed class FailListPanel : Panel
         var btnExport = Theme.MakeButton("导出", 76);
         btnExport.Margin = new Padding(0, 0, 8, 0);
         var exportMenu = new ContextMenuStrip { Font = Theme.Body };
-        foreach (var p in new[]
-                 {
-                     TimeUtil.NaturalPeriod.Day, TimeUtil.NaturalPeriod.Week,
-                     TimeUtil.NaturalPeriod.Month, TimeUtil.NaturalPeriod.Quarter,
-                 })
+        var periods = new[]
         {
-            var captured = p;
-            var node = new ToolStripMenuItem($"导出{TimeUtil.NaturalPeriodName(p)} FAIL 明细（CSV）");
-            node.Click += (_, _) => ExportPeriod(captured);
-            exportMenu.Items.Add(node);
+            TimeUtil.NaturalPeriod.Day, TimeUtil.NaturalPeriod.Week,
+            TimeUtil.NaturalPeriod.Month, TimeUtil.NaturalPeriod.Quarter,
+        };
+        // Excel 排在前：列宽已预设，打开即用；CSV 是纯文本（不含列宽），留在下面做备选
+        foreach (var asXlsx in new[] { true, false })
+        {
+            if (!asXlsx) exportMenu.Items.Add(new ToolStripSeparator());
+            foreach (var p in periods)
+            {
+                var captured = p;
+                bool xlsx = asXlsx;
+                var node = new ToolStripMenuItem(
+                    $"导出{TimeUtil.NaturalPeriodName(p)} FAIL 明细（{(xlsx ? "Excel" : "CSV")}）");
+                node.Click += (_, _) => ExportPeriod(captured, xlsx);
+                exportMenu.Items.Add(node);
+            }
         }
         btnExport.Click += (_, _) =>
             exportMenu.Show(btnExport, new Point(0, btnExport.Height));
@@ -562,15 +570,15 @@ public sealed class FailListPanel : Panel
     /// 导出指定自然周期的 FAIL 明细（CSV）。按周期查全库（不受界面"最近 2000 条"限制），
     /// 查询与写文件都在后台线程，UI 只负责对话框与结果提示。
     /// </summary>
-    private void ExportPeriod(TimeUtil.NaturalPeriod period)
+    private void ExportPeriod(TimeUtil.NaturalPeriod period, bool xlsx)
     {
         var (from, to) = TimeUtil.NaturalRange(period, DateTime.Today);
         var name = TimeUtil.NaturalPeriodName(period);
         using var dlg = new SaveFileDialog
         {
             Title = $"导出{name} FAIL 明细",
-            Filter = "CSV 文件 (*.csv)|*.csv",
-            FileName = $"FAIL明细_{name}_{from:yyyyMMdd}-{to:yyyyMMdd}.csv",
+            Filter = xlsx ? "Excel 工作簿 (*.xlsx)|*.xlsx" : "CSV 文件 (*.csv)|*.csv",
+            FileName = $"FAIL明细_{name}_{from:yyyyMMdd}-{to:yyyyMMdd}{(xlsx ? ".xlsx" : ".csv")}",
             OverwritePrompt = true,
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
@@ -588,7 +596,9 @@ public sealed class FailListPanel : Panel
             try
             {
                 var rows = db.QueryFailItemDetails(sid, from.ToString("yyyyMMdd"), to.ToString("yyyyMMdd"));
-                n = FailExporter.ExportCsv(path, period, from, to, rows);
+                n = xlsx
+                    ? FailExporter.ExportXlsx(path, rows)
+                    : FailExporter.ExportCsv(path, period, from, to, rows);
             }
             catch (Exception ex) { err = ex.Message; }
 

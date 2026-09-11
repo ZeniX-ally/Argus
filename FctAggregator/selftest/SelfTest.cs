@@ -3662,6 +3662,25 @@ Argus 统一发布包  v{newer}
         Check(qText.Contains("\"A,B\"") && qText.Contains("\"he\"\"llo\""),
             "CSV：逗号与引号按 RFC 4180 转义");
 
+        // ── xlsx 导出（列宽已预设：解决"CSV 打开挤在一起"） ──
+        var xlsxPath = Path.Combine(dir, "out.xlsx");
+        var nx = FailExporter.ExportXlsx(xlsxPath, all);
+        Check(nx == 3, $"xlsx：返回数据行数（实得 {nx}）");
+        Check(new FileInfo(xlsxPath).Length > 1200, $"xlsx：已生成（{new FileInfo(xlsxPath).Length} 字节）");
+        using (var zip = System.IO.Compression.ZipFile.OpenRead(xlsxPath))
+        {
+            using var sx = new StreamReader(zip.GetEntry("xl/worksheets/sheet1.xml")!.Open());
+            var body = sx.ReadToEnd();
+            Check(body.Contains("<cols>") && body.Contains("customWidth=\"1\"") && body.Contains("width=\"46\""),
+                "xlsx：列宽已写入（长文本列按内容预设，打开即用不必手调）");
+            Check(body.Contains("<pane ySplit=\"1\"") && body.Contains("state=\"frozen\""),
+                "xlsx：表头行已冻结");
+            Check(body.Contains("t=\"inlineStr\""),
+                "xlsx：单元格按文本落表（时间/测项名不被 Excel 乱解析）");
+            Check(body.Contains("V_KL30") && body.Contains("3.29") && body.Contains("10.8") && body.Contains("14.4"),
+                "xlsx：项目/值/上下限均落表");
+        }
+
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try { Directory.Delete(dir, true); } catch { }
     }

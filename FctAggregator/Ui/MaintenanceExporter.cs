@@ -75,35 +75,7 @@ public static class MaintenanceExporter
             sh.Rows.Add(row);
         }
 
-        FctShared.Xlsx.Write(path, new[] { sh }, Styles());
+        FctShared.Xlsx.Write(path, new[] { sh }, FctShared.Xlsx.TableStyles());
     }
-
-    private static string Styles() =>
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-        "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
-        "<fonts count=\"2\">" +
-        "<font><sz val=\"11\"/><name val=\"微软雅黑\"/></font>" +
-        "<font><b/><sz val=\"11\"/><color rgb=\"FFFFFFFF\"/><name val=\"微软雅黑\"/></font>" +
-        "</fonts>" +
-        "<fills count=\"3\">" +
-        "<fill><patternFill patternType=\"none\"/></fill>" +
-        "<fill><patternFill patternType=\"gray125\"/></fill>" +
-        "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF4472C4\"/></patternFill></fill>" +
-        "</fills>" +
-        "<borders count=\"2\">" +
-        "<border><left/><right/><top/><bottom/><diagonal/></border>" +
-        "<border>" +
-        "<left style=\"thin\"><color rgb=\"FFBFBFBF\"/></left><right style=\"thin\"><color rgb=\"FFBFBFBF\"/></right>" +
-        "<top style=\"thin\"><color rgb=\"FFBFBFBF\"/></top><bottom style=\"thin\"><color rgb=\"FFBFBFBF\"/></bottom>" +
-        "<diagonal/></border>" +
-        "</borders>" +
-        "<cellStyleXfs count=\"1\"><xf/></cellStyleXfs>" +
-        "<cellXfs count=\"2\">" +
-        "<xf fontId=\"0\" fillId=\"0\" borderId=\"1\" applyFont=\"1\" applyBorder=\"1\" applyAlignment=\"1\">" +
-        "<alignment horizontal=\"left\" vertical=\"center\" wrapText=\"1\"/></xf>" +
-        "<xf fontId=\"1\" fillId=\"2\" borderId=\"1\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\">" +
-        "<alignment horizontal=\"center\" vertical=\"center\"/></xf>" +
-        "</cellXfs>" +
-        "</styleSheet>";
 
 }
