@@ -8,6 +8,7 @@ public class Engine
     private readonly AppConfig _cfg;
     private readonly Database _db;
     private readonly DbMaintenance _maintenance;
+    private readonly FeishuFailBatcher _failBatcher; // FAIL 告警批处理（窗口内合并成一张卡，治批量不良刷屏）
     private readonly string _stationId;
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly object _watcherLock = new();
@@ -49,6 +50,7 @@ public class Engine
         var dbFile = Path.Combine(dataDir, $"{(string.IsNullOrEmpty(sid) ? "fct" : sid)}.db");
         _db = new Database(dbFile);
         _maintenance = DbMaintenance.StartFor(cfg, _db);
+        _failBatcher = new FeishuFailBatcher(cfg, _db);
 
         try { DeviceSampleRecorder.Instance.Start(); } catch { }
 
@@ -188,6 +190,20 @@ public class Engine
         _watchers.Clear();
         lock (_watcherLock) _watchedDirs.Clear();
         SaveRetryQueue(); // 未处理重试条目落盘，下次启动恢复（M5：退出即丢）
+
+        // 冲刷未发出的 FAIL 告警（有界等待：在途一轮没发完就放弃，未标记的记录由下次启动的「今日补推」兜底）
+        try
+        {
+            if (_failBatcher.PendingCount > 0)
+            {
+                if (_failBatcher.FlushAsync().Wait(TimeSpan.FromSeconds(3)))
+                    Logger.Info($"[飞书推送] 退出前已冲刷 FAIL 告警队列");
+                else
+                    Logger.Warning($"[飞书推送] 退出前仍有 {_failBatcher.PendingCount} 条 FAIL 未发出，下次启动补推");
+            }
+        }
+        catch (Exception ex) { Logger.Warning($"[飞书推送] 退出冲刷异常: {ex.Message}"); }
+        _failBatcher.Dispose();
     }
 
     private List<string> DiscoverModels(string root)
@@ -521,17 +537,10 @@ public class Engine
         try { DesktopNotifier.NotifyFail(rec); }
         catch (Exception ex) { Logger.Warning($"桌面提示失败: {ex.Message}"); }
 
-        var url = _cfg.WebhookUrl;
-        Task.Run(async () =>
-        {
-            try
-            {
-                await FeishuNotifier.SendFailAlert(url, rec);
-                _db.MarkFailAlerted(rec.XmlPath);
-                Logger.Info($"[飞书推送] FAIL / {rec.Model} / {rec.Sn}");
-            }
-            catch (Exception ex) { Logger.Error($"[错误] 飞书推送失败: {Path.GetFileName(rec.XmlPath)} | {ex.Message}"); }
-        });
+        // 入批处理队列：单条走原卡、窗口内多条合并成一张卡（推送成功才 MarkFailAlerted，
+        // 失败留待下次启动的 FlushTodayFailAlerts 补推，不新增落盘状态）
+        if (_failBatcher.Enqueue(rec))
+            Logger.Info($"[飞书推送] FAIL 入队 / {rec.Model} / {rec.Sn}（待发 {_failBatcher.PendingCount}）");
     }
 
     private bool WaitForStable(string path, int stableChecks = 0, int intervalMs = 500, int timeoutMs = 10000)

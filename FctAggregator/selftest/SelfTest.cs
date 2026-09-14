@@ -2342,6 +2342,159 @@ Argus 统一发布包  v{newer}
                 "飞书推送: FallbackWebhookUrl 已置空（开源版不携带任何硬编码凭据）");
         }
 
+        // ============ 飞书 FAIL 告警批量合并（窗口内多条合成一张卡，治批量不良刷屏） ============
+        {
+            Console.WriteLine("\n【飞书FAIL批量告警】合并窗口 / 待发队列去重 / 合并卡内容…");
+
+            // —— 纯函数：冲刷时机 ——
+            Check(FeishuFailBatcher.ShouldFlushImmediately(1, 20, false),
+                "合并关闭：任何一条 FAIL 都立即冲刷（退回 v3.40.5 逐条推送行为）");
+            Check(!FeishuFailBatcher.ShouldFlushImmediately(19, 20, true),
+                "合并开启：未攒满上限不立即冲刷（等窗口到点）");
+            Check(FeishuFailBatcher.ShouldFlushImmediately(20, 20, true),
+                "合并开启：攒满上限立即冲刷（不等窗口）");
+            Check(!FeishuFailBatcher.ShouldFlushImmediately(0, 20, true),
+                "空队列不触发冲刷");
+
+            // —— 纯函数：标记口径（决定失败后是否会被补推重发）——
+            Check(FeishuFailBatcher.ShouldMarkAlerted(FeishuSendOutcome.Sent)
+                  && FeishuFailBatcher.ShouldMarkAlerted(FeishuSendOutcome.Skipped),
+                "推送成功/主动跳过都标记已推送（未配 webhook 的机台不会每次启动重刷今日 FAIL）");
+            Check(!FeishuFailBatcher.ShouldMarkAlerted(FeishuSendOutcome.Failed),
+                "推送失败不标记 → 留给下次启动「今日补推」兜底（不新增落盘状态）");
+
+            // —— 待发队列：去重 / 排序 / 取走 ——
+            var q = new FailAlertQueue();
+            var qa = new TestRecord { StationId = "FCT1", Model = "E3002781", Sn = "SN0001", Result = "FAIL", XmlPath = @"D:\R\a.xml", BatchTimestamp = "2026-09-14T10:00:01" };
+            var qb = new TestRecord { StationId = "FCT1", Model = "E3002781", Sn = "SN0002", Result = "FAIL", XmlPath = @"D:\R\b.xml", BatchTimestamp = "2026-09-14T10:00:00" };
+            var qaDup = new TestRecord { StationId = "FCT1", Model = "E3002781", Sn = "SN0001", Result = "FAIL", XmlPath = @"D:\R\A.XML", BatchTimestamp = "2026-09-14T10:00:01" };
+
+            Check(q.Enqueue(qa) && q.Count == 1, "队列：首次入队成功");
+            Check(!q.Enqueue(qaDup), "队列：同 xml_path 重复入队被拒（大小写不敏感，与 fail_alerted 同口径）");
+            Check(q.Count == 1, "队列：重复入队不增加计数");
+            Check(!q.Enqueue(new TestRecord { Result = "FAIL", XmlPath = "" }), "队列：空路径不入队（无路径则无法落库标记）");
+
+            q.Enqueue(qb);
+            var qSnap = q.Snapshot();
+            Check(qSnap.Count == 2 && qSnap[0].Sn == "SN0002", "队列：快照按 batch_timestamp 升序（卡面明细顺序可复现）");
+            Check(q.Count == 2, "队列：Snapshot 只读不清空");
+            Check(q.TakeAll().Count == 2 && q.Count == 0, "队列：TakeAll 取走全部并清空");
+            Check(q.TakeAll().Count == 0, "队列：空队列 TakeAll 返回空列表（不抛异常）");
+
+            // —— 合并卡内容（用宽松编码序列化，中文断言可读）——
+            var relaxed = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+            TestRecord MkFail(string sn, string ts, string xml, params (string name, string val)[] items)
+            {
+                var rec = new TestRecord
+                {
+                    StationId = "FCT1", Model = "E3002781", Sn = sn, Result = "FAIL",
+                    XmlPath = xml, BatchTimestamp = ts,
+                };
+                foreach (var it in items)
+                    rec.FailedTests.Add(new FailedTest { Name = it.name, Value = it.val });
+                return rec;
+            }
+
+            var batch3 = new List<TestRecord>
+            {
+                MkFail("SN0001", "2026-09-14T10:00:01", @"D:\R\1.xml", ("KL30_1", "3.5"), ("V_5V", "4.1")),
+                MkFail("SN0002", "2026-09-14T10:00:02", @"D:\R\2.xml", ("KL30_1", "3.6")),
+                MkFail("SN0003", "2026-09-14T10:00:03", @"D:\R\3.xml", ("KL30_1", "3.4")),
+            };
+            var bJson = JsonSerializer.Serialize(FeishuNotifier.BuildFailBatchCard(batch3, 60), relaxed);
+
+            Check(bJson.Contains("\"schema\":\"2.0\""), "合并卡：仍是卡片 2.0（复用同一套构建原语）");
+            Check(bJson.Contains("\"template\":\"red\""), "合并卡：header 红色（与单条 FAIL 告警同色系）");
+            Check(bJson.Contains("FAIL 批量告警 ×3"), "合并卡：标题带批量条数（×3）");
+            Check(bJson.Contains("失败项统计（2 项）"), "合并卡：失败项按去重后项数统计（2 项）");
+            Check(bJson.Contains("KL30_1 ×3"), "合并卡：同一测项跨记录合并计数（KL30_1 ×3）");
+            Check(bJson.Contains("V_5V ×1"), "合并卡：只出现一次的测项也列出（V_5V ×1）");
+            Check(bJson.Contains("SN0001") && bJson.Contains("SN0002") && bJson.Contains("SN0003"), "合并卡：明细列出各条 SN");
+            Check(bJson.IndexOf("SN0001", StringComparison.Ordinal) < bJson.IndexOf("SN0002", StringComparison.Ordinal),
+                "合并卡：明细按时间升序（SN0001 早于 SN0002）");
+            Check(bJson.Contains("60s 窗口内合并 · 共 3 条 FAIL"), "合并卡：页脚交代窗口与总条数");
+            Check(bJson.Contains("×3") && bJson.Contains("2026-09-14 10:00:01"), "合并卡：失败条数与时间范围已渲染");
+
+            // 失败项超 10 项 / 记录超 10 条 → 截断提示
+            var manyItems = new List<TestRecord>();
+            for (int i = 0; i < 12; i++)
+                manyItems.Add(MkFail($"SN{i:D4}", "2026-09-14T11:00:00", $@"D:\R\m{i}.xml", ($"ITEM_{i:D2}", "1")));
+            var manyJson = JsonSerializer.Serialize(FeishuNotifier.BuildFailBatchCard(manyItems, 60), relaxed);
+            Check(manyJson.Contains("失败项统计（12 项）") && manyJson.Contains("另有 2 项未列出"),
+                "合并卡：失败项超 10 项只列前 10 并提示「另有 2 项未列出」");
+            Check(manyJson.Contains("另有 2 条未列出"), "合并卡：明细超 10 条只列前 10 并提示「另有 2 条未列出」");
+
+            // 无测项明细的老记录 → 退回 fail_reason，并标注条数
+            var legacy = new TestRecord
+            {
+                StationId = "FCT1", Model = "E3002781", Sn = "SN9001", Result = "FAIL",
+                XmlPath = @"D:\R\legacy.xml", BatchTimestamp = "2026-09-14T12:00:00",
+                FailReason = "整体测试失败\n未生成测项明细",
+            };
+            var legacyJson = JsonSerializer.Serialize(FeishuNotifier.BuildFailBatchCard(new[] { legacy }, 60), relaxed);
+            Check(legacyJson.Contains("（1 条无测项明细，仅有汇总失败原因）"), "合并卡：无测项明细的记录单独标注条数");
+            Check(legacyJson.Contains("整体测试失败 未生成测项明细"), "合并卡：老记录明细退回 fail_reason（换行压平，不破版式）");
+
+            // markdown 转义：SN 里的特殊字符必须转义，否则飞书渲染破版
+            // 注意：Escape 产出单反斜杠，JSON 序列化会再转义成 \\ —— 断言按 JSON 里的实际形态写
+            var escJson = JsonSerializer.Serialize(
+                FeishuNotifier.BuildFailBatchCard(new[] { MkFail("SN*01[甲]", "2026-09-14T13:00:00", @"D:\R\e.xml", ("KL*30", "1")) }, 60), relaxed);
+            Check(escJson.Contains(@"SN\\*01\\[甲\\]"), "合并卡：SN 中 markdown 特殊字符已转义");
+            Check(escJson.Contains(@"KL\\*30"), "合并卡：测项名中 markdown 特殊字符已转义");
+
+            // 多机台/多型号聚合（补推跨机台时会出现）
+            var mixed = new List<TestRecord>
+            {
+                MkFail("S1", "2026-09-14T14:00:00", @"D:\R\x1.xml", ("A", "1")),
+                MkFail("S2", "2026-09-14T14:00:01", @"D:\R\x2.xml", ("A", "1")),
+            };
+            mixed[1].StationId = "FCT2"; mixed[1].Model = "E3002782";
+            var mixedJson = JsonSerializer.Serialize(FeishuNotifier.BuildFailBatchCard(mixed, 60), relaxed);
+            Check(mixedJson.Contains("FCT1/FCT2") && mixedJson.Contains("E3002781/E3002782"),
+                "合并卡：跨机台/跨型号时并列展示");
+            Check(FeishuNotifier.Summarize(new[] { "A", "B", "C", "D" }, "—", "台") == "A/B/C 等 4 台",
+                "合并卡：机台超过 3 个时截断并补「等 N 台」");
+            Check(FeishuNotifier.Summarize(new string[0], "未知机台", "台") == "未知机台",
+                "合并卡：无机台信息时回落占位文案");
+
+            Check(FeishuNotifier.Clip(null, 5) == "—" && FeishuNotifier.Clip("   ", 5) == "—",
+                "合并卡：空白 fail_reason 回落「—」");
+            Check(FeishuNotifier.Clip("0123456789", 5) == "01234…", "合并卡：超长文本按上限裁剪并加省略号");
+
+            // —— 推送结果三态（全部走本地短路分支，不发真实请求）——
+            Check(FeishuNotifier.SendFailAlertBatch("https://example.invalid/hook", Array.Empty<TestRecord>())
+                    .GetAwaiter().GetResult() == FeishuSendOutcome.Skipped,
+                "批量推送：空列表直接跳过（不发请求）");
+            Check(FeishuNotifier.SendFailAlert("", qa).GetAwaiter().GetResult() == FeishuSendOutcome.Skipped,
+                "推送：未配置 webhook 返回 Skipped（不发请求）");
+            Check(FeishuNotifier.SendFailAlert("http://example.com/hook", qa).GetAwaiter().GetResult() == FeishuSendOutcome.Skipped,
+                "推送：非 https 前缀返回 Skipped（配置错误不重试，避免每次启动重刷日志）");
+
+            // —— 配置键（默认值 + Load 生效 + 越界回落）——
+            var mergeDef = new AppConfig();
+            Check(mergeDef.FeishuFailMergeEnabled && mergeDef.FeishuFailMergeWindowSec == 60 && mergeDef.FeishuFailMergeMax == 20,
+                "配置：feishu_fail_merge_* 默认 开 / 60s / 20 条");
+
+            var cfgFileM = Path.Combine(AppConfig.BaseDir, "config.json");
+            var backupM = File.Exists(cfgFileM) ? File.ReadAllText(cfgFileM) : null;
+            try
+            {
+                File.WriteAllText(cfgFileM, "{\"feishu_fail_merge_enabled\":false,\"feishu_fail_merge_window_sec\":120,\"feishu_fail_merge_max\":5}");
+                var loadedM = AppConfig.Load();
+                Check(!loadedM.FeishuFailMergeEnabled && loadedM.FeishuFailMergeWindowSec == 120 && loadedM.FeishuFailMergeMax == 5,
+                    "配置：feishu_fail_merge_* 三键 Load 生效");
+
+                File.WriteAllText(cfgFileM, "{\"feishu_fail_merge_window_sec\":5,\"feishu_fail_merge_max\":9999}");
+                var badM = AppConfig.Load();
+                Check(badM.FeishuFailMergeWindowSec == 60 && badM.FeishuFailMergeMax == 20,
+                    $"配置：越界值回落默认（窗口 {badM.FeishuFailMergeWindowSec}s / 上限 {badM.FeishuFailMergeMax}）");
+            }
+            finally
+            {
+                try { if (backupM != null) File.WriteAllText(cfgFileM, backupM); else File.Delete(cfgFileM); } catch { }
+            }
+        }
+
         // ============ 规格06 多元深分析：PASS 测量值采集 / v14 存储 / 漂移+CPK / backfill ============
         {
             Console.WriteLine("\n【规格06】PASS 测量值采集（ParseMeasurements）…");

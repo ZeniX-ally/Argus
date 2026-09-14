@@ -15,6 +15,12 @@ public class AppConfig
     public int NotifyMinIntervalSec { get; set; } = 15;
     public int TodoScanDays { get; set; } = 30;
     public string FeishuBannerImgKey { get; set; } = "";
+    /// <summary>FAIL 告警合并：窗口内多条 FAIL 合成一张卡（治批量不良刷屏）。关闭则每条立即单独推送。</summary>
+    public bool FeishuFailMergeEnabled { get; set; } = true;
+    /// <summary>合并窗口（秒）：从第一条 FAIL 入队起算的固定窗口，不因后续入队顺延。范围 10~3600。</summary>
+    public int FeishuFailMergeWindowSec { get; set; } = 60;
+    /// <summary>攒满多少条 FAIL 立即冲刷（不等窗口）。范围 1~200。</summary>
+    public int FeishuFailMergeMax { get; set; } = 20;
     public bool TodoSpecMerge { get; set; } = true;
     public string ParsersPath { get; set; } = "parsers.json";
     public int DbMaintenanceHour { get; set; } = 3;
@@ -119,6 +125,14 @@ public class AppConfig
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var days) && days >= 1)
                     cfg.TodoScanDays = days;
                 if (root.TryGetProperty("feishu_banner_img_key", out v)) cfg.FeishuBannerImgKey = (GetStringSafe(v) ?? "").Trim();
+                if (root.TryGetProperty("feishu_fail_merge_enabled", out v))
+                    cfg.FeishuFailMergeEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("feishu_fail_merge_window_sec", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var fmw) && fmw >= 10 && fmw <= 3600)
+                    cfg.FeishuFailMergeWindowSec = fmw;
+                if (root.TryGetProperty("feishu_fail_merge_max", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var fmm) && fmm >= 1 && fmm <= 200)
+                    cfg.FeishuFailMergeMax = fmm;
                 if (root.TryGetProperty("parsers_path", out v) && v.ValueKind == JsonValueKind.String)
                     cfg.ParsersPath = GetStringSafe(v) ?? "parsers.json";
                 if (root.TryGetProperty("todo_spec_merge", out v) &&
@@ -273,6 +287,7 @@ public class AppConfig
                     "station_id", "results_root", "fct_ini_path", "webhook_url", "skip_historical_scan",
                     "log_level", "desktop_notify", "notify_min_interval_sec", "todo_scan_days",
                     "feishu_banner_img_key", "parsers_path",
+                    "feishu_fail_merge_enabled", "feishu_fail_merge_window_sec", "feishu_fail_merge_max",
                     "todo_spec_merge",
                     "db_maintenance_hour", "db_storage_auto_optimize", "db_storage_monitor_hours",
                     "db_vacuum_threshold_mb", "db_parse_failure_retention_days",
@@ -309,6 +324,9 @@ public class AppConfig
                 writer.WriteNumber("notify_min_interval_sec", NotifyMinIntervalSec);
                 writer.WriteNumber("todo_scan_days", TodoScanDays);
                 writer.WriteString("feishu_banner_img_key", FeishuBannerImgKey);
+                writer.WriteBoolean("feishu_fail_merge_enabled", FeishuFailMergeEnabled);
+                writer.WriteNumber("feishu_fail_merge_window_sec", FeishuFailMergeWindowSec);
+                writer.WriteNumber("feishu_fail_merge_max", FeishuFailMergeMax);
                 writer.WriteString("parsers_path", ParsersPath);
                 writer.WriteBoolean("todo_spec_merge", TodoSpecMerge);
                 writer.WriteNumber("db_maintenance_hour", DbMaintenanceHour);

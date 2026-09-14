@@ -47,6 +47,7 @@ desktop.ini
 # ===== Agent / editor toolchain =====
 .opencode/
 .workbuddy/
+.workbuddy-ai/
 .mimosa/
 .commandcode/
 .pi/
