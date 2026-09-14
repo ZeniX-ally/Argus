@@ -2787,6 +2787,147 @@ Argus 统一发布包  v{newer}
                 "配置：feishu_group_alert / feishu_deviation_* 默认 开 / 开 / 90 / 5");
         }
 
+        // ============ 运维告警：存储健康卡 + 待办超期卡 ============
+        {
+            Console.WriteLine("\n【运维告警】严重度门槛 / 超期筛选 / 两张卡内容…");
+
+            var relaxed = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+            // —— 严重度权重 ——
+            Check(OpsAlertMonitor.SeverityRank("critical") == 3 && OpsAlertMonitor.SeverityRank("major") == 2
+                  && OpsAlertMonitor.SeverityRank("minor") == 1, "严重度权重：critical > major > minor");
+            Check(OpsAlertMonitor.SeverityRank("CRITICAL") == 3, "严重度权重：大小写不敏感");
+            Check(OpsAlertMonitor.SeverityRank("野值") == 0 && OpsAlertMonitor.SeverityRank(null) == 0,
+                "严重度权重：未知/空一律 0（不会因为脏数据被当成严重）");
+
+            // —— 超期判定 ——
+            var odNow = new DateTime(2026, 9, 14, 10, 0, 0);
+            Check(OpsAlertMonitor.IsOverdue("open", "2026-09-01 08:00:00", "critical", odNow, 3, 3),
+                "超期判定：待办 + 13 天前 + 严重 → 超期");
+            Check(OpsAlertMonitor.IsOverdue("in_progress", "2026-09-10 08:00:00", "critical", odNow, 3, 3),
+                "超期判定：持续跟踪同样算未闭环");
+            Check(!OpsAlertMonitor.IsOverdue("open", "2026-09-13 08:00:00", "critical", odNow, 3, 3),
+                "超期判定：刚登记 1 天不算超期");
+            Check(!OpsAlertMonitor.IsOverdue("resolved", "2026-09-01 08:00:00", "critical", odNow, 3, 3),
+                "超期判定：已完成不算超期（哪怕很旧）");
+            Check(!OpsAlertMonitor.IsOverdue("open", "2026-09-01 08:00:00", "minor", odNow, 3, 3),
+                "超期判定：严重度不达标不告警（轻微项不该刷屏）");
+            Check(!OpsAlertMonitor.IsOverdue("open", "坏时间", "critical", odNow, 3, 3)
+                  && !OpsAlertMonitor.IsOverdue("open", "", "critical", odNow, 3, 3),
+                "超期判定：创建时间缺失/不可解析 → 不判定（不误报）");
+            Check(OpsAlertMonitor.IsOverdue("open", "2026-09-13 09:00:00", "critical", odNow, 0, 3),
+                "超期判定：天数非法(0) 按 1 天兜底");
+
+            // —— 超期筛选与排序 ——
+            MaintenanceRecord MR(int id, string status, string severity, string created, string item = "KL30_1")
+                => new() { Id = id, Status = status, Severity = severity, CreatedAt = created, FailItem = item, StationId = "FCT1" };
+            var recs = new List<MaintenanceRecord>
+            {
+                MR(1, "open", "critical", "2026-09-01 08:00:00"),
+                MR(2, "open", "major", "2026-09-01 09:00:00"),
+                MR(3, "in_progress", "critical", "2026-09-10 08:00:00"),
+                MR(4, "resolved", "critical", "2026-09-01 08:00:00"),
+                MR(5, "open", "critical", "2026-09-13 08:00:00"),
+                MR(6, "open", "minor", "2026-09-01 08:00:00"),
+                MR(7, "open", "critical", "2026-09-11 08:00:00"),
+            };
+            var od = OpsAlertMonitor.SelectOverdue(recs, odNow, 3, 3);
+            Check(od.Total == 3, $"超期筛选：门槛 critical 命中 3 条（实得 {od.Total}）");
+            Check(od.Shown.Select(m => m.Id).SequenceEqual(new[] { 1, 3, 7 }),
+                "超期筛选：同龄按创建时间从旧到新（实得 " + string.Join(",", od.Shown.Select(m => m.Id)) + "）");
+
+            var odMajor = OpsAlertMonitor.SelectOverdue(recs, odNow, 3, 2);
+            Check(odMajor.Total == 4, $"超期筛选：门槛降到 major 时纳入 major（实得 {odMajor.Total}）");
+
+            var odCap = OpsAlertMonitor.SelectOverdue(recs, odNow, 3, 3, 2);
+            Check(odCap.Shown.Count == 2 && odCap.Total == 3,
+                "超期筛选：cap 只截断展示条数，总数仍为全量（供「另有 N 条」提示）");
+            Check(OpsAlertMonitor.SelectOverdue(null!, odNow, 3, 3).Total == 0, "超期筛选：null 列表安全返回空");
+
+            // —— 按天去重（RunNow 每次启动都补跑，不去重会重复推）——
+            Check(OpsAlertMonitor.DayAllows(null, "2026-09-14"), "按天去重：从未推过 → 放行");
+            Check(!OpsAlertMonitor.DayAllows("2026-09-14", "2026-09-14"), "按天去重：当天已推 → 拦下");
+            Check(OpsAlertMonitor.DayAllows("2026-09-13", "2026-09-14"), "按天去重：跨天 → 放行");
+
+            // —— 存储健康卡 ——
+            var sp = new StorageAlertPayload
+            {
+                StationId = "FCT1",
+                Score = 42,
+                Threshold = 60,
+                FileBytes = 2147483648,
+                WalBytes = 1048576,
+                BloatRatio = 0.35,
+                Issues = new List<string> { "库空洞率 35% 偏高", "WAL 未合并" },
+                PlannedActions = new List<string> { "执行 VACUUM 回收磁盘" },
+            };
+            var spJson = JsonSerializer.Serialize(FeishuNotifier.BuildStorageAlertCard(sp), relaxed);
+            Check(spJson.Contains("\"template\":\"orange\""), "存储卡：header 橙色");
+            Check(spJson.Contains("存储健康告警（42/100）"), "存储卡：标题带健康分");
+            Check(spJson.Contains("42/100（阈值 60）"), "存储卡：健康分与阈值并列");
+            Check(spJson.Contains("2.00 GB") && spJson.Contains("1.0 MB"), "存储卡：库体积/WAL 按量级格式化");
+            Check(spJson.Contains("35.0%"), "存储卡：空洞率百分比");
+            Check(spJson.Contains("库空洞率 35% 偏高") && spJson.Contains("WAL 未合并"), "存储卡：列出问题");
+            Check(spJson.Contains("执行 VACUUM 回收磁盘"), "存储卡：列出建议动作");
+
+            // —— 待办超期卡 ——
+            var tp = new TodoOverduePayload
+            {
+                StationId = "FCT1",
+                OverdueDays = 3,
+                MinSeverity = "critical",
+                TotalOverdue = 12,
+                Items = new List<MaintenanceRecord>
+                {
+                    new() { Id = 7, FailItem = "KL30_1", Severity = "critical", Status = "open",
+                            CreatedAt = DateTime.Now.AddDays(-5).ToString("yyyy-MM-dd HH:mm:ss") },
+                },
+            };
+            var tpJson = JsonSerializer.Serialize(FeishuNotifier.BuildTodoOverdueCard(tp), relaxed);
+            Check(tpJson.Contains("\"template\":\"orange\""), "超期卡：header 橙色");
+            Check(tpJson.Contains("待办超期未闭环 ×12"), "超期卡：标题带超期总数");
+            Check(tpJson.Contains("≥3 天未闭环"), "超期卡：标注超期判定口径");
+            Check(tpJson.Contains("严重"), "超期卡：严重度门槛转中文");
+            Check(tpJson.Contains("#7 KL30_1"), "超期卡：列出待办编号与故障项");
+            Check(tpJson.Contains("已 5 天"), "超期卡：列出已超期天数");
+            Check(tpJson.Contains("另有 11 条未列出"), "超期卡：超出展示上限时提示总数差额");
+
+            var tpBad = new TodoOverduePayload
+            {
+                StationId = "FCT1", OverdueDays = 3, MinSeverity = "critical", TotalOverdue = 1,
+                Items = new List<MaintenanceRecord> { new() { Id = 1, FailItem = "X", CreatedAt = "坏时间" } },
+            };
+            Check(JsonSerializer.Serialize(FeishuNotifier.BuildTodoOverdueCard(tpBad), relaxed).Contains("已 — 天"),
+                "超期卡：创建时间不可解析时显示「—」（不抛异常）");
+
+            // —— 配置键 ——
+            var opsCfgDef = new AppConfig();
+            Check(opsCfgDef.FeishuStorageAlertEnabled && opsCfgDef.FeishuStorageAlertScore == 60
+                  && opsCfgDef.FeishuTodoOverdueEnabled && opsCfgDef.FeishuTodoOverdueDays == 3
+                  && opsCfgDef.FeishuTodoOverdueMinSeverity == "critical",
+                "配置：feishu_storage_alert_* / feishu_todo_overdue_* 默认 开 / 60 / 开 / 3 / critical");
+
+            var cfgFileO = Path.Combine(AppConfig.BaseDir, "config.json");
+            var backupO = File.Exists(cfgFileO) ? File.ReadAllText(cfgFileO) : null;
+            try
+            {
+                File.WriteAllText(cfgFileO, "{\"feishu_todo_overdue_min_severity\":\"bogus\",\"feishu_storage_alert_score\":150}");
+                var lo = AppConfig.Load();
+                Check(lo.FeishuTodoOverdueMinSeverity == "critical" && lo.FeishuStorageAlertScore == 60,
+                    "配置：非法严重度 / 越界分数回落默认");
+
+                File.WriteAllText(cfgFileO, "{\"feishu_todo_overdue_min_severity\":\"major\",\"feishu_storage_alert_score\":75,\"feishu_todo_overdue_days\":10}");
+                var lo2 = AppConfig.Load();
+                Check(lo2.FeishuTodoOverdueMinSeverity == "major" && lo2.FeishuStorageAlertScore == 75
+                      && lo2.FeishuTodoOverdueDays == 10,
+                    "配置：feishu_storage_alert_score / feishu_todo_overdue_* Load 生效");
+            }
+            finally
+            {
+                try { if (backupO != null) File.WriteAllText(cfgFileO, backupO); else File.Delete(cfgFileO); } catch { }
+            }
+        }
+
         // ============ 规格06 多元深分析：PASS 测量值采集 / v14 存储 / 漂移+CPK / backfill ============
         {
             Console.WriteLine("\n【规格06】PASS 测量值采集（ParseMeasurements）…");

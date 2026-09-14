@@ -455,6 +455,83 @@ public static class FeishuNotifier
             bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
     }
 
+    // ───────────────────────── 运维告警（存储健康 / 待办超期） ─────────────────────────
+
+    public static Task<FeishuSendOutcome> SendStorageAlert(string webhookUrl, StorageAlertPayload p)
+        => PostCard(webhookUrl, BuildStorageAlertCard(p), $"{p.StationId} 存储健康 {p.Score}");
+
+    public static Task<FeishuSendOutcome> SendTodoOverdueAlert(string webhookUrl, TodoOverduePayload p)
+        => PostCard(webhookUrl, BuildTodoOverdueCard(p), $"{p.StationId} 待办超期 {p.TotalOverdue}");
+
+    /// <summary>存储健康卡：橙色。防「库涨到 10GB 才被发现」。</summary>
+    public static object BuildStorageAlertCard(StorageAlertPayload p)
+    {
+        var elements = new List<object>
+        {
+            FeishuCardV2.FieldRow(("机台", p.StationId), ("健康分", $"{p.Score}/100（阈值 {p.Threshold}）")),
+            FeishuCardV2.FieldRow(("库体积", FmtBytes(p.FileBytes)), ("WAL", FmtBytes(p.WalBytes))),
+            FeishuCardV2.FieldRow(("空洞率", $"{p.BloatRatio * 100:F1}%")),
+        };
+
+        if (p.Issues.Count > 0)
+        {
+            elements.Add(FeishuCardV2.Hr());
+            elements.Add(FeishuCardV2.Md("**问题**", heading: true));
+            elements.Add(FeishuCardV2.Md(string.Join("\n", p.Issues.Select(i => $"▸ {FeishuCardV2.Escape(i)}"))));
+        }
+
+        if (p.PlannedActions.Count > 0)
+        {
+            elements.Add(FeishuCardV2.Hr());
+            elements.Add(FeishuCardV2.Md("**建议动作**", heading: true));
+            elements.Add(FeishuCardV2.Md(string.Join("\n", p.PlannedActions.Select(a => $"▸ {FeishuCardV2.Escape(a)}"))));
+        }
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Note("可到「调试工具 → 智能优化」立即处理，或等待每日维护自动执行。"));
+        return FeishuCardV2.Root($"{p.StationId} · 存储健康告警（{p.Score}/100）", "orange", elements,
+            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+    }
+
+    /// <summary>待办超期卡：橙色。一天最多一张（汇总，不是每单一张）。</summary>
+    public static object BuildTodoOverdueCard(TodoOverduePayload p)
+    {
+        var elements = new List<object>
+        {
+            FeishuCardV2.FieldRow(("机台", p.StationId), ("超期条数", $"{p.TotalOverdue} 条")),
+            FeishuCardV2.FieldRow(("超期判定", $"≥{p.OverdueDays} 天未闭环"),
+                ("严重度门槛", MaintenanceMeta.SeverityZhOf(p.MinSeverity))),
+        };
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Md("**超期待办**", heading: true));
+        var sb = new StringBuilder();
+        foreach (var m in p.Items)
+        {
+            var days = DaysSince(m.CreatedAt);
+            sb.AppendLine($"▸ #{m.Id} {FeishuCardV2.Escape(Clip(m.FailItem, 24))} · " +
+                          $"{MaintenanceMeta.SeverityZhOf(m.Severity)} · {MaintenanceMeta.ZhOf(MaintenanceMeta.Normalize(m.Status))} · " +
+                          $"已 {days} 天");
+        }
+        if (p.TotalOverdue > p.Items.Count)
+            sb.AppendLine($"… 另有 {p.TotalOverdue - p.Items.Count} 条未列出");
+        elements.Add(FeishuCardV2.Md(sb.ToString().TrimEnd()));
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Note("请到「维修」页处理或调整状态；本卡每天最多推送一次。"));
+        return FeishuCardV2.Root($"{p.StationId} · 待办超期未闭环 ×{p.TotalOverdue}", "orange", elements,
+            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+    }
+
+    /// <summary>创建时间距今天数（不可解析时给「—」，不抛异常）。</summary>
+    private static string DaysSince(string? createdAt)
+    {
+        if (string.IsNullOrWhiteSpace(createdAt)) return "—";
+        if (!DateTime.TryParse(createdAt, out var d)) return "—";
+        var days = (int)(DateTime.Now - d).TotalDays;
+        return days < 0 ? "0" : days.ToString();
+    }
+
     /// <summary>数值紧凑格式化（偏离明细用；避免 3.5200000001 这类噪声）。</summary>
     private static string FmtNum(double v)
     {

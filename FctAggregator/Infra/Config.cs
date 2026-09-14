@@ -41,6 +41,16 @@ public class AppConfig
     public int FeishuDeviationMinScore { get; set; } = 90;
     /// <summary>偏离告警单日推送上限（防预警变噪音）。</summary>
     public int FeishuDeviationMaxPerDay { get; set; } = 5;
+    /// <summary>存储健康告警（库健康分低于阈值时推，防「库涨到 10GB 才被发现」）。</summary>
+    public bool FeishuStorageAlertEnabled { get; set; } = true;
+    /// <summary>存储健康告警的分数下限（0~100）。</summary>
+    public int FeishuStorageAlertScore { get; set; } = 60;
+    /// <summary>待办超期未闭环告警（每天最多一张汇总卡）。</summary>
+    public bool FeishuTodoOverdueEnabled { get; set; } = true;
+    /// <summary>待办超期判定天数（未完成态停留 ≥N 天）。</summary>
+    public int FeishuTodoOverdueDays { get; set; } = 3;
+    /// <summary>待办超期告警的严重度门槛：critical / major / minor（含及以上）。</summary>
+    public string FeishuTodoOverdueMinSeverity { get; set; } = "critical";
     public bool TodoSpecMerge { get; set; } = true;
     public string ParsersPath { get; set; } = "parsers.json";
     public int DbMaintenanceHour { get; set; } = 3;
@@ -179,6 +189,21 @@ public class AppConfig
                 if (root.TryGetProperty("feishu_deviation_max_per_day", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var dmd) && dmd >= 1)
                     cfg.FeishuDeviationMaxPerDay = dmd;
+                if (root.TryGetProperty("feishu_storage_alert_enabled", out v))
+                    cfg.FeishuStorageAlertEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("feishu_storage_alert_score", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var sas) && sas >= 0 && sas <= 100)
+                    cfg.FeishuStorageAlertScore = sas;
+                if (root.TryGetProperty("feishu_todo_overdue_enabled", out v))
+                    cfg.FeishuTodoOverdueEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("feishu_todo_overdue_days", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var tod) && tod >= 1)
+                    cfg.FeishuTodoOverdueDays = tod;
+                if (root.TryGetProperty("feishu_todo_overdue_min_severity", out v) && v.ValueKind == JsonValueKind.String)
+                {
+                    var sev = (GetStringSafe(v) ?? "critical").Trim().ToLowerInvariant();
+                    if (sev is "critical" or "major" or "minor") cfg.FeishuTodoOverdueMinSeverity = sev;
+                }
                 if (root.TryGetProperty("parsers_path", out v) && v.ValueKind == JsonValueKind.String)
                     cfg.ParsersPath = GetStringSafe(v) ?? "parsers.json";
                 if (root.TryGetProperty("todo_spec_merge", out v) &&
@@ -339,6 +364,8 @@ public class AppConfig
                     "feishu_collect_alert_throttle_min", "feishu_daily_summary_enabled",
                     "feishu_group_alert_enabled", "feishu_deviation_alert_enabled",
                     "feishu_deviation_min_score", "feishu_deviation_max_per_day",
+                    "feishu_storage_alert_enabled", "feishu_storage_alert_score",
+                    "feishu_todo_overdue_enabled", "feishu_todo_overdue_days", "feishu_todo_overdue_min_severity",
                     "todo_spec_merge",
                     "db_maintenance_hour", "db_storage_auto_optimize", "db_storage_monitor_hours",
                     "db_vacuum_threshold_mb", "db_parse_failure_retention_days",
@@ -388,6 +415,11 @@ public class AppConfig
                 writer.WriteBoolean("feishu_deviation_alert_enabled", FeishuDeviationAlertEnabled);
                 writer.WriteNumber("feishu_deviation_min_score", FeishuDeviationMinScore);
                 writer.WriteNumber("feishu_deviation_max_per_day", FeishuDeviationMaxPerDay);
+                writer.WriteBoolean("feishu_storage_alert_enabled", FeishuStorageAlertEnabled);
+                writer.WriteNumber("feishu_storage_alert_score", FeishuStorageAlertScore);
+                writer.WriteBoolean("feishu_todo_overdue_enabled", FeishuTodoOverdueEnabled);
+                writer.WriteNumber("feishu_todo_overdue_days", FeishuTodoOverdueDays);
+                writer.WriteString("feishu_todo_overdue_min_severity", FeishuTodoOverdueMinSeverity);
                 writer.WriteString("parsers_path", ParsersPath);
                 writer.WriteBoolean("todo_spec_merge", TodoSpecMerge);
                 writer.WriteNumber("db_maintenance_hour", DbMaintenanceHour);

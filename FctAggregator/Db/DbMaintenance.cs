@@ -140,6 +140,17 @@ public sealed class DbMaintenance
             Logger.Warning($"[库维护] FTS 测试程序备份失败: {ex.Message}");
         }
 
+        // 运维告警（存储健康 / 待办超期）与每日摘要：均按日期去重，重启补跑不会重复推
+        try
+        {
+            OpsAlertMonitor.RunStorageCheck(_db, _cfg);
+            OpsAlertMonitor.RunTodoOverdueCheck(_db, _cfg);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[运维告警] 评估失败（不影响运行）: {ex.Message}");
+        }
+
         // 每日摘要卡：复用上面各步已算出的结果汇总成一张例行卡（不额外计算，不产生噪音）
         try
         {
