@@ -151,10 +151,4 @@ public static class LearningEngine
         var key = TodoGrouping.KeyOf(failItem);
         return _priorityFactors.TryGetValue(key, out var f) ? f : 1.0;
     }
-
-    public static void ResetPriorityFactors(Database db)
-    {
-        db.SetMeta(MetaPriorityFactors, "{}");
-        _priorityFactors = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-    }
 }

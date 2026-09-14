@@ -1,9 +1,17 @@
 #requires -Version 7
 param(
-    [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.0.1.zip",
-    [string]$SeedDb = "$PSScriptRoot\..\dist\data\fct.db",
+    [string]$Zip,
+    [string]$SeedDb,
     [string]$OutDir = "$PSScriptRoot\..\.snap"
 )
+# 默认包名从 csproj 推导（原来写死 Argus-v3.0.1.zip，之后必然报"路径不存在"）
+if (-not $Zip) {
+    $root = (Resolve-Path "$PSScriptRoot\..").Path
+    $ver = [regex]::Match((Get-Content (Join-Path $root 'FctAggregator.csproj') -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
+    if (-not $ver) { throw 'FctAggregator.csproj 里找不到 <Version>' }
+    $Zip = Join-Path $root "bin\Release\net8.0-windows\Argus-v$ver.zip"
+}
+if (-not (Test-Path $Zip)) { throw "找不到发布包: $Zip（先跑 scripts/make_release.ps1）" }
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 
@@ -33,7 +41,7 @@ $cfg.station_id = ''
 $cfg.skip_historical_scan = $true
 $cfg | ConvertTo-Json -Depth 6 | Set-Content $cfgPath -Encoding utf8
 
-if (Test-Path $SeedDb) {
+if ($SeedDb -and (Test-Path $SeedDb)) {
     New-Item -ItemType Directory -Path (Join-Path $tmp 'data') -Force | Out-Null
     Copy-Item $SeedDb (Join-Path $tmp 'data\fct.db') -Force
     Write-Host "[i] 已灌入种子数据库: $SeedDb"

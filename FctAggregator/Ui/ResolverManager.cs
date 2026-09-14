@@ -459,7 +459,6 @@ public class ResolverPickerForm : AppForm
 
     public IReadOnlyList<string> AllCandidates => _all;
     public int CheckedCount => _checked.Count;
-    public void SetFilterForTest(string kw) => _filter.Text = kw;
     public void CheckForTest(string name) { _checked.Add(name); Rebind(); }
     public string BuildResultForTest()
     {

@@ -8,15 +8,9 @@ public static class Theme
     public static Color Bg => SystemColors.Control;
     public static Color Surface => SystemColors.Window;
     public static Color SurfaceHi => SystemColors.ControlLight;
-    public static Color NavBg => SystemColors.Control;
-    public static Color NavHover => SystemColors.ControlLight;
-    public static Color NavActive => SystemColors.ControlLight;
-    public static Color NavText => SystemColors.ControlText;
-    public static Color NavTextActive => SystemColors.HighlightText;
 
     public static Color Border => SystemColors.ControlDark;
     public static Color BorderHi => SystemColors.ControlDarkDark;
-    public static Color BorderDark => SystemColors.ControlDark;
     public static Color TextMain => SystemColors.ControlText;
     public static Color TextSub => SystemColors.GrayText;
     public static Color TextFaint => SystemColors.GrayText;
@@ -44,7 +38,6 @@ public static class Theme
     public static Color ToolHighlight   => Color.FromArgb(250, 235, 238);
     public static Color ToolFixed      => Color.FromArgb(26, 26, 26);
     public static Color ToolDim         => TextMuted;
-    public static Color ToolLine        => Color.FromArgb(170, 170, 170);
     public static Color ToolNodeDir     => Color.FromArgb(200, 16, 46);
     public static Color ToolNodeFile    => Color.FromArgb(60, 60, 60);
     public static Color ToolGray        => Color.Gray;
@@ -80,7 +73,6 @@ public static class Theme
     public const int NavWidth = 0;
     public const int TopBarHeight = 34;
     public const int StatusBarHeight = 26;
-    public const int TitleBarHeight = 0;
     public const int Radius = 0;
     public const int Gap = 10;
 
@@ -249,7 +241,7 @@ public static class Theme
 
     private static bool IsSkipped(Control c) =>
         (c.Tag as string) == SkipTag
-        || c is NavButton or KpiCard or ChipBar or SectionPanel or ToolHost
+        || c is KpiCard or ChipBar or SectionPanel or ToolHost
         || c is BoardCardBase or MaintenanceBoard
         || c is RichTextBox
         || c is ProgressBar

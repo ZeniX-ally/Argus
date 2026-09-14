@@ -20,7 +20,6 @@ public sealed class DeviationEvent
 public static class DeviationScorer
 {
     public const double SigmaFloor = 1e-6;
-    private static long _stormDropped;
 
     public static double? ScoreOne(NormalModelRow row, double x, DateTime now, int staleDays)
     {
@@ -61,10 +60,7 @@ public static class DeviationScorer
 
             var day = (ts.Length >= 10 ? ts[..10] : now.ToString("yyyy-MM-dd"));
             if (db.CountDeviationEventsOnDay(day) >= Math.Max(1, cfg.LearnNormalMaxEventsPerDay))
-            {
-                Interlocked.Increment(ref _stormDropped);
                 return null;
-            }
 
             var top = hits.OrderByDescending(h => h.Score).First();
             var ev = new DeviationEvent
@@ -133,6 +129,4 @@ public static class DeviationScorer
         if (double.IsFinite(diskFreeGb)) samples.Add(($"disk@{slot}", diskFreeGb));
         EvaluateWindow(db, cfg, NormalModelStore.SourceDevice, "", t, samples, DateTime.Now);
     }
-
-    public static long StormDropped => Interlocked.Read(ref _stormDropped);
 }

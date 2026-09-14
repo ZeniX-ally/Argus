@@ -32,6 +32,7 @@
     "todo_spec_merge": true,
     "auto_update": true,
     "update_source": "",
+    "update_dir": "data/updates",
     "learn_baseline_enabled": false,
     "learn_resource_sampling_enabled": false,
     "learn_priority_enabled": false,

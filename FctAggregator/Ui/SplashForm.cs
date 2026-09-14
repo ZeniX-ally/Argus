@@ -41,8 +41,6 @@ public class SplashForm : AppForm
 
     private System.Threading.Timer? _holdTimer;
 
-    public bool Finished => _finished;
-
     public event Action? Completed;
 
     public SplashForm(Image img)

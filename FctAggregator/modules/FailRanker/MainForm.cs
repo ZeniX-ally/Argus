@@ -211,6 +211,11 @@ public class MainForm : AppForm
 			IsSplitterFixed = false,
 		};
 		_tvSurvey.Dock = DockStyle.Fill;
+		// 树交互接线（此前 OnSurveyBeforeExpand / ShowXmlContent 写好了却从未挂上，
+		// 导致标签承诺的「双击展开/收起，双击 XML 看内容，双击其它文件默认打开」全部失效、
+		// 且子目录展开时不会懒加载子节点）
+		_tvSurvey.BeforeExpand += OnSurveyBeforeExpand;
+		_tvSurvey.NodeMouseDoubleClick += OnSurveyNodeDoubleClick;
 		split.Panel1.Controls.Add(_tvSurvey);
 
 		var rightPanel = new TableLayoutPanel
@@ -558,6 +563,27 @@ public class MainForm : AppForm
 		if (e.Node?.Tag is FsTag { IsDir: true, Loaded: false })
 		{
 			PopulateChildren(e.Node);
+		}
+	}
+
+	/// <summary>双击节点：目录交给 TreeView 默认展开/收起（避免与默认行为互相抵消）；
+	/// XML 用内置查看器打开；其它文件走系统默认程序。</summary>
+	private void OnSurveyNodeDoubleClick(object? sender, TreeNodeMouseClickEventArgs e)
+	{
+		if (e.Node?.Tag is not FsTag tag || tag.IsDir) return;
+		if (string.IsNullOrEmpty(tag.Path)) return;
+		if (tag.Path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+		{
+			ShowXmlContent(tag.Path);
+			return;
+		}
+		try
+		{
+			Process.Start(new ProcessStartInfo { FileName = tag.Path, UseShellExecute = true });
+		}
+		catch (Exception ex)
+		{
+			Log("[打开文件失败] " + ex.Message);
 		}
 	}
 

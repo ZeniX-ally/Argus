@@ -22,8 +22,6 @@ public abstract class BoardCardBase : Panel
     private Point _origin;
     private System.Windows.Forms.Timer? _clickTimer;
 
-    internal bool PreviewPending => _clickTimer?.Enabled == true;
-
     protected BoardCardBase()
     {
         Height = 80;

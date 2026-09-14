@@ -92,8 +92,6 @@ public sealed class FeishuFailBatcher : IDisposable
 
     public int PendingCount => _queue.Count;
 
-    public bool MergeEnabled => _cfg.FeishuFailMergeEnabled;
-
     /// <summary>纯判定：是否应立即冲刷（不等窗口）。合并关闭→有任何一条即冲刷；合并开启→攒满上限即冲刷。</summary>
     public static bool ShouldFlushImmediately(int pendingCount, int mergeMax, bool mergeEnabled)
         => pendingCount > 0 && (!mergeEnabled || pendingCount >= Math.Max(1, mergeMax));

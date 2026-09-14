@@ -120,8 +120,6 @@ public class AppConfig
 
     public static AppConfig Instance => _instance ??= Load();
 
-    public static string GenerateRandomToken() => Guid.NewGuid().ToString("N");
-
     public static string BaseDir =>
         AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
 
@@ -234,6 +232,8 @@ public class AppConfig
                     cfg.FctProgramBackupKeep = fpk;
                 if (root.TryGetProperty("auto_update", out v)) cfg.AutoUpdate = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("update_source", out v)) cfg.UpdateSource = (GetStringSafe(v) ?? "").Trim();
+                if (root.TryGetProperty("update_dir", out v) && v.ValueKind == JsonValueKind.String)
+                    cfg.UpdateDir = (GetStringSafe(v) ?? cfg.UpdateDir).Trim();
                 if (root.TryGetProperty("learn_baseline_enabled", out v)) cfg.LearnBaselineEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_resource_sampling_enabled", out v)) cfg.LearnResourceSamplingEnabled = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("learn_priority_enabled", out v)) cfg.LearnPriorityEnabled = v.ValueKind == JsonValueKind.True;
@@ -371,7 +371,7 @@ public class AppConfig
                     "db_vacuum_threshold_mb", "db_parse_failure_retention_days",
                     "fct_program_source_root", "fct_program_backup_dir", "fct_program_backup_enabled",
                     "fct_program_backup_keep",
-                    "auto_update", "update_source",
+                    "auto_update", "update_source", "update_dir",
                     "learn_baseline_enabled", "learn_resource_sampling_enabled", "learn_priority_enabled",
                     "learn_fail_merge_enabled", "learn_fail_merge_level", "learn_baseline_window_days",
                     "learn_baseline_sigma", "learn_baseline_min_samples", "learn_normal_enabled",
@@ -433,6 +433,7 @@ public class AppConfig
                 writer.WriteNumber("fct_program_backup_keep", FctProgramBackupKeep);
                 writer.WriteBoolean("auto_update", AutoUpdate);
                 writer.WriteString("update_source", UpdateSource);
+                writer.WriteString("update_dir", UpdateDir);
                 writer.WriteBoolean("learn_baseline_enabled", LearnBaselineEnabled);
                 writer.WriteBoolean("learn_resource_sampling_enabled", LearnResourceSamplingEnabled);
                 writer.WriteBoolean("learn_priority_enabled", LearnPriorityEnabled);
@@ -484,8 +485,6 @@ public class AppConfig
 
     }
     public List<string> Validate() => ConfigValidator.Validate(this);
-
-    public static List<string> ValidateCurrent() => ConfigValidator.Validate(Load());
 
     public static List<string> ListBackups(int take = 20)
     {

@@ -21,8 +21,8 @@ if ([string]::IsNullOrWhiteSpace($csprojVer)) { Pop-Location; throw 'cannot read
 $msg = @"
 Argus v$csprojVer - open-source export
 
-FCT production-line test data collection, mesh aggregation and dashboard suite.
-Single WinExe: collection engine, P2P mesh, web dashboard, feishu cards, hot upgrade.
+Standalone FCT production-line test data collection and analysis tool (single machine, no server).
+Single WinExe: collection engine, fail/todo loop, local analytics, feishu cards, hot upgrade.
 MIT licensed. See README.md.
 "@
 

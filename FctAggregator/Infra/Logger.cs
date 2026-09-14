@@ -117,11 +117,6 @@ public static class Logger
 
     public static List<string> SnapshotGuiLogs() => _guiLogs.ToArray().ToList();
 
-    public static void ClearGuiLogs()
-    {
-        while (_guiLogs.TryDequeue(out _)) { }
-    }
-
     /// <summary>读当前 app.log 尾部（UTF-8），供调试页预览。文件不存在返回提示串。</summary>
     public static string ReadTail(int maxBytes = 120_000)
     {

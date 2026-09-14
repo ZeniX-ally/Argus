@@ -1,7 +1,15 @@
 #requires -Version 7
 param(
-    [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.2.zip"
+    [string]$Zip
 )
+# 默认包名从 csproj 推导（与 smoke_gui/smoke_cli 同一做法；原来写死 Argus-v3.2.2.zip，之后必然报"路径不存在"）
+if (-not $Zip) {
+    $root = (Resolve-Path "$PSScriptRoot\..").Path
+    $ver = [regex]::Match((Get-Content (Join-Path $root 'FctAggregator.csproj') -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
+    if (-not $ver) { throw 'FctAggregator.csproj 里找不到 <Version>' }
+    $Zip = Join-Path $root "bin\Release\net8.0-windows\Argus-v$ver.zip"
+}
+if (-not (Test-Path $Zip)) { throw "找不到发布包: $Zip（先跑 scripts/make_release.ps1）" }
 $ErrorActionPreference = 'Stop'
 
 $tmp = Join-Path $env:TEMP "fct_notify_$(Get-Random -Maximum 999999)"

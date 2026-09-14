@@ -29,8 +29,6 @@ public sealed class GroupInfo
 
     public int Seq;
 
-    public string NumberText => Number.Length == 0 ? "" : string.Join(".", Number);
-
     public override string ToString() => Name;
 }
 

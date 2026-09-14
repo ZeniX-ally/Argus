@@ -1,10 +1,29 @@
-﻿#requires -Version 7
+#requires -Version 7
 param(
-    [string]$OldZip = "$PSScriptRoot\..\..\Releases\aggregator\FCT-Aggregator-v2.4.0.zip",
-    [string]$NewUpdateZip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.2-update.zip",
+    [string]$OldZip,
+    [string]$NewUpdateZip,
     [switch]$FullScan,
     [switch]$KeepTemp
 )
+# 默认值从仓库实际情况推导：原来写死 Releases\aggregator\FCT-Aggregator-v2.4.0.zip（聚合时代路径，目录早已不存在）
+if (-not $OldZip) {
+    $relRoot = Join-Path (Resolve-Path "$PSScriptRoot\..\..").Path 'Releases'
+    $cand = if (Test-Path $relRoot) {
+        Get-ChildItem -Path $relRoot -Recurse -Filter 'Argus-v*.zip' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notlike '*-update.zip' } | Sort-Object Name | Select-Object -First 1
+    }
+    if (-not $cand) { throw "Releases/ 下找不到历史完整包（Argus-v*.zip），请用 -OldZip 显式指定" }
+    $OldZip = $cand.FullName
+}
+if (-not $NewUpdateZip) {
+    $root = (Resolve-Path "$PSScriptRoot\..").Path
+    $ver = [regex]::Match((Get-Content (Join-Path $root 'FctAggregator.csproj') -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
+    if (-not $ver) { throw 'FctAggregator.csproj 里找不到 <Version>' }
+    $NewUpdateZip = Join-Path $root "bin\Release\net8.0-windows\Argus-v$ver-update.zip"
+}
+foreach ($p in @($OldZip, $NewUpdateZip)) {
+    if (-not (Test-Path $p)) { throw "找不到包: $p" }
+}
 $ErrorActionPreference = 'Stop'
 $fail = 0
 function Assert($cond, $msg) {

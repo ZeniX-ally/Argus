@@ -146,8 +146,6 @@ public class CardPreviewForm : AppForm
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
     }
 
-    internal int DetailSelectionLength => _detail.SelectionLength;
-
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
