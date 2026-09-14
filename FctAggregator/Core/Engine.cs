@@ -401,11 +401,13 @@ public class Engine
         catch (Exception ex) { Logger.Warning($"[监控] 新型号周期重扫失败: {ex.Message}"); }
     }
 
-    /// <summary>采集健康巡检（漏采/解析失败堆积 → 飞书主动告警 + 恢复通知）。</summary>
+    /// <summary>周期健康巡检：采集异常（漏采/解析失败堆积）+ 章节群挂 → 飞书主动告警。</summary>
     private void CheckCollectHealth()
     {
         try { CollectHealthMonitor.RunOnce(_db, _cfg, RetryQueueDepth); }
         catch (Exception ex) { Logger.Warning($"[采集健康] 巡检调度异常: {ex.Message}"); }
+        try { LearnAlertMonitor.RunGroupAlerts(_db, _cfg); }
+        catch (Exception ex) { Logger.Warning($"[自学习] 群挂巡检调度异常: {ex.Message}"); }
     }
 
     private void SyncTodos(string tag)

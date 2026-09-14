@@ -12,6 +12,9 @@ public static class FeishuNotifier
     private const int BatchMaxItemsListed = 10;
     /// <summary>合并卡最多列出的记录明细条数。</summary>
     private const int BatchMaxRecordsListed = 10;
+    /// <summary>群挂卡最多列出的章节数 / 每章节信号数（防卡片过长被飞书折叠）。</summary>
+    private const int GroupAlertMaxSections = 5;
+    private const int GroupAlertMaxSignals = 10;
 
     public static Task<FeishuSendOutcome> SendFailAlert(string webhookUrl, TestRecord record)
         => PostCard(webhookUrl, BuildFailCard(record), record.Sn ?? "?");
@@ -376,6 +379,89 @@ public static class FeishuNotifier
         if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
         if (bytes < 1024L * 1024 * 1024) return $"{bytes / 1024.0 / 1024:F1} MB";
         return $"{bytes / 1024.0 / 1024 / 1024:F2} GB";
+    }
+
+    // ───────────────────────── 自学习告警（章节群挂 / 正常态偏离） ─────────────────────────
+
+    public static Task<FeishuSendOutcome> SendGroupAlert(string webhookUrl, string stationId, string day,
+        IReadOnlyList<SectionGroupAlertResult> alerts, int threshold)
+        => PostCard(webhookUrl, BuildGroupAlertCard(stationId, day, alerts, threshold),
+            $"{stationId} 章节群挂 ×{alerts.Count}");
+
+    public static Task<FeishuSendOutcome> SendDeviationAlert(string webhookUrl, DeviationAlertPayload p)
+        => PostCard(webhookUrl, BuildDeviationAlertCard(p), $"{p.StationId} 偏离 {p.TopSignal}");
+
+    /// <summary>章节群挂卡：橙色。同一章节 N 个不同信号同时挂 → 系统性故障，信息量远高于单条 FAIL。</summary>
+    public static object BuildGroupAlertCard(string stationId, string day,
+        IReadOnlyList<SectionGroupAlertResult> alerts, int threshold)
+    {
+        var station = string.IsNullOrWhiteSpace(stationId) ? "未知机台" : stationId;
+        var elements = new List<object>
+        {
+            FeishuCardV2.FieldRow(("机台", station), ("日期", day ?? "—")),
+            FeishuCardV2.FieldRow(("判定阈值", $"≥{threshold} 个不同信号"), ("命中章节", $"{alerts.Count} 个")),
+        };
+
+        foreach (var a in alerts.Take(GroupAlertMaxSections))
+        {
+            elements.Add(FeishuCardV2.Hr());
+            elements.Add(FeishuCardV2.Md($"**§{FeishuCardV2.Escape(a.Section)} · {a.DistinctSignalCount} 个不同信号**", heading: true));
+            if (a.SignalNames.Count > 0)
+            {
+                var shown = a.SignalNames.Take(GroupAlertMaxSignals).Select(s => FeishuCardV2.Escape(s));
+                var line = "▸ " + string.Join("\n▸ ", shown);
+                if (a.SignalNames.Count > GroupAlertMaxSignals)
+                    line += $"\n… 另有 {a.SignalNames.Count - GroupAlertMaxSignals} 个信号未列出";
+                elements.Add(FeishuCardV2.Md(line));
+            }
+            if (!string.IsNullOrWhiteSpace(a.RootCauseHint))
+                elements.Add(FeishuCardV2.Md($"根因指向：{FeishuCardV2.Escape(a.RootCauseHint)}"));
+        }
+
+        if (alerts.Count > GroupAlertMaxSections)
+            elements.Add(FeishuCardV2.Md($"… 另有 {alerts.Count - GroupAlertMaxSections} 个章节未列出"));
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Note("同一章节多个不同信号同时挂，通常指向治具/供电/程序版本等系统性原因，建议优先排查。"));
+        return FeishuCardV2.Root($"{station} · 章节群挂告警 ×{alerts.Count}", "orange", elements,
+            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+    }
+
+    /// <summary>正常态偏离卡：黄色。PASS 但在偏离 = 比 FAIL 更早的预警。</summary>
+    public static object BuildDeviationAlertCard(DeviationAlertPayload p)
+    {
+        var model = string.IsNullOrWhiteSpace(p.Model) ? "—" : p.Model;
+        var elements = new List<object>
+        {
+            FeishuCardV2.FieldRow(("机台", p.StationId), ("型号", model)),
+            FeishuCardV2.FieldRow(("来源", p.SourceZh), ("最高偏离分", $"{p.TopScore:F0}")),
+            FeishuCardV2.Hr(),
+            FeishuCardV2.Md($"**最高分信号**\n{FeishuCardV2.Escape(p.TopSignal)}（共 {p.SignalCount} 个信号越线）"),
+        };
+
+        if (p.Top.Count > 0)
+        {
+            elements.Add(FeishuCardV2.Hr());
+            elements.Add(FeishuCardV2.Md($"**偏离明细（前 {p.Top.Count} 项）**", heading: true));
+            var sb = new StringBuilder();
+            foreach (var h in p.Top)
+                sb.AppendLine($"▸ {FeishuCardV2.Escape(h.Key)} 分 {h.Score:F0}（实测 {FmtNum(h.Value)}，正常 {FmtNum(h.Mean)}±{FmtNum(h.Sigma)}）");
+            elements.Add(FeishuCardV2.Md(sb.ToString().TrimEnd()));
+        }
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Note($"采集时间 {FmtTime(p.Ts)} · 属 PASS 但在偏离正常态，为提前预警"));
+        return FeishuCardV2.Root($"{p.StationId} · {model} · 正常态偏离告警", "yellow", elements,
+            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+    }
+
+    /// <summary>数值紧凑格式化（偏离明细用；避免 3.5200000001 这类噪声）。</summary>
+    private static string FmtNum(double v)
+    {
+        if (!double.IsFinite(v)) return "—";
+        var a = Math.Abs(v);
+        if (a >= 10000 || (a > 0 && a < 0.01)) return v.ToString("0.###E+0");
+        return Math.Round(v, 3).ToString("0.###");
     }
 
     private static string BuildFailItems(TestRecord r)

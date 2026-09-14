@@ -33,6 +33,14 @@ public class AppConfig
     public int FeishuCollectAlertThrottleMin { get; set; } = 60;
     /// <summary>每日运行摘要卡（采集量/良率/Top失败项/库健康分/备份状态）。</summary>
     public bool FeishuDailySummaryEnabled { get; set; } = true;
+    /// <summary>章节群挂告警（同一章节 N 个不同信号同时挂 → 系统性故障）。阈值复用 learn_group_alert_min。</summary>
+    public bool FeishuGroupAlertEnabled { get; set; } = true;
+    /// <summary>正常态偏离告警（PASS 但测量值偏离已学正常态 → 提前预警）。</summary>
+    public bool FeishuDeviationAlertEnabled { get; set; } = true;
+    /// <summary>偏离告警的分数下限（0~100）。低于此分只落库不推送。</summary>
+    public int FeishuDeviationMinScore { get; set; } = 90;
+    /// <summary>偏离告警单日推送上限（防预警变噪音）。</summary>
+    public int FeishuDeviationMaxPerDay { get; set; } = 5;
     public bool TodoSpecMerge { get; set; } = true;
     public string ParsersPath { get; set; } = "parsers.json";
     public int DbMaintenanceHour { get; set; } = 3;
@@ -161,6 +169,16 @@ public class AppConfig
                     cfg.FeishuCollectAlertThrottleMin = cat;
                 if (root.TryGetProperty("feishu_daily_summary_enabled", out v))
                     cfg.FeishuDailySummaryEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("feishu_group_alert_enabled", out v))
+                    cfg.FeishuGroupAlertEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("feishu_deviation_alert_enabled", out v))
+                    cfg.FeishuDeviationAlertEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("feishu_deviation_min_score", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var dms) && dms >= 0 && dms <= 100)
+                    cfg.FeishuDeviationMinScore = dms;
+                if (root.TryGetProperty("feishu_deviation_max_per_day", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var dmd) && dmd >= 1)
+                    cfg.FeishuDeviationMaxPerDay = dmd;
                 if (root.TryGetProperty("parsers_path", out v) && v.ValueKind == JsonValueKind.String)
                     cfg.ParsersPath = GetStringSafe(v) ?? "parsers.json";
                 if (root.TryGetProperty("todo_spec_merge", out v) &&
@@ -319,6 +337,8 @@ public class AppConfig
                     "feishu_collect_alert_enabled", "feishu_collect_alert_window_min",
                     "feishu_collect_alert_parse_min", "feishu_collect_alert_retry_min",
                     "feishu_collect_alert_throttle_min", "feishu_daily_summary_enabled",
+                    "feishu_group_alert_enabled", "feishu_deviation_alert_enabled",
+                    "feishu_deviation_min_score", "feishu_deviation_max_per_day",
                     "todo_spec_merge",
                     "db_maintenance_hour", "db_storage_auto_optimize", "db_storage_monitor_hours",
                     "db_vacuum_threshold_mb", "db_parse_failure_retention_days",
@@ -364,6 +384,10 @@ public class AppConfig
                 writer.WriteNumber("feishu_collect_alert_retry_min", FeishuCollectAlertRetryMin);
                 writer.WriteNumber("feishu_collect_alert_throttle_min", FeishuCollectAlertThrottleMin);
                 writer.WriteBoolean("feishu_daily_summary_enabled", FeishuDailySummaryEnabled);
+                writer.WriteBoolean("feishu_group_alert_enabled", FeishuGroupAlertEnabled);
+                writer.WriteBoolean("feishu_deviation_alert_enabled", FeishuDeviationAlertEnabled);
+                writer.WriteNumber("feishu_deviation_min_score", FeishuDeviationMinScore);
+                writer.WriteNumber("feishu_deviation_max_per_day", FeishuDeviationMaxPerDay);
                 writer.WriteString("parsers_path", ParsersPath);
                 writer.WriteBoolean("todo_spec_merge", TodoSpecMerge);
                 writer.WriteNumber("db_maintenance_hour", DbMaintenanceHour);

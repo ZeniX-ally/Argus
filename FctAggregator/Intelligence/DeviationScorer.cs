@@ -81,6 +81,8 @@ public static class DeviationScorer
                 })),
             };
             db.InsertDeviationEvent(ev);
+            // 达分数下限且当日未超推送封顶时推飞书（PASS 但在偏离 = 比 FAIL 更早的预警）
+            LearnAlertMonitor.MaybeNotifyDeviation(db, cfg, ev);
             return ev;
         }
         catch (Exception ex)

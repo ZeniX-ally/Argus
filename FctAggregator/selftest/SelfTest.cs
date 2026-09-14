@@ -2665,6 +2665,128 @@ Argus 统一发布包  v{newer}
                 "采集告警状态：空/坏 JSON 安全返回 null");
         }
 
+        // ============ 自学习告警：章节群挂卡 + 正常态偏离卡 ============
+        {
+            Console.WriteLine("\n【自学习告警】群挂去重 / 偏离封顶 / 两张卡内容…");
+
+            var relaxed = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+            // —— 群挂去重：5 分钟一轮巡检，同一群挂不能反复推 ——
+            var gs = new GroupAlertPushState();
+            var gaAll = new List<SectionGroupAlertResult>
+            {
+                new() { Section = "6.1", DistinctSignalCount = 4, SignalNames = new List<string> { "KL30_1", "KL30_2", "KL30_3", "KL30_4" }, RootCauseHint = "治具接触不良" },
+                new() { Section = "7.2", DistinctSignalCount = 3, SignalNames = new List<string> { "X", "Y", "Z" } },
+            };
+            Check(LearnAlertMonitor.SelectFreshAlerts(gs, "2026-09-14", gaAll).Count == 2, "群挂去重：首次评估两个章节都算新");
+            Check(gs.Date == "2026-09-14" && gs.Sections.Count == 2, "群挂去重：章节已记入当日状态");
+            Check(LearnAlertMonitor.SelectFreshAlerts(gs, "2026-09-14", gaAll).Count == 0,
+                "群挂去重：同一天重复评估不再推（关键——巡检每 5 分钟一次）");
+            Check(LearnAlertMonitor.SelectFreshAlerts(gs, "2026-09-15", gaAll).Count == 2 && gs.Sections.Count == 2,
+                "群挂去重：跨天自动重置额度");
+
+            var gsCase = new GroupAlertPushState { Date = "d", Sections = new List<string> { "AbC" } };
+            Check(LearnAlertMonitor.SelectFreshAlerts(gsCase, "d",
+                    new List<SectionGroupAlertResult> { new() { Section = "abc" } }).Count == 0,
+                "群挂去重：章节名比较大小写不敏感");
+            Check(LearnAlertMonitor.SelectFreshAlerts(new GroupAlertPushState(), "d",
+                    new List<SectionGroupAlertResult> { new() { Section = "6.1" } }).Count == 1,
+                "群挂去重：新章节照常放行");
+            Check(LearnAlertMonitor.SelectFreshAlerts(null!, "d", gaAll).Count == 0, "群挂去重：null 状态安全返回空");
+
+            // —— 偏离封顶 ——
+            var ds = new DeviationPushState();
+            Check(LearnAlertMonitor.TryReserveDeviationPush(ds, "2026-09-14", 3), "偏离封顶：第 1 条占额度成功");
+            Check(LearnAlertMonitor.TryReserveDeviationPush(ds, "2026-09-14", 3), "偏离封顶：第 2 条占额度成功");
+            Check(LearnAlertMonitor.TryReserveDeviationPush(ds, "2026-09-14", 3), "偏离封顶：第 3 条占额度成功");
+            Check(!LearnAlertMonitor.TryReserveDeviationPush(ds, "2026-09-14", 3), "偏离封顶：达上限后拒绝");
+            Check(ds.Count == 3, "偏离封顶：被拒时计数不增长（否则会被后续请求连带压死）");
+            Check(LearnAlertMonitor.TryReserveDeviationPush(ds, "2026-09-15", 3), "偏离封顶：跨天重置额度");
+
+            var dsZero = new DeviationPushState();
+            Check(LearnAlertMonitor.TryReserveDeviationPush(dsZero, "d", 0) && dsZero.Count == 1,
+                "偏离封顶：上限非法(0) 按 1 兜底，仍允许推 1 条");
+            Check(!LearnAlertMonitor.TryReserveDeviationPush(dsZero, "d", 0), "偏离封顶：兜底上限下第 2 条被拒");
+
+            // —— 偏离载荷组装（DetailJson 损坏只损失明细，不影响主信息）——
+            var devEv = new DeviationEvent
+            {
+                Ts = "2026-09-14 10:20:30",
+                Model = "E3002781",
+                Source = NormalModelStore.SourceMeasurement,
+                SignalCount = 3,
+                TopSignal = "KL30_1",
+                TopScore = 96,
+                DetailJson = "[{\"signal_key\":\"KL30_1\",\"score\":96,\"value\":3.52,\"mean\":3.3,\"sigma\":0.05},"
+                            + "{\"signal_key\":\"V_5V\",\"score\":91,\"value\":5.4,\"mean\":5.0,\"sigma\":0.1}]",
+            };
+            var dp = DeviationAlertPayload.FromEvent(devEv, "FCT1");
+            Check(dp.StationId == "FCT1" && dp.TopSignal == "KL30_1" && Math.Abs(dp.TopScore - 96) < 0.01,
+                "偏离载荷：事件本体字段映射");
+            Check(dp.Top.Count == 2 && dp.Top[0].Key == "KL30_1" && dp.Top[1].Key == "V_5V", "偏离载荷：明细按分数倒序");
+            Check(dp.SourceZh == "测量值", "偏离载荷：来源代号转中文");
+            Check(DeviationAlertPayload.FromEvent(devEv, "").StationId == "未知机台", "偏离载荷：无机台号回落占位");
+            Check(DeviationAlertPayload.FromEvent(devEv, "FCT1", 1).Top.Count == 1, "偏离载荷：topN 生效");
+
+            var dpBad = DeviationAlertPayload.FromEvent(
+                new DeviationEvent { TopSignal = "X", TopScore = 90, DetailJson = "{不是数组" }, "FCT1");
+            Check(dpBad.Top.Count == 0 && dpBad.TopSignal == "X", "偏离载荷：DetailJson 损坏不抛异常（最高分信号仍在）");
+            Check(DeviationAlertPayload.FromEvent(new DeviationEvent { TopSignal = "Y", DetailJson = "" }, "FCT1").Top.Count == 0,
+                "偏离载荷：无明细时 Top 为空列表");
+
+            // —— 章节群挂卡 ——
+            var gaJson = JsonSerializer.Serialize(
+                FeishuNotifier.BuildGroupAlertCard("FCT1", "2026-09-14", gaAll.Take(1).ToList(), 3), relaxed);
+            Check(gaJson.Contains("\"template\":\"orange\""), "群挂卡：header 橙色");
+            Check(gaJson.Contains("章节群挂告警 ×1"), "群挂卡：标题带命中章节数");
+            Check(gaJson.Contains("§6.1 · 4 个不同信号"), "群挂卡：章节与不同信号数");
+            Check(gaJson.Contains("KL30_1") && gaJson.Contains("KL30_4"), "群挂卡：列出信号名");
+            Check(gaJson.Contains("根因指向：治具接触不良"), "群挂卡：带根因指向");
+            Check(gaJson.Contains("≥3 个不同信号"), "群挂卡：标注判定阈值");
+            Check(gaJson.Contains("系统性原因"), "群挂卡：页脚给出排查方向");
+
+            var manySec = Enumerable.Range(0, 6)
+                .Select(i => new SectionGroupAlertResult { Section = $"S{i}", DistinctSignalCount = 3, SignalNames = new List<string> { "a" } })
+                .ToList();
+            Check(JsonSerializer.Serialize(FeishuNotifier.BuildGroupAlertCard("FCT1", "d", manySec, 3), relaxed)
+                    .Contains("另有 1 个章节未列出"),
+                "群挂卡：章节超 5 个时截断提示");
+
+            var manySig = new List<SectionGroupAlertResult>
+            {
+                new() { Section = "S", DistinctSignalCount = 12, SignalNames = Enumerable.Range(0, 12).Select(i => $"sig{i}").ToList() },
+            };
+            Check(JsonSerializer.Serialize(FeishuNotifier.BuildGroupAlertCard("FCT1", "d", manySig, 3), relaxed)
+                    .Contains("另有 2 个信号未列出"),
+                "群挂卡：单章节信号超 10 个时截断提示");
+
+            // —— 正常态偏离卡 ——
+            var dpJson = JsonSerializer.Serialize(FeishuNotifier.BuildDeviationAlertCard(dp), relaxed);
+            Check(dpJson.Contains("\"template\":\"yellow\""), "偏离卡：header 黄色（预警而非故障，与 FAIL 红区分）");
+            Check(dpJson.Contains("正常态偏离告警"), "偏离卡：标题含「正常态偏离告警」");
+            Check(dpJson.Contains("最高分信号"), "偏离卡：突出最高分信号");
+            Check(dpJson.Contains("KL30_1 分 96"), "偏离卡：明细含信号与分数");
+            Check(dpJson.Contains("实测 3.52，正常 3.3±0.05"), "偏离卡：明细含实测值 / 正常均值 / σ");
+            Check(dpJson.Contains("测量值"), "偏离卡：来源转中文");
+            Check(dpJson.Contains("PASS 但在偏离正常态"), "偏离卡：说明这是提前预警而非失败");
+
+            // —— 状态序列化 ——
+            Check(GroupAlertPushState.FromJson("") == null && GroupAlertPushState.FromJson("{坏") == null,
+                "群挂状态：空 / 坏 JSON 安全返回 null");
+            var gRound = GroupAlertPushState.FromJson(
+                new GroupAlertPushState { Date = "d", Sections = new List<string> { "a" } }.ToJson());
+            Check(gRound != null && gRound!.Date == "d" && gRound.Sections.Count == 1, "群挂状态：JSON 往返一致");
+            Check(DeviationPushState.FromJson("{坏") == null, "偏离状态：坏 JSON 安全返回 null");
+            var dRound = DeviationPushState.FromJson(new DeviationPushState { Date = "d", Count = 4 }.ToJson());
+            Check(dRound != null && dRound!.Count == 4, "偏离状态：JSON 往返一致");
+
+            // —— 配置默认值 ——
+            var learnCfgDef = new AppConfig();
+            Check(learnCfgDef.FeishuGroupAlertEnabled && learnCfgDef.FeishuDeviationAlertEnabled
+                  && learnCfgDef.FeishuDeviationMinScore == 90 && learnCfgDef.FeishuDeviationMaxPerDay == 5,
+                "配置：feishu_group_alert / feishu_deviation_* 默认 开 / 开 / 90 / 5");
+        }
+
         // ============ 规格06 多元深分析：PASS 测量值采集 / v14 存储 / 漂移+CPK / backfill ============
         {
             Console.WriteLine("\n【规格06】PASS 测量值采集（ParseMeasurements）…");
