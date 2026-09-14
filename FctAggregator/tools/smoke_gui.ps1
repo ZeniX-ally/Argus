@@ -1,8 +1,16 @@
 #requires -Version 7
 param(
-    [string]$Zip = "$PSScriptRoot\..\bin\Release\net8.0-windows\Argus-v3.2.2.zip",
+    [string]$Zip,
     [string]$ExpectTitle = 'Argus'
 )
+# 默认包名不能再写死：版本号唯一来源是 csproj（原来硬编码 Argus-v3.2.2.zip，v3.2.2 之后脚本必然报"路径不存在"）
+if (-not $Zip) {
+    $root = (Resolve-Path "$PSScriptRoot\..").Path
+    $ver = [regex]::Match((Get-Content (Join-Path $root 'FctAggregator.csproj') -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
+    if (-not $ver) { throw 'FctAggregator.csproj 里找不到 <Version>' }
+    $Zip = Join-Path $root "bin\Release\net8.0-windows\Argus-v$ver.zip"
+}
+if (-not (Test-Path $Zip)) { throw "找不到发布包: $Zip（先跑 scripts/make_release.ps1）" }
 $ErrorActionPreference = 'Stop'
 
 $tmp = Join-Path $env:TEMP "fct_gui_$(Get-Random -Maximum 999999)"
