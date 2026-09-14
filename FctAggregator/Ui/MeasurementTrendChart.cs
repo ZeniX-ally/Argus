@@ -120,6 +120,17 @@ public sealed class MeasurementTrendChart : Control
     }
 
     /// <summary>
+    /// GDI+ 坐标钳位：NaN/Inf/超大值会让 DrawEllipse/DrawLines 抛 OverflowException（红叉）。
+    /// </summary>
+    public static float ClampPlotCoord(double v, float min, float max, float fallback)
+    {
+        if (!double.IsFinite(v)) return fallback;
+        if (v < min) return min;
+        if (v > max) return max;
+        return (float)v;
+    }
+
+    /// <summary>
     /// 纵轴口径：所有曲线共享同一规格带时直接用**实际值**（选单条测项时必然如此），
     /// 否则只能退回归一化相对位置（各测项量纲/量程不同，共用一个实际值轴没有意义）。
     /// </summary>
@@ -177,13 +188,29 @@ public sealed class MeasurementTrendChart : Control
             return;
         }
 
-        int bucketCount = _data.BucketCount;
+        try { PaintPlot(g, actualAxis, chartLeft, chartRight, chartTop, chartBottom, chartW, chartH); }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[分析] 趋势图绘制失败: {ex.Message}");
+            try { g.ResetClip(); } catch { }
+            TextRenderer.DrawText(g, "趋势图绘制失败，详情见日志。", Theme.Body,
+                new Rectangle(chartLeft, chartTop + 24, chartW, 40), Theme.Danger,
+                TextFormatFlags.HorizontalCenter);
+        }
+    }
+
+    private void PaintPlot(Graphics g, bool actualAxis, int chartLeft, int chartRight, int chartTop, int chartBottom, int chartW, int chartH)
+    {
         var (lo, hi) = AxisRange(_series);
-        var (x0, x1) = PlotBucketRange(_series, bucketCount);
+        var (x0, x1) = PlotBucketRange(_series, _data!.BucketCount);
         int xSpan = Math.Max(1, x1 - x0);
 
-        float YOf(double norm) => chartBottom - (float)((norm - lo) / (hi - lo) * chartH);
-        float XOf(int bucket) => chartLeft + (float)(bucket - x0) / xSpan * chartW;
+        float YOf(double norm) => ClampPlotCoord(
+            !(hi > lo) || !double.IsFinite(norm) ? double.NaN : chartBottom - (norm - lo) / (hi - lo) * chartH,
+            chartTop - 4, chartBottom + 4, (chartTop + chartBottom) / 2f);
+        float XOf(int bucket) => ClampPlotCoord(
+            chartLeft + (double)(bucket - x0) / xSpan * chartW,
+            chartLeft - 4, chartRight + 4, chartLeft);
 
         // 合格带 [0, 1]
         float yHigh = YOf(1), yLow = YOf(0);
@@ -289,8 +316,14 @@ public sealed class MeasurementTrendChart : Control
         if (seg.Count == 0) return;
         if (seg.Count == 1)
         {
-            g.DrawEllipse(pen, seg[0].X - 1.5f, seg[0].Y - 1.5f, 3f, 3f);
+            var p = seg[0];
+            if (!float.IsFinite(p.X) || !float.IsFinite(p.Y)) return;
+            g.DrawEllipse(pen, p.X - 1.5f, p.Y - 1.5f, 3f, 3f);
             return;
+        }
+        for (int i = 0; i < seg.Count; i++)
+        {
+            if (!float.IsFinite(seg[i].X) || !float.IsFinite(seg[i].Y)) return;
         }
         g.DrawLines(pen, seg.ToArray());
     }

@@ -231,10 +231,14 @@ class SelfTest
 
         {
             var tsRoot = Path.Combine(work, "tsrc");
-            var tsDir = Path.Combine(tsRoot, "Offline", "E3002781", "20260814");
+            // 夹具日期按"昨天"生成而非硬编码：Processor 侧文件名时间要过 ResolveFileNameTime 的 anchor 校验，
+            // 写死 2026-08-14 这种日期会让套件随真实时间推移自然失效（09-14 跑时相差 31 天 > 30 天阈值）。
+            var tsDay = DateTime.Now.AddDays(-1);
+            var tsTime = tsDay.ToString("yyyy-MM-dd HH:mm:ss");
+            var tsDir = Path.Combine(tsRoot, "Offline", "E3002781", tsDay.ToString("yyyyMMdd"));
             Directory.CreateDirectory(tsDir);
             var tsXml = Path.Combine(tsDir,
-                "O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_20260814072417293_2026813232417386.xml");
+                $"O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_{tsDay:yyyyMMddHHmmss}293_2026813232417386.xml");
             const string tsBody = """
                 <BATCH TIMESTAMP="2026-07-30T18:21:15.533+08:00">
                   <FACTORY USER="Operator" TESTER="PEU_G49_FCT6"/>
@@ -246,11 +250,11 @@ class SelfTest
                 """;
             File.WriteAllText(tsXml, tsBody);
             var tsPr = XmlParser.Parse(tsXml);
-            Check(tsPr.BatchTimestamp == "2026-08-14 07:24:17",
+            Check(tsPr.BatchTimestamp == tsTime,
                   $"时间源: 文件名 17 位时间优先（实得 {tsPr?.BatchTimestamp}）");
             var tsProc = new Processor(new AppConfig(), "");
             var tsRec = tsProc.ParseAndClassify(tsXml);
-            Check(tsRec != null && TimeUtil.Normalize(tsRec.BatchTimestamp) == "2026-08-14 07:24:17",
+            Check(tsRec != null && TimeUtil.Normalize(tsRec.BatchTimestamp) == tsTime,
                   $"时间源: Processor 也取文件名时间（实得 {tsRec?.BatchTimestamp}）");
             Check(tsRec != null && tsRec.StationId == "FCT6",
                   $"时间源用例: 机台号仍从 TESTER 提取（实得 {tsRec?.StationId}）");
@@ -258,7 +262,7 @@ class SelfTest
                 "O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_nodate_2026813232417387.xml");
             File.WriteAllText(tsXml2, tsBody);
             var tsRec2 = tsProc.ParseAndClassify(tsXml2);
-            Check(tsRec2 != null && TimeUtil.Normalize(tsRec2.BatchTimestamp) == "2026-08-14 00:00:00",
+            Check(tsRec2 != null && TimeUtil.Normalize(tsRec2.BatchTimestamp) == $"{tsDay:yyyy-MM-dd} 00:00:00",
                   $"时间源: 无文件名时间时回退目录日期（实得 {tsRec2?.BatchTimestamp}）");
             TryDeleteDir(tsRoot);
         }
@@ -2884,7 +2888,9 @@ Argus 统一发布包  v{newer}
                 for (int k = 0; k < h - 9; k++)
                     dbF6b.BatchInsert(new[] { FR($"2026-09-05 {h:00}:{k:00}:00", "T1", "FX1", "FAIL", "Failed",
                         Array.Empty<(string, string, string, string, string, string)>()) });
-                dbF6b.InsertLocalDeviceSample(h * 10.0, 50, 100, $"{fixedNow:yyyy-MM-dd} {h:00}:05:00");
+                // 采样时间必须相对"今天"：GetLocalDeviceSamples 按 datetime('now','-N days') 取数，
+                // 写死 fixedNow 会让样本随真实时间推移滑出窗口（小时键仍与上面的失败记录对齐）
+                dbF6b.InsertLocalDeviceSample(h * 10.0, 50, 100, $"{DateTime.Today:yyyy-MM-dd} {h:00}:05:00");
             }
             var attrCorr = FailAttributor.Run(dbF6b, cfgF, fixedNow);
             var cpuCorr = attrCorr.ResourceCorrelations.FirstOrDefault(c => c.Metric == "cpu");
@@ -3510,6 +3516,12 @@ Argus 统一发布包  v{newer}
         });
         Check(axisPass.Lo > -0.5 && axisPass.Hi < 1.5,
             $"纵轴：只用 PASS 极值+规格带（实得 {axisPass.Lo:F2}~{axisPass.Hi:F2}）");
+        Check(MeasurementTrendChart.ClampPlotCoord(double.NaN, 0, 100, 50) == 50
+              && MeasurementTrendChart.ClampPlotCoord(double.PositiveInfinity, 0, 100, 50) == 50
+              && MeasurementTrendChart.ClampPlotCoord(-1e12, 0, 100, 50) == 0
+              && MeasurementTrendChart.ClampPlotCoord(1e12, 0, 100, 50) == 100
+              && MeasurementTrendChart.ClampPlotCoord(42, 0, 100, 50) == 42,
+            "绘图坐标：NaN/Inf 回落，超大值钳进绘图区（防 GDI OverflowException）");
 
         var only = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2,
             new[] { "t_one" });
