@@ -11,6 +11,11 @@ internal static class UiAsync
             t.Stop();
             if (!owner.IsDisposed) action();
         };
+        // 调用方通常只持有引用、不负责释放：随宿主控件一起销毁，避免 Timer 在控件销毁后继续持有闭包
+        owner.Disposed += (_, _) =>
+        {
+            try { t.Stop(); t.Dispose(); } catch { }
+        };
         return t;
     }
 

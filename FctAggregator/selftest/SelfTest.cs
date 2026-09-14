@@ -39,6 +39,11 @@ class SelfTest
         if (args.Length > 0 && args[0] == "--perf")
             return PerfReport.Run(args);
 
+        // 先按主程序同一套 SDK 生成逻辑初始化（含 csproj 的 ApplicationHighDpiMode）：
+        // 必须在创建任何窗口之前调用，否则 SetHighDpiMode 会抛 InvalidOperationException
+        ApplicationConfiguration.Initialize();
+        Console.WriteLine($"DPI 感知: {Application.HighDpiMode}");
+
         var work = Path.Combine(Path.GetTempPath(), "fct_agg_" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(work);
         var real = FindUp(Path.Combine("dist", "data", "fct.db"));
@@ -1651,6 +1656,76 @@ Argus 统一发布包  v{newer}
                 Check(dg.BackgroundColor == Theme.Bg, "主题: DataGridView 背景=Bg（StyleGrid 走令牌）");
                 var btn = Theme.MakeButton("测试", 60);
                 Check(btn.FlatStyle == FlatStyle.System, "主题: 按钮 FlatStyle.System 系统原生");
+            }
+        }
+
+        // ── UI 体验修复（v3.40.5）：primary 上色 / 对比度 / DPI 基准 / 无障碍 / 键盘可达 ──
+        {
+            using (var f = new Form())
+            {
+                var primary = Theme.MakeButton("刷新", 76, primary: true);
+                var plain = Theme.MakeButton("其它", 76);
+                f.Controls.Add(primary); f.Controls.Add(plain);
+                Theme.Apply(f, isPageRoot: true);
+                Check(primary.FlatStyle == FlatStyle.Flat && !primary.UseVisualStyleBackColor
+                      && primary.BackColor == Theme.PrimaryDim && primary.ForeColor == Color.White,
+                      "UI-7: primary 按钮走 Flat 上色（Apply 后仍保持，不被 System 风格吞掉）");
+                Check(plain.FlatStyle == FlatStyle.System, "UI-7: 普通按钮保持系统原生外观");
+                Theme.SetButtonPrimary(primary, false);
+                Check(primary.BackColor == Theme.Surface && primary.FlatStyle == FlatStyle.Flat,
+                      "UI-7: 运行时切回非高亮态仍能上色（树形/表格切换按钮依赖此行为）");
+                Check(!string.IsNullOrEmpty(plain.AccessibleName) && plain.AccessibleName == plain.Text,
+                      "UI-9: Apply 用控件文本补 AccessibleName（读屏可读）");
+            }
+
+            double Rel(Color c)
+            {
+                double Ch(double v) => v <= 0.03928 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+                return 0.2126 * Ch(c.R / 255.0) + 0.7152 * Ch(c.G / 255.0) + 0.0722 * Ch(c.B / 255.0);
+            }
+            double Contrast(Color a, Color b)
+            {
+                var l1 = Rel(a); var l2 = Rel(b);
+                if (l1 < l2) (l1, l2) = (l2, l1);
+                return (l1 + 0.05) / (l2 + 0.05);
+            }
+            var mutedContrast = Contrast(Theme.TextMuted, Color.White);
+            Check(mutedContrast >= 4.5,
+                  $"UI-8: 次要灰字白底对比度 ≥4.5:1（WCAG AA，实得 {mutedContrast:F2}:1）");
+            Check(Theme.Tiny.Size >= 8F, $"UI-8: Tiny 字号 ≥8pt（实得 {Theme.Tiny.Size}pt）");
+
+            using (var probe = new Form())
+            {
+                Theme.ApplyDpi(probe);
+                Check(probe.AutoScaleMode == AutoScaleMode.Dpi && probe.AutoScaleDimensions == new SizeF(96F, 96F),
+                      "UI-4: ApplyDpi 统一 AutoScaleMode.Dpi + 96dpi 基准");
+            }
+            var strayForms = typeof(Program).Assembly.GetTypes()
+                .Where(t => typeof(Form).IsAssignableFrom(t) && !t.IsAbstract && !typeof(AppForm).IsAssignableFrom(t))
+                .Select(t => t.Name).ToList();
+            Check(strayForms.Count == 0,
+                  $"UI-4: 所有窗体都继承 AppForm（漏网 {strayForms.Count} 个: {string.Join(",", strayForms)}）");
+            Check(Application.HighDpiMode == HighDpiMode.PerMonitorV2,
+                  $"UI-3: 进程 DPI 感知为 PerMonitorV2（实得 {Application.HighDpiMode}）");
+
+            var probeCard = new KeyboardProbeCard();
+            bool cardActivated = false, cardContext = false;
+            probeCard.ActivateRequested += _ => cardActivated = true;
+            probeCard.ContextRequested += (_, _) => cardContext = true;
+            Check(probeCard.TabStop && probeCard.AccessibleRole == AccessibleRole.PushButton,
+                  "UI-9: 看板卡片可 Tab 聚焦且无障碍角色=按钮");
+            InvokeCardKey(probeCard, Keys.Enter);
+            Check(cardActivated, "UI-9: 卡片 Enter = 确认（与双击等价）");
+            InvokeCardKey(probeCard, Keys.F10 | Keys.Shift);
+            Check(cardContext, "UI-9: 卡片 Shift+F10 = 右键菜单");
+            probeCard.Dispose();
+
+            using (var host = new Panel())
+            {
+                var debounce = UiAsync.Debounce(host, 100, () => { });
+                debounce.Start();
+                host.Dispose();
+                Check(!debounce.Enabled, "UI-11: 防抖 Timer 随宿主控件销毁而释放");
             }
         }
 
@@ -4197,6 +4272,20 @@ Argus 统一发布包  v{newer}
             "P4 开关关：不附偏离证据");
     }
 
+    /// <summary>看板卡片抽象基类的可实例化探针（UI-9 键盘可达断言用）。</summary>
+    private sealed class KeyboardProbeCard : BoardCardBase
+    {
+        public override string ColumnKey => "probe";
+    }
+
+    /// <summary>模拟按键：OnKeyDown 是 protected，用反射调用以直测键盘路径。</summary>
+    static void InvokeCardKey(Control card, Keys keys)
+    {
+        var mi = typeof(BoardCardBase).GetMethod("OnKeyDown",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        mi.Invoke(card, new object[] { new KeyEventArgs(keys) });
+    }
+
     static void RunLogExportTests(string work)
     {
         var marker = "LOGEXPORT-" + Guid.NewGuid().ToString("N")[..8];
@@ -4204,6 +4293,13 @@ Argus 统一发布包  v{newer}
         var tail = Logger.ReadTail();
         Check(tail.Contains(marker), "ReadTail 含刚写入的 INFO 行");
         Check(File.Exists(Logger.CurrentLogPath), "app.log 落盘");
+
+        // PERF-10：日志改为复用同一个 StreamWriter（原来每行 open→write→close），连续多行仍必须全部可见
+        var batchMarker = "LOGBATCH-" + Guid.NewGuid().ToString("N")[..8];
+        for (int i = 0; i < 3; i++) Logger.Info($"[自检] {batchMarker}-{i}");
+        var tail2 = Logger.ReadTail();
+        Check(tail2.Contains($"{batchMarker}-0") && tail2.Contains($"{batchMarker}-2"),
+              "PERF-10: 复用写入器后连续多行全部落盘（含最后一行）");
 
         var zipPath = Path.Combine(work, "argus-logs-selftest.zip");
         var got = Logger.ExportZip(zipPath);

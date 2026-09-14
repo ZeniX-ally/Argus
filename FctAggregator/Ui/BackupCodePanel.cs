@@ -246,7 +246,8 @@ public sealed class BackupCodePanel : Panel
         Task.Run(() =>
         {
             var rep = FctProgramBackup.Run(db, cfg, sid, FctProgramBackup.TriggerManual);
-            BeginInvoke(() =>
+            // 走 UiAsync.Post：它已处理"窗体已销毁 / 句柄未创建"，裸 BeginInvoke 在关窗瞬间会抛 ObjectDisposedException
+            UiAsync.Post(this, () =>
             {
                 _busy = false;
                 _btnBackup.Enabled = true;

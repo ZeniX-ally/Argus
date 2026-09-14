@@ -11,7 +11,7 @@ using FctAggregator.Parsing;
 
 namespace FctAggregator;
 
-public class FailItemPickerForm : Form
+public class FailItemPickerForm : AppForm
 {
 	private sealed class Stat
 	{

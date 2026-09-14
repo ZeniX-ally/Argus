@@ -81,6 +81,10 @@ public sealed class FailListPanel : Panel
 
         _btnTree = Theme.MakeButton("树形", 52);
         _btnTable = Theme.MakeButton("表格", 52, primary: true);
+        // 视图切换是"常驻按钮 + 运行时改底色"：必须在建按钮时就切成 Flat，否则 Theme.Apply 会把它设回
+        // FlatStyle.System，之后改 BackColor 一律被系统主题吞掉（高亮态看不出来）
+        Theme.SetButtonPrimary(_btnTree, _treeMode);
+        Theme.SetButtonPrimary(_btnTable, !_treeMode);
         _btnTree.Margin = new Padding(0, 0, 2, 0);
         _btnTable.Margin = new Padding(0, 0, 8, 0);
         _btnTree.Click += (_, _) => SetView(tree: true);
@@ -165,7 +169,7 @@ public sealed class FailListPanel : Panel
         _grid.ColumnHeadersDefaultCellStyle.BackColor = Theme.SurfaceHi;
         _grid.ColumnHeadersDefaultCellStyle.ForeColor = Theme.TextSub;
         _grid.ColumnHeadersDefaultCellStyle.Font = Theme.BodyBold;
-        _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(20, 20, 20);
+        _grid.DefaultCellStyle.SelectionBackColor = Theme.Primary;
         _grid.DefaultCellStyle.SelectionForeColor = Color.White;
         _grid.Columns.Add("item", "项目");
         _grid.Columns["item"]!.Width = 300;
@@ -202,10 +206,8 @@ public sealed class FailListPanel : Panel
     {
         if (_treeMode == tree) return;
         _treeMode = tree;
-        _btnTree.BackColor = tree ? Theme.Primary : Theme.Surface;
-        _btnTree.ForeColor = tree ? Color.White : Theme.TextMain;
-        _btnTable.BackColor = tree ? Theme.Surface : Theme.Primary;
-        _btnTable.ForeColor = tree ? Theme.TextMain : Color.White;
+        Theme.SetButtonPrimary(_btnTree, tree);
+        Theme.SetButtonPrimary(_btnTable, !tree);
         _tree.Visible = tree;
         _grid.Visible = !tree;
         RebuildActiveView();

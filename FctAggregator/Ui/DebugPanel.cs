@@ -7,6 +7,7 @@ public class DebugPanel : Panel
     private readonly Engine _engine;
     private TextBox _output = null!;
     private volatile bool _busy;
+    private volatile bool _pushBusy;   // 测试推送防连点（会真发飞书群）
     private int _printLines;   // 输出框只增不减会越来越慢，超过上限先清空
 
     public DebugPanel(Engine engine)
@@ -143,6 +144,8 @@ public class DebugPanel : Panel
     {
         var cfg = _engine.Config;
         if (string.IsNullOrEmpty(cfg.WebhookUrl)) { Print("Webhook 未配置"); return; }
+        if (_pushBusy) { Print("上一次测试推送尚未结束，请稍候…"); return; }   // 防连点刷屏飞书
+        _pushBusy = true;
         var rec = new TestRecord
         {
             StationId = _engine.ResolvedStationId, Model = "TEST", Category = "Offline",
@@ -153,8 +156,19 @@ public class DebugPanel : Panel
         Print("正在发送测试推送到飞书...");
         Task.Run(async () =>
         {
-            await FeishuNotifier.SendFailAlert(cfg.WebhookUrl, rec);
-            BeginInvoke(() => Print("测试推送已发送(查看飞书群)"));
+            try
+            {
+                await FeishuNotifier.SendFailAlert(cfg.WebhookUrl, rec);
+                UiAsync.Post(this, () => Print("测试推送已发送(查看飞书群)"));
+            }
+            catch (Exception ex)
+            {
+                UiAsync.Post(this, () => Print($"测试推送失败: {ex.Message}"));
+            }
+            finally
+            {
+                UiAsync.Post(this, () => _pushBusy = false);
+            }
         });
     }
 
@@ -406,11 +420,11 @@ public class DebugPanel : Panel
             try
             {
                 var rep = StorageOptimizer.Run(db, cfg, StorageOptimizeMode.Deep);
-                BeginInvoke(() => { foreach (var line in rep.FormatLines()) Print(line); });
+                UiAsync.Post(this, () => { foreach (var line in rep.FormatLines()) Print(line); });
             }
             catch (Exception ex)
             {
-                BeginInvoke(() => Print($"优化失败: {ex.Message}"));
+                UiAsync.Post(this, () => Print($"优化失败: {ex.Message}"));
             }
         });
     }

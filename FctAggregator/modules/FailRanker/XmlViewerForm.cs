@@ -5,7 +5,7 @@ using FctAggregator;
 
 namespace FctFailRanker;
 
-public class XmlViewerForm : Form
+public class XmlViewerForm : AppForm
 {
     private const string IgnoredHint = "不计入不良";
     private static readonly string[] IgnoredFailSteps = { "Get Unit Information", "UUT Status Err" };

@@ -3,7 +3,7 @@ using System.Drawing.Imaging;
 
 namespace FctAggregator;
 
-public class SplashForm : Form
+public class SplashForm : AppForm
 {
     public const double FadeInSec = 0.7;
     public const double HoldUntilSec = 5.0;

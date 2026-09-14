@@ -381,7 +381,9 @@ public class AnalysisPanel : Panel
 
     private void RefreshDataAsync(bool force)
     {
-        if (_dataBusy && !force) return;
+        // force（用户点刷新）只跳过节流，不再绕过在途锁：连点刷新会并发重叠，多批后台任务互相覆盖
+        _ = force;
+        if (_dataBusy) return;
         _dataBusy = true;
         int gen = ++_refreshGen;
         var db = _engine.Db;

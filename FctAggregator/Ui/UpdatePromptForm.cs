@@ -3,7 +3,7 @@ using System.Text;
 
 namespace FctAggregator;
 
-public sealed class UpdatePromptForm : Form
+public sealed class UpdatePromptForm : AppForm
 {
     private readonly UpdateInfo _info;
     private readonly Database _db;

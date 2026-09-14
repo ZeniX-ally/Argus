@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace FctAggregator;
 
-public class CardPreviewForm : Form
+public class CardPreviewForm : AppForm
 {
     private static CardPreviewForm? _open;
 
@@ -132,7 +132,7 @@ public class CardPreviewForm : Form
         var foot = new Label
         {
             Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(12, 4, 12, 4),
-            Text = footer, ForeColor = Color.FromArgb(140, 140, 140),
+            Text = footer, ForeColor = Theme.TextMuted,
             Font = new Font("Microsoft YaHei UI", 8.5F),
             BackColor = Theme.Bg, AutoEllipsis = true,
         };

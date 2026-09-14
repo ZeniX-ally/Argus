@@ -483,7 +483,7 @@ public class MaintenancePanel : Panel
     }
 }
 
-    public class MaintenanceForm : Form
+    public class MaintenanceForm : AppForm
     {
         public MaintenanceRecord Result { get; }
 

@@ -20,12 +20,16 @@ public sealed class NavButton : Control
         set { if (_badge != value) { _badge = value; Invalidate(); } }
     }
 
+    // UI-10：导航文字过长会被 EndEllipsis 截断，悬停给全名
+    private static readonly ToolTip NavTip = new() { AutoPopDelay = 15000, InitialDelay = 500, ReshowDelay = 200 };
+
     public NavButton(string text, int pageIndex)
     {
         PageIndex = pageIndex;
         Text = text;
         Height = 30;
         Cursor = Cursors.Hand;
+        NavTip.SetToolTip(this, text);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -352,12 +356,17 @@ public sealed class SectionPanel : Panel
 
     private readonly int _titleHeight;
     private string _hint = "";
+    private readonly ToolTip _tip = new() { AutoPopDelay = 15000, InitialDelay = 500, ReshowDelay = 200 };
 
     public string Hint
     {
         get => _hint;
-        set { if (_hint != value) { _hint = value; Invalidate(); } }
+        set { if (_hint != value) { _hint = value; Invalidate(); SyncTip(); } }
     }
+
+    private void SyncTip() =>
+        // UI-10：标题/提示被 EndEllipsis 截断后，悬停可看全
+        _tip.SetToolTip(this, (string.IsNullOrEmpty(_hint) ? Text : $"{Text} — {_hint}").Trim());
 
     public SectionPanel(string title, int titleHeight = 34)
     {
@@ -391,6 +400,7 @@ public sealed class SectionPanel : Panel
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
         };
+        SyncTip();
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)

@@ -20,6 +20,8 @@ public sealed class TodoCard : BoardCardBase
         Item = item;
         Height = 88 + VariantLineCount * 16;
         Tip.SetToolTip(this, BuildTooltip());
+        SetAccessibleLabel($"未确认不良 {Item.Title}（优先级 {Item.PriorityZh}，区间内 {Item.RangeCount} 次）");
+        AccessibleDescription = BuildTooltip();
     }
 
     private int VariantLineCount =>
@@ -118,7 +120,7 @@ public sealed class TodoCard : BoardCardBase
 
         TextRenderer.DrawText(g, $"最近 {ShortTime(Item.LastSeen)}", MetaFont,
             new Rectangle(left, y + 2, Math.Max(20, Width - left - 96), 16),
-            Color.FromArgb(140, 140, 140), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Theme.TextMuted, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, Hover ? "单击预览" : "必须确认", MetaFont,
             new Rectangle(Width - 92, y + 2, 86, 16),
             Color.FromArgb(200, 16, 46), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
@@ -172,7 +174,7 @@ public sealed class TodoRange
         new(label, DateTime.Today.AddDays(-Math.Max(0, days - 1)), DateTime.Today);
 }
 
-public class TodoRangeForm : Form
+public class TodoRangeForm : AppForm
 {
     public DateTime From => _from.Value.Date;
     public DateTime To => _to.Value.Date;
@@ -237,7 +239,7 @@ public class TodoRangeForm : Form
         var note = new Label
         {
             Dock = DockStyle.Bottom, Height = 22, Padding = new Padding(16, 0, 16, 0),
-            ForeColor = Color.FromArgb(140, 140, 140),
+            ForeColor = Theme.TextMuted,
             Text = "只影响「待办」列的显示范围，不会删除任何待办。",
         };
 

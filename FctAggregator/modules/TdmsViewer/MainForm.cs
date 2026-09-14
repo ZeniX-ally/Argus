@@ -11,7 +11,7 @@ using FctAggregator;
 
 namespace FctTdmsViewer;
 
-public sealed class MainForm : Form
+public sealed class MainForm : AppForm
 {
 	private TdmsDoc? _doc;
 

@@ -12,7 +12,7 @@ using FctAggregator;
 
 namespace FctFetcher;
 
-public sealed class MainForm : Form
+public sealed class MainForm : AppForm
 {
 	private readonly TextBox _txtResults = new();
 

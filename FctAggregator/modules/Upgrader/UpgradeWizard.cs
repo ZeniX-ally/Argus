@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace FctAggregator.modules.Upgrader;
 
-public partial class UpgradeWizard : Form
+public partial class UpgradeWizard : AppForm
 {
     private int _phase;
     private bool _launchAfterClose;

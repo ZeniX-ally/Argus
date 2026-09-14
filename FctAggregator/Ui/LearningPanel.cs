@@ -304,14 +304,14 @@ public class LearningPanel : Panel
         if (!EnsureRetentionCoversBackfill()) return;
 
         SetBusy(true, "正在回填（补采 XML → 训练模型）…");
-        var progress = new Progress<string>(msg => BeginInvoke(() => _summary.Text = msg));
+        var progress = new Progress<string>(msg => UiAsync.Post(this, () => _summary.Text = msg));
         Task.Run(() =>
         {
             LearnPipeline.FullBackfillResult? result = null;
             string? err = null;
             try { result = LearnPipeline.RunFullBackfill(_engine, WindowIndex, progress); }
             catch (Exception ex) { err = ex.Message; Logger.Warning($"[正常态] UI 回填失败: {ex.Message}"); }
-            BeginInvoke(() =>
+            UiAsync.Post(this, () =>
             {
                 SetBusy(false);
                 Refresh2();

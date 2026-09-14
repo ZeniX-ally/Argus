@@ -2,7 +2,7 @@ using System.Text;
 
 namespace FctAggregator;
 
-public class MainForm : Form
+public class MainForm : AppForm
 {
     private static readonly string AppVersion = typeof(MainForm).Assembly.GetName().Version is { } v
         ? $"{v.Major}.{v.Minor}.{v.Build}"
@@ -19,6 +19,7 @@ public class MainForm : Form
     private ProgressBar _progressBar = null!;
     private Label _statusLeft = null!;
     private Label _statusRight = null!;
+    private ToolTip? _statusTip;
 
     private readonly Dictionary<string, KpiCard> _kpi = new();
     private HourlyTrendChart _hourlyChart = null!;
@@ -105,11 +106,29 @@ public class MainForm : Form
         {
             Dock = DockStyle.Left, Width = 760, ForeColor = Theme.TextSub, Font = Theme.Small,
             BackColor = Theme.Surface, Padding = new Padding(14, 0, 0, 0), TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
         };
         _statusRight = new Label
         {
             Dock = DockStyle.Right, Width = 280, ForeColor = Theme.TextFaint, Font = Theme.Small,
             BackColor = Theme.Surface, Padding = new Padding(0, 0, 14, 0), TextAlign = ContentAlignment.MiddleRight,
+            AutoEllipsis = true,
+        };
+        // 状态栏原来左右宽度写死 760+280：1024 宽屏上两段加起来超过屏宽，右侧（时间/版本）被推出可视区。
+        // 改为按实际宽度分配，并把完整文本挂到 ToolTip（截断后仍可读全）。
+        _statusTip ??= new ToolTip { AutoPopDelay = 15000, InitialDelay = 400, ReshowDelay = 200 };
+        foreach (var lbl in new[] { _statusLeft, _statusRight })
+        {
+            var l = lbl;
+            l.TextChanged += (_, _) => _statusTip.SetToolTip(l, l.Text);
+            _statusTip.SetToolTip(l, "");
+        }
+        statusBar.Resize += (_, _) =>
+        {
+            int total = statusBar.ClientSize.Width;
+            int right = Math.Clamp(total / 4, 140, 280);
+            _statusRight.Width = right;
+            _statusLeft.Width = Math.Max(160, total - right);
         };
         statusBar.Controls.Add(_statusRight);
         statusBar.Controls.Add(_statusLeft);

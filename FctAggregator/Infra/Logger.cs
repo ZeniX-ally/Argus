@@ -56,16 +56,38 @@ public static class Logger
                 if (_writtenBytes > MaxLogBytes)
                 {
                     _writtenBytes = 0;
+                    CloseWriter();       // 滚动要先关掉自己的句柄，否则 File.Move 必然失败
                     RotateIfNeeded();
                 }
-                File.AppendAllText(LogPath, line + Environment.NewLine);
-            }
+                Writer().WriteLine(line);
+                }
         }
         catch {  }
 
         var guiLine = $"[{DateTime.Now:HH:mm:ss}] [{level}] {message}";
         _guiLogs.Enqueue(guiLine);
         while (_guiLogs.Count > MaxGuiLogs && _guiLogs.TryDequeue(out _)) { }
+    }
+
+    private static StreamWriter? _writer;
+
+    /// <summary>复用同一个 StreamWriter。原来每行都走 <c>File.AppendAllText</c>（打开→写→关闭），
+    /// 历史扫描/每条入库都写 INFO（`Engine.cs` 热路径）时文件开关与持锁开销可观。
+    /// AutoFlush 保证崩溃时日志不丢；FileShare.ReadWrite 保证 ReadTail / 导出日志 / 复制仍能读。</summary>
+    private static StreamWriter Writer()
+    {
+        if (_writer != null) return _writer;
+        var dir = Path.GetDirectoryName(LogPath)!;
+        Directory.CreateDirectory(dir);
+        var fs = new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        _writer = new StreamWriter(fs, new UTF8Encoding(false)) { AutoFlush = true };
+        return _writer;
+    }
+
+    private static void CloseWriter()
+    {
+        try { _writer?.Dispose(); } catch { }
+        _writer = null;
     }
 
     private static void RotateIfNeeded()

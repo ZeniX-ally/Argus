@@ -56,7 +56,7 @@ public static class ResolverUtil
     }
 }
 
-public class ResolverManagerForm : Form
+public class ResolverManagerForm : AppForm
 {
     private readonly Database _db;
     private readonly ListBox _list = new();
@@ -89,7 +89,7 @@ public class ResolverManagerForm : Form
         {
             Left = 14, Top = 12, Width = 380, Height = 20,
             Text = "输入姓名 → 【添加】即可，之后在维修记录里直接下拉选。",
-            ForeColor = Color.FromArgb(140, 140, 140),
+            ForeColor = Theme.TextMuted,
         };
 
         _name.Left = 14; _name.Top = 38; _name.Width = 250;
@@ -245,7 +245,7 @@ public class ResolverManagerForm : Form
     }
 }
 
-public class RenameResolverForm : Form
+public class RenameResolverForm : AppForm
 {
     public string NewName => _name.Text.Trim();
     public bool SyncRecords => _sync.Checked;
@@ -282,7 +282,7 @@ public class RenameResolverForm : Form
     }
 }
 
-public class ResolverPickerForm : Form
+public class ResolverPickerForm : AppForm
 {
     public string Result { get; private set; } = "";
 
@@ -321,7 +321,7 @@ public class ResolverPickerForm : Form
         {
             Left = 14, Top = 10, Width = 396, Height = 18,
             Text = "勾选一个或多个 —— 多人会存成「张三、李四」。",
-            ForeColor = Color.FromArgb(140, 140, 140),
+            ForeColor = Theme.TextMuted,
         };
 
         var lblF = new Label { Left = 14, Top = 34, Width = 40, Text = "过滤:", TextAlign = ContentAlignment.MiddleRight };

@@ -600,7 +600,7 @@ public class MaintenanceBoard : Panel
             e.Graphics.DrawRectangle(pen, r.X, r.Y, r.Width, Math.Min(r.Height, 64));
             TextRenderer.DrawText(e.Graphics, "拖动卡片到此处", HintFont,
                 new Rectangle(r.X, r.Y, r.Width, Math.Min(r.Height, 64)),
-                Color.FromArgb(150, 150, 150),
+                Theme.TextMuted,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
     }
@@ -629,6 +629,8 @@ public sealed class MaintenanceCard : BoardCardBase
         SourceItems = TodoGrouping.ParseSourceItems(m.Notes);
         if (SourceItems.Count > 1) Height = 100;
         Tip.SetToolTip(this, BuildTooltip());
+        SetAccessibleLabel($"#{Record.Id} {Record.FailItem}（{MaintenanceMeta.SeverityZhOf(Record.Severity)}，状态 {MaintenanceMeta.ZhOf(Record.Status)}）");
+        AccessibleDescription = BuildTooltip();
     }
 
     private string BuildTooltip()

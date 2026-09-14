@@ -20,6 +20,9 @@ public static class Theme
     public static Color TextMain => SystemColors.ControlText;
     public static Color TextSub => SystemColors.GrayText;
     public static Color TextFaint => SystemColors.GrayText;
+    /// <summary>次要灰字（#6D6D6D，白底对比度 ≈5.2:1，满足 WCAG AA 4.5:1）。
+    /// 旧的 140/150 灰只有 3.0~3.4:1，产线灯光 + 年长操作员下读不清。</summary>
+    public static Color TextMuted => Color.FromArgb(109, 109, 109);
 
     public static Color Primary => SystemColors.Highlight;
     public static Color PrimaryDim => SystemColors.Highlight;
@@ -40,7 +43,7 @@ public static class Theme
     public static Color ToolSummary     => Color.FromArgb(200, 16, 46);
     public static Color ToolHighlight   => Color.FromArgb(250, 235, 238);
     public static Color ToolFixed      => Color.FromArgb(26, 26, 26);
-    public static Color ToolDim         => Color.FromArgb(140, 140, 140);
+    public static Color ToolDim         => TextMuted;
     public static Color ToolLine        => Color.FromArgb(170, 170, 170);
     public static Color ToolNodeDir     => Color.FromArgb(200, 16, 46);
     public static Color ToolNodeFile    => Color.FromArgb(60, 60, 60);
@@ -67,7 +70,8 @@ public static class Theme
     public static readonly Font Body = new(Family, 9F);
     public static readonly Font BodyBold = new(Family, 9F, FontStyle.Bold);
     public static readonly Font Small = new(Family, 8.25F);
-    public static readonly Font Tiny = new(Family, 7.5F, FontStyle.Bold);
+    /// <summary>最小号字体：7.5pt 在产线灯光下偏小，提到 8pt（仅用于非关键信息）。</summary>
+    public static readonly Font Tiny = new(Family, 8F, FontStyle.Bold);
     public static readonly Font Number = new(Family, 20F, FontStyle.Bold);
     public static readonly Font NumberSmall = new(Family, 15F, FontStyle.Bold);
     public static readonly Font NumberMid = new(Family, 16F, FontStyle.Bold);
@@ -105,6 +109,31 @@ public static class Theme
         return w;
     }
 
+    public const string PrimaryTag = "primary";
+
+    /// <summary>窗体统一 DPI 基准（各 Form 构造函数里调一次）。
+    /// 不设的话 AutoScaleMode 默认 Inherit → 非 100% 缩放下行高不足、文字被截断；96dpi 基准在 100% 缩放下缩放系数为 1，机台零视觉变化。</summary>
+    public static void ApplyDpi(Form f)
+    {
+        f.AutoScaleDimensions = new SizeF(96F, 96F);
+        f.AutoScaleMode = AutoScaleMode.Dpi;
+    }
+
+    /// <summary>主操作/高亮态按钮上色。`FlatStyle.System` 下 `BackColor` 被系统主题吞掉（primary 与普通按钮长得一样），
+    /// 必须切 Flat + 关掉 `UseVisualStyleBackColor` 才生效；`Tag=PrimaryTag` 标记"自管底色"，让 `Apply` 不把它改回 System。</summary>
+    public static void SetButtonPrimary(Button b, bool primary, int width = -1)
+    {
+        b.Tag = PrimaryTag;
+        b.FlatStyle = FlatStyle.Flat;
+        b.UseVisualStyleBackColor = false;
+        b.FlatAppearance.BorderSize = 0;
+        b.FlatAppearance.BorderColor = Border;
+        b.BackColor = primary ? PrimaryDim : Surface;
+        b.ForeColor = primary ? Color.White : TextMain;
+        b.Cursor = Cursors.Hand;
+        if (width > 0) b.Width = width;
+    }
+
     public static Button MakeButton(string text, int width = 88, bool primary = false)
     {
         var b = new Button
@@ -115,6 +144,7 @@ public static class Theme
             BackColor = primary ? PrimaryDim : Surface,
             ForeColor = primary ? Color.White : TextMain,
         };
+        if (primary) SetButtonPrimary(b, true);
         return b;
     }
 
@@ -137,11 +167,14 @@ public static class Theme
                 break;
             case Button b:
                 StyleButton(b);
+                // UI-9：无障碍名（读屏/辅助技术），缺省用按钮文本
+                if (string.IsNullOrEmpty(b.AccessibleName)) b.AccessibleName = b.Text;
                 break;
             case TextBox tb:
                 tb.BorderStyle = BorderStyle.FixedSingle;
                 if (!tb.ReadOnly) tb.BackColor = Surface;
                 tb.ForeColor = TextMain;
+                if (string.IsNullOrEmpty(tb.AccessibleName)) tb.AccessibleName = tb.PlaceholderText;
                 break;
             case ComboBox cb:
                 cb.FlatStyle = FlatStyle.System;
@@ -155,6 +188,8 @@ public static class Theme
             case Label lb:
                 if (IsDefaultish(lb.ForeColor)) lb.ForeColor = TextMain;
                 lb.BackColor = Color.Transparent;
+                lb.AutoEllipsis = true;   // UI-10：截断处给"…"，而不是硬切
+                if (string.IsNullOrEmpty(lb.AccessibleName)) lb.AccessibleName = lb.Text;
                 break;
             case ListView lv:
                 lv.BorderStyle = BorderStyle.FixedSingle;
@@ -178,8 +213,18 @@ public static class Theme
 
     private static void StyleButton(Button b)
     {
-        b.FlatStyle = FlatStyle.System;
         b.Cursor = Cursors.Hand;
+        // 自管底色的按钮（primary / 状态高亮 / 语义色）必须保持 Flat：System 风格会吞掉 BackColor
+        bool selfPainted = (b.Tag as string) == PrimaryTag || !IsDefaultish(b.BackColor);
+        if (!selfPainted)
+        {
+            b.FlatStyle = FlatStyle.System;
+            return;
+        }
+        b.FlatStyle = FlatStyle.Flat;
+        b.UseVisualStyleBackColor = false;
+        b.FlatAppearance.BorderColor = Border;
+        b.FlatAppearance.BorderSize = 1;
     }
 
     private static void StyleGrid(DataGridView dg)

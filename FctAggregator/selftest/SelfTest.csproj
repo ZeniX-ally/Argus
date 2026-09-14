@@ -9,6 +9,7 @@
     <RootNamespace>FctAggregator.SelfTest</RootNamespace>
     <AssemblyName>FctAggregator.SelfTest</AssemblyName>
     <StartupObject>SelfTest</StartupObject>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <NoWarn>$(NoWarn);CS0618</NoWarn>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>

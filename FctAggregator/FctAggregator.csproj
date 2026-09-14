@@ -9,9 +9,11 @@
     <AssemblyName>Argus</AssemblyName>
     <RootNamespace>FctAggregator</RootNamespace>
     <StartupObject>FctAggregator.Program</StartupObject>
-    <Version>3.40.4</Version>
-  <AssemblyVersion>3.40.4.0</AssemblyVersion>
-  <FileVersion>3.40.4.0</FileVersion>
+    <!-- UI-3：默认 SystemAware 会让整窗被位图拉伸（高分屏发虚、跨屏错位）；PerMonitorV2 由 SDK 生成到 ApplicationConfiguration.Initialize -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>3.40.5</Version>
+  <AssemblyVersion>3.40.5.0</AssemblyVersion>
+  <FileVersion>3.40.5.0</FileVersion>
     <Company>Argus</Company>
     <Product>FCT 工具套件</Product>
     <ApplicationIcon>app_icon.ico</ApplicationIcon>

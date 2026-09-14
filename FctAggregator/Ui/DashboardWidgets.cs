@@ -443,6 +443,8 @@ public sealed class DeviceOnlinePanel : Panel
 public sealed class TopFailRankPanel : Control
 {
     private List<TopFailItem> _items = new();
+    // UI-10：行内长测项名会被 EndEllipsis 截断，悬停列出完整名称（含原因提示）
+    private static readonly ToolTip ListTip = new() { AutoPopDelay = 20000, InitialDelay = 500, ReshowDelay = 200 };
 
     public TopFailRankPanel()
     {
@@ -454,7 +456,23 @@ public sealed class TopFailRankPanel : Control
     public void SetData(List<TopFailItem> items)
     {
         _items = items ?? new List<TopFailItem>();
+        ListTip.SetToolTip(this, BuildListTooltip());
         Invalidate();
+    }
+
+    private string BuildListTooltip()
+    {
+        if (_items.Count == 0) return "";
+        var sb = new System.Text.StringBuilder("当日 Top 5 故障不良项（表格内过长会截断，这里看全）：");
+        int rank = 0;
+        foreach (var it in _items.Take(5))
+        {
+            rank++;
+            sb.AppendLine().Append($"{rank}. {it.FailItem} — {it.Count} 次 ({it.Ratio:F1}%)");
+            if (!string.IsNullOrEmpty(it.MainStation)) sb.Append($" · 机台:{it.MainStation}");
+            if (!string.IsNullOrEmpty(it.RootCauseHint)) sb.AppendLine().Append($"      ↳ {it.RootCauseHint}");
+        }
+        return sb.ToString();
     }
 
     protected override void OnPaint(PaintEventArgs e)

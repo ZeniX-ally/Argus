@@ -32,6 +32,45 @@ public abstract class BoardCardBase : Panel
         BackColor = Color.Transparent;
         Cursor = Cursors.Hand;
         SetStyle(ControlStyles.ResizeRedraw, true);
+        // UI-9：卡片此前只能鼠标操作，键盘/读屏用户无法确认或改状态
+        SetStyle(ControlStyles.Selectable, true);
+        TabStop = true;
+        AccessibleRole = AccessibleRole.PushButton;
+    }
+
+    /// <summary>无障碍名（读屏/辅助技术）：派生卡片在数据绑定时传入卡片主文本。</summary>
+    protected void SetAccessibleLabel(string label)
+    {
+        if (string.IsNullOrWhiteSpace(label)) return;
+        AccessibleName = label;
+        AccessibleDescription = label;
+    }
+
+    protected override void OnEnter(EventArgs e) { base.OnEnter(e); Invalidate(); }
+    protected override void OnLeave(EventArgs e) { base.OnLeave(e); Invalidate(); }
+
+    protected override bool IsInputKey(Keys keyData) =>
+        (keyData & Keys.KeyCode) is Keys.Enter or Keys.Space or Keys.Apps ||
+        (keyData & Keys.KeyCode) == Keys.F10 ||
+        base.IsInputKey(keyData);
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        // 与鼠标等价：Enter/空格 = 双击（确认），Shift+F10 / 菜单键 = 右键（改状态/删除）
+        switch (e.KeyCode)
+        {
+            case Keys.Enter:
+            case Keys.Space:
+                e.Handled = true;
+                ActivateRequested?.Invoke(this);
+                break;
+            case Keys.Apps:
+            case Keys.F10 when e.Shift:
+                e.Handled = true;
+                ContextRequested?.Invoke(this, new Point(Width / 2, Height / 2));
+                break;
+        }
     }
 
     public static BoardCardBase? FromDrag(DragEventArgs e)

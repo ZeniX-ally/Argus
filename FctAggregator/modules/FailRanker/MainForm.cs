@@ -11,7 +11,7 @@ using FctAggregator;
 
 namespace FctFailRanker;
 
-public class MainForm : Form
+public class MainForm : AppForm
 {
 	private class FsTag
 	{
