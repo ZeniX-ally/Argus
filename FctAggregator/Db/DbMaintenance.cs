@@ -12,6 +12,12 @@ public sealed class DbMaintenance
     private volatile bool _stopping;
     private DateTime _lastRunDate = DateTime.MinValue;
     private DateTime _lastLightRunUtc = DateTime.MinValue;
+    private string? _lastBackupName; // 每日备份结果（摘要卡用）
+
+    /// <summary>重试队列积压条数提供者（Engine 注入；未注入按 0 计）。</summary>
+    public Func<int>? RetryQueueDepthProvider { get; set; }
+    /// <summary>已解析的机台号提供者（Engine 注入；未注入回落 config.StationId）。</summary>
+    public Func<string>? StationIdProvider { get; set; }
 
     private DbMaintenance(Database db, AppConfig cfg, int hour)
     {
@@ -109,10 +115,12 @@ public sealed class DbMaintenance
         try
         {
             var bak = _db.BackupDaily();
+            _lastBackupName = bak;
             if (bak != null) Logger.Info($"[库维护] 每日备份完成: {Path.GetFileName(bak)}（保留 {Database.BackupKeepDays} 份）");
         }
         catch (Exception ex)
         {
+            _lastBackupName = null;
             Logger.Warning($"[库维护] 本机库每日备份失败（不影响运行）: {ex.Message}");
         }
         try
@@ -131,5 +139,49 @@ public sealed class DbMaintenance
         {
             Logger.Warning($"[库维护] FTS 测试程序备份失败: {ex.Message}");
         }
+
+        // 每日摘要卡：复用上面各步已算出的结果汇总成一张例行卡（不额外计算，不产生噪音）
+        try
+        {
+            if (_cfg.FeishuDailySummaryEnabled) SendDailySummary();
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[每日摘要] 汇总失败（不影响运行）: {ex.Message}");
+        }
+    }
+
+    /// <summary>汇总「最近一个完整日」的运行摘要并推飞书。</summary>
+    private void SendDailySummary()
+    {
+        var now = DateTime.Now;
+        var day = CollectHealthMonitor.SummaryDayOf(now);
+        var dayKey = day.ToString("yyyyMMdd");
+
+        // 按日期去重：RunNow 在每个进程启动时都会补跑一次（_lastRunDate 只在内存里），
+        // 不去重的话重启几次就推几张摘要卡。落 app_meta 保证跨重启只推一次。
+        if (_db.GetMeta(CollectHealthMonitor.MetaLastSummaryDay) == dayKey)
+        {
+            Logger.Info($"[每日摘要] {day:yyyy-MM-dd} 摘要已推送过，跳过");
+            return;
+        }
+
+        var stationId = (StationIdProvider?.Invoke() ?? _cfg.StationId) ?? "";
+        var stationFilter = string.IsNullOrEmpty(stationId) ? "" : stationId;
+
+        var stats = _db.FetchDailyStats(stationFilter, dayKey);
+        var top = _db.FetchDailyTopFails(stationFilter, dayKey, 5);
+
+        var health = StorageOptimizer.Evaluate(_db, _cfg);
+        var since = CollectHealthMonitor.WindowStart(now, _cfg.FeishuCollectAlertWindowMin);
+        var abnormal = _db.CountAbnormalParseFailures(since, string.IsNullOrEmpty(stationId) ? null : stationId);
+
+        var payload = CollectHealthMonitor.BuildDailySummary(
+            stationId, day, stats, top, health.Score, health.FileBytes, _lastBackupName,
+            RetryQueueDepthProvider?.Invoke() ?? 0, abnormal, _cfg.FeishuCollectAlertWindowMin);
+
+        CollectHealthMonitor.SendDailySummary(_cfg, payload);
+        _db.SetMeta(CollectHealthMonitor.MetaLastSummaryDay, dayKey);
+        Logger.Info($"[每日摘要] {payload.Date} 摘要已推送（总数 {payload.Total}，良率 {payload.YieldPct:F2}%，FAIL {payload.Fail}，库健康分 {payload.StorageScore}）");
     }
 }

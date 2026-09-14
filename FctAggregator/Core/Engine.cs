@@ -14,6 +14,7 @@ public class Engine
     private readonly object _watcherLock = new();
     private readonly HashSet<string> _watchedDirs = new(StringComparer.OrdinalIgnoreCase);
     private System.Threading.Timer? _modelRescanTimer; // 审计 A3：周期重扫型号目录，运行期新型号动态挂监控
+    private System.Threading.Timer? _collectHealthTimer; // 采集健康巡检（漏采/解析失败堆积主动告警）
     private long _lastStatsRefreshTicks; // 审计 A2：入库热路径统计刷新节流
     private volatile bool _initialScanComplete = false;
     private CancellationTokenSource _cts = new();
@@ -31,6 +32,8 @@ public class Engine
     public Database Db => _db;
     public string ResolvedStationId => _stationId;
     public AppConfig Config => _cfg;
+    /// <summary>重试队列当前积压条数（采集异常告警的触发维度之一）。</summary>
+    public int RetryQueueDepth => _retryQueue.Count;
 
     public Engine(AppConfig cfg)
     {
@@ -50,6 +53,9 @@ public class Engine
         var dbFile = Path.Combine(dataDir, $"{(string.IsNullOrEmpty(sid) ? "fct" : sid)}.db");
         _db = new Database(dbFile);
         _maintenance = DbMaintenance.StartFor(cfg, _db);
+        // 每日摘要卡需要「重试队列积压」与「已解析机台号」，两者只有 Engine 知道
+        _maintenance.RetryQueueDepthProvider = () => RetryQueueDepth;
+        _maintenance.StationIdProvider = () => _stationId;
         _failBatcher = new FeishuFailBatcher(cfg, _db);
 
         try { DeviceSampleRecorder.Instance.Start(); } catch { }
@@ -123,6 +129,11 @@ public class Engine
         _modelRescanTimer = new System.Threading.Timer(_ => RescanModels(), null,
             TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 
+        // 采集健康巡检：漏采/解析失败堆积此前只能靠翻日志发现（parse_failure_log 只进不出），
+        // 这里周期评估并主动推飞书。首轮延后 5 分钟，避开启动扫描高峰。
+        _collectHealthTimer = new System.Threading.Timer(_ => CheckCollectHealth(), null,
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+
         if (models.Count > 0)
         {
             RefreshStats();
@@ -186,6 +197,7 @@ public class Engine
         _cts.Cancel();
         try { _retryThread?.Join(3000); } catch { }
         try { _modelRescanTimer?.Dispose(); } catch { }
+        try { _collectHealthTimer?.Dispose(); } catch { }
         foreach (var w in _watchers) { try { w.EnableRaisingEvents = false; w.Dispose(); } catch { } }
         _watchers.Clear();
         lock (_watcherLock) _watchedDirs.Clear();
@@ -387,6 +399,13 @@ public class Engine
                 }
         }
         catch (Exception ex) { Logger.Warning($"[监控] 新型号周期重扫失败: {ex.Message}"); }
+    }
+
+    /// <summary>采集健康巡检（漏采/解析失败堆积 → 飞书主动告警 + 恢复通知）。</summary>
+    private void CheckCollectHealth()
+    {
+        try { CollectHealthMonitor.RunOnce(_db, _cfg, RetryQueueDepth); }
+        catch (Exception ex) { Logger.Warning($"[采集健康] 巡检调度异常: {ex.Message}"); }
     }
 
     private void SyncTodos(string tag)

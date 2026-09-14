@@ -233,6 +233,151 @@ public static class FeishuNotifier
         return FeishuCardV2.Root($"{station} · {model} · 待办状态变更", "blue", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
     }
 
+    // ───────────────────────── 采集异常告警（漏采是数据正确性问题，必须主动告知） ─────────────────────────
+
+    public static Task<FeishuSendOutcome> SendCollectAlert(string webhookUrl, CollectAlertPayload p)
+        => PostCard(webhookUrl, BuildCollectAlertCard(p), $"{p.StationId} 采集异常");
+
+    public static Task<FeishuSendOutcome> SendCollectRecover(string webhookUrl, string stationId, string? recoveredFrom, int abnormalCount)
+        => PostCard(webhookUrl, BuildCollectRecoverCard(stationId, recoveredFrom, abnormalCount),
+            $"{stationId} 采集恢复");
+
+    public static Task<FeishuSendOutcome> SendDailySummary(string webhookUrl, DailySummaryPayload p)
+        => PostCard(webhookUrl, BuildDailySummaryCard(p), $"{p.StationId} 运行摘要 {p.Date}");
+
+    /// <summary>采集异常告警卡：橙色（需要人看一眼，但不是停机事故）。</summary>
+    public static object BuildCollectAlertCard(CollectAlertPayload p)
+    {
+        var elements = new List<object>
+        {
+            FeishuCardV2.FieldRow(("机台", p.StationId), ("统计窗口", $"{p.WindowMin} 分钟")),
+            FeishuCardV2.FieldRow(("解析失败", $"{p.AbnormalCount} 条"), ("重试队列", $"{p.RetryQueueDepth} 条")),
+            FeishuCardV2.Hr(),
+            FeishuCardV2.Md("**触发原因**", heading: true),
+            FeishuCardV2.Md(FeishuCardV2.Escape(
+                CollectHealthMonitor.ReasonOf(p.AbnormalCount, p.ParseThreshold, p.RetryQueueDepth, p.RetryThreshold))),
+        };
+
+        if (p.ByCode.Count > 0)
+        {
+            elements.Add(FeishuCardV2.Hr());
+            elements.Add(FeishuCardV2.Md($"**按错误码分布（{p.ByCode.Count} 类）**", heading: true));
+            var sb = new StringBuilder();
+            foreach (var row in p.ByCode)
+            {
+                sb.Append($"▸ {FeishuCardV2.Escape(ErrorCodeZh(row.ErrorCode))} ×{row.Count}");
+                if (!string.IsNullOrWhiteSpace(row.SkipReason))
+                    sb.Append($"（{FeishuCardV2.Escape(Clip(row.SkipReason, 30))}）");
+                sb.AppendLine();
+            }
+            elements.Add(FeishuCardV2.Md(sb.ToString().TrimEnd()));
+        }
+
+        if (p.Recent.Count > 0)
+        {
+            elements.Add(FeishuCardV2.Hr());
+            elements.Add(FeishuCardV2.Md($"**最近失败文件（前 {p.Recent.Count} 条）**", heading: true));
+            var sb = new StringBuilder();
+            foreach (var f in p.Recent)
+                sb.AppendLine($"▸ {FeishuCardV2.Escape(f.CreatedAt)} · {FeishuCardV2.Escape(ErrorCodeZh(f.ErrorCode))} · {FeishuCardV2.Escape(FileName(f.XmlPath))}");
+            elements.Add(FeishuCardV2.Md(sb.ToString().TrimEnd()));
+        }
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Note("漏采会让良率偏高且现场无感——请确认结果目录可写、文件未被其他程序占用。"));
+
+        return FeishuCardV2.Root($"{p.StationId} · 采集异常告警", "orange", elements,
+            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+    }
+
+    /// <summary>采集恢复卡：绿色。没有这张卡，运维不知道告警是否还需要继续处理。</summary>
+    public static object BuildCollectRecoverCard(string stationId, string? recoveredFrom, int abnormalCount)
+    {
+        var station = string.IsNullOrWhiteSpace(stationId) ? "未知机台" : stationId;
+        var elements = new List<object>
+        {
+            FeishuCardV2.FieldRow(("机台", station), ("当前解析失败", $"{abnormalCount} 条")),
+        };
+        if (!string.IsNullOrWhiteSpace(recoveredFrom))
+        {
+            elements.Add(FeishuCardV2.Hr());
+            elements.Add(FeishuCardV2.Md("**此前告警**", heading: true));
+            elements.Add(FeishuCardV2.Md(FeishuCardV2.Escape(recoveredFrom)));
+        }
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Note($"恢复时间 {DateTime.Now:yyyy-MM-dd HH:mm:ss}"));
+        return FeishuCardV2.Root($"{station} · 采集异常已恢复", "green", elements,
+            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+    }
+
+    /// <summary>每日运行摘要卡：把当天已经跑完的维护结果汇总成一张例行卡（不产生噪音）。</summary>
+    public static object BuildDailySummaryCard(DailySummaryPayload p)
+    {
+        var elements = new List<object>
+        {
+            FeishuCardV2.FieldRow(("采集总数", p.Total.ToString()), ("综合良率", $"{p.YieldPct:F2}%")),
+            FeishuCardV2.FieldRow(("PASS", p.Pass.ToString()), ("FAIL", p.Fail.ToString()), ("中断", p.Interrupted.ToString())),
+        };
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Md("**Top 失败项**", heading: true));
+        if (p.TopFails.Count == 0)
+        {
+            elements.Add(FeishuCardV2.Md("（当日无 FAIL 记录）"));
+        }
+        else
+        {
+            var sb = new StringBuilder();
+            foreach (var t in p.TopFails)
+                sb.AppendLine($"▸ {FeishuCardV2.Escape(t.FailItem)} ×{t.Count}（{t.Ratio:F1}%）");
+            elements.Add(FeishuCardV2.Md(sb.ToString().TrimEnd()));
+        }
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Md("**运维状态**", heading: true));
+        var ops = new StringBuilder();
+        ops.AppendLine($"库健康分: {p.StorageScore}/100");
+        ops.AppendLine($"库体积: {FmtBytes(p.DbBytes)}");
+        ops.AppendLine(p.BackupOk ? $"每日备份: 成功（{FeishuCardV2.Escape(p.BackupName)}）" : "每日备份: **未完成**");
+        ops.AppendLine($"重试队列: {p.RetryQueueDepth} 条");
+        ops.AppendLine($"解析失败: {p.AbnormalParseCount} 条（近 {p.WindowMin} 分钟）");
+        elements.Add(FeishuCardV2.Md(ops.ToString().TrimEnd()));
+
+        elements.Add(FeishuCardV2.Hr());
+        elements.Add(FeishuCardV2.Note($"{p.Date} · 每日维护完成后自动汇总"));
+
+        return FeishuCardV2.Root($"{p.StationId} · {p.Date} 运行摘要", "blue", elements,
+            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+    }
+
+    /// <summary>错误码 → 现场可读中文（未知码原样返回，便于新增解析器时不用改这里）。</summary>
+    public static string ErrorCodeZh(string? code) => (code ?? "").Trim().ToLowerInvariant() switch
+    {
+        "oversize" => "文件超 512MB 上限",
+        "read_error" => "读取失败（占用/权限）",
+        "registry_exception" => "解析器内部异常",
+        "xml_malformed" => "XML 格式错误",
+        "invalid_result" => "无效结果前缀",
+        Database.SkipErrorCode => "正常跳过（debug/路径不匹配）",
+        "" => "未标注",
+        _ => code ?? "",
+    };
+
+    private static string FileName(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "—";
+        try { return Path.GetFileName(path); } catch { return path!; }
+    }
+
+    private static string FmtBytes(long bytes)
+    {
+        if (bytes <= 0) return "—";
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / 1024.0 / 1024:F1} MB";
+        return $"{bytes / 1024.0 / 1024 / 1024:F2} GB";
+    }
+
     private static string BuildFailItems(TestRecord r)
     {
         var sb = new StringBuilder();

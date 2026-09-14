@@ -2495,6 +2495,176 @@ Argus 统一发布包  v{newer}
             }
         }
 
+        // ============ 采集异常告警 + 每日运行摘要（漏采从「翻日志」变主动告知） ============
+        {
+            Console.WriteLine("\n【采集异常/每日摘要】判定口径 / 卡片内容 / parse_failure_log 查询…");
+
+            var relaxed = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+            // —— 纯判定：该不该告警 / 该不该报恢复 ——
+            Check(CollectHealthMonitor.Decide(false, 0, 10, 0, 20) == CollectAlertDecision.None,
+                "采集判定：一切正常且此前未告警 → 不动");
+            Check(CollectHealthMonitor.Decide(false, 10, 10, 0, 20) == CollectAlertDecision.Alert,
+                "采集判定：解析失败达到阈值（等于也算）→ 告警");
+            Check(CollectHealthMonitor.Decide(false, 0, 10, 20, 20) == CollectAlertDecision.Alert,
+                "采集判定：重试队列积压达到阈值 → 告警");
+            Check(CollectHealthMonitor.Decide(false, 999, 0, 0, 0) == CollectAlertDecision.None,
+                "采集判定：阈值 ≤0 视为关闭该维度");
+            Check(CollectHealthMonitor.Decide(true, 0, 10, 0, 20) == CollectAlertDecision.Recovered,
+                "采集判定：曾告警且现已正常 → 报恢复");
+            Check(CollectHealthMonitor.Decide(true, 999, 0, 0, 0) == CollectAlertDecision.Recovered,
+                "采集判定：两个维度都关闭时，曾告警也要收敛为恢复（不会永久挂着）");
+
+            // —— 纯判定：节流 ——
+            var t0 = new DateTime(2026, 9, 14, 12, 0, 0);
+            Check(CollectHealthMonitor.ThrottleAllows("", t0, 60), "节流：从未推送过 → 放行");
+            Check(!CollectHealthMonitor.ThrottleAllows("2026-09-14 11:30:00", t0, 60), "节流：未到间隔 → 拦下");
+            Check(CollectHealthMonitor.ThrottleAllows("2026-09-14 10:30:00", t0, 60), "节流：已过间隔 → 放行");
+            Check(CollectHealthMonitor.ThrottleAllows("不是时间", t0, 60), "节流：时间戳不可解析 → 放行（不因脏数据静默哑掉）");
+            Check(CollectHealthMonitor.ThrottleAllows("2026-09-14 11:59:00", t0, 0), "节流：阈值 ≤0 → 不节流");
+
+            Check(CollectHealthMonitor.ReasonOf(14, 10, 25, 20).Contains("解析失败 14 条")
+                  && CollectHealthMonitor.ReasonOf(14, 10, 25, 20).Contains("重试队列积压 25 条"),
+                "触发原因：两个维度越线时都给（实得 " + CollectHealthMonitor.ReasonOf(14, 10, 25, 20) + "）");
+            Check(CollectHealthMonitor.ReasonOf(0, 10, 0, 20) == "", "触发原因：都不越线时为空串");
+
+            // —— 纯判定：摘要日期口径（维护默认凌晨跑，应汇总刚结束的昨天）——
+            Check(CollectHealthMonitor.SummaryDayOf(new DateTime(2026, 9, 14, 3, 0, 0)) == new DateTime(2026, 9, 13),
+                "摘要日期：凌晨 3 点跑 → 汇总昨天");
+            Check(CollectHealthMonitor.SummaryDayOf(new DateTime(2026, 9, 14, 14, 0, 0)) == new DateTime(2026, 9, 14),
+                "摘要日期：下午跑 → 汇总当天");
+            Check(CollectHealthMonitor.WindowStart(new DateTime(2026, 9, 14, 12, 0, 0), 60) == "2026-09-14 11:00:00",
+                "采集窗口起点：now - windowMin");
+
+            // —— 错误码中文映射 ——
+            Check(FeishuNotifier.ErrorCodeZh("oversize").Contains("512MB"), "错误码中文：oversize → 文件超上限");
+            Check(FeishuNotifier.ErrorCodeZh("xml_malformed") == "XML 格式错误", "错误码中文：xml_malformed");
+            Check(FeishuNotifier.ErrorCodeZh("read_error").Contains("读取失败"), "错误码中文：read_error");
+            Check(FeishuNotifier.ErrorCodeZh("skip").Contains("正常跳过"), "错误码中文：skip → 正常跳过");
+            Check(FeishuNotifier.ErrorCodeZh("brand_new_code") == "brand_new_code",
+                "错误码中文：未知码原样返回（新增解析器不用改这里）");
+            Check(FeishuNotifier.ErrorCodeZh("") == "未标注", "错误码中文：空码回落「未标注」");
+
+            // —— 采集异常卡 ——
+            var alertPayload = new CollectAlertPayload
+            {
+                StationId = "FCT1",
+                WindowMin = 60,
+                AbnormalCount = 14,
+                ParseThreshold = 10,
+                RetryQueueDepth = 25,
+                RetryThreshold = 20,
+                ByCode = new List<CollectFailureRow>
+                {
+                    new() { ErrorCode = "xml_malformed", Count = 12, SamplePath = @"D:\R\FAIL_1.xml", SkipReason = "xml 解析异常" },
+                    new() { ErrorCode = "read_error", Count = 2, SamplePath = @"D:\R\FAIL_2.xml", SkipReason = "read file failed" },
+                },
+                Recent = new List<CollectFailureItem>
+                {
+                    new() { XmlPath = @"D:\R\Online\E3002781\20260914\FAIL_9.xml", ErrorCode = "xml_malformed", CreatedAt = "2026-09-14 10:05:00" },
+                },
+            };
+            var alertJson = JsonSerializer.Serialize(FeishuNotifier.BuildCollectAlertCard(alertPayload), relaxed);
+            Check(alertJson.Contains("\"template\":\"orange\""), "采集异常卡：header 橙色（要看一眼但非停机事故）");
+            Check(alertJson.Contains("采集异常告警"), "采集异常卡：标题含「采集异常告警」");
+            Check(alertJson.Contains("XML 格式错误 ×12"), "采集异常卡：错误码转中文并带条数");
+            Check(alertJson.Contains("窗口内解析失败 14 条（阈值 10）"), "采集异常卡：触发原因含解析失败维度");
+            Check(alertJson.Contains("重试队列积压 25 条（阈值 20）"), "采集异常卡：触发原因含重试队列维度");
+            Check(alertJson.Contains("最近失败文件") && alertJson.Contains("FAIL_9.xml"), "采集异常卡：列出最近失败文件供定位");
+            Check(alertJson.Contains("漏采会让良率偏高"), "采集异常卡：页脚点明后果（漏采 → 良率偏高）");
+
+            // —— 采集恢复卡 ——
+            var recJson = JsonSerializer.Serialize(
+                FeishuNotifier.BuildCollectRecoverCard("FCT1", "窗口内解析失败 14 条（阈值 10）", 0), relaxed);
+            Check(recJson.Contains("\"template\":\"green\""), "采集恢复卡：header 绿色");
+            Check(recJson.Contains("采集异常已恢复"), "采集恢复卡：标题含「已恢复」");
+            Check(recJson.Contains("此前告警") && recJson.Contains("窗口内解析失败 14 条"), "采集恢复卡：回显此前告警原因");
+            Check(recJson.Contains("当前解析失败"), "采集恢复卡：给出当前值供核对");
+
+            // —— 每日摘要载荷（纯函数）——
+            var sumStats = new StatsData { Pass = 97, Fail = 3, Interrupted = 1 };
+            var sum = CollectHealthMonitor.BuildDailySummary("FCT1", new DateTime(2026, 9, 13), sumStats,
+                new List<TopFailItem> { new() { FailItem = "KL30_1", Count = 2, Ratio = 66.7 } },
+                88, 123456789, @"D:\backup\local_20260913.db", 4, 7, 60);
+            Check(sum.Total == 100 && Math.Abs(sum.YieldPct - 97.0) < 0.01,
+                $"摘要：综合良率 = PASS/(PASS+FAIL)（实得 {sum.YieldPct}%）");
+            Check(sum.Interrupted == 1, "摘要：中断单独列出、不计入良率分母");
+            Check(sum.BackupOk && sum.BackupName == "local_20260913.db", "摘要：备份只取文件名并标记成功");
+
+            var sumZero = CollectHealthMonitor.BuildDailySummary("FCT1", new DateTime(2026, 9, 13), new StatsData(),
+                new List<TopFailItem>(), 100, 0, null, 0, 0, 60);
+            Check(sumZero.YieldPct == 0 && !sumZero.BackupOk,
+                "摘要：当日无数据时良率 0、备份标记失败（不出现 NaN/除零）");
+
+            var sumJson = JsonSerializer.Serialize(FeishuNotifier.BuildDailySummaryCard(sum), relaxed);
+            Check(sumJson.Contains("\"template\":\"blue\""), "摘要卡：header 蓝色");
+            Check(sumJson.Contains("运行摘要"), "摘要卡：标题含「运行摘要」");
+            Check(sumJson.Contains("97.00%"), "摘要卡：良率保留两位小数");
+            Check(sumJson.Contains("KL30_1 ×2（66.7%）"), "摘要卡：Top 失败项带次数与占比");
+            Check(sumJson.Contains("库健康分: 88/100"), "摘要卡：库健康分");
+            Check(sumJson.Contains("每日备份: 成功"), "摘要卡：备份成功状态");
+            Check(sumJson.Contains("重试队列: 4 条"), "摘要卡：重试队列积压");
+            Check(sumJson.Contains("117.7 MB"), "摘要卡：库体积按量级格式化（实得 " +
+                (sumJson.Contains("117.7 MB") ? "117.7 MB" : "非预期") + "）");
+            Check(sumJson.Contains("解析失败: 7 条（近 60 分钟）"), "摘要卡：窗口内解析失败条数");
+
+            var sumNoFail = CollectHealthMonitor.BuildDailySummary("FCT1", new DateTime(2026, 9, 13),
+                new StatsData { Pass = 5 }, new List<TopFailItem>(), 90, 1000, null, 0, 0, 60);
+            Check(JsonSerializer.Serialize(FeishuNotifier.BuildDailySummaryCard(sumNoFail), relaxed)
+                    .Contains("（当日无 FAIL 记录）"),
+                "摘要卡：无 FAIL 时给明确文案（不是空白段）");
+            Check(JsonSerializer.Serialize(FeishuNotifier.BuildDailySummaryCard(sumNoFail), relaxed)
+                    .Contains("每日备份: **未完成**"),
+                "摘要卡：备份缺失时给出警示文案（加粗强调）");
+
+            // —— parse_failure_log 查询（该表此前只进不出，本轮首次加读取入口）——
+            var chDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test_collect_" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(chDir);
+            try
+            {
+                var chDb = new Database(Path.Combine(chDir, "local.db"));
+                chDb.LogParseFailure(@"D:\R\a.xml", "xml_malformed", "xml 解析异常", "FCT1");
+                chDb.LogParseFailure(@"D:\R\b.xml", "xml_malformed", "xml 解析异常", "FCT1");
+                chDb.LogParseFailure(@"D:\R\c.xml", "read_error", "read file failed", "FCT1");
+                chDb.LogParseFailure(@"D:\R\d.xml", "skip", "debug", "FCT1");
+                chDb.LogParseFailure(@"D:\R\e.xml", "skip", "debug", "FCT1");
+
+                var since = CollectHealthMonitor.WindowStart(DateTime.Now, 60);
+                Check(chDb.CountAbnormalParseFailures(since) == 3,
+                    "采集查询：异常计数排除 skip（5 条里只有 3 条算异常）");
+                Check(chDb.CountAbnormalParseFailures(since, "FCT1") == 3, "采集查询：按机台过滤命中");
+                Check(chDb.CountAbnormalParseFailures(since, "FCT9") == 0, "采集查询：按机台过滤不串台");
+
+                var byCode = chDb.FetchParseFailureSummary(since);
+                Check(byCode.Count == 3, $"采集查询：按错误码聚合 3 类（实得 {byCode.Count}）");
+                var malformed = byCode.FirstOrDefault(x => x.ErrorCode == "xml_malformed");
+                Check(malformed != null && malformed.Count == 2, "采集查询：同错误码合并计数（xml_malformed ×2）");
+                Check(byCode[0].Count >= byCode[^1].Count, "采集查询：按条数倒序（最多的排最前）");
+
+                var recent = chDb.FetchRecentParseFailures(10, since);
+                Check(recent.Count == 3, "采集查询：最近失败明细同样排除 skip");
+                Check(recent[0].CreatedAt.CompareTo(recent[^1].CreatedAt) >= 0, "采集查询：明细按时间倒序");
+                Check(chDb.FetchRecentParseFailures(2, since).Count == 2, "采集查询：limit 生效");
+
+                var sinceFuture = DateTime.Now.AddHours(1).ToString("yyyy-MM-dd HH:mm:ss");
+                Check(chDb.CountAbnormalParseFailures(sinceFuture) == 0, "采集查询：窗口外不计入");
+
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            }
+            finally
+            {
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                try { Directory.Delete(chDir, true); } catch { }
+            }
+
+            // —— 采集告警状态序列化往返 ——
+            var cst = new CollectAlertState { Alerting = true, LastPushTs = "2026-09-14 10:00:00", LastReason = "x" };
+            var cstRound = CollectAlertState.FromJson(cst.ToJson());
+            Check(cstRound != null && cstRound!.Alerting && cstRound.LastReason == "x", "采集告警状态：JSON 往返一致");
+            Check(CollectAlertState.FromJson("") == null && CollectAlertState.FromJson("{坏}") == null,
+                "采集告警状态：空/坏 JSON 安全返回 null");
+        }
+
         // ============ 规格06 多元深分析：PASS 测量值采集 / v14 存储 / 漂移+CPK / backfill ============
         {
             Console.WriteLine("\n【规格06】PASS 测量值采集（ParseMeasurements）…");

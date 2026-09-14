@@ -21,6 +21,18 @@ public class AppConfig
     public int FeishuFailMergeWindowSec { get; set; } = 60;
     /// <summary>攒满多少条 FAIL 立即冲刷（不等窗口）。范围 1~200。</summary>
     public int FeishuFailMergeMax { get; set; } = 20;
+    /// <summary>采集异常告警（漏采/解析失败堆积/重试队列积压）总开关。</summary>
+    public bool FeishuCollectAlertEnabled { get; set; } = true;
+    /// <summary>采集异常统计窗口（分钟）。范围 5~1440。</summary>
+    public int FeishuCollectAlertWindowMin { get; set; } = 60;
+    /// <summary>窗口内异常解析失败条数阈值（≤0 关闭该维度）。</summary>
+    public int FeishuCollectAlertParseMin { get; set; } = 10;
+    /// <summary>重试队列积压条数阈值（≤0 关闭该维度）。</summary>
+    public int FeishuCollectAlertRetryMin { get; set; } = 20;
+    /// <summary>同一采集告警的最短间隔（分钟），防持续异常刷屏。≤0 不节流。</summary>
+    public int FeishuCollectAlertThrottleMin { get; set; } = 60;
+    /// <summary>每日运行摘要卡（采集量/良率/Top失败项/库健康分/备份状态）。</summary>
+    public bool FeishuDailySummaryEnabled { get; set; } = true;
     public bool TodoSpecMerge { get; set; } = true;
     public string ParsersPath { get; set; } = "parsers.json";
     public int DbMaintenanceHour { get; set; } = 3;
@@ -133,6 +145,22 @@ public class AppConfig
                 if (root.TryGetProperty("feishu_fail_merge_max", out v) &&
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var fmm) && fmm >= 1 && fmm <= 200)
                     cfg.FeishuFailMergeMax = fmm;
+                if (root.TryGetProperty("feishu_collect_alert_enabled", out v))
+                    cfg.FeishuCollectAlertEnabled = v.ValueKind != JsonValueKind.False;
+                if (root.TryGetProperty("feishu_collect_alert_window_min", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var caw) && caw >= 5 && caw <= 1440)
+                    cfg.FeishuCollectAlertWindowMin = caw;
+                if (root.TryGetProperty("feishu_collect_alert_parse_min", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var cap) && cap >= 0)
+                    cfg.FeishuCollectAlertParseMin = cap;
+                if (root.TryGetProperty("feishu_collect_alert_retry_min", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var car) && car >= 0)
+                    cfg.FeishuCollectAlertRetryMin = car;
+                if (root.TryGetProperty("feishu_collect_alert_throttle_min", out v) &&
+                    v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var cat) && cat >= 0)
+                    cfg.FeishuCollectAlertThrottleMin = cat;
+                if (root.TryGetProperty("feishu_daily_summary_enabled", out v))
+                    cfg.FeishuDailySummaryEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("parsers_path", out v) && v.ValueKind == JsonValueKind.String)
                     cfg.ParsersPath = GetStringSafe(v) ?? "parsers.json";
                 if (root.TryGetProperty("todo_spec_merge", out v) &&
@@ -288,6 +316,9 @@ public class AppConfig
                     "log_level", "desktop_notify", "notify_min_interval_sec", "todo_scan_days",
                     "feishu_banner_img_key", "parsers_path",
                     "feishu_fail_merge_enabled", "feishu_fail_merge_window_sec", "feishu_fail_merge_max",
+                    "feishu_collect_alert_enabled", "feishu_collect_alert_window_min",
+                    "feishu_collect_alert_parse_min", "feishu_collect_alert_retry_min",
+                    "feishu_collect_alert_throttle_min", "feishu_daily_summary_enabled",
                     "todo_spec_merge",
                     "db_maintenance_hour", "db_storage_auto_optimize", "db_storage_monitor_hours",
                     "db_vacuum_threshold_mb", "db_parse_failure_retention_days",
@@ -327,6 +358,12 @@ public class AppConfig
                 writer.WriteBoolean("feishu_fail_merge_enabled", FeishuFailMergeEnabled);
                 writer.WriteNumber("feishu_fail_merge_window_sec", FeishuFailMergeWindowSec);
                 writer.WriteNumber("feishu_fail_merge_max", FeishuFailMergeMax);
+                writer.WriteBoolean("feishu_collect_alert_enabled", FeishuCollectAlertEnabled);
+                writer.WriteNumber("feishu_collect_alert_window_min", FeishuCollectAlertWindowMin);
+                writer.WriteNumber("feishu_collect_alert_parse_min", FeishuCollectAlertParseMin);
+                writer.WriteNumber("feishu_collect_alert_retry_min", FeishuCollectAlertRetryMin);
+                writer.WriteNumber("feishu_collect_alert_throttle_min", FeishuCollectAlertThrottleMin);
+                writer.WriteBoolean("feishu_daily_summary_enabled", FeishuDailySummaryEnabled);
                 writer.WriteString("parsers_path", ParsersPath);
                 writer.WriteBoolean("todo_spec_merge", TodoSpecMerge);
                 writer.WriteNumber("db_maintenance_hour", DbMaintenanceHour);
