@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Xml;
 using FctAggregator;
@@ -102,8 +103,13 @@ public sealed class DefaultResultParser : IResultParser
             if (string.IsNullOrEmpty(snFromName)) snFromName = pr.Sn;
         }
 
+        // anchor 用**目录日期**而非"现在"：回填历史 XML（>30 天）时文件名时间会被 anchor 判为不可信而丢弃，
+        // 与 v3.40.1 的 90/365 天回填口径矛盾（ALGO-1 日期口径）。目录日是该文件"应有的那天"，
+        // 用它做锚既能容跨零点文件，又能挡住明显伪造的远日期段。
+        var anchor = DateTime.TryParseExact(info.TestDate, "yyyyMMdd", CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var dirDay) ? dirDay : DateTime.Now;
         var ts = info.FileTime != null
-            ? TimeUtil.ResolveFileNameTime(info.FileTime, DateTime.Now)
+            ? TimeUtil.ResolveFileNameTime(info.FileTime, anchor)
             : "";
         if (string.IsNullOrEmpty(ts))
             ts = info.TestDate.Length == 8

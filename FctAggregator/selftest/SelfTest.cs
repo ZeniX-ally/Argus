@@ -258,6 +258,23 @@ class SelfTest
                   $"时间源: Processor 也取文件名时间（实得 {tsRec?.BatchTimestamp}）");
             Check(tsRec != null && tsRec.StationId == "FCT6",
                   $"时间源用例: 机台号仍从 TESTER 提取（实得 {tsRec?.StationId}）");
+            // anchor 改为目录日后：历史文件（距"现在" >30 天）不再丢文件名时间；与目录日相差 >30 天的伪段仍被拒
+            var tsOldDir = Path.Combine(tsRoot, "Offline", "E3002781", "20260115");
+            Directory.CreateDirectory(tsOldDir);
+            var tsOldXml = Path.Combine(tsOldDir,
+                "O_Fts_PEU_G49_FCT6_SN_20260115083059654_2026813232417390.xml");
+            File.WriteAllText(tsOldXml, tsBody);
+            var tsOldRec = tsProc.ParseAndClassify(tsOldXml);
+            Check(tsOldRec != null && TimeUtil.Normalize(tsOldRec.BatchTimestamp) == "2026-01-15 08:30:59",
+                  $"时间源: 目录日锚点——历史文件（距今 >30 天）仍取文件名时间（实得 {tsOldRec?.BatchTimestamp}）");
+            var tsBadDir = Path.Combine(tsRoot, "Offline", "E3002781", "20260116");
+            Directory.CreateDirectory(tsBadDir);
+            var tsBadXml = Path.Combine(tsBadDir,
+                "O_Fts_PEU_G49_FCT6_SN_20240101083059655_2026813232417391.xml");
+            File.WriteAllText(tsBadXml, tsBody);
+            var tsBadRec = tsProc.ParseAndClassify(tsBadXml);
+            Check(tsBadRec != null && TimeUtil.Normalize(tsBadRec.BatchTimestamp) == "2026-01-16 00:00:00",
+                  $"时间源: 文件名时间与目录日相差 >30 天仍拒用（实得 {tsBadRec?.BatchTimestamp}）");
             var tsXml2 = Path.Combine(tsDir,
                 "O_Fts_PEU_G49_FCT6_E3002781AGV75236898002K81201743_nodate_2026813232417387.xml");
             File.WriteAllText(tsXml2, tsBody);
