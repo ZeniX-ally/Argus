@@ -191,7 +191,7 @@ public static class CollectHealthMonitor
             Pass = stats.Pass,
             Fail = stats.Fail,
             Interrupted = stats.Interrupted,
-            YieldPct = total <= 0 ? 0 : Math.Round(stats.Pass * 100.0 / total, 2),
+            YieldPct = Math.Round(StatsUtil.YieldPct(stats.Pass, stats.Fail), 2),
             TopFails = topFails ?? new List<TopFailItem>(),
             StorageScore = storageScore,
             DbBytes = dbBytes,

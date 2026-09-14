@@ -160,7 +160,7 @@ public static class FctProgramBackup
                 Note = fwNote,
                 ZipExists = true,
             };
-            result.Message = $"备份完成 {FmtBytes(zipBytes)}（{fileCount} 个文件，压缩比约 {CompressionRatio(rawBytes, zipBytes)}）";
+            result.Message = $"备份完成 {ByteUtil.MbGb(zipBytes)}（{fileCount} 个文件，压缩比约 {CompressionRatio(rawBytes, zipBytes)}）";
             Logger.Info($"[FTS备份] {result.Message} → {zipPath}");
         }
         catch (Exception ex)
@@ -285,9 +285,6 @@ public static class FctProgramBackup
         if (string.IsNullOrEmpty(path)) return;
         try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
-
-    private static string FmtBytes(long b) =>
-        b >= 1_000_000_000 ? $"{b / 1_000_000_000.0:F2} GB" : $"{b / 1_000_000.0:F1} MB";
 
     private static string CompressionRatio(long raw, long zip)
     {

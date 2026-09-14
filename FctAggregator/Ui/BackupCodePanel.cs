@@ -158,7 +158,7 @@ public sealed class BackupCodePanel : Panel
         _backupList.Items.Clear();
         foreach (var r in backups)
         {
-            var size = r.ZipBytes >= 1_000_000_000 ? $"{r.ZipBytes / 1_000_000_000.0:F2} GB" : $"{r.ZipBytes / 1_000_000.0:F1} MB";
+            var size = ByteUtil.MbGb(r.ZipBytes);
             var st = r.Status != "ok" ? r.Status : (r.ZipExists ? "有文件" : "已清理");
             var item = new ListViewItem(r.CreatedAt);
             item.SubItems.Add(r.Trigger == FctProgramBackup.TriggerScheduled ? "自动" : "手动");

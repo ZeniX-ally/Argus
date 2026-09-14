@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using FctAggregator;
 
 namespace FctFetcher;
 
@@ -92,9 +93,6 @@ public static class Packager
         }
     }
 
-    public static string HumanSize(long b)
-        => b >= 1L << 30 ? $"{b / (double)(1L << 30):F2} GB"
-         : b >= 1L << 20 ? $"{b / (double)(1L << 20):F1} MB"
-         : b >= 1L << 10 ? $"{b / (double)(1L << 10):F0} KB"
-         : $"{b} B";
+    /// <summary>二进制 B/KB/MB/GB（KB 保留原有的 0 位小数，与飞书卡的 1 位小数不同）。</summary>
+    public static string HumanSize(long b) => ByteUtil.Human(b, 0);
 }

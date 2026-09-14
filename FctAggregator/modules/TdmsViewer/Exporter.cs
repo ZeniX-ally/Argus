@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using FctAggregator;
 
 namespace FctTdmsViewer;
 
@@ -21,7 +22,7 @@ public static class Exporter
         int rows = cols.Max(c => c.data.Length);
         var sb = new StringBuilder();
         sb.Append(inc > 0 ? "Time(s)" : "Index");
-        foreach (var c in cols) sb.Append(',').Append(Esc(c.header));
+        foreach (var c in cols) sb.Append(',').Append(CsvUtil.Esc(c.header));
         sb.AppendLine();
 
         for (int i = 0; i < rows; i++)
@@ -49,7 +50,7 @@ public static class Exporter
         {
             foreach (var c in g.Channels)
             {
-                sb.Append(Esc(g.Name)).Append(',').Append(Esc(c.Name)).Append(',')
+                sb.Append(CsvUtil.Esc(g.Name)).Append(',').Append(CsvUtil.Esc(c.Name)).Append(',')
                   .Append(c.TypeName).Append(',').Append(c.Count);
                 var st = c.Numeric ? TdmsDoc.Describe(doc.GetData(c)) : null;
                 if (st == null) sb.Append(",,,,,,");
@@ -67,14 +68,4 @@ public static class Exporter
     }
 
     private static string F(double v) => v.ToString("R", CultureInfo.InvariantCulture);
-
-    private static string Esc(string s)
-    {
-        if (s.Length > 0 && (s[0] == '=' || s[0] == '+' || s[0] == '-' || s[0] == '@' ||
-                             s[0] == '\t' || s[0] == '\r'))
-            s = "'" + s;
-        if (s.Contains(',') || s.Contains('"') || s.Contains('\n') || s.Contains('\r'))
-            return "\"" + s.Replace("\"", "\"\"") + "\"";
-        return s;
-    }
 }

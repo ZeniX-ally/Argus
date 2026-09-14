@@ -1,4 +1,5 @@
 using System.Text;
+using FctAggregator;
 
 namespace FctFailRanker;
 
@@ -71,8 +72,7 @@ public static class CsvExporter
         }
 
         s.DistinctSn = sns.Count;
-        int denom = s.Pass + s.Fail;
-        s.Yield = denom > 0 ? (double)s.Pass / denom * 100.0 : 0;
+        s.Yield = StatsUtil.YieldPctDivFirst(s.Pass, s.Fail);
 
         var ranks = itemCount
             .Select(kv => new FailRank
@@ -138,7 +138,7 @@ public static class CsvExporter
         void Line(params string[] cells)
         {
             var arr = new string[COLS];
-            for (int i = 0; i < COLS; i++) arr[i] = i < cells.Length ? Esc(cells[i]) : "";
+            for (int i = 0; i < COLS; i++) arr[i] = i < cells.Length ? CsvUtil.Esc(cells[i]) : "";
             sb.AppendLine(string.Join(",", arr));
         }
         void Blank() => sb.AppendLine(string.Join(",", new string[COLS]));
@@ -196,9 +196,9 @@ public static class CsvExporter
         {
             var failList = string.Join(" | ", rec.FailItems.Select(f => f.ToDetail()));
             sb.AppendLine(string.Join(",",
-                Esc(rec.TestDate), Esc(rec.Category), Esc(rec.Model), Esc(rec.Sn),
-                Esc(rec.Station), Esc(rec.Result), rec.FailItems.Count.ToString(),
-                Esc(failList), Esc(rec.Filename)));
+                CsvUtil.Esc(rec.TestDate), CsvUtil.Esc(rec.Category), CsvUtil.Esc(rec.Model), CsvUtil.Esc(rec.Sn),
+                CsvUtil.Esc(rec.Station), CsvUtil.Esc(rec.Result), rec.FailItems.Count.ToString(),
+                CsvUtil.Esc(failList), CsvUtil.Esc(rec.Filename)));
         }
 
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
@@ -226,7 +226,7 @@ public static class CsvExporter
         void Line(params string[] cells)
         {
             var arr = new string[8];
-            for (int i = 0; i < 8; i++) arr[i] = i < cells.Length ? Esc(cells[i]) : "";
+            for (int i = 0; i < 8; i++) arr[i] = i < cells.Length ? CsvUtil.Esc(cells[i]) : "";
             sb.AppendLine(string.Join(",", arr));
         }
         Line("不良项排名", $"{start:yyyy-MM-dd} ~ {end:yyyy-MM-dd}");
@@ -234,16 +234,5 @@ public static class CsvExporter
         Line();
         WriteRankRows(Line, ranks);
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
-    }
-
-    private static string Esc(string? v)
-    {
-        v ??= "";
-        if (v.Length > 0 && (v[0] == '=' || v[0] == '+' || v[0] == '-' || v[0] == '@' ||
-                             v[0] == '\t' || v[0] == '\r'))
-            v = "'" + v;
-        if (v.Contains(',') || v.Contains('"') || v.Contains('\n') || v.Contains('\r'))
-            return "\"" + v.Replace("\"", "\"\"") + "\"";
-        return v;
     }
 }

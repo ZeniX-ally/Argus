@@ -2928,6 +2928,43 @@ Argus 统一发布包  v{newer}
             }
         }
 
+        // ============ 口径单一来源：字节格式化 / 良率（收敛实现，输出与收敛前逐位一致） ============
+        {
+            Console.WriteLine("\n【口径收敛】ByteUtil / StatsUtil（实现收敛，输出不变）…");
+
+            // —— 字节格式化：两套进制都保留，值必须与收敛前的原实现一致 ——
+            Check(ByteUtil.MbGb(2_147_483_648) == "2.15 GB", $"MbGb: 十进制 GB（实得 {ByteUtil.MbGb(2_147_483_648)}）");
+            Check(ByteUtil.MbGb(1_048_576) == "1.0 MB", $"MbGb: 十进制 MB（实得 {ByteUtil.MbGb(1_048_576)}）");
+            Check(ByteUtil.MbGb(0) == "0.0 MB", $"MbGb: 小于 1MB 也按 MB 显示（原行为，实得 {ByteUtil.MbGb(0)}）");
+
+            Check(ByteUtil.Human(2_147_483_648) == "2.00 GB", $"Human: 二进制 GB（实得 {ByteUtil.Human(2_147_483_648)}）");
+            Check(ByteUtil.Human(1_048_576) == "1.0 MB", $"Human: 二进制 MB（实得 {ByteUtil.Human(1_048_576)}）");
+            Check(ByteUtil.Human(2048) == "2.0 KB", $"Human: KB 默认 1 位小数（飞书卡，实得 {ByteUtil.Human(2048)}）");
+            Check(ByteUtil.Human(2048, 0) == "2 KB", $"Human: KB 可传 0 位小数（工具箱，实得 {ByteUtil.Human(2048, 0)}）");
+            Check(ByteUtil.Human(512) == "512 B", $"Human: B 档（实得 {ByteUtil.Human(512)}）");
+
+            Check(ByteUtil.MbGb(2_147_483_648) != ByteUtil.Human(2_147_483_648),
+                "字节格式化：两套进制对同一值显示不同（2.15 GB vs 2.00 GB）——本轮只收敛实现、未统一进制");
+
+            // —— 良率：两种运算顺序必须各自保持原浮点结果 ——
+            Check(Math.Abs(StatsUtil.YieldPct(23, 57) - 28.75) < 1e-12,
+                $"YieldPct(先乘后除): 23/57 = 28.75（实得 {StatsUtil.YieldPct(23, 57):R}）");
+            Check(StatsUtil.YieldPctDivFirst(23, 57) < 28.75,
+                $"YieldPctDivFirst(先除后乘): 23/57 略小于 28.75（实得 {StatsUtil.YieldPctDivFirst(23, 57):R}）");
+            Check(StatsUtil.YieldPctDivFirst(23, 57) != StatsUtil.YieldPct(23, 57),
+                "良率：两种运算顺序结果不同 —— 这正是二者不能合并成一个函数的原因（一位小数显示 28.8% vs 28.7%）");
+
+            Check(StatsUtil.YieldPct(0, 0) == 0.0 && StatsUtil.YieldPctDivFirst(0, 0) == 0.0,
+                "良率：分母为 0 时返回 0（不产生 NaN/除零）");
+            Check(StatsUtil.YieldPct(97, 3) == 97.0 && StatsUtil.YieldPctDivFirst(97, 3) == 97.0,
+                "良率：能整除时两者一致（97/100 = 97）");
+
+            // —— 回归：收敛后各处调用点仍走同一实现（抽查 HomeCard 口径的 HourlyStatItem）——
+            var hourly = new HourlyStatItem { Pass = 23, Fail = 57 };
+            Check(hourly.YieldRate == StatsUtil.YieldPctDivFirst(23, 57),
+                "回归：HourlyStatItem.YieldRate 走 StatsUtil（先除后乘口径不变）");
+        }
+
         // ============ 规格06 多元深分析：PASS 测量值采集 / v14 存储 / 漂移+CPK / backfill ============
         {
             Console.WriteLine("\n【规格06】PASS 测量值采集（ParseMeasurements）…");

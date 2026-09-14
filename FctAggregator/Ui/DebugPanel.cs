@@ -259,7 +259,7 @@ public class DebugPanel : Panel
     {
         var today = DateTime.Now.ToString("yyyyMMdd");
         var d = _engine.Db.FetchDailyStats(_engine.ResolvedStationId, today);
-        var yield = d.Pass + d.Fail > 0 ? d.Pass * 100.0 / (d.Pass + d.Fail) : 0;
+        var yield = StatsUtil.YieldPct(d.Pass, d.Fail);
         Print($"今日({DateTime.Now:yyyy-MM-dd}) 统计(公司口径 FAIL优先, Offline PASS不计): 总测试={d.TodayProductCount} PASS={d.Pass} FAIL={d.Fail} 中断={d.Interrupted} 良率={yield:F1}%");
         foreach (var m in _engine.Db.FetchDailyStatsByModel(_engine.ResolvedStationId, today))
             Print($"  型号 {m.Model}: PASS={m.Pass} FAIL={m.Fail} 中断={m.Interrupted} 合计={m.Total}");
@@ -269,8 +269,7 @@ public class DebugPanel : Panel
     {
         var ym = DateTime.Now.ToString("yyyyMM");
         var m = _engine.Db.FetchMonthlyStats(_engine.ResolvedStationId, ym);
-        var den = m.Pass + m.Fail;
-        var y = den > 0 ? m.Pass * 100.0 / den : 0;
+        var y = StatsUtil.YieldPct(m.Pass, m.Fail);
         Print($"当月库内 {ym}（xml_path 去重 log 条数，不是 app.log 行数，debug 跳过不入库）");
         Print($"  PASS={m.Pass} FAIL={m.Fail} 中断={m.Interrupted} 良率={y:F1}% 产品去重={m.TodayProductCount}");
         Print("  公式: PASS/(PASS+FAIL)，中断不进分母。对账公司系统请对这组数字。");

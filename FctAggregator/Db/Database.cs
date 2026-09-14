@@ -3654,7 +3654,7 @@ public class HourlyStatItem
     public int Pass { get; set; }
     public int Fail { get; set; }
     public int Total => Pass + Fail;
-    public double YieldRate => Total > 0 ? (double)Pass / Total * 100.0 : 0.0;
+    public double YieldRate => StatsUtil.YieldPctDivFirst(Pass, Fail);
 }
 
 public class TopFailItem

@@ -372,14 +372,9 @@ public static class FeishuNotifier
         try { return Path.GetFileName(path); } catch { return path!; }
     }
 
+    /// <summary>飞书卡的字节显示：沿用二进制口径，但 0/负值用「—」占位（卡面语义，非通用格式化）。</summary>
     private static string FmtBytes(long bytes)
-    {
-        if (bytes <= 0) return "—";
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024L * 1024 * 1024) return $"{bytes / 1024.0 / 1024:F1} MB";
-        return $"{bytes / 1024.0 / 1024 / 1024:F2} GB";
-    }
+        => bytes <= 0 ? "—" : ByteUtil.Human(bytes);
 
     // ───────────────────────── 自学习告警（章节群挂 / 正常态偏离） ─────────────────────────
 

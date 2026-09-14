@@ -72,11 +72,8 @@ public sealed class StorageOptimizeResult
             yield return $"  清理: 解析失败 {PurgedParseFailures}  慢查询 {PurgedSlowLogs}  采样 {PurgedDeviceSamples}  测量 {PurgedMeasurements}  失败项 {PurgedFailItems}  TDMS {PurgedTdms}";
         if (Rebuilt) yield return "  已重建瘦表（去掉路径冗余列）";
         if (Vacuumed)
-            yield return $"  VACUUM: {FmtBytes(BytesBefore)} → {FmtBytes(BytesAfter)}";
+            yield return $"  VACUUM: {ByteUtil.MbGb(BytesBefore)} → {ByteUtil.MbGb(BytesAfter)}";
     }
-
-    private static string FmtBytes(long b) =>
-        b >= 1_000_000_000 ? $"{b / 1_000_000_000.0:F2} GB" : $"{b / 1_000_000.0:F1} MB";
 }
 
 /// <summary>库容量监控与滚动优化：分类盘点 → 健康评分 → 定时轻量维护 / 每日深度压缩。</summary>
@@ -174,7 +171,7 @@ public static class StorageOptimizer
 
         result.Summary = $"深度优化完成，删除 {purgedTotal:N0} 行过期明细";
         PersistMeta(db, result);
-        Logger.Info($"[存储优化] {result.Summary} | 健康分 {result.ScoreBefore}→{result.ScoreAfter} | {FmtBytes(result.BytesBefore)}→{FmtBytes(result.BytesAfter)}");
+        Logger.Info($"[存储优化] {result.Summary} | 健康分 {result.ScoreBefore}→{result.ScoreAfter} | {ByteUtil.MbGb(result.BytesBefore)}→{ByteUtil.MbGb(result.BytesAfter)}");
         return result;
     }
 
@@ -291,7 +288,4 @@ public static class StorageOptimizer
         if (actions.Count == 0) actions.Add("当前结构健康，仅做 WAL checkpoint");
         return actions;
     }
-
-    private static string FmtBytes(long b) =>
-        b >= 1_000_000_000 ? $"{b / 1_000_000_000.0:F2} GB" : $"{b / 1_000_000.0:F1} MB";
 }

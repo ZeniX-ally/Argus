@@ -32,21 +32,10 @@ public static class MaintenanceExporter
         sb.AppendLine("维修记录导出");
         sb.AppendLine($"导出时间,{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine();
-        sb.AppendLine(string.Join(",", Headers.Select(Esc)));
+        sb.AppendLine(string.Join(",", Headers.Select(CsvUtil.Esc)));
         foreach (var m in records)
-            sb.AppendLine(string.Join(",", RowOf(m).Select(Esc)));
+            sb.AppendLine(string.Join(",", RowOf(m).Select(CsvUtil.Esc)));
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
-    }
-
-    private static string Esc(string? v)
-    {
-        v ??= "";
-        if (v.Length > 0 && (v[0] == '=' || v[0] == '+' || v[0] == '-' || v[0] == '@' ||
-                             v[0] == '\t' || v[0] == '\r'))
-            v = "'" + v;
-        if (v.Contains(',') || v.Contains('"') || v.Contains('\n') || v.Contains('\r'))
-            return "\"" + v.Replace("\"", "\"\"") + "\"";
-        return v;
     }
 
     public static void ExportXlsx(string path, IEnumerable<MaintenanceRecord> records)

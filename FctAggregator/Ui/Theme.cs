@@ -45,6 +45,28 @@ public static class Theme
     public static Color ToolLogBg       => Color.FromArgb(20, 20, 20);
     public static Color ToolLogFg       => Color.FromArgb(230, 230, 230);
 
+    // ── 主页大屏图表专用（原先散落在 DashboardWidgets.cs 里硬编码，值原样搬迁，显示不变）──
+    /// <summary>良率折线/柱/坐标轴主色。</summary>
+    public static Color ChartAccent     => Color.FromArgb(0, 180, 255);
+    public static Color ChartPass       => Color.FromArgb(200, 39, 174, 96);
+    public static Color ChartFail       => Color.FromArgb(220, 235, 77, 75);
+    /// <summary>FAIL 红的低透明度变体（柱底纹/描边）。</summary>
+    public static Color ChartFailSoft   => Color.FromArgb(18, 235, 77, 75);
+    public static Color ChartFailBorder => Color.FromArgb(60, 235, 77, 75);
+    /// <summary>FAIL 浅红文字。</summary>
+    public static Color ChartFailText   => Color.FromArgb(235, 120, 120);
+    /// <summary>悬停高亮（半透明白，覆盖在柱/线上）。</summary>
+    public static Color ChartHover      => Color.FromArgb(40, 255, 255, 255);
+    /// <summary>折线孤点填充（近白）。</summary>
+    public static Color ChartPointFill  => Color.FromArgb(240, 255, 255);
+    public static Color ChartTooltipBg  => Color.FromArgb(235, 20, 24, 33);
+    public static Color ChartTooltipFg  => Color.FromArgb(200, 210, 225);
+    /// <summary>TopFail 柱状调色（第 2/3/4 名与其它）。</summary>
+    public static Color ChartBarOrange  => Color.FromArgb(230, 126, 34);
+    public static Color ChartBarRed     => Color.FromArgb(231, 76, 60);
+    public static Color ChartBarYellow  => Color.FromArgb(241, 196, 15);
+    public static Color ChartBarGray    => Color.FromArgb(80, 90, 105);
+
     public const int InputLabelWidth = 96;
     public const int InputFieldWidth = 800;
     public const int BrowseWidth    = 40;

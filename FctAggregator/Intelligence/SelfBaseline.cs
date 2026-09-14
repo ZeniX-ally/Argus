@@ -154,7 +154,7 @@ public static class SelfBaseline
                 .ToList();
 
             var yields = dayStats.Where(d => d.Pass + d.Fail > 0)
-                .Select(d => (double)d.Pass / (d.Pass + d.Fail) * 100.0)
+                .Select(d => StatsUtil.YieldPctDivFirst(d.Pass, d.Fail))
                 .ToList();
 
             buckets.Add(new BaselineBucketStat
@@ -220,7 +220,7 @@ public static class SelfBaseline
                 else intr++;
             }
             if (pass + fail <= 0) continue;
-            double yieldPct = (double)pass / (pass + fail) * 100.0;
+            double yieldPct = StatsUtil.YieldPctDivFirst(pass, fail);
 
             if (!bucketMap.TryGetValue(grp.Key, out var b)) continue;
             if (b.SampleCount < minSamples) continue;

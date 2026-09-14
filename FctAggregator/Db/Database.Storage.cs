@@ -160,7 +160,7 @@ public sealed partial class Database
         SetMeta(StorageSchemaMeta, StorageSchemaSlim);
         SqliteConnection.ClearAllPools();
         try { if (File.Exists(_dbPath)) report.BytesAfter = new FileInfo(_dbPath).Length; } catch { }
-            report.Message = $"压缩前 {FmtBytes(report.BytesBefore)} → 压缩后 {FmtBytes(report.BytesAfter)}";
+            report.Message = $"压缩前 {ByteUtil.MbGb(report.BytesBefore)} → 压缩后 {ByteUtil.MbGb(report.BytesAfter)}";
         _detailTablesFat = false;
         Logger.Info($"[存储] {report.Message}");
         return report;
@@ -335,7 +335,4 @@ public sealed partial class Database
     {
         try { Exec(conn, sql); } catch { }
     }
-
-    private static string FmtBytes(long b) =>
-        b >= 1_000_000_000 ? $"{b / 1_000_000_000.0:F2} GB" : $"{b / 1_000_000.0:F1} MB";
 }

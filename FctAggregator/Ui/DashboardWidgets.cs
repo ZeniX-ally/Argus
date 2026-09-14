@@ -71,7 +71,7 @@ public sealed class HourlyTrendChart : Control
         int legX = Width - 240;
         DrawLegend(g, legX, 16, Theme.Success, "PASS 产出");
         DrawLegend(g, legX + 75, 16, Theme.Danger, "FAIL 异常");
-        DrawLegend(g, legX + 150, 16, Color.FromArgb(0, 180, 255), "良率 %");
+        DrawLegend(g, legX + 150, 16, Theme.ChartAccent, "良率 %");
 
         int chartLeft = 50;
         int chartRight = Width - 50;
@@ -116,9 +116,9 @@ public sealed class HourlyTrendChart : Control
 
         var points = new List<PointF>();
 
-        using var passBrush = new SolidBrush(Color.FromArgb(200, 39, 174, 96));
-        using var failBrush = new SolidBrush(Color.FromArgb(220, 235, 77, 75));
-        using var hoverBrush = new SolidBrush(Color.FromArgb(40, 255, 255, 255));
+        using var passBrush = new SolidBrush(Theme.ChartPass);
+        using var failBrush = new SolidBrush(Theme.ChartFail);
+        using var hoverBrush = new SolidBrush(Theme.ChartHover);
 
         for (int h = 0; h < 24; h++)
         {
@@ -162,12 +162,12 @@ public sealed class HourlyTrendChart : Control
 
         if (points.Count > 1)
         {
-            using var linePen = new Pen(Color.FromArgb(0, 180, 255), 2.2f);
+            using var linePen = new Pen(Theme.ChartAccent, 2.2f);
             g.DrawLines(linePen, points.ToArray());
         }
 
-        using var ptFill = new SolidBrush(Color.FromArgb(240, 255, 255));
-        using var ptBorder = new Pen(Color.FromArgb(0, 180, 255), 2f);
+        using var ptFill = new SolidBrush(Theme.ChartPointFill);
+        using var ptBorder = new Pen(Theme.ChartAccent, 2f);
         using var lowYieldPen = new Pen(Theme.Danger, 2.5f);
         using var lowYieldFill = new SolidBrush(Theme.Danger);
 
@@ -211,8 +211,8 @@ public sealed class HourlyTrendChart : Control
         int tipY = top + 10;
 
         var tipRect = new Rectangle(tipX, tipY, tipW, tipH);
-        using var bgBrush = new SolidBrush(Color.FromArgb(235, 20, 24, 33));
-        using var borderPen = new Pen(Color.FromArgb(0, 180, 255), 1f);
+        using var bgBrush = new SolidBrush(Theme.ChartTooltipBg);
+        using var borderPen = new Pen(Theme.ChartAccent, 1f);
         g.FillRectangle(bgBrush, tipRect);
         g.DrawRectangle(borderPen, tipRect);
 
@@ -220,10 +220,10 @@ public sealed class HourlyTrendChart : Control
             new Rectangle(tipX + 8, tipY + 6, tipW - 16, 16), Color.White,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
         TextRenderer.DrawText(g, row1, Theme.Tiny,
-            new Rectangle(tipX + 8, tipY + 24, tipW - 16, 14), Color.FromArgb(200, 210, 225),
+            new Rectangle(tipX + 8, tipY + 24, tipW - 16, 14), Theme.ChartTooltipFg,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
         TextRenderer.DrawText(g, row2, Theme.Tiny,
-            new Rectangle(tipX + 8, tipY + 39, tipW - 16, 14), Color.FromArgb(200, 210, 225),
+            new Rectangle(tipX + 8, tipY + 39, tipW - 16, 14), Theme.ChartTooltipFg,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
         TextRenderer.DrawText(g, row3, Theme.BodyBold,
             new Rectangle(tipX + 8, tipY + 54, tipW - 16, 16),
@@ -540,7 +540,7 @@ public sealed class TopFailRankPanel : Control
             g.FillRectangle(barBg, barX, barY, barMaxW, barH);
 
             float fillW = Math.Max(4f, (float)it.Count / maxCount * barMaxW);
-            Color barCol = i == 0 ? Theme.Danger : (i == 1 ? Color.FromArgb(230, 126, 34) : Color.FromArgb(0, 180, 255));
+            Color barCol = i == 0 ? Theme.Danger : (i == 1 ? Theme.ChartBarOrange : Theme.ChartAccent);
             using var barFill = new SolidBrush(barCol);
             g.FillRectangle(barFill, barX, barY, fillW, barH);
             y += rowH;
@@ -551,10 +551,10 @@ public sealed class TopFailRankPanel : Control
     {
         Color bg = rank switch
         {
-            1 => Color.FromArgb(231, 76, 60),
-            2 => Color.FromArgb(230, 126, 34),
-            3 => Color.FromArgb(241, 196, 15),
-            _ => Color.FromArgb(80, 90, 105)
+            1 => Theme.ChartBarRed,
+            2 => Theme.ChartBarOrange,
+            3 => Theme.ChartBarYellow,
+            _ => Theme.ChartBarGray
         };
         using var b = new SolidBrush(bg);
         g.FillEllipse(b, x, y, 20, 20);
@@ -706,21 +706,21 @@ public sealed class LiveAlertPanel : Control
 
             if (i == _hoverIndex)
             {
-                using var hovB = new SolidBrush(Color.FromArgb(40, 255, 255, 255));
+                using var hovB = new SolidBrush(Theme.ChartHover);
                 g.FillRectangle(hovB, rowRect);
             }
             else
             {
-                using var cardB = new SolidBrush(Color.FromArgb(18, 235, 77, 75));
+                using var cardB = new SolidBrush(Theme.ChartFailSoft);
                 g.FillRectangle(cardB, rowRect);
             }
 
-            using var borP = new Pen(Color.FromArgb(60, 235, 77, 75), 1f);
+            using var borP = new Pen(Theme.ChartFailBorder, 1f);
             g.DrawRectangle(borP, rowRect);
 
             string timeStr = a.TimeText.Length >= 19 ? a.TimeText.Substring(11, 8) : a.TimeText;
             TextRenderer.DrawText(g, timeStr, Theme.Tiny,
-                new Rectangle(18, y, 65, rowH - 4), Color.FromArgb(235, 120, 120),
+                new Rectangle(18, y, 65, rowH - 4), Theme.ChartFailText,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
             if (!string.IsNullOrEmpty(a.StationId))

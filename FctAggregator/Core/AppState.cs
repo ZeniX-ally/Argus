@@ -122,6 +122,6 @@ public class StatsSnapshot
     public List<HourlyStatItem> Hourly = new();
     public List<TopFailItem> TopFails = new();
     public List<LiveFailAlert> Alerts = new();
-    public double YieldRate => Pass + Fail > 0 ? Pass * 100.0 / (Pass + Fail) : 0.0;
-    public double TodayYield => TodayPass + TodayFail > 0 ? TodayPass * 100.0 / (TodayPass + TodayFail) : 0.0;
+    public double YieldRate => StatsUtil.YieldPct(Pass, Fail);
+    public double TodayYield => StatsUtil.YieldPct(TodayPass, TodayFail);
 }
