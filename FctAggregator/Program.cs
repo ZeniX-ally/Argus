@@ -32,6 +32,11 @@ static class Program
         bool debugMode = args.Any(a => a.Equals("--debug", StringComparison.OrdinalIgnoreCase));
         args = args.Where(a => !a.Equals("--debug", StringComparison.OrdinalIgnoreCase)).ToArray();
 
+        // 审计：--post-update 由 UpdateChecker.ScheduleRestart / UpdatePromptForm.RestartApp 传入，
+        // 必须在子命令分发之前剥离；否则它会被当成未知子命令 return 2，升级重启后 GUI 永不启动。
+        bool postUpdate = args.Any(a => a.Equals("--post-update", StringComparison.OrdinalIgnoreCase));
+        args = args.Where(a => !a.Equals("--post-update", StringComparison.OrdinalIgnoreCase)).ToArray();
+
         if (args.Length > 0)
         {
             var sub = args[0].Trim().ToLowerInvariant();
@@ -93,8 +98,6 @@ static class Program
             return 2;
         }
 
-        bool postUpdate = args.Any(a => a.Equals("--post-update", StringComparison.OrdinalIgnoreCase));
-        args = args.Where(a => !a.Equals("--post-update", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (postUpdate || UpdateChecker.HasPendingUpdate())
         {
             try

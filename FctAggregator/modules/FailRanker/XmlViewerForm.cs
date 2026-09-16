@@ -24,6 +24,11 @@ public class XmlViewerForm : AppForm
     private readonly ReportData _data;
     private RichTextBox _report = null!;
 
+    // 审计：这几处字体原先在 Paint / 逐行追加里 new 出来从不释放——每次重绘/每追加一行泄漏一个 HFONT。
+    // Paint 路径用静态缓存；富文本路径按需 new 后立即 Dispose（RichTextBox 只复制字符格式，不持有 Font）。
+    private static readonly Font BadgeFont = new(Theme.Body.FontFamily, 12F, FontStyle.Bold);
+    private static readonly Font BigValueFont = new(Theme.Body.FontFamily, 20F, FontStyle.Bold);
+
     public XmlViewerForm(string path)
     {
         _path = path;
@@ -103,7 +108,7 @@ public class XmlViewerForm : AppForm
             e.Graphics.DrawPath(pen, path);
             using var dot = new SolidBrush(badgeColor);
             e.Graphics.FillEllipse(dot, 16, badge.Height / 2 - 5, 10, 10);
-            TextRenderer.DrawText(e.Graphics, badgeText, new Font(Theme.Body.FontFamily, 12F, FontStyle.Bold),
+            TextRenderer.DrawText(e.Graphics, badgeText, BadgeFont,
                 new Rectangle(30, 0, badge.Width - 34, badge.Height), badgeColor,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
         };
@@ -194,7 +199,7 @@ public class XmlViewerForm : AppForm
                 e.Graphics.DrawPath(pen, path);
                 using var bar = new SolidBrush(color);
                 e.Graphics.FillRectangle(bar, 0, 10, 4, p.Height - 20);
-                TextRenderer.DrawText(e.Graphics, value, new Font(Theme.Body.FontFamily, 20F, FontStyle.Bold),
+                TextRenderer.DrawText(e.Graphics, value, BigValueFont,
                     new Rectangle(18, 10, p.Width - 24, 40), color, TextFormatFlags.Left);
                 TextRenderer.DrawText(e.Graphics, label, Theme.Body,
                     new Rectangle(18, 52, p.Width - 24, 22), CTextDim, TextFormatFlags.Left);
@@ -356,7 +361,8 @@ public class XmlViewerForm : AppForm
         rtb.Select(start, text.Length);
         rtb.SelectionColor = color;
         var baseFont = rtb.Font;
-        rtb.SelectionFont = new Font(baseFont, bold ? FontStyle.Bold : FontStyle.Regular);
+        using var sel = new Font(baseFont, bold ? FontStyle.Bold : FontStyle.Regular);
+        rtb.SelectionFont = sel;
         rtb.SelectionLength = 0;
     }
 

@@ -226,12 +226,15 @@ public static class FctProgramBackup
         while (stack.Count > 0)
         {
             var dir = stack.Pop();
-            IEnumerable<string> subDirs;
-            IEnumerable<string> files;
+            List<string> subDirs;
+            List<string> files;
             try
             {
-                subDirs = Directory.EnumerateDirectories(dir);
-                files = Directory.EnumerateFiles(dir);
+                // 审计：Directory.Enumerate* 是惰性的，异常发生在 foreach/MoveNext 而不是调用处——
+                // 原来的 try 包不住，单个不可读目录会把整次备份判为 failed 并删掉 zip。
+                // 这里在 try 内物化，真正做到"跳过该目录"。
+                subDirs = new List<string>(Directory.EnumerateDirectories(dir));
+                files = new List<string>(Directory.EnumerateFiles(dir));
             }
             catch (Exception ex)
             {

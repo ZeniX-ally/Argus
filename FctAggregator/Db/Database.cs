@@ -31,6 +31,14 @@ public sealed partial class Database
     public string DbPath => _dbPath;
 
     public Database(string dbPath)
+        : this(dbPath, setAsCurrent: true)
+    {
+    }
+
+    /// <summary>次级打开：与主构造一致，但**不改写全局 Current**。
+    /// 审计：UpdateChecker 只为读写一个 app_meta 键就 new Database(...)，原来会把 Current 顶成临时实例，
+    /// 污染其它模块拿到的"当前库"。</summary>
+    public Database(string dbPath, bool setAsCurrent)
     {
         _dbPath = dbPath;
         _connString = new SqliteConnectionStringBuilder
@@ -39,7 +47,7 @@ public sealed partial class Database
             Mode = SqliteOpenMode.ReadWriteCreate,
         }.ToString();
         Init();
-        Current = this;
+        if (setAsCurrent) Current = this;
     }
 
     /// <summary>每连接执行的 PRAGMA（WAL + 写性能 + 读缓存）。synchronous=NORMAL 为 WAL 下官方推荐组合，
@@ -1897,7 +1905,9 @@ public sealed partial class Database
             using var conn = Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "PRAGMA integrity_check";
-            var r = cmd.ExecuteScalar()?.ToString() ?? "ok";
+            // 审计：DBNull.ToString() 返回 ""（非 null），?? "ok" 兜不住——空库/特殊库会误报"integrity_check 异常"。
+            var raw = cmd.ExecuteScalar();
+            var r = raw is null or DBNull ? "ok" : raw.ToString() ?? "ok";
             result = r;
             LogHealth("integrity_check", r);
             if (!r.Equals("ok", StringComparison.OrdinalIgnoreCase))
@@ -1914,6 +1924,14 @@ public sealed partial class Database
     // TSV 归档需要压平的字符（制表/回车/换行）
     private static readonly char[] SanitizeTsvChars = { '\t', '\r', '\n' };
 
+    /// <summary>冷数据判定条件（三处 COUNT/SELECT/DELETE 必须同口径）。
+    /// 审计：test_date 存在 yyyyMMdd 与 yyyy-MM-dd 两种格式（见 IsWithinRetention 与双格式查询），
+    /// 直接拿 "yyyyMMdd" 字面量与 dash 格式做字符串比较时 "2026-09-10" &lt; "20260612" 恒成立（'-' &lt; '0'），
+    /// 会把近期记录当冷数据导出后 DELETE（静默数据丢失）。归一化并只认 8 位日期后再比较。
+    /// 常量化供自检断言同口径。</summary>
+    public const string ColdDataPredicate =
+        "length(replace(test_date,'-',''))=8 AND replace(test_date,'-','') < @c";
+
     public int ArchiveColdData(int warmDays = 90)
     {
         if (warmDays <= 0) return 0;
@@ -1924,7 +1942,7 @@ public sealed partial class Database
             using (var conn = Open())
             using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = "SELECT COUNT(*) FROM test_records WHERE test_date < @c";
+                cmd.CommandText = $"SELECT COUNT(*) FROM test_records WHERE {ColdDataPredicate}";
                 cmd.Parameters.AddWithValue("@c", cutoff);
                 toArchive = Convert.ToInt32(cmd.ExecuteScalar());
             }
@@ -1949,7 +1967,7 @@ public sealed partial class Database
                     using (var writer = new StreamWriter(archFile, append: false))
                     {
                         cmd.Transaction = tx;
-                        cmd.CommandText = $"SELECT {string.Join(", ", cols)} FROM test_records WHERE test_date < @c ORDER BY id";
+                        cmd.CommandText = $"SELECT {string.Join(", ", cols)} FROM test_records WHERE {ColdDataPredicate} ORDER BY id";
                         cmd.Parameters.AddWithValue("@c", cutoff);
                         using var r = cmd.ExecuteReader();
                         writer.WriteLine(string.Join('\t', cols));
@@ -1971,7 +1989,7 @@ public sealed partial class Database
                     using (var cmd = conn.CreateCommand())
                     {
                         cmd.Transaction = tx;
-                        cmd.CommandText = "DELETE FROM test_records WHERE test_date < @c";
+                        cmd.CommandText = $"DELETE FROM test_records WHERE {ColdDataPredicate}";
                         cmd.Parameters.AddWithValue("@c", cutoff);
                         var deleted = cmd.ExecuteNonQuery();
                         tx.Commit();

@@ -257,22 +257,30 @@ public class DebugPanel : Panel
 
     private void QueryToday()
     {
+        // 审计：与同文件其它查库按钮一致走 RunBusy——FetchDailyStats/按型号统计含窗口 CTE，
+        // 大库上直接在 UI 线程跑会整窗卡住。
+        RunBusy("正在统计今日数据…", () =>
+        {
         var today = DateTime.Now.ToString("yyyyMMdd");
         var d = _engine.Db.FetchDailyStats(_engine.ResolvedStationId, today);
         var yield = StatsUtil.YieldPct(d.Pass, d.Fail);
         Print($"今日({DateTime.Now:yyyy-MM-dd}) 统计(公司口径 FAIL优先, Offline PASS不计): 总测试={d.TodayProductCount} PASS={d.Pass} FAIL={d.Fail} 中断={d.Interrupted} 良率={yield:F1}%");
         foreach (var m in _engine.Db.FetchDailyStatsByModel(_engine.ResolvedStationId, today))
             Print($"  型号 {m.Model}: PASS={m.Pass} FAIL={m.Fail} 中断={m.Interrupted} 合计={m.Total}");
+        });
     }
 
     private void QueryMonth()
     {
+        RunBusy("正在统计当月数据…", () =>
+        {
         var ym = DateTime.Now.ToString("yyyyMM");
         var m = _engine.Db.FetchMonthlyStats(_engine.ResolvedStationId, ym);
         var y = StatsUtil.YieldPct(m.Pass, m.Fail);
         Print($"当月库内 {ym}（xml_path 去重 log 条数，不是 app.log 行数，debug 跳过不入库）");
         Print($"  PASS={m.Pass} FAIL={m.Fail} 中断={m.Interrupted} 良率={y:F1}% 产品去重={m.TodayProductCount}");
         Print("  公式: PASS/(PASS+FAIL)，中断不进分母。对账公司系统请对这组数字。");
+        });
     }
 
     private void QueryMaxSn()
@@ -329,6 +337,9 @@ public class DebugPanel : Panel
 
     private void ProbeLeftover()
     {
+        // 审计：LeftoverAgg.Probe 内部 Process.Start 调 sc/netsh（秒级），必须在后台跑
+        RunBusy("正在探测聚合残留…", () =>
+        {
         var hits = LeftoverAgg.Probe();
         if (hits.Count == 0)
         {
@@ -338,6 +349,7 @@ public class DebugPanel : Panel
         Print("发现残留（不自动删除）：");
         foreach (var h in hits) Print("  " + h);
         Print("处理：管理员 CMD 执行 sc stop <名> && sc delete <名>；防火墙 netsh advfirewall firewall delete rule name=ArgusAggWeb");
+        });
     }
 
     private void TestDesktopNotify()
@@ -406,25 +418,45 @@ public class DebugPanel : Panel
 
     private void SmartOptimize()
     {
-        var health = StorageOptimizer.Evaluate(_engine.Db, _engine.Config);
-        Print(health.FormatHeadline());
-        foreach (var a in health.PlannedActions) Print($"  计划: {a}");
-        var msg = "将按保留策略清理过期数据、重建瘦表并视情况 VACUUM。\n大库可能需要数分钟，期间请勿关软件。继续？";
-        if (MessageBox.Show(msg, "智能优化", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-        Print("正在优化，请稍候…");
+        // 审计：StorageOptimizer.Evaluate 会盘点全库（COUNT/PRAGMA），原先在 UI 线程跑会整窗卡住。
+        // 这里后台评估 → 回 UI 线程出计划与确认框（顺序与原实现一致）→ 再后台执行优化。
+        if (_busy) return;
+        _busy = true;
+        UseWaitCursor = true;
+        Print("正在评估存储健康…");
         var db = _engine.Db;
         var cfg = _engine.Config;
         Task.Run(() =>
         {
-            try
-            {
-                var rep = StorageOptimizer.Run(db, cfg, StorageOptimizeMode.Deep);
-                UiAsync.Post(this, () => { foreach (var line in rep.FormatLines()) Print(line); });
-            }
+            StorageHealthReport health;
+            try { health = StorageOptimizer.Evaluate(db, cfg); }
             catch (Exception ex)
             {
-                UiAsync.Post(this, () => Print($"优化失败: {ex.Message}"));
+                UiAsync.Post(this, () => { _busy = false; UseWaitCursor = false; Print($"评估失败: {ex.Message}"); });
+                return;
             }
+            UiAsync.Post(this, () =>
+            {
+                _busy = false;
+                UseWaitCursor = false;
+                Print(health.FormatHeadline());
+                foreach (var a in health.PlannedActions) Print($"  计划: {a}");
+                var msg = "将按保留策略清理过期数据、重建瘦表并视情况 VACUUM。\n大库可能需要数分钟，期间请勿关软件。继续？";
+                if (MessageBox.Show(msg, "智能优化", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                Print("正在优化，请稍候…");
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        var rep = StorageOptimizer.Run(db, cfg, StorageOptimizeMode.Deep);
+                        UiAsync.Post(this, () => { foreach (var line in rep.FormatLines()) Print(line); });
+                    }
+                    catch (Exception ex)
+                    {
+                        UiAsync.Post(this, () => Print($"优化失败: {ex.Message}"));
+                    }
+                });
+            });
         });
     }
 

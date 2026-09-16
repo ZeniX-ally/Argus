@@ -93,17 +93,22 @@ public class MainForm : AppForm
 		var root = new TableLayoutPanel
 		{
 			RowCount = 4,
-			ColumnCount = 6,
+			ColumnCount = 8,
 			Dock = DockStyle.Top,
-			Height = 130,
+			Height = 152,
 			Padding = new Padding(12, 18, 12, 0),
 		};
-		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 74));
-		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 640));
-		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Theme.BrowseWidth + 4));
-		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
-		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-		root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+		// 审计：原布局 row0 高度为 0（结果目录整行被压没）、两个 CSV 导出按钮同处 (5,2) 互相覆盖，
+		// 且列宽合计 1060 > 窗口宽 980 被挤出可见区（截图实证：标签被裁、按钮点不到）。
+		// 现按「标签|输入|浏览|标签|输入|扫描|xlsx|CSV×2」重排；输入列用百分比，窗口缩小时自适应。
+		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 74));   // 0 标签
+		root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // 1 结果目录 / 起始日期
+		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 44));   // 2 浏览按钮
+		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 74));   // 3 结束日期标签
+		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));  // 4 结束日期
+		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));  // 5 扫描统计（跨两行）
+		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));  // 6 导出 Excel（跨两行）
+		root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));  // 7 两个 CSV（上下各一）
 
 		AddLab(root, "结果目录:", 0, 0);
 		_txtRoot.Dock = DockStyle.Fill;
@@ -124,18 +129,18 @@ public class MainForm : AppForm
 		_dtStart.Value = DateTime.Today.AddDays(-7.0);
 		root.SetColumn(_dtStart, 1);
 		root.SetRow(_dtStart, 1);
-		AddLab(root, "结束日期:", 2, 1);
+		AddLab(root, "结束日期:", 3, 1);
 		_dtEnd.Format = DateTimePickerFormat.Custom;
 		_dtEnd.CustomFormat = "yyyy-MM-dd";
 		_dtEnd.Value = DateTime.Today;
-		root.SetColumn(_dtEnd, 3);
+		root.SetColumn(_dtEnd, 4);
 		root.SetRow(_dtEnd, 1);
 
 		_btnScan.Text = "扫描统计";
 		_btnScan.Width = Theme.SmallBtnWidth;
 		_btnScan.Height = 62;
 		_btnScan.Click += async delegate { await ScanAsync(); };
-		root.SetColumn(_btnScan, 4);
+		root.SetColumn(_btnScan, 5);
 		root.SetRow(_btnScan, 1);
 		root.SetRowSpan(_btnScan, 2);
 
@@ -144,37 +149,38 @@ public class MainForm : AppForm
 		_btnExportXlsx.Height = 62;
 		_btnExportXlsx.Enabled = false;
 		_btnExportXlsx.Click += (_, _) => ExportXlsx();
-		root.SetColumn(_btnExportXlsx, 5);
+		root.SetColumn(_btnExportXlsx, 6);
 		root.SetRow(_btnExportXlsx, 1);
+		root.SetRowSpan(_btnExportXlsx, 2);
 
 		_btnExport.Text = "导出完整 CSV";
 		_btnExport.Width = Theme.SmallBtnWidth;
 		_btnExport.Height = Theme.InputHeight;
 		_btnExport.Enabled = false;
 		_btnExport.Click += (_, _) => ExportCsv(rankOnly: false);
-		root.SetColumn(_btnExport, 5);
-		root.SetRow(_btnExport, 2);
+		root.SetColumn(_btnExport, 7);
+		root.SetRow(_btnExport, 1);
 
 		_btnExportRank.Text = "仅排名表 CSV";
 		_btnExportRank.Width = Theme.SmallBtnWidth;
 		_btnExportRank.Height = Theme.InputHeight;
 		_btnExportRank.Enabled = false;
 		_btnExportRank.Click += (_, _) => ExportCsv(rankOnly: true);
-		root.SetColumn(_btnExportRank, 5);
+		root.SetColumn(_btnExportRank, 7);
 		root.SetRow(_btnExportRank, 2);
 
 		_progress.Dock = DockStyle.Fill;
 		root.SetColumn(_progress, 0);
 		root.SetRow(_progress, 3);
-		root.SetColumnSpan(_progress, 6);
+		root.SetColumnSpan(_progress, 8);
 
 		root.Controls.AddRange(new Control[] { _txtRoot, _btnBrowse, _dtStart, _dtEnd, _btnScan, _btnExportXlsx, _btnExport, _btnExportRank, _progress });
-		for (int c = 0; c < 6; c++)
-			root.ColumnStyles[c] = new ColumnStyle(SizeType.Absolute, c switch { 1 => 640, 4 => 128, _ => root.ColumnStyles[c].Width });
-		root.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
-		root.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-		root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-		root.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.InputHeight + 4));
+		// 审计：原 row0 高度 0 会压掉整个「结果目录」行；原 for 循环还会把百分比列改写成 Absolute 100，
+		// 与 980 宽窗口冲突。这里显式给四行高度，不再改写列样式。
+		root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));  // 0 结果目录
+		root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));  // 1 日期 + 跨两行按钮上半
+		root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));  // 2 CSV 第二行 + 跨两行按钮下半
+		root.RowStyles.Add(new RowStyle(SizeType.Absolute, Theme.InputHeight + 4)); // 3 进度
 
 		_inputPanel = root;
 		Controls.Add(root);

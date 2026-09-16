@@ -54,19 +54,48 @@ public static class FeishuNotifier
             try
             {
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                var resp = await _http.PostAsync(webhookUrl, content);
-                if (resp.IsSuccessStatusCode) return FeishuSendOutcome.Sent;
-                Logger.Warning($"飞书推送失败(尝试{attempt + 1}/{MaxRetries}): HTTP {(int)resp.StatusCode}");
+                using var resp = await _http.PostAsync(webhookUrl, content).ConfigureAwait(false);
+                var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (resp.IsSuccessStatusCode && IsBusinessSuccess(body)) return FeishuSendOutcome.Sent;
+                Logger.Warning($"飞书推送失败(尝试{attempt + 1}/{MaxRetries}): HTTP {(int)resp.StatusCode} {Summarize(body)}");
             }
             catch (Exception ex)
             {
                 Logger.Warning($"飞书推送异常(尝试{attempt + 1}/{MaxRetries}): {ex.Message}");
             }
-            await Task.Delay(1000 * (attempt + 1));
+            if (attempt < MaxRetries - 1) await Task.Delay(1000 * (attempt + 1)).ConfigureAwait(false);
         }
         Logger.Error($"飞书推送最终失败: {tag}");
         return FeishuSendOutcome.Failed;
     }
+
+    /// <summary>飞书自定义机器人 webhook 在业务失败时（签名错误 / 内容非法 / 限频）常返回
+    /// HTTP 200 + 非 0 <c>code</c>。只看状态码会把失败当成功，进而 MarkFailAlerted 永久吞掉该条告警。
+    /// 判定：body 为空或无法解析成对象视为成功（兼容非 JSON 应答）；否则要求 code == 0。
+    /// 纯函数，供自检断言。</summary>
+    public static bool IsBusinessSuccess(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return true;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return true;
+            if (!doc.RootElement.TryGetProperty("code", out var code)) return true;
+            return code.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.Number => code.TryGetInt64(out var n) && n == 0,
+                System.Text.Json.JsonValueKind.String => long.TryParse(code.GetString(), out var s) && s == 0,
+                _ => true,
+            };
+        }
+        catch
+        {
+            return true; // 非 JSON 应答（代理页/错误页）不据此判定业务失败，仍按 HTTP 状态码处理
+        }
+    }
+
+    private static string Summarize(string body)
+        => string.IsNullOrWhiteSpace(body) ? "" : $"body={body[..Math.Min(160, body.Length)]}";
 
     private static object BuildFailCard(TestRecord r)
     {

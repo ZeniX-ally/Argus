@@ -1268,6 +1268,9 @@ class SelfTest
         Console.WriteLine("\n【FAIL 明细导出】自然周期 / 测项级明细（老记录退回）/ CSV 列与转义");
         RunFailDetailExportTests(work);
 
+        Console.WriteLine("\n【v3.48.1 审计修复】热升级参数/换装白名单 + 飞书业务码 + 机台号边界 + 冷归档日期口径 + 告警回队 + CLI 兜底");
+        RunAuditFixTests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -5053,5 +5056,132 @@ Argus 统一发布包  v{newer}
         Check(emptyName.EndsWith(".zip") && emptyName.StartsWith("Argus-logs-"), "建议文件名 Argus-logs-*.zip");
         Check(new AppConfig().AnalyzeMaxTestsPerFile == 1000, "默认 analyze_max_tests_per_file=1000（G49 超 500）");
         Check(LeftoverAgg.QueryService("ArgusNoSuchService_xyz") == null, "残留探测：不存在的服务返回 null");
+    }
+
+    /// <summary>v3.48.1 审计修复回归：每条断言锁定一处已修缺陷，防回退。</summary>
+    static void RunAuditFixTests(string work)
+    {
+        // ── 热升级：换装白名单（不得覆盖现场 data/ 与 config）──
+        Check(UpdateChecker.IsRuntimePath(@"data\fct.db") && UpdateChecker.IsRuntimePath("data/sub/x.db"),
+            "换装白名单：data/ 子树一律不覆盖（现场数据库不得被更新包覆盖）");
+        Check(UpdateChecker.IsRuntimePath(@"logs\app.log"), "换装白名单：logs/ 不覆盖");
+        Check(UpdateChecker.IsRuntimePath("config.json") && UpdateChecker.IsRuntimePath(@"fct.db"),
+            "换装白名单：config.json 与根目录 .db 不覆盖");
+        Check(!UpdateChecker.IsRuntimePath(@"Argus.dll") && !UpdateChecker.IsRuntimePath("modules/readme.txt"),
+            "换装白名单：程序文件正常放行");
+
+        // ── 热升级：版本号文本化与包名匹配（两段版本不再抛 ArgumentException / 扫描不再漏包）──
+        Check(UpdateChecker.VersionText(new Version(3, 48, 1)) == "3.48.1",
+            "版本文本：三段版本按三段输出");
+        string vt2;
+        try { vt2 = UpdateChecker.VersionText(new Version(1, 2)); }
+        catch { vt2 = "THROW"; }
+        Check(vt2 == "1.2", $"版本文本：两段版本不抛异常（实得 {vt2}）");
+        Check(UpdateChecker.VersionText(null) == "unknown", "版本文本：解析失败回落 unknown");
+        Check(UpdateChecker.ParseZipVersion("Argus-v1.2.3.zip")?.ToString() == "1.2.3"
+              && UpdateChecker.ParseZipVersion("Argus_1.2.3.zip")?.ToString() == "1.2.3"
+              && UpdateChecker.ParseZipVersion("Argus 1.2.3.zip")?.ToString() == "1.2.3",
+            "更新包解析：Argus[-_空格]v? 三种命名都能识别（扫描已放宽到 Argus*.zip）");
+
+        // ── 飞书：HTTP 200 + 业务非 0 码必须判失败（否则该条 FAIL 被永久标记已推送）──
+        Check(FeishuNotifier.IsBusinessSuccess("{\"code\":0,\"msg\":\"success\"}"),
+            "飞书业务码：code=0 视为成功");
+        Check(!FeishuNotifier.IsBusinessSuccess("{\"code\":9499,\"msg\":\"Bad Request\"}"),
+            "飞书业务码：code=9499 判失败（不再被 HTTP 200 掩盖）");
+        Check(FeishuNotifier.IsBusinessSuccess("{\"code\":\"0\"}"), "飞书业务码：字符串 0 兼容为成功");
+        Check(FeishuNotifier.IsBusinessSuccess("") && FeishuNotifier.IsBusinessSuccess("<html>502</html>"),
+            "飞书业务码：空/非 JSON 应答不据此判失败（仍看 HTTP 状态码）");
+        Check(FeishuNotifier.IsBusinessSuccess("{\"msg\":\"ok\"}"), "飞书业务码：无 code 字段视为成功");
+
+        // ── 机台号识别：数字后缀不得被截断成 FCT1 ──
+        Check(StationDetector.ExtractStationFromTester("FCT1") == "FCT1", "机台号：FCT1 正常识别");
+        Check(StationDetector.ExtractStationFromTester("FCT7") == "FCT7", "机台号：FCT7 正常识别");
+        Check(StationDetector.ExtractStationFromTester("FCT15") == null,
+            "机台号：FCT15 不再被误判为 FCT1（Contains 破坏词边界，原缺陷）");
+        Check(StationDetector.ExtractStationFromTester("Panel_FCT3") == "FCT3",
+            "机台号：Panel_FCT3 仍可识别（保留下划线连接场景）");
+        Check(StationDetector.ExtractStationFromTester(null) == null, "机台号：空输入返回 null");
+
+        // ── 冷数据归档：dash 格式的近期待记录不得被当冷数据删除 ──
+        {
+            var dir = Path.Combine(work, "coldarc_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "cold.db"));
+            var recentDash = DateTime.Today.AddDays(-3).ToString("yyyy-MM-dd");
+            var oldDash = DateTime.Today.AddDays(-200).ToString("yyyy-MM-dd");
+            var oldYmd = DateTime.Today.AddDays(-200).ToString("yyyyMMdd");
+            db.BatchInsert(new[]
+            {
+                new TestRecord { StationId="FCT1", Model="E300", Category="Offline", TestDate=recentDash,
+                                 Sn="SN-RECENT", Result="PASS", XmlPath=Path.Combine(dir, "recent.xml") },
+                new TestRecord { StationId="FCT1", Model="E300", Category="Offline", TestDate=oldDash,
+                                 Sn="SN-OLDDASH", Result="PASS", XmlPath=Path.Combine(dir, "olddash.xml") },
+                new TestRecord { StationId="FCT1", Model="E300", Category="Offline", TestDate=oldYmd,
+                                 Sn="SN-OLDYMD", Result="PASS", XmlPath=Path.Combine(dir, "oldymd.xml") },
+            });
+            var deleted = db.ArchiveColdData(90);
+            Check(deleted == 2, $"冷归档：只删两条真正的冷记录，dash 格式近期记录保留（实删 {deleted}）");
+            using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(dir, "cold.db")}");
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM test_records WHERE sn='SN-RECENT'";
+            Check(Convert.ToInt32(cmd.ExecuteScalar()) == 1,
+                "冷归档：dash 格式的近期（3 天前）记录仍在表内（原缺陷会静默删除）");
+            Check(Database.ColdDataPredicate.Contains("replace(test_date,'-','')"),
+                "冷归档：COUNT/SELECT/DELETE 三处共用同一条归一化判定");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // ── 飞书批量告警：推送失败必须回队，不能只打日志（进程长期不重启会永久丢）──
+        {
+            var cfg = new AppConfig { FeishuFailMergeEnabled = true, FeishuFailMergeMax = 100 };
+            var dir = Path.Combine(work, "batchq_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "q.db"));
+            var batcher = new FeishuFailBatcher(cfg, db,
+                (_, _) => Task.FromResult(FeishuSendOutcome.Failed));
+            batcher.Enqueue(new TestRecord { StationId="FCT1", Model="E300", Sn="A", Result="FAIL",
+                                             XmlPath=Path.Combine(dir, "a.xml"), BatchTimestamp="2026-01-01 00:00:01" });
+            batcher.Enqueue(new TestRecord { StationId="FCT1", Model="E300", Sn="B", Result="FAIL",
+                                             XmlPath=Path.Combine(dir, "b.xml"), BatchTimestamp="2026-01-01 00:00:02" });
+            var before = batcher.PendingCount;
+            batcher.FlushAsync().GetAwaiter().GetResult();
+            Check(before == 2 && batcher.PendingCount == 2,
+                $"告警回队：推送失败后 2 条仍在队列（冲刷前 {before} / 后 {batcher.PendingCount}）");
+
+            var okBatcher = new FeishuFailBatcher(cfg, db,
+                (_, _) => Task.FromResult(FeishuSendOutcome.Sent));
+            okBatcher.Enqueue(new TestRecord { StationId="FCT1", Model="E300", Sn="C", Result="FAIL",
+                                              XmlPath=Path.Combine(dir, "c.xml"), BatchTimestamp="2026-01-01 00:00:03" });
+            okBatcher.FlushAsync().GetAwaiter().GetResult();
+            Check(okBatcher.PendingCount == 0, "告警回队：推送成功则正常出队（回队逻辑不误伤成功路径）");
+            batcher.Dispose(); okBatcher.Dispose();
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // ── CLI 兜底：解析不了的 TDMS 必须给出错误码而不是未处理异常 ──
+        // 注意选材：TDMSReader 对"足够长的非 TDMS 文本"会当成 0 组的空文档（返回 0，不是失败），
+        // 只有截断/头部不完整才抛异常。这里用「TDMS 魔数 + 截断」精确命中异常路径。
+        {
+            var fake = Path.Combine(work, "not_tdms_" + Guid.NewGuid().ToString("N") + ".tdms");
+            File.WriteAllBytes(fake, new byte[] { 0x54, 0x44, 0x53, 0x6D, 0x0E, 0x00, 0x00, 0x00 });
+            int rc;
+            try { rc = FctTdmsViewer.Program.RunCliEntry(new[] { "--info", fake }); }
+            catch { rc = -1; }
+            Check(rc == 2, $"TDMS CLI：截断文件返回 2 而不是未处理异常（实得 {rc}）");
+            try { File.Delete(fake); } catch { }
+        }
+
+        // ── CLI 兜底：诊断报告输出目录不可写时必须给错误码而不是未处理异常 ──
+        {
+            var badOut = Path.Combine(work, "no_such_dir_" + Guid.NewGuid().ToString("N"), "sub", "diag.txt");
+            var xml = Path.Combine(work, "diag_probe.xml");
+            File.WriteAllText(xml, "<TestResults/>");
+            int rc;
+            try { rc = FctFetcher.Program.RunCliEntry(new[] { "--diag", xml, "--out", badOut }); }
+            catch { rc = -1; }
+            Check(rc == 2, $"Fetcher CLI：--out 目录不存在返回 2 而不是未处理异常（实得 {rc}）");
+            try { File.Delete(xml); } catch { }
+        }
     }
 }

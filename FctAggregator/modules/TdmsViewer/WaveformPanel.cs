@@ -191,7 +191,12 @@ public sealed class WaveformPanel : Panel
                 pts.Add(new PointF(XToPx(i, plot), YToPx(v, ymin, ymax, plot)));
             }
             if (pts.Count == 1)
-                g.FillEllipse(new SolidBrush(s.Color), pts[0].X - 2.5f, pts[0].Y - 2.5f, 5, 5);
+            {
+                // 审计：原来是内联 new SolidBrush(...) 从不释放——MouseMove 每次都 Invalidate（十字线），
+                // 缩放到只剩单点时鼠标一动就泄漏一个 GDI+ 对象。
+                using var dot = new SolidBrush(s.Color);
+                g.FillEllipse(dot, pts[0].X - 2.5f, pts[0].Y - 2.5f, 5, 5);
+            }
             else if (pts.Count > 1)
                 g.DrawLines(pen, pts.ToArray());
         }

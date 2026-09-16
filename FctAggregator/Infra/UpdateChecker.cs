@@ -57,7 +57,7 @@ public static class UpdateChecker
             var prompted = PromptedVersions(db);
 
             UpdateInfo? best = null;
-            foreach (var f in Directory.EnumerateFiles(dir, "Argus-v*.zip", SearchOption.TopDirectoryOnly))
+            foreach (var f in Directory.EnumerateFiles(dir, "Argus*.zip", SearchOption.TopDirectoryOnly))
             {
                 var ver = ParseZipVersion(Path.GetFileName(f));
                 if (ver == null) continue;
@@ -98,7 +98,8 @@ public static class UpdateChecker
         // 复用已打开的同一个库：Database 构造函数会跑整套建表/索引/迁移，只为读一个 meta 键不值得
         var cur = Database.Current;
         if (cur != null && string.Equals(cur.DbPath, path, StringComparison.OrdinalIgnoreCase)) return cur;
-        return new Database(path);
+        // setAsCurrent:false —— 次级实例不得顶掉运行中的主库句柄（审计）
+        return new Database(path, setAsCurrent: false);
     }
 
     public static string GetReleaseNotes(Version ver, string? updateDir = null)
@@ -215,15 +216,38 @@ public static class UpdateChecker
         Logger.Info($"[更新器] 已排定 {delaySeconds}s 后自动重启并完成升级提交");
     }
 
+    /// <summary>版本号安全文本化：两段版本（1.2）没有 Build，ToString(3) 会抛 ArgumentException。</summary>
+    public static string VersionText(Version? ver)
+    {
+        if (ver == null) return "unknown";
+        if (ver.Build >= 0) return ver.ToString(3);
+        return ver.ToString(2);
+    }
+
+    /// <summary>更新包中**不得覆盖现场**的运行期路径：data/、logs/ 与数据库文件、config.json。
+    /// 纯函数，供自检断言。</summary>
+    public static bool IsRuntimePath(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return false;
+        var p = relativePath.Replace('\\', '/').TrimStart('/');
+        if (p.StartsWith("data/", StringComparison.OrdinalIgnoreCase)) return true;
+        if (p.StartsWith("logs/", StringComparison.OrdinalIgnoreCase)) return true;
+        var name = Path.GetFileName(p);
+        if (name.Equals("config.json", StringComparison.OrdinalIgnoreCase)) return true;
+        return name.EndsWith(".db", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".db-wal", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".db-shm", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>把暂存目录内容换装入 baseDir：未锁定文件直接覆盖；被运行进程锁定的文件
     /// （Argus.exe/Argus.dll/本地原生库等）先改名为 *.old（NTFS 允许重命名已加载映像）再覆盖。
-    /// config.json 跳过（由 MergeConfig 站点合并，不整份覆盖）。</summary>
+    /// config.json 与 data/logs/数据库一律跳过（现场数据不得被更新包覆盖）。</summary>
     public static void SwapIn(string stagingDir, string baseDir)
     {
         foreach (var f in Directory.EnumerateFiles(stagingDir, "*", SearchOption.AllDirectories))
         {
             var rel = Path.GetRelativePath(stagingDir, f);
-            if (rel.Equals("config.json", StringComparison.OrdinalIgnoreCase)) continue;
+            if (IsRuntimePath(rel)) continue;
             var dest = Path.Combine(baseDir, rel);
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             try
@@ -266,16 +290,20 @@ public static class UpdateChecker
         var pendingZip = d.GetMeta(PendingKey);
         if (string.IsNullOrEmpty(pendingZip)) return true; // 本无待更新任务，视为成功（可放心重启）
 
-        var updatesRoot = ResolveUpdateDir();
-        var ver = ParseZipVersion(Path.GetFileName(pendingZip));
-        var verStr = ver?.ToString(3) ?? "unknown";
-        var stagingDir = Path.Combine(updatesRoot, "staging", verStr);
-        var backupDir = Directory.EnumerateDirectories(Path.Combine(updatesRoot, "backup"), verStr + "_*")
-                                 .OrderByDescending(x => x).FirstOrDefault();
         var baseDir = AppConfig.BaseDir;
 
         try
         {
+            // 审计：以下解析/枚举原先在 try 之外——backup 目录缺失抛 DirectoryNotFoundException、
+            // 两段版本号 ToString(3) 抛 ArgumentException，都会逃出本方法破坏 bool 契约（"保留 pending 等重试"分支永不执行）。
+            var updatesRoot = ResolveUpdateDir();
+            var verStr = VersionText(ParseZipVersion(Path.GetFileName(pendingZip)));
+            var stagingDir = Path.Combine(updatesRoot, "staging", verStr);
+            var backupRoot = Path.Combine(updatesRoot, "backup");
+            var backupDir = Directory.Exists(backupRoot)
+                ? Directory.EnumerateDirectories(backupRoot, verStr + "_*").OrderByDescending(x => x).FirstOrDefault()
+                : null;
+
             if (!Directory.Exists(stagingDir))
             {
                 d.SetMeta(PendingKey, "");

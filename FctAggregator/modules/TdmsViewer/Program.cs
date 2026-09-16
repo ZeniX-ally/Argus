@@ -78,7 +78,19 @@ internal static class Program
             return 2;
         }
 
-        using var doc = TdmsDoc.Load(path);
+        // 审计：TdmsDoc.Load 对新版 TDMS / 损坏文件 / 非 TDMS 文件会抛异常，
+        // 原来无兜底会让 CLI 以未处理异常终止（WinExe 下用户看不到任何提示）。
+        TdmsDoc doc;
+        try
+        {
+            doc = TdmsDoc.Load(path);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[错误] 无法解析 TDMS 文件: {ex.Message}");
+            return 2;
+        }
+        using var docScope = doc;
 
         if (info)
         {

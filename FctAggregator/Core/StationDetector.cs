@@ -40,8 +40,11 @@ public static class StationDetector
     public static string? ExtractStationFromTester(string? tester)
     {
         if (string.IsNullOrEmpty(tester)) return null;
+        // 审计：原先 `\bFCT{i}\b` 之外还 `|| tester.Contains($"FCT{i}")`，Contains 把词边界检查架空——
+        // "FCT15"/"FCT12" 在 i=1 时命中 FCT1，机台号被误判（良率对比与告警路由全错）。
+        // 保留 Contains 想覆盖的 "Panel_FCT1" 场景（`_` 是词字符，\b 不成立），改用「数字后不再跟数字」判定。
         for (int i = 7; i >= 1; i--)
-            if (Regex.IsMatch(tester, $@"\bFCT{i}\b") || tester.Contains($"FCT{i}"))
+            if (Regex.IsMatch(tester, $@"FCT{i}(?!\d)"))
                 return $"FCT{i}";
         return null;
     }

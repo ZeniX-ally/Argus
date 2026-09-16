@@ -49,10 +49,18 @@ public static class AppState
 
     private static void Refresh(Database db, string stationId)
     {
-        var g = db.FetchGlobalStats(stationId);
+        // 审计：下面三条是 KPI 主查询，原先没有 try——库被占用/损坏时异常会穿透 Engine.Start()，
+        // 启动流程直接中断。与后面三条一样做降级兜底（保留上一轮的值）。
+        StatsData g;
+        StatsData d;
+        List<ModelDayStat> byModel;
+        try { g = db.FetchGlobalStats(stationId); }
+        catch (Exception ex) { Logger.Warning($"[统计] 全局统计查询失败: {ex.Message}"); return; }
         var today = DateTime.Now.ToString("yyyyMMdd");
-        var d = db.FetchDailyStats(stationId, today);
-        var byModel = db.FetchDailyStatsByModel(stationId, today);
+        try { d = db.FetchDailyStats(stationId, today); }
+        catch (Exception ex) { Logger.Warning($"[统计] 当日统计查询失败: {ex.Message}"); return; }
+        try { byModel = db.FetchDailyStatsByModel(stationId, today); }
+        catch (Exception ex) { Logger.Warning($"[统计] 分型号统计查询失败: {ex.Message}"); byModel = new(); }
         var modelLine = FormatModelLine(byModel);
         List<HourlyStatItem> hourly;
         List<TopFailItem> topFails;

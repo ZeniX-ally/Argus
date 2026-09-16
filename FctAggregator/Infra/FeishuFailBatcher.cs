@@ -156,13 +156,15 @@ public sealed class FeishuFailBatcher : IDisposable
             }
             catch (Exception ex)
             {
-                Logger.Error($"[飞书推送] FAIL 批量推送异常（{batch.Count} 条未标记，待下次启动补推）: {ex.Message}");
+                RequeueBatch(batch);
+                Logger.Error($"[飞书推送] FAIL 批量推送异常（{batch.Count} 条已回队，待下批/下次启动补推）: {ex.Message}");
                 return;
             }
 
             if (!ShouldMarkAlerted(outcome))
             {
-                Logger.Warning($"[飞书推送] FAIL 批量推送失败（{batch.Count} 条未标记，待下次启动补推）");
+                RequeueBatch(batch);
+                Logger.Warning($"[飞书推送] FAIL 批量推送失败（{batch.Count} 条已回队，待下批/下次启动补推）");
                 return;
             }
 
@@ -178,6 +180,18 @@ public sealed class FeishuFailBatcher : IDisposable
         {
             Interlocked.Exchange(ref _flushing, 0);
         }
+    }
+
+    /// <summary>推送失败时把整批放回队列。审计：原来只打日志（TakeAll 已清空队列），
+    /// 进程连续运行数天/数周时这些 FAIL 在本次生命周期内再也不会发出。
+    /// 这里只回队不再 Arm：避免 webhook 持续故障时形成 60s 重试风暴；
+    /// 下一条 FAIL 入队或退出冲刷会自动带上它们，兜底仍是下次启动的「今日补推」。</summary>
+    private void RequeueBatch(List<TestRecord> batch)
+    {
+        int back = 0;
+        foreach (var r in batch)
+            if (_queue.Enqueue(r)) back++;
+        if (back > 0) Logger.Info($"[飞书推送] {back} 条 FAIL 已回队列等待重试");
     }
 
     public void Dispose()

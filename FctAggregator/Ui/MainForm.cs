@@ -583,7 +583,10 @@ public class MainForm : AppForm
                     .Sum(kv => kv.Value);
                 var top = db.ListTodoView(null, null, 1).FirstOrDefault();
                 string todoTop = top == null ? "—" : $"{top.SortCount} 次";
-                if (!IsHandleCreated || IsDisposed) return;
+                // 审计：早退必须先复位 _todoBadgeBusy——构造函数里的首次 Tick 在句柄创建前执行，
+                // 原来直接 return 会让标志永久为 true，之后每 10 秒的调用都在入口被拦掉，
+                // 标签页「待办 / 维修 (N)」与状态栏计数整场会话停在 0。
+                if (!IsHandleCreated || IsDisposed) { _todoBadgeBusy = false; return; }
                 BeginInvoke(() =>
                 {
                     try

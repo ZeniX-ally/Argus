@@ -13,6 +13,7 @@ public class Engine
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly object _watcherLock = new();
     private readonly HashSet<string> _watchedDirs = new(StringComparer.OrdinalIgnoreCase);
+    private bool _watchersStopped;
     private System.Threading.Timer? _modelRescanTimer; // 审计 A3：周期重扫型号目录，运行期新型号动态挂监控
     private System.Threading.Timer? _collectHealthTimer; // 采集健康巡检（漏采/解析失败堆积主动告警）
     private long _lastStatsRefreshTicks; // 审计 A2：入库热路径统计刷新节流
@@ -198,9 +199,16 @@ public class Engine
         try { _retryThread?.Join(3000); } catch { }
         try { _modelRescanTimer?.Dispose(); } catch { }
         try { _collectHealthTimer?.Dispose(); } catch { }
-        foreach (var w in _watchers) { try { w.EnableRaisingEvents = false; w.Dispose(); } catch { } }
-        _watchers.Clear();
-        lock (_watcherLock) _watchedDirs.Clear();
+        // 审计：_watchers 的写受 _watcherLock 保护，这里原来无锁遍历 + Clear，
+        // 与 RescanModels（5 分钟周期）并发时 foreach 会抛 InvalidOperationException 逃出 Stop→Program.Main；
+        // 且 Clear 之后新加的 watcher 永不释放（句柄泄漏且仍向已停止的引擎投递事件）。
+        lock (_watcherLock)
+        {
+            _watchersStopped = true;
+            foreach (var w in _watchers) { try { w.EnableRaisingEvents = false; w.Dispose(); } catch { } }
+            _watchers.Clear();
+            _watchedDirs.Clear();
+        }
         SaveRetryQueue(); // 未处理重试条目落盘，下次启动恢复（M5：退出即丢）
 
         // 冲刷未发出的 FAIL 告警（有界等待：在途一轮没发完就放弃，未标记的记录由下次启动的「今日补推」兜底）
@@ -366,6 +374,7 @@ public class Engine
     {
         lock (_watcherLock)
         {
+            if (_watchersStopped) return; // 已停止：不再新建（否则新 watcher 无人 Dispose，且向死引擎投递事件）
             if (!_watchedDirs.Add(dir)) return;
             var w = new FileSystemWatcher(dir, "*.xml")
             {
@@ -592,9 +601,11 @@ public class Engine
 
     private void RetryLoop()
     {
-        try
+        // 审计：catch 原在 while 之外——循环体内任何一次异常都会让本线程直接结束，
+        // 此后所有入队条目直到下次重启才被处理且无任何"线程已死"标志。改为逐轮兜底。
+        while (!_cts.IsCancellationRequested)
         {
-            while (!_cts.IsCancellationRequested)
+            try
             {
                 var now = Environment.TickCount64;
                 var due = new List<(string Path, int Attempt)>();
@@ -605,10 +616,13 @@ public class Engine
                 }
                 foreach (var (p, attempt) in due)
                     if (File.Exists(p)) ScheduleProcess(p, attempt);
-                Thread.Sleep(5000);
             }
+            catch (Exception ex)
+            {
+                Logger.Error($"[重试线程] 本轮异常（线程继续）: {ex.Message}");
+            }
+            try { Thread.Sleep(5000); } catch (ThreadInterruptedException) { break; }
         }
-        catch (Exception ex) { Logger.Error($"[重试线程] 异常: {ex.Message}"); }
     }
 
     private bool EnqueueRetry(string path, int attempt)

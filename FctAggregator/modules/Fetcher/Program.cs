@@ -65,9 +65,20 @@ internal static class Program
                 return 2;
             }
 
-            TextWriter dw = diagOut != null
-                ? new StreamWriter(diagOut, false, System.Text.Encoding.UTF8)
-                : Console.Out;
+            // 审计：StreamWriter 构造在 try 之外——--out 指向不存在的目录会抛
+            // DirectoryNotFoundException，整个 CLI 以未处理异常结束而不是给错误码。
+            TextWriter dw;
+            try
+            {
+                dw = diagOut != null
+                    ? new StreamWriter(diagOut, false, System.Text.Encoding.UTF8)
+                    : Console.Out;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[错误] 无法写入诊断报告 {diagOut}: {ex.Message}");
+                return 2;
+            }
             try
             {
                 dw.WriteLine($"FCT-Fetcher 诊断报告  共 {dfiles.Count} 个文件");

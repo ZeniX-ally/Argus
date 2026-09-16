@@ -52,7 +52,9 @@ public static class Logger
                 }
                 var dir = Path.GetDirectoryName(LogPath)!;
                 Directory.CreateDirectory(dir);
-                _writtenBytes += line.Length + 2;
+                // 审计：原按 line.Length（UTF-16 字符数）累加，中文日志实际磁盘占用约为其 3 倍，
+                // MaxLogBytes(20MB) 形同虚设（单文件可涨到 ~60MB）。改按 UTF-8 实际字节数。
+                _writtenBytes += Encoding.UTF8.GetByteCount(line) + 2;
                 if (_writtenBytes > MaxLogBytes)
                 {
                     _writtenBytes = 0;

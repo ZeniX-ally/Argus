@@ -319,6 +319,28 @@ public class AppConfig
     {
         try
         {
+            // 审计：Load() 内部把所有异常吞掉后 return new AppConfig()（全默认值），
+            // ReloadFromDisk 无法区分"读失败"和"读成功"——任何一次瞬时读取失败
+            // （文件被占用 / 磁盘抖动 / 读到半份写入）都会把运行中的 station_id / results_root /
+            // webhook_url / 全部开关静默复位。这里先做一次显式预校验，不通过就保持旧值。
+            var path = Path.Combine(BaseDir, "config.json");
+            if (!File.Exists(path))
+            {
+                Logger.Warning("[配置] 热加载跳过：config.json 不存在（保持当前值）");
+                return false;
+            }
+            try
+            {
+                using var probe = JsonDocument.Parse(File.ReadAllText(path));
+                if (probe.RootElement.ValueKind != JsonValueKind.Object)
+                    throw new JsonException("根节点不是 JSON 对象");
+            }
+            catch (Exception vex)
+            {
+                Logger.Warning($"[配置] 热加载跳过：config.json 不可读或非法 JSON（保持当前值）: {vex.Message}");
+                return false;
+            }
+
             var loaded = Load(false);
             Instance.CopyFrom(loaded);
             try { Logger.SetLevel(Instance.LogLevel); } catch { }
