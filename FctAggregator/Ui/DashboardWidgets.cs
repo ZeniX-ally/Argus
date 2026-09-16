@@ -6,6 +6,11 @@ public sealed class HourlyTrendChart : Control
 {
     private List<HourlyStatItem> _stats = new();
     private int _hoverHour = -1;
+    private string _paintSig = "";
+    private bool _hasSig;
+
+    public int PaintGeneration { get; private set; }
+    public string LastPaintSig => _paintSig;
 
     public HourlyTrendChart()
     {
@@ -14,10 +19,25 @@ public sealed class HourlyTrendChart : Control
         BackColor = Theme.Surface;
     }
 
-    public void SetData(List<HourlyStatItem> stats)
+    public void SetData(List<HourlyStatItem>? stats)
     {
-        _stats = stats ?? new List<HourlyStatItem>();
+        stats ??= new List<HourlyStatItem>();
+        var sig = HourlySig(stats);
+        if (_hasSig && sig == _paintSig) return;
+        _hasSig = true;
+        _paintSig = sig;
+        PaintGeneration++;
+        _stats = stats;
         Invalidate();
+    }
+
+    private static string HourlySig(List<HourlyStatItem> stats)
+    {
+        if (stats.Count == 0) return "";
+        var sb = new System.Text.StringBuilder(stats.Count * 12);
+        foreach (var s in stats)
+            sb.Append(s.Hour).Append(',').Append(s.Pass).Append(',').Append(s.Fail).Append(';');
+        return sb.ToString();
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -83,9 +103,10 @@ public sealed class HourlyTrendChart : Control
         if (chartW <= 20 || chartH <= 20) return;
 
         int maxTotal = 10;
-        foreach (var it in _stats)
+        for (int h = 0; h < _stats.Count; h++)
         {
-            if (it.Total > maxTotal) maxTotal = it.Total;
+            int tot = _stats[h].Pass + _stats[h].Fail;
+            if (tot > maxTotal) maxTotal = tot;
         }
         maxTotal = ((maxTotal / 10) + 1) * 10;
 
@@ -123,6 +144,9 @@ public sealed class HourlyTrendChart : Control
         for (int h = 0; h < 24; h++)
         {
             var item = _stats[h];
+            float passN = item.Pass;
+            float failN = item.Fail;
+            float totalN = passN + failN;
             float cx = chartLeft + (h * slotW) + (slotW / 2f);
             float bx = cx - (barW / 2f);
 
@@ -131,10 +155,10 @@ public sealed class HourlyTrendChart : Control
                 g.FillRectangle(hoverBrush, chartLeft + (h * slotW), chartTop, slotW, chartH);
             }
 
-            if (item.Total > 0)
+            if (totalN > 0)
             {
-                float passH = ((float)item.Pass / maxTotal) * chartH;
-                float failH = ((float)item.Fail / maxTotal) * chartH;
+                float passH = (passN / maxTotal) * chartH;
+                float failH = (failN / maxTotal) * chartH;
 
                 if (passH > 0)
                 {
@@ -153,7 +177,7 @@ public sealed class HourlyTrendChart : Control
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
 
-            if (item.Total > 0)
+            if (totalN > 0)
             {
                 float py = chartBottom - (float)(item.YieldRate / 100.0 * chartH);
                 points.Add(new PointF(cx, py));
@@ -174,12 +198,15 @@ public sealed class HourlyTrendChart : Control
         for (int h = 0; h < 24; h++)
         {
             var item = _stats[h];
-            if (item.Total <= 0) continue;
+            float passN = item.Pass;
+            float failN = item.Fail;
+            if (passN + failN <= 0) continue;
 
             float cx = chartLeft + (h * slotW) + (slotW / 2f);
-            float py = chartBottom - (float)(item.YieldRate / 100.0 * chartH);
+            double yld = item.YieldRate;
+            float py = chartBottom - (float)(yld / 100.0 * chartH);
 
-            if (item.YieldRate < 95.0)
+            if (yld < 95.0)
             {
                 g.FillEllipse(lowYieldFill, cx - 4, py - 4, 8, 8);
                 g.DrawEllipse(lowYieldPen, cx - 4, py - 4, 8, 8);
@@ -257,7 +284,7 @@ public sealed class DeviceOnlinePanel : Panel
     {
         DoubleBuffered = true;
         BackColor = Theme.Surface;
-        Padding = new Padding(8, 6, 8, 6);
+        Padding = new Padding(Theme.Gap);
 
         var bar = new Panel { Dock = DockStyle.Top, Height = 32, BackColor = Theme.Surface, Cursor = Cursors.Hand };
         _title.Text = "设备在线";
@@ -445,6 +472,11 @@ public sealed class TopFailRankPanel : Control
     private List<TopFailItem> _items = new();
     // UI-10：行内长测项名会被 EndEllipsis 截断，悬停列出完整名称（含原因提示）
     private static readonly ToolTip ListTip = new() { AutoPopDelay = 20000, InitialDelay = 500, ReshowDelay = 200 };
+    private string _paintSig = "";
+    private bool _hasSig;
+
+    public int PaintGeneration { get; private set; }
+    public string LastPaintSig => _paintSig;
 
     public TopFailRankPanel()
     {
@@ -453,11 +485,28 @@ public sealed class TopFailRankPanel : Control
         BackColor = Theme.Surface;
     }
 
-    public void SetData(List<TopFailItem> items)
+    public void SetData(List<TopFailItem>? items)
     {
-        _items = items ?? new List<TopFailItem>();
+        items ??= new List<TopFailItem>();
+        var sig = TopFailSig(items);
+        if (_hasSig && sig == _paintSig) return;
+        _hasSig = true;
+        _paintSig = sig;
+        PaintGeneration++;
+        _items = items;
         ListTip.SetToolTip(this, BuildListTooltip());
         Invalidate();
+    }
+
+    private static string TopFailSig(List<TopFailItem> items)
+    {
+        if (items.Count == 0) return "";
+        var sb = new System.Text.StringBuilder(items.Count * 24);
+        foreach (var it in items)
+            sb.Append(it.FailItem).Append('\u0001').Append(it.Count).Append('\u0001')
+                .Append(it.Ratio.ToString("R")).Append('\u0001').Append(it.MainStation).Append('\u0001')
+                .Append(it.RootCauseHint).Append('\u0002');
+        return sb.ToString();
     }
 
     private string BuildListTooltip()
@@ -501,14 +550,17 @@ public sealed class TopFailRankPanel : Control
         }
 
         int slotH = Math.Max(40, (Height - startY - 12) / 5);
-        int maxCount = _items.Count > 0 ? _items[0].Count : 1;
         int y = startY;
+        float maxNow = 1;
+        for (int k = 0; k < Math.Min(5, _items.Count); k++)
+            maxNow = Math.Max(maxNow, _items[k].Count);
 
         for (int i = 0; i < Math.Min(5, _items.Count); i++)
         {
             var it = _items[i];
             bool hasHint = !string.IsNullOrEmpty(it.RootCauseHint);
             int rowH = hasHint ? Math.Max(slotH, 48) : slotH;
+            float countNow = it.Count;
 
             DrawBadge(g, 16, y + 4, i + 1);
 
@@ -517,7 +569,7 @@ public sealed class TopFailRankPanel : Control
                 new Rectangle(46, y + 4, nameW, 18), Theme.TextMain,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
-            string ratioText = $"{it.Count}次 ({it.Ratio:F1}%)";
+            string ratioText = $"{Math.Round(countNow)}次 ({it.Ratio:F1}%)";
             if (!string.IsNullOrEmpty(it.MainStation)) ratioText += $" · 机台:{it.MainStation}";
 
             TextRenderer.DrawText(g, ratioText, Theme.Tiny,
@@ -539,7 +591,7 @@ public sealed class TopFailRankPanel : Control
             using var barBg = new SolidBrush(Color.FromArgb(30, Theme.TextFaint));
             g.FillRectangle(barBg, barX, barY, barMaxW, barH);
 
-            float fillW = Math.Max(4f, (float)it.Count / maxCount * barMaxW);
+            float fillW = Math.Max(4f, countNow / maxNow * barMaxW);
             Color barCol = i == 0 ? Theme.Danger : (i == 1 ? Theme.ChartBarOrange : Theme.ChartAccent);
             using var barFill = new SolidBrush(barCol);
             g.FillRectangle(barFill, barX, barY, fillW, barH);
@@ -619,6 +671,11 @@ public sealed class LiveAlertPanel : Control
 {
     private List<LiveFailAlert> _alerts = new();
     private int _hoverIndex = -1;
+    private string _paintSig = "";
+    private bool _hasSig;
+
+    public int PaintGeneration { get; private set; }
+    public string LastPaintSig => _paintSig;
 
     public event Action<LiveFailAlert>? AlertClicked;
 
@@ -629,10 +686,26 @@ public sealed class LiveAlertPanel : Control
         BackColor = Theme.Surface;
     }
 
-    public void SetData(List<LiveFailAlert> alerts)
+    public void SetData(List<LiveFailAlert>? alerts)
     {
-        _alerts = alerts ?? new List<LiveFailAlert>();
+        alerts ??= new List<LiveFailAlert>();
+        var sig = AlertSig(alerts);
+        if (_hasSig && sig == _paintSig) return;
+        _hasSig = true;
+        _paintSig = sig;
+        PaintGeneration++;
+        _alerts = alerts;
         Invalidate();
+    }
+
+    private static string AlertSig(List<LiveFailAlert> alerts)
+    {
+        if (alerts.Count == 0) return "";
+        var sb = new System.Text.StringBuilder(alerts.Count * 24);
+        foreach (var a in alerts)
+            sb.Append(a.Id).Append('\u0001').Append(a.TimeText).Append('\u0001')
+                .Append(a.Sn).Append('\u0001').Append(a.FailReason).Append('\u0002');
+        return sb.ToString();
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -704,16 +777,9 @@ public sealed class LiveAlertPanel : Control
             int y = startY + (i * rowH);
             var rowRect = new Rectangle(12, y, Width - 24, rowH - 4);
 
-            if (i == _hoverIndex)
-            {
-                using var hovB = new SolidBrush(Theme.ChartHover);
-                g.FillRectangle(hovB, rowRect);
-            }
-            else
-            {
-                using var cardB = new SolidBrush(Theme.ChartFailSoft);
-                g.FillRectangle(cardB, rowRect);
-            }
+            var rowBg = i == _hoverIndex ? Theme.ChartHover : Theme.ChartFailSoft;
+            using var rowB = new SolidBrush(rowBg);
+            g.FillRectangle(rowB, rowRect);
 
             using var borP = new Pen(Theme.ChartFailBorder, 1f);
             g.DrawRectangle(borP, rowRect);

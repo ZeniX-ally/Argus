@@ -15,6 +15,11 @@ public sealed class MeasurementTrendChart : Control
     private int _hoverSeries = -1;
     private int _hoverBucket = -1;
     private int _hoverX = -1;
+    private string _paintSig = "";
+    private bool _hasSig;
+
+    public int PaintGeneration { get; private set; }
+    public string LastPaintSig => _paintSig;
 
     public MeasurementTrendChart()
     {
@@ -26,12 +31,39 @@ public sealed class MeasurementTrendChart : Control
 
     public void SetData(TrendResult? data, List<TrendSeries> series, string? emptyHint = null, string? statusHint = null)
     {
+        series ??= new List<TrendSeries>();
+        var storedEmpty = series.Count == 0 ? emptyHint : null;
+        var storedStatus = series.Count > 0 ? statusHint : null;
+        var sig = TrendPaintSig(data, series, storedEmpty, storedStatus);
+        if (_hasSig && sig == _paintSig) return;
+        _hasSig = true;
+        _paintSig = sig;
+        PaintGeneration++;
         _data = data;
-        _series = series ?? new List<TrendSeries>();
-        _emptyHint = series is null or { Count: 0 } ? emptyHint : null;
-        _statusHint = series is { Count: > 0 } ? statusHint : null;
+        _series = series;
+        _emptyHint = storedEmpty;
+        _statusHint = storedStatus;
         _hoverSeries = _hoverBucket = _hoverX = -1;
         Invalidate();
+    }
+
+    private static string TrendPaintSig(TrendResult? data, List<TrendSeries> series, string? emptyHint, string? statusHint)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(emptyHint).Append('\u0001').Append(statusHint).Append('\u0001');
+        if (data != null)
+            sb.Append(data.From.Ticks).Append(',').Append(data.ToExclusive.Ticks).Append(',')
+                .Append(data.BucketSeconds).Append(',').Append(data.BucketCount);
+        foreach (var s in series)
+        {
+            sb.Append('|').Append(s.TestName).Append(':').Append(s.Points.Count).Append('/')
+                .Append(s.FailPoints.Count).Append('@').Append(s.Samples);
+            foreach (var p in s.Points)
+                sb.Append('#').Append(p.Bucket).Append(',').Append(p.MeanValue.ToString("R")).Append(',').Append(p.N);
+            foreach (var p in s.FailPoints)
+                sb.Append('!').Append(p.Bucket).Append(',').Append(p.MeanValue.ToString("R")).Append(',').Append(p.N);
+        }
+        return sb.ToString();
     }
 
     /// <summary>绘图区（与 OnPaint 同口径，避免两处硬编码漂移）。</summary>

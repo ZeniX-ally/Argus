@@ -177,7 +177,7 @@ public class MainForm : AppForm
 
         Controls.Add(topBar);
 
-        _tabs = new TabControl { Dock = DockStyle.Fill };
+        _tabs = new BufferedTabControl { Dock = DockStyle.Fill };
         _tabs.Dock = DockStyle.Fill;
         _tabs.Font = Theme.Body;
         contentHost.Controls.Add(_tabs);
@@ -234,11 +234,12 @@ public class MainForm : AppForm
 
     private Panel BuildDashboardPage()
     {
-        var page = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap, Theme.Gap, Theme.Gap, 0) };
+        var page = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(Theme.Gap) };
 
         var kpiRow = new TableLayoutPanel
         {
             Dock = DockStyle.Top, Height = 92, ColumnCount = 5, RowCount = 1, BackColor = Theme.Bg,
+            Margin = new Padding(0, 0, 0, Theme.Gap),
         };
         for (int i = 0; i < 5; i++) kpiRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
         void AddKpi(string key, string title, Color accent, int col)
@@ -254,7 +255,7 @@ public class MainForm : AppForm
         AddKpi("today_interrupted", "今日中断", Theme.Warning, 4);
         _kpi["today_interrupted"].Margin = new Padding(0);
 
-        var lower = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(0, Theme.Gap, 0, Theme.Gap) };
+        var lower = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Bg, Padding = new Padding(0, Theme.Gap, 0, 0) };
 
         var mainGrid = new TableLayoutPanel
         {
@@ -421,8 +422,11 @@ public class MainForm : AppForm
         UpdateChips();
         UpdateProgress();
         UpdateKpi();
-        RefreshDeviceOnline();
-        if (_page == 0) UpdateDashboardWidgets();
+        if (_page == 0)
+        {
+            RefreshDeviceOnline();
+            UpdateDashboardWidgets();
+        }
         if (_tickCount % 10 == 1) UpdateTodoBadgeAsync();
         UpdateStatusBar();
         if (_tickCount % 5 == 1) RefreshLiveStats();

@@ -1763,6 +1763,115 @@ Argus 统一发布包  v{newer}
             Check(paintOk, "UI 稳定性: DeviceOnlinePanel 空数据/有设备 OnPaint 离屏绘制无异常");
         }
 
+        // ── v3.44.2 去卡顿：同数据不重绘 / Tab 合成 / 表格双缓冲 / 自绘 OptimizedDoubleBuffer ──
+        {
+            Console.WriteLine("\n【去卡顿】SetData 签名跳过 / BufferedTabControl / StyleGrid 双缓冲…");
+
+            var hours = Enumerable.Range(0, 24).Select(h => new HourlyStatItem { Hour = h, Pass = h, Fail = 1 }).ToList();
+            using (var chart = new HourlyTrendChart())
+            {
+                chart.SetData(hours);
+                var g1 = chart.PaintGeneration;
+                var sig1 = chart.LastPaintSig;
+                chart.SetData(hours.ToList());
+                Check(chart.PaintGeneration == g1 && chart.LastPaintSig == sig1,
+                    "去卡顿: HourlyTrendChart 相同小时序列第二次 SetData 不换签名、不增代际");
+                hours[3].Pass = 99;
+                chart.SetData(hours);
+                Check(chart.PaintGeneration == g1 + 1, "去卡顿: HourlyTrendChart 数据变化后代际 +1");
+                chart.SetData(null);
+                var gEmpty = chart.PaintGeneration;
+                chart.SetData(new List<HourlyStatItem>());
+                Check(chart.PaintGeneration == gEmpty, "去卡顿: HourlyTrendChart null 与空列表签名相同");
+            }
+
+            var tops = new List<TopFailItem>
+            {
+                new() { FailItem = "KL30_1", Count = 3, Ratio = 12.5, MainStation = "FCT1" },
+            };
+            using (var rank = new TopFailRankPanel())
+            {
+                rank.SetData(tops);
+                var g1 = rank.PaintGeneration;
+                rank.SetData(new List<TopFailItem> { new() { FailItem = "KL30_1", Count = 3, Ratio = 12.5, MainStation = "FCT1" } });
+                Check(rank.PaintGeneration == g1, "去卡顿: TopFailRankPanel 相同条目第二次不重绘");
+                tops[0].Count = 4;
+                rank.SetData(tops);
+                Check(rank.PaintGeneration == g1 + 1, "去卡顿: TopFailRankPanel 次数变化后代际 +1");
+            }
+
+            var alerts = new List<LiveFailAlert>
+            {
+                new() { Id = 7, TimeText = "08:01:02", Sn = "SN1", FailReason = "KL30" },
+            };
+            using (var live = new LiveAlertPanel())
+            {
+                live.SetData(alerts);
+                var g1 = live.PaintGeneration;
+                live.SetData(new List<LiveFailAlert> { new() { Id = 7, TimeText = "08:01:02", Sn = "SN1", FailReason = "KL30" } });
+                Check(live.PaintGeneration == g1, "去卡顿: LiveAlertPanel 相同告警第二次不重绘");
+                alerts[0].TimeText = "08:01:03";
+                live.SetData(alerts);
+                Check(live.PaintGeneration == g1 + 1, "去卡顿: LiveAlertPanel 时间变化后代际 +1");
+            }
+
+            var trend = new TrendResult
+            {
+                From = new DateTime(2026, 9, 1),
+                ToExclusive = new DateTime(2026, 9, 2),
+                BucketSeconds = 3600,
+                BucketCount = 1,
+            };
+            var series = new List<TrendSeries>
+            {
+                new()
+                {
+                    TestName = "KL30",
+                    Points = { new TrendPoint { Bucket = 0, MeanValue = 1.2, N = 3, Norm = 0.5 } },
+                },
+            };
+            using (var trendChart = new MeasurementTrendChart())
+            {
+                trendChart.SetData(trend, series, "空", "忙");
+                var g1 = trendChart.PaintGeneration;
+                trendChart.SetData(trend, series, "空", "忙");
+                Check(trendChart.PaintGeneration == g1, "去卡顿: MeasurementTrendChart 相同输入第二次不重绘");
+                trendChart.SetData(trend, series, "空", "其它提示");
+                Check(trendChart.PaintGeneration == g1 + 1, "去卡顿: MeasurementTrendChart 状态提示变化后代际 +1");
+            }
+
+            using (var dg = new DataGridView())
+            {
+                Theme.Apply(dg, isPageRoot: false);
+                var prop = typeof(Control).GetProperty("DoubleBuffered",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                Check(prop != null && (bool)prop.GetValue(dg)!,
+                    "去卡顿: Theme.StyleGrid 反射打开 DataGridView.DoubleBuffered");
+            }
+
+            using (var tabs = new BufferedTabControl())
+            {
+                var cpProp = typeof(Control).GetProperty("CreateParams",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                var cp = (CreateParams)cpProp!.GetValue(tabs)!;
+                Check((cp.ExStyle & 0x02000000) != 0,
+                    "去卡顿: BufferedTabControl CreateParams 含 WS_EX_COMPOSITED");
+            }
+
+            bool HasOpt(Control c)
+            {
+                var m = typeof(Control).GetMethod("GetStyle",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                return (bool)m!.Invoke(c, new object[] { ControlStyles.OptimizedDoubleBuffer })!;
+            }
+            using (var kpi = new KpiCard("今日", Theme.Primary))
+                Check(HasOpt(kpi), "去卡顿: KpiCard OptimizedDoubleBuffer");
+            using (var chips = new ChipBar())
+                Check(HasOpt(chips), "去卡顿: ChipBar OptimizedDoubleBuffer");
+            using (var card = new KeyboardProbeCard())
+                Check(HasOpt(card), "去卡顿: BoardCard OptimizedDoubleBuffer");
+        }
+
         {
             Check(new AppConfig().AutoUpdate, "无感热升级: config auto_update 缺省 true（自动暂存+自动重启）");
             var cwLive = new AppConfig { LearnNormalEnabled = true };

@@ -29,7 +29,7 @@ public abstract class BoardCardBase : Panel
         DoubleBuffered = true;
         BackColor = Color.Transparent;
         Cursor = Cursors.Hand;
-        SetStyle(ControlStyles.ResizeRedraw, true);
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         // UI-9：卡片此前只能鼠标操作，键盘/读屏用户无法确认或改状态
         SetStyle(ControlStyles.Selectable, true);
         TabStop = true;

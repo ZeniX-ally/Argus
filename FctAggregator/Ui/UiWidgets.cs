@@ -14,12 +14,14 @@ public sealed class KpiCard : Control
         _big = big;
         DoubleBuffered = true;
         BackColor = Theme.Surface;
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
     }
 
     public void Set(string value, string sub = "")
     {
         if (_value == value && _sub == sub) return;
-        _value = value; _sub = sub;
+        _value = value;
+        _sub = sub;
         Invalidate();
     }
 
@@ -27,6 +29,8 @@ public sealed class KpiCard : Control
     {
         var g = e.Graphics;
         Theme.DrawCard(g, ClientRectangle, null);
+        using (var accent = new SolidBrush(_accent))
+            g.FillRectangle(accent, 0, 10, 3, Math.Max(12, Height - 20));
 
         TextRenderer.DrawText(g, Text, Theme.Small,
             new Rectangle(14, 8, Width - 24, 16), Theme.TextSub,
@@ -57,7 +61,7 @@ public sealed class ChipBar : Control
     {
         DoubleBuffered = true;
         BackColor = Theme.Surface;
-        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint, true);
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
     }
 
     public void SetChips(List<(string text, Color color)> chips)
@@ -188,7 +192,7 @@ public sealed class SectionPanel : Panel
         {
             Dock = DockStyle.Fill,
             BackColor = Theme.Surface,
-            Padding = new Padding(10, 2, 10, 10),
+            Padding = new Padding(Theme.Gap, 2, Theme.Gap, Theme.Gap),
         };
         var head = new Panel { Dock = DockStyle.Top, Height = _titleHeight, BackColor = Theme.Surface };
         Controls.Add(Content);

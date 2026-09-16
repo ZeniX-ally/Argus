@@ -59,9 +59,9 @@ public class DeviceStatusPanel : Panel
         kpiHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
         kpiHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
         kpiHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.4f));
-        _kpiOn = new KpiCard("COM 在线", Theme.Success, big: false) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 6, 0) };
-        _kpiOff = new KpiCard("COM 离线", Theme.Danger, big: false) { Dock = DockStyle.Fill, Margin = new Padding(6, 0, 6, 0) };
-        _kpiUsb = new KpiCard("USB 已登记", Theme.Info, big: false) { Dock = DockStyle.Fill, Margin = new Padding(6, 0, 0, 0) };
+        _kpiOn = new KpiCard("COM 在线", Theme.Success, big: false) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, 0) };
+        _kpiOff = new KpiCard("COM 离线", Theme.Danger, big: false) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, Theme.Gap, 0) };
+        _kpiUsb = new KpiCard("USB 已登记", Theme.Info, big: false) { Dock = DockStyle.Fill, Margin = new Padding(0) };
         kpiHost.Controls.Add(_kpiOn, 0, 0);
         kpiHost.Controls.Add(_kpiOff, 1, 0);
         kpiHost.Controls.Add(_kpiUsb, 2, 0);

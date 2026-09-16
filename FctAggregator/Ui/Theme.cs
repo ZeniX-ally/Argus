@@ -259,6 +259,15 @@ public static class Theme
         dg.AlternatingRowsDefaultCellStyle.BackColor = AltRowA;
         dg.RowHeadersDefaultCellStyle.BackColor = GridHeaderBg;
         dg.RowHeadersDefaultCellStyle.ForeColor = TextFaint;
+        EnableGridDoubleBuffer(dg);
+    }
+
+    /// <summary>WinForms 的 DoubleBuffered 是 protected，只能反射开；公开属性不够。</summary>
+    private static void EnableGridDoubleBuffer(DataGridView dg)
+    {
+        typeof(Control).GetProperty("DoubleBuffered",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?.SetValue(dg, true);
     }
 
     private static bool IsSkipped(Control c) =>

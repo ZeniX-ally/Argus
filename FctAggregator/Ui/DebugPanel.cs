@@ -24,7 +24,7 @@ public class DebugPanel : Panel
         var side = new Panel
         {
             Dock = DockStyle.Left, Width = 220, BackColor = Theme.Surface,
-            Padding = new Padding(8, 8, 8, 8),
+            Padding = new Padding(Theme.Gap),
         };
         var nav = new FlowLayoutPanel
         {

@@ -13,7 +13,7 @@ Argus 是一套面向工厂 FCT（Functional Test，功能测试）工位的机�
 - **机台端自学习**（规格 05 + 正常态 P1）：G49 产品字典驱动故障归并、自基线良率预警、Welford/P² 正常态建模（`learn_normal_enabled` 默认开）
 - **工具箱**：FCT 取数打包（fetch）、TDMS 波形查看（tdms）、FAIL 排行导出（rank）
 - **无缝热升级**：检测更新包自动暂存，分离进程提交，失败自动回滚，不碰现场数据
-- **自检体系**：1016 项断言全链路自检，临时目录隔离运行（不碰真实库）
+- **自检体系**：1030 项断言全链路自检，临时目录隔离运行（不碰真实库）
 
 ## 环境要求
 
@@ -29,7 +29,7 @@ cd Argus-main
 dotnet build Argus.sln -c Release   # 0 警告 0 错误为提交门槛
 ```
 
-运行自检（1016 项断言，使用临时目录隔离，不碰真实数据）：
+运行自检（1030 项断言，使用临时目录隔离，不碰真实数据）：
 
 ```powershell
 cd FctAggregator\selftest\bin\Release\net8.0-windows
@@ -101,7 +101,7 @@ Argus-main/
 │   ├── Infra/              # Config/Logger/TimeUtil/Xlsx/CsvUtil/FeishuNotifier
 │   ├── Parsing/            # 插件式 XML 解析器
 │   ├── modules/            # fetch / tdms / rank 工具箱
-│   ├── selftest/           # 1016 项断言自检工程
+│   ├── selftest/           # 1030 项断言自检工程
 │   └── tools/              # 打包 / 冒烟 / 诊断脚本
 ├── scripts/                # make_release.ps1 一键发布
 ├── docs/                   # 设计文档（含历史 mesh/聚合协议文档备查）
