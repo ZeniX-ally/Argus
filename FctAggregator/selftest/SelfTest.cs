@@ -46,7 +46,11 @@ class SelfTest
 
         var work = Path.Combine(Path.GetTempPath(), "fct_agg_" + Guid.NewGuid().ToString("N")[..6]);
         Directory.CreateDirectory(work);
+        // 审计 F14：真实库 fixture 原只找 dist\data\fct.db——dist/ 已随纯单机化删除，
+        // haveReal 恒 false，「迁移前自动备份」等老库兼容断言每次被静默跳过。补 data\fct.db 候选
+        // （gitignore 的运行期目录，开发机跑过主程序即有；两处都没有仍走空库路径）。
         var real = FindUp(Path.Combine("dist", "data", "fct.db"));
+        if (real.Length == 0) real = FindUp(Path.Combine("data", "fct.db"));
         var db = Path.Combine(work, "fct.db");
 
         bool haveReal = real.Length > 0 && File.Exists(real);
@@ -667,7 +671,7 @@ class SelfTest
             Check(realAgg.Count > 0 && realAgg.Count < realFails.Count,
                   $"真实库：{realFails.Count} 条 FAIL -> 去重后 {realAgg.Count} 个故障项（确实去了重）");
         else
-            Console.WriteLine("    (跳过真实库断言：无 fixture，把任意一个机台库拷到 dist\\data\\fct.db 即可启用)");
+            Console.WriteLine("    (跳过真实库断言：无 fixture，把任意一个机台库拷到 data\\fct.db 即可启用)");
         Check(realFails.All(f => f.GetType().GetField("Sn") == null),
               "FailItemSource 结构里根本没有 Sn 字段（从数据层就不带 SN）");
 
@@ -1285,6 +1289,9 @@ class SelfTest
 
         Console.WriteLine("\n【v3.48.6 审计修复批四】回填水位单调 / 基线日期归一 / 样本σ / 近常量闸门");
         RunAuditFixBatch4Tests(work);
+
+        Console.WriteLine("\n【v3.48.7 审计修复批五】工程纪律：脚本失效/文档基线/夹具路径/来源项round-trip");
+        RunAuditFixBatch5Tests();
 
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
@@ -5721,5 +5728,30 @@ Argus 统一发布包  v{newer}
             Check(!DeviationScorer.IsNearConstant(new NormalModelRow { Mean = 0.001, Sigma = 1.0, N = 10 }),
                   "C5：小量程大波动不误判为近常量");
         }
+    }
+
+    /// <summary>v3.48.7 审计修复批五（工程纪律）：先写断言再改生产代码。</summary>
+    static void RunAuditFixBatch5Tests()
+    {
+        // F12：待办备注「来源测试项」round-trip——写进去的必须原样读出来
+        var items = new[] { "6.1.1.1 5V_Rail", "BSW_v_Kl30_HS", "  带空格  " };
+        var note = TodoGrouping.BuildSourceItemsNote(items);
+        var parsed = TodoGrouping.ParseSourceItems(note);
+        Check(parsed.Count == 3 && parsed[0] == "6.1.1.1 5V_Rail" && parsed[1] == "BSW_v_Kl30_HS",
+              $"F12：来源测试项 round-trip 保序保值（实得 {parsed.Count} 条）");
+        Check(TodoGrouping.ParseSourceItems("没有标记的备注").Count == 0,
+              "F12：无标记备注解析为空（不误读其它文本）");
+        Check(TodoGrouping.ParseSourceItems(null).Count == 0 && TodoGrouping.ParseSourceItems("").Count == 0,
+              "F12：null/空串解析为空");
+
+        // F12：spec 开关关时 MergeKeyOf 必须退化为 KeyOf（两函数一致性锁定）
+        var prevSpec = AppConfig.Instance.TodoSpecMerge;
+        AppConfig.Instance.TodoSpecMerge = false;
+        try
+        {
+            Check(TodoGrouping.MergeKeyOf("6.1.1.1 BSW_v_Kl30_HS") == TodoGrouping.KeyOf("6.1.1.1 BSW_v_Kl30_HS"),
+                  "F12：todo_spec_merge=false 时合并键退化为 token 键（不锁死 G49）");
+        }
+        finally { AppConfig.Instance.TodoSpecMerge = prevSpec; }
     }
 }

@@ -416,6 +416,36 @@ $KnownKeys = [ordered]@{
     'analyze_attr_min_bucket'         = 20
     'analyze_attr_dev_ratio'          = 1.5
     'analyze_effect_d'                = 0.8
+    # ── 审计 F6：以下 25 个键是 v3.41~v3.44 飞书卡片/存储监控/备份/更新目录期新增的，
+    #    漏登记会把现场生效配置 WARN 成「Argus does not read… consider deleting」——现场误删即丢功能。
+    #    默认值与 config.example.json / Infra/Config.cs 对齐。
+    'feishu_fail_merge_enabled'           = $true
+    'feishu_fail_merge_window_sec'        = 60
+    'feishu_fail_merge_max'               = 20
+    'feishu_collect_alert_enabled'        = $true
+    'feishu_collect_alert_window_min'     = 60
+    'feishu_collect_alert_parse_min'      = 10
+    'feishu_collect_alert_retry_min'      = 20
+    'feishu_collect_alert_throttle_min'   = 60
+    'feishu_daily_summary_enabled'        = $true
+    'feishu_group_alert_enabled'          = $true
+    'feishu_deviation_alert_enabled'      = $true
+    'feishu_deviation_min_score'          = 90
+    'feishu_deviation_max_per_day'        = 5
+    'feishu_storage_alert_enabled'        = $true
+    'feishu_storage_alert_score'          = 60
+    'feishu_todo_overdue_enabled'         = $true
+    'feishu_todo_overdue_days'            = 3
+    'feishu_todo_overdue_min_severity'    = 'critical'
+    'update_dir'                          = 'data/updates'
+    'db_storage_auto_optimize'            = $true
+    'db_storage_monitor_hours'            = 4
+    'db_vacuum_threshold_mb'              = 500
+    'db_parse_failure_retention_days'     = 30
+    'fct_program_source_root'             = 'C:/FTS'
+    'fct_program_backup_dir'              = 'D:/backup'
+    'fct_program_backup_enabled'          = $true
+    'fct_program_backup_keep'             = 10
 }
 # keys Argus itself does not read but the updater / autostart uses - keep them
 $KeepKeys = @('auto_start', 'fts')

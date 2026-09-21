@@ -326,7 +326,11 @@ if (-not $dbPath) {
 } else {
     W "    db: $dbPath"
     $stationFilter = if ($resolvedStation) { " AND station_id = '$resolvedStation'" } else { '' }
-    $sqlToday = "SELECT result, COUNT(*) AS cnt FROM test_records WHERE test_date = '$today'$stationFilter GROUP BY result;"
+    # 审计 F10：test_date 有 yyyyMMdd 与 yyyy-MM-dd 两种格式（主程序 TestDateEqDay 双格式），
+    # 单格式等值会少算 dash 行 → 误报「disk>DB 疑漏采」。这里同样双格式。
+    $todayDash = (Get-Date).ToString('yyyy-MM-dd')
+    $dateEq = "(test_date = '$today' OR test_date = '$todayDash')"
+    $sqlToday = "SELECT result, COUNT(*) AS cnt FROM test_records WHERE $dateEq$stationFilter GROUP BY result;"
     $outToday = Invoke-SqliteQuery $dbPath $sqlToday
     if ($outToday) {
         W "    DB today test_date=$today (folder date, same as Argus UI):"
@@ -347,7 +351,7 @@ if (-not $dbPath) {
         $outTs -split "`n" | ForEach-Object { W "      $_" }
     }
 
-    $sqlFail = "SELECT substr(COALESCE(batch_timestamp, created_at), 1, 19) AS ts, sn, model, fail_reason FROM test_records WHERE test_date = '$today' AND result = 'FAIL'$stationFilter ORDER BY id DESC LIMIT 10;"
+    $sqlFail = "SELECT substr(COALESCE(batch_timestamp, created_at), 1, 19) AS ts, sn, model, fail_reason FROM test_records WHERE $dateEq AND result = 'FAIL'$stationFilter ORDER BY id DESC LIMIT 10;"
     $outFail = Invoke-SqliteQuery $dbPath $sqlFail
     if ($outFail) {
         W '    recent FAIL (max 10):'

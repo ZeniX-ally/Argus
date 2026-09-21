@@ -19,8 +19,17 @@ $rDir = Join-Path $fixture 'Results\Offline\E3002781\20260722'
 $tDir = Join-Path $fixture 'TDMS Log\Offline\E3002781\20260722'
 New-Item -ItemType Directory -Path $rDir, $tDir -Force | Out-Null
 
-Get-ChildItem (Join-Path $proj 'modules\Distributor\tpl') -Filter *.xml |
-    Copy-Item -Destination $rDir
+# 审计 F2：v3.31.0 删除聚合时代后 modules\Distributor\tpl 已不存在，
+# 原写法 Get-ChildItem 在 ErrorActionPreference=Stop 下直接崩。改为：目录不在就明确告知并退出，
+# 需要人工放样例 XML（本仓库不随源码分发结果文件样本）。
+$tplDir = Join-Path $proj 'modules\Distributor\tpl'
+if (-not (Test-Path $tplDir)) {
+    Write-Host "[!!] fixture 源 $tplDir 不存在（随 v3.31.0 删除）。" -ForegroundColor Yellow
+    Write-Host "     请手动把样例 FCT 结果 XML 放到: $rDir" -ForegroundColor Yellow
+    Write-Host "     本脚本不再自动崩在此处；无 fixture 时后续对比无意义，建议改用 selftest 的 xlsx 分组断言。" -ForegroundColor Yellow
+    exit 2
+}
+Get-ChildItem $tplDir -Filter *.xml | Copy-Item -Destination $rDir
 $fetcherFx = Join-Path $repo 'Releases\fct-fetcher-cs-old\selftest'
 if (Test-Path $fetcherFx) {
     Get-ChildItem "$fetcherFx\Results" -Recurse -Filter *.xml | Copy-Item -Destination $rDir
