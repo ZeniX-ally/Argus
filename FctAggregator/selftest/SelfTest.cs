@@ -1277,6 +1277,9 @@ class SelfTest
         Console.WriteLine("\n【v3.48.3 审计修复批一】待办区间合并键 / 复发FAIL告警 / dotnet宿主重启 / 压缩保留期");
         RunAuditFixBatch1Tests(work);
 
+        Console.WriteLine("\n【v3.48.4 审计修复批二】瘦表DDL事务 / checkpoint返回值 / 备份保留glob / 状态机常量 / 区间时间归一");
+        RunAuditFixBatch2Tests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -5447,6 +5450,169 @@ Argus 统一发布包  v{newer}
             db.CompactStorage(365, vacuum: false);
             Check(RowCountB2(dbPath, "test_measurements") == 1,
                   "B2：保留期 365 时 200 天前的测量不被压缩清掉（原缺陷硬钳 180 多删 180~365 天明细）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>v3.48.4 审计修复批二（数据安全类）：先写断言再改生产代码。</summary>
+    static void RunAuditFixBatch2Tests(string work)
+    {
+        long Count(string p, string sql)
+        {
+            using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={p}");
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = sql;
+            return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
+        }
+
+        // B3：瘦表重建整组 DDL 单事务——重建后不得残留 _slim 半成品表，数据必须原样保留
+        {
+            var dir = Path.Combine(work, "b3_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string dbPath = Path.Combine(dir, "slim.db");
+            var db = new Database(dbPath);
+            db.BatchInsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "E300", Result = "PASS",
+                    TestDate = DateTime.Today.ToString("yyyyMMdd"),
+                    BatchTimestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), XmlPath = @"C:\t\b3_0.xml",
+                    Measurements = new[] { new MeasurementRow { TestName = "T_B3", Value = 2.0 } }.ToList(),
+                },
+            });
+            // 人为把测量表改回胖结构（补冗余列），迫使 CompactStorage 走重建分支
+            using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+            {
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = "ALTER TABLE test_measurements ADD COLUMN xml_path TEXT";
+                cmd.ExecuteNonQuery();
+            }
+            db.CompactStorage(30, vacuum: false);
+            Check(Count(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='test_measurements_slim'") == 0,
+                  "B3：重建后无 test_measurements_slim 半成品残留（DDL 单事务，崩溃不留空表）");
+            Check(Count(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='test_measurements'") == 1,
+                  "B3：重建后主表明细在");
+            Check(Count(dbPath, "SELECT COUNT(*) FROM test_measurements") == 1,
+                  "B3：重建后测量数据原样保留");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // B4：备份清理 glob 排除 .sha256——名义「保留 7 份」必须真的留 7 个 .bak
+        {
+            var dir = Path.Combine(work, "b4_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string dbPath = Path.Combine(dir, "fct.db");
+            var db = new Database(dbPath);
+            for (int k = 1; k <= 10; k++)
+            {
+                var name = $"{dbPath}.bak-202001{k:02}";
+                File.WriteAllText(name, "x");
+                File.WriteAllText(name + ".sha256", "y");
+            }
+            db.BackupDaily();
+            var baks = Directory.GetFiles(dir, "fct.db.bak-*")
+                .Count(f => !f.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase));
+            Check(baks == Database.BackupKeepDays,
+                  $"B4：每日备份后 .bak 实留 {Database.BackupKeepDays} 份（实得 {baks}；原缺陷 .sha256 占额度只留 ~3 份）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // B5：wal_checkpoint 返回值被读取——新库 checkpoint 必须 busy=0；备份路径可用
+        {
+            var dir = Path.Combine(work, "b5_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string dbPath = Path.Combine(dir, "cp.db");
+            var db = new Database(dbPath);
+            using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+            {
+                c.Open();
+                Check(Database.CheckpointTruncate(c),
+                      "B5：CheckpointTruncate 读 PRAGMA 返回值，新库 busy=0 判 true");
+            }
+            db.CheckpointTruncateForBackup(); // 不得抛
+            Check(File.Exists(dbPath), "B5：CheckpointTruncateForBackup 后库完好");
+            Check(db.BackupDaily() != null, "B5：checkpoint 正常时每日备份成功");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // B8：维修状态机终态收口 MaintenanceMeta（常量锁定 + 行为回归）
+        {
+            Check(MaintenanceMeta.DoneStatus == "resolved" && MaintenanceMeta.LegacyClosed == "closed"
+                  && MaintenanceMeta.Normalize("closed") == "resolved",
+                  "B8：终态常量锁定（DoneStatus=resolved / LegacyClosed=closed，closed 归一化为 resolved）");
+            var dir = Path.Combine(work, "b8_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "m.db"));
+            db.InsertOne(new TestRecord
+            {
+                StationId = "FCT1", Model = "E300", Category = "Offline", TestDate = DateTime.Today.ToString("yyyyMMdd"),
+                Sn = "SN-B8", Result = "FAIL", XmlPath = Path.Combine(dir, "b8.xml"),
+                FailReason = "B8_Item", BatchTimestamp = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss"), HasFailItems = true,
+            });
+            db.SyncTodoItems(30);
+            var todo = db.ListTodoView().First(x => x.Title.Contains("B8_Item"));
+            var mid = db.AcknowledgeTodo(todo.Id, "测试", "major");
+            // 直接写遗留 closed 状态，验证 ReconcileTodoStates 按 Meta 常量把待办归到 resolved
+            using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(dir, "m.db")}"))
+            {
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = "UPDATE maintenance_records SET status='closed' WHERE id=@id";
+                cmd.Parameters.AddWithValue("@id", mid);
+                cmd.ExecuteNonQuery();
+            }
+            db.SyncTodoItems(30);
+            Check(!db.ListTodoView().Any(x => x.Title.Contains("B8_Item")),
+                  "B8：遗留 closed 状态的维修记录仍能让待办离开待办列（常量收口后行为不变）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // B12：区间首末时间拼装归一 dash 格式——dash 记录不再得到空串
+        {
+            var dir = Path.Combine(work, "b12_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "r.db"));
+            var todayDash = DateTime.Today.ToString("yyyy-MM-dd");
+            db.InsertOne(new TestRecord
+            {
+                StationId = "FCT1", Model = "E300", Category = "Offline", TestDate = todayDash,
+                Sn = "SN-B12", Result = "FAIL", XmlPath = Path.Combine(dir, "b12.xml"),
+                FailReason = "B12_Range_Item", BatchTimestamp = "", HasFailItems = true,
+            });
+            db.SyncTodoItems(30);
+            var item = db.ListTodoView(DateTime.Today, DateTime.Today).FirstOrDefault(x => x.Title.Contains("B12_Range_Item"));
+            Check(item != null, "B12 前置：dash 今日 FAIL 进入区间视图");
+            var expect = DateTime.Today.ToString("yyyy-MM-dd") + " 00:00:00";
+            Check(item != null && item.RangeFirstSeen == expect && item.RangeLastSeen == expect,
+                  $"B12：dash 记录区间首末时间归一为 {expect}（实得 {item?.RangeFirstSeen}，原缺陷 substr 拼出垃圾串）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // B14：状态读-写单事务 + 不存在 id 的边界
+        {
+            var dir = Path.Combine(work, "b14_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "t.db"));
+            Check(!db.UpdateMaintenanceStatus(999999, "resolved"), "B14：更新不存在的维修记录返回 false");
+            db.InsertOne(new TestRecord
+            {
+                StationId = "FCT1", Model = "E300", Category = "Offline", TestDate = DateTime.Today.ToString("yyyyMMdd"),
+                Sn = "SN-B14", Result = "FAIL", XmlPath = Path.Combine(dir, "b14.xml"),
+                FailReason = "B14_Item", BatchTimestamp = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss"), HasFailItems = true,
+            });
+            db.SyncTodoItems(30);
+            var todo = db.ListTodoView().First(x => x.Title.Contains("B14_Item"));
+            var mid = db.AcknowledgeTodo(todo.Id, "测试", "major");
+            var events = 0;
+            db.MaintenanceStatusChanged += (_, from, to) => events++;
+            Check(db.UpdateMaintenanceStatus(mid, "resolved"), "B14：状态更新成功（单事务读-写）");
+            Check(events == 1 && db.GetMaintenance(mid)!.Status == "resolved",
+                  "B14：状态变更事件照旧触发一次且落库");
+            Check(db.UpdateMaintenanceStatus(mid, "resolved"), "B14：同状态重复更新短路返回 true（无变更不通知）");
+            Check(events == 1, "B14：无变更时不重复发通知");
             try { Directory.Delete(dir, true); } catch { }
         }
     }

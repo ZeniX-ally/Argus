@@ -189,9 +189,12 @@ public sealed partial class Database
         SqliteConnection.ClearAllPools();
     }
 
+    // B3：整组 DDL（CREATE/INSERT…SELECT/DROP/RENAME/INDEX）包进单事务——
+    // 原实现每条自动提交，DROP 与 RENAME 之间崩溃只剩 test_measurements_slim 空表，Init 另建空表后数据不可达。
     private bool RebuildSlimMeasurements(SqliteConnection conn)
     {
         if (!HasColumn(conn, "test_measurements", "xml_path")) return false;
+        using var tx = conn.BeginTransaction();
         Exec(conn, @"
             CREATE TABLE test_measurements_slim (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -205,17 +208,18 @@ public sealed partial class Database
                 unit TEXT,
                 rule TEXT,
                 UNIQUE(record_id, test_name)
-            )");
+            )", tx);
         Exec(conn, @"
             INSERT OR IGNORE INTO test_measurements_slim
                 (record_id, ts, test_name, value, value_text, lolim, hilim, unit, rule)
             SELECT record_id, ts, test_name, value, value_text, lolim, hilim, unit, rule
-            FROM test_measurements");
-        Exec(conn, "DROP TABLE test_measurements");
-        Exec(conn, "ALTER TABLE test_measurements_slim RENAME TO test_measurements");
-        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_tm_name_ts ON test_measurements(test_name, ts)");
-        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_tm_ts ON test_measurements(ts)");
-        TryExec(conn, "DROP INDEX IF EXISTS idx_tm_daystr");
+            FROM test_measurements", tx);
+        Exec(conn, "DROP TABLE test_measurements", tx);
+        Exec(conn, "ALTER TABLE test_measurements_slim RENAME TO test_measurements", tx);
+        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_tm_name_ts ON test_measurements(test_name, ts)", tx);
+        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_tm_ts ON test_measurements(ts)", tx);
+        TryExec(conn, "DROP INDEX IF EXISTS idx_tm_daystr", tx);
+        tx.Commit();
         Logger.Info("[存储] test_measurements 已去掉 xml_path/station/model/sn/test_date 冗余列");
         return true;
     }
@@ -223,6 +227,7 @@ public sealed partial class Database
     private bool RebuildSlimFailItems(SqliteConnection conn)
     {
         if (!HasColumn(conn, "fail_items", "xml_path")) return false;
+        using var tx = conn.BeginTransaction();
         Exec(conn, @"
             CREATE TABLE fail_items_slim (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,19 +244,20 @@ public sealed partial class Database
                 unit TEXT,
                 rule TEXT,
                 UNIQUE(record_id, test_name)
-            )");
+            )", tx);
         Exec(conn, @"
             INSERT OR IGNORE INTO fail_items_slim
                 (record_id, ts, fixture_id, tester, hour, test_name, value, value_text, lolim, hilim, unit, rule)
             SELECT record_id, ts, fixture_id, tester, hour, test_name, value, value_text, lolim, hilim, unit, rule
-            FROM fail_items");
-        Exec(conn, "DROP TABLE fail_items");
-        Exec(conn, "ALTER TABLE fail_items_slim RENAME TO fail_items");
-        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_fi_name_ts ON fail_items(test_name, ts)");
-        TryExec(conn, "DROP INDEX IF EXISTS idx_fi_daystr");
-        TryExec(conn, "DROP INDEX IF EXISTS idx_fi_ts");
-        TryExec(conn, "DROP INDEX IF EXISTS idx_fi_fixture_ts");
-        TryExec(conn, "DROP INDEX IF EXISTS idx_fi_tester_ts");
+            FROM fail_items", tx);
+        Exec(conn, "DROP TABLE fail_items", tx);
+        Exec(conn, "ALTER TABLE fail_items_slim RENAME TO fail_items", tx);
+        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_fi_name_ts ON fail_items(test_name, ts)", tx);
+        TryExec(conn, "DROP INDEX IF EXISTS idx_fi_daystr", tx);
+        TryExec(conn, "DROP INDEX IF EXISTS idx_fi_ts", tx);
+        TryExec(conn, "DROP INDEX IF EXISTS idx_fi_fixture_ts", tx);
+        TryExec(conn, "DROP INDEX IF EXISTS idx_fi_tester_ts", tx);
+        tx.Commit();
         Logger.Info("[存储] fail_items 已去掉路径冗余列");
         return true;
     }
@@ -259,6 +265,7 @@ public sealed partial class Database
     private bool RebuildSlimTdms(SqliteConnection conn)
     {
         if (!HasColumn(conn, "tdms_features", "xml_path")) return false;
+        using var tx = conn.BeginTransaction();
         Exec(conn, @"
             CREATE TABLE tdms_features_slim (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,18 +283,19 @@ public sealed partial class Database
                 vfirst REAL,
                 vlast REAL,
                 UNIQUE(record_id, group_name, channel_name)
-            )");
+            )", tx);
         Exec(conn, @"
             INSERT OR IGNORE INTO tdms_features_slim
                 (record_id, ts, tdms_path, group_name, channel_name, section, n, vmin, vmax, vmean, vstd, vfirst, vlast)
             SELECT record_id, ts, tdms_path, group_name, channel_name, section, n, vmin, vmax, vmean, vstd, vfirst, vlast
-            FROM tdms_features");
-        Exec(conn, "DROP TABLE tdms_features");
-        Exec(conn, "ALTER TABLE tdms_features_slim RENAME TO tdms_features");
-        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_tf_ts ON tdms_features(ts)");
-        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_tf_channel_ts ON tdms_features(group_name, channel_name, ts)");
-        TryExec(conn, "DROP INDEX IF EXISTS idx_tf_daystr");
-        TryExec(conn, "DROP INDEX IF EXISTS idx_tf_model_ts");
+            FROM tdms_features", tx);
+        Exec(conn, "DROP TABLE tdms_features", tx);
+        Exec(conn, "ALTER TABLE tdms_features_slim RENAME TO tdms_features", tx);
+        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_tf_ts ON tdms_features(ts)", tx);
+        Exec(conn, "CREATE INDEX IF NOT EXISTS idx_tf_channel_ts ON tdms_features(group_name, channel_name, ts)", tx);
+        TryExec(conn, "DROP INDEX IF EXISTS idx_tf_daystr", tx);
+        TryExec(conn, "DROP INDEX IF EXISTS idx_tf_model_ts", tx);
+        tx.Commit();
         Logger.Info("[存储] tdms_features 已去掉路径冗余列");
         return true;
     }
@@ -325,16 +333,17 @@ public sealed partial class Database
         return o == null || o is DBNull ? 0 : Convert.ToInt64(o);
     }
 
-    private static void Exec(SqliteConnection conn, string sql)
+    private static void Exec(SqliteConnection conn, string sql, SqliteTransaction? tx = null)
     {
         using var cmd = conn.CreateCommand();
+        if (tx != null) cmd.Transaction = tx;
         cmd.CommandText = sql;
         cmd.CommandTimeout = 600;
         cmd.ExecuteNonQuery();
     }
 
-    private static void TryExec(SqliteConnection conn, string sql)
+    private static void TryExec(SqliteConnection conn, string sql, SqliteTransaction? tx = null)
     {
-        try { Exec(conn, sql); } catch { }
+        try { Exec(conn, sql, tx); } catch { }
     }
 }

@@ -95,9 +95,11 @@ public sealed partial class Database
     }
 
     /// <summary>每连接执行的 PRAGMA（WAL + 写性能 + 读缓存）。synchronous=NORMAL 为 WAL 下官方推荐组合，
-    /// 断电最多丢最近几条已提交写入，防库损坏能力不变；cache_size/temp_store 纯读加速。常量化供 selftest 断言。</summary>
+    /// 断电最多丢最近几条已提交写入，防库损坏能力不变；cache_size/temp_store 纯读加速。常量化供 selftest 断言。
+    /// B7：busy_timeout 5s→30s——深度优化 VACUUM 持写锁可达数分钟，写入侧只等 5s 就 SQLITE_BUSY，
+    /// 历史扫描批次重试一次即放弃整批（漏采）。30s 覆盖绝大多数锁竞争；VACUUM 期间的停顿由后台线程承担。</summary>
     internal const string ConnectionPragmas =
-        "PRAGMA busy_timeout = 5000; " +
+        "PRAGMA busy_timeout = 30000; " +
         "PRAGMA journal_mode = WAL; " +
         "PRAGMA synchronous = NORMAL; " +
         "PRAGMA cache_size = -20000; " +
@@ -434,7 +436,9 @@ public sealed partial class Database
             using (var conn = Open())
             using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = "SELECT COUNT(*) FROM maintenance_records WHERE status='closed'";
+                // B8：状态终态字面量收口 MaintenanceMeta（LegacyClosed/DoneStatus），Meta 增删终态时自动同步
+                cmd.CommandText = "SELECT COUNT(*) FROM maintenance_records WHERE status=@legacy";
+                cmd.Parameters.AddWithValue("@legacy", MaintenanceMeta.LegacyClosed);
                 pending = Convert.ToInt32(cmd.ExecuteScalar());
             }
             if (pending == 0) return;
@@ -448,7 +452,9 @@ public sealed partial class Database
             using (var conn = Open())
             using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = "UPDATE maintenance_records SET status='resolved' WHERE status='closed'";
+                cmd.CommandText = "UPDATE maintenance_records SET status=@done WHERE status=@legacy";
+                cmd.Parameters.AddWithValue("@done", MaintenanceMeta.DoneStatus);
+                cmd.Parameters.AddWithValue("@legacy", MaintenanceMeta.LegacyClosed);
                 var done = cmd.ExecuteNonQuery();
                 Logger.Info($"[迁移] {done} 条维修记录状态「已关闭」-> 「已完成」(v2.2.0 状态体系合并)");
             }
@@ -457,6 +463,26 @@ public sealed partial class Database
         {
             Logger.Error($"[迁移] 维修记录状态迁移失败: {ex.Message}");
         }
+    }
+
+    /// <summary>PRAGMA wal_checkpoint(TRUNCATE) 并读返回值。busy≠0 = 有连接占写锁、截断未完成，
+    /// 此时裸拷 .db 缺近期提交。纯读返回值，供自检与备份路径断言。</summary>
+    internal static bool CheckpointTruncate(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+        using var r = cmd.ExecuteReader();
+        if (!r.Read() || r.FieldCount == 0 || r.IsDBNull(0)) return false;
+        return Convert.ToInt64(r.GetValue(0)) == 0;
+    }
+
+    /// <summary>热升级备份 / 迁移备份前调用：清池 + WAL 截断进主库，避免备份缺近期提交。失败仅告警不抛。</summary>
+    public void CheckpointTruncateForBackup()
+    {
+        SqliteConnection.ClearAllPools();
+        using var conn = Open();
+        if (!CheckpointTruncate(conn))
+            Logger.Warning("[数据库] WAL checkpoint 未完成(busy)，备份可能不含最后一批提交");
     }
 
     private bool BackupDbFile()
@@ -470,13 +496,17 @@ public sealed partial class Database
                 Logger.Info($"[迁移] 已存在当日备份, 直接迁移: {Path.GetFileName(bak)}");
                 return true;
             }
-            using (var conn = Open())
-            using (var cmd = conn.CreateCommand())
-            {
-                cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
-                cmd.ExecuteNonQuery();
-            }
+            // B5：wal_checkpoint 的 busy≠0 说明有连接占着写锁、截断没完成——此时裸拷 .db 会缺近期提交，
+            // 而本备份是 closed->resolved 迁移与冷归档 DELETE 的安全闸门，宁可跳过也不能留残缺备份。
             SqliteConnection.ClearAllPools();
+            using (var conn = Open())
+            {
+                if (!CheckpointTruncate(conn))
+                {
+                    Logger.Warning("[迁移] WAL checkpoint 未完成(busy)，跳过本次备份（避免丢近期提交的残缺备份）");
+                    return false;
+                }
+            }
             File.Copy(_dbPath, bak);
             try
             {
@@ -504,18 +534,24 @@ public sealed partial class Database
             if (!File.Exists(_dbPath)) return null;
             var bak = $"{_dbPath}.bak-{DateTime.Now:yyyyMMdd}";
             if (File.Exists(bak)) return null;
-            using (var conn = Open())
-            using (var cmd = conn.CreateCommand())
-            {
-                cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
-                cmd.ExecuteNonQuery();
-            }
+            // B5：见 BackupDbFile——checkpoint 未完成时留残缺备份比不备份更危险
             SqliteConnection.ClearAllPools();
+            using (var conn = Open())
+            {
+                if (!CheckpointTruncate(conn))
+                {
+                    Logger.Warning("[数据库] WAL checkpoint 未完成(busy)，跳过今日备份（下次维护再试）");
+                    return null;
+                }
+            }
             File.Copy(_dbPath, bak);
             var dir = Path.GetDirectoryName(_dbPath)!;
             var prefix = Path.GetFileName(_dbPath) + ".bak-";
+            // B4：glob 必须排除 .sha256——否则校验文件占额度，名义「保留 7 份」实际只留 3 个 .bak
             var old = Directory.Exists(dir)
-                ? Directory.GetFiles(dir, prefix + "*").OrderByDescending(f => f, StringComparer.Ordinal).ToList()
+                ? Directory.GetFiles(dir, prefix + "*")
+                    .Where(f => !f.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(f => f, StringComparer.Ordinal).ToList()
                 : new List<string>();
             foreach (var f in old.Skip(BackupKeepDays))
             {
@@ -2636,23 +2672,28 @@ public sealed partial class Database
 
     public bool UpdateMaintenanceStatus(int id, string status)
     {
+        // B14：读旧状态与写库合并为单连接单事务——原实现两个连接，并发状态变更会丢更新
+        //（A 读到 open、B 改成 resolved、A 再写 in_progress，B 的变更被静默覆盖）。
         string from;
-        using (var conn = Open())
+        using var conn = Open();
+        using var tx = conn.BeginTransaction();
+        using (var sel = conn.CreateCommand())
         {
-            using var sel = conn.CreateCommand();
+            sel.Transaction = tx;
             sel.CommandText = "SELECT status FROM maintenance_records WHERE id=@id";
             sel.Parameters.AddWithValue("@id", id);
             from = sel.ExecuteScalar() as string ?? "";
-            if (string.Equals(from, status, StringComparison.OrdinalIgnoreCase)) return true;
         }
-        using (var conn = Open())
+        if (string.Equals(from, status, StringComparison.OrdinalIgnoreCase)) return true;
+        using (var cmd = conn.CreateCommand())
         {
-            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
             cmd.CommandText = "UPDATE maintenance_records SET status=@s, updated_at=datetime('now','localtime') WHERE id=@id";
             cmd.Parameters.AddWithValue("@s", status);
             cmd.Parameters.AddWithValue("@id", id);
             if (cmd.ExecuteNonQuery() == 0) return false;
         }
+        tx.Commit();
         var snapshot = GetMaintenance(id);
         if (snapshot != null) NotifyStatusChanged(snapshot, from, status);
         return true;
@@ -2660,17 +2701,20 @@ public sealed partial class Database
 
     public bool UpdateMaintenance(MaintenanceRecord m)
     {
+        // B14：同上，读旧状态与写库单事务
         string from;
-        using (var conn = Open())
+        using var conn = Open();
+        using var tx = conn.BeginTransaction();
+        using (var sel = conn.CreateCommand())
         {
-            using var sel = conn.CreateCommand();
+            sel.Transaction = tx;
             sel.CommandText = "SELECT status FROM maintenance_records WHERE id=@id";
             sel.Parameters.AddWithValue("@id", m.Id);
             from = sel.ExecuteScalar() as string ?? "";
         }
-        using (var conn = Open())
+        using (var cmd = conn.CreateCommand())
         {
-            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
             cmd.CommandText = @"
             UPDATE maintenance_records SET
                 equipment_model=@model, equipment_sn=@sn, fail_item=@item, fail_reason=@reason,
@@ -2691,6 +2735,7 @@ public sealed partial class Database
             cmd.Parameters.AddWithValue("@id", m.Id);
             if (cmd.ExecuteNonQuery() == 0) return false;
         }
+        tx.Commit();
         if (!string.Equals(from, m.Status, StringComparison.OrdinalIgnoreCase))
         {
             var snapshot = GetMaintenance(m.Id);
@@ -2960,6 +3005,7 @@ public sealed partial class Database
     private static void ReconcileTodoStates(SqliteConnection conn)
     {
         using var cmd = conn.CreateCommand();
+        // B8：终态集合收口 MaintenanceMeta（DoneStatus/LegacyClosed），与状态机单一来源同步
         cmd.CommandText = @"
             -- 记录被删 -> 重新变成未确认
             UPDATE todo_items
@@ -2976,14 +3022,14 @@ public sealed partial class Database
                    updated_at=datetime('now','localtime')
              WHERE maintenance_id IS NOT NULL
                AND (SELECT status FROM maintenance_records WHERE id=todo_items.maintenance_id)
-                   IN ('resolved','closed');
+                   IN (@done,@legacy);
 
             -- 记录仍活跃 -> ack
             UPDATE todo_items
                SET state='ack', resolved_at=NULL, updated_at=datetime('now','localtime')
              WHERE maintenance_id IS NOT NULL
                AND (SELECT status FROM maintenance_records WHERE id=todo_items.maintenance_id)
-                   NOT IN ('resolved','closed');
+                   NOT IN (@done,@legacy);
 
             -- 处理完之后又出现新不良 -> 复发，回到未确认
             UPDATE todo_items
@@ -2992,6 +3038,8 @@ public sealed partial class Database
              WHERE state='resolved' AND COALESCE(resolved_at,'')<>''
                AND COALESCE(last_seen,'') > resolved_at;
         ";
+        cmd.Parameters.AddWithValue("@done", MaintenanceMeta.DoneStatus);
+        cmd.Parameters.AddWithValue("@legacy", MaintenanceMeta.LegacyClosed);
         cmd.ExecuteNonQuery();
     }
 
@@ -3043,9 +3091,13 @@ public sealed partial class Database
                 cmd.CommandText = $@"
                     SELECT fail_reason, station_id, COUNT(*),
                            MIN(COALESCE(NULLIF(batch_timestamp,''),
-                                        substr(test_date,1,4)||'-'||substr(test_date,5,2)||'-'||substr(test_date,7,2)||' 00:00:00')),
+                                        substr(replace(test_date,'-',''),1,4)||'-'||
+                                        substr(replace(test_date,'-',''),5,2)||'-'||
+                                        substr(replace(test_date,'-',''),7,2)||' 00:00:00')),
                            MAX(COALESCE(NULLIF(batch_timestamp,''),
-                                        substr(test_date,1,4)||'-'||substr(test_date,5,2)||'-'||substr(test_date,7,2)||' 00:00:00'))
+                                        substr(replace(test_date,'-',''),1,4)||'-'||
+                                        substr(replace(test_date,'-',''),5,2)||'-'||
+                                        substr(replace(test_date,'-',''),7,2)||' 00:00:00'))
                       FROM test_records {where}
                      GROUP BY fail_reason, station_id";
                 if (from != null || to != null)
@@ -3139,16 +3191,26 @@ public sealed partial class Database
         rec.Id = id;
         NotifyStatusChanged(rec, "", rec.Status);
 
-        using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            UPDATE todo_items
-               SET state='ack', maintenance_id=@mid, resolved_at=NULL,
-                   updated_at=datetime('now','localtime')
-             WHERE id=@id";
-        cmd.Parameters.AddWithValue("@mid", id);
-        cmd.Parameters.AddWithValue("@id", todoId);
-        cmd.ExecuteNonQuery();
+        // B14：建维修记录与挂待办原先是两个独立连接，中断会留下孤儿维修记录。
+        // 挂接失败时补偿删除刚建的记录（DeleteMaintenance 幂等），把窗口缩到「通知已发但记录已回滚」。
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE todo_items
+                   SET state='ack', maintenance_id=@mid, resolved_at=NULL,
+                       updated_at=datetime('now','localtime')
+                 WHERE id=@id";
+            cmd.Parameters.AddWithValue("@mid", id);
+            cmd.Parameters.AddWithValue("@id", todoId);
+            cmd.ExecuteNonQuery();
+        }
+        catch
+        {
+            try { DeleteMaintenance(id); } catch { }
+            throw;
+        }
         return id;
     }
 

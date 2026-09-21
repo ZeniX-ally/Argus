@@ -334,7 +334,15 @@ public class Engine
                         totalInserted += _db.BatchUpsert(records, null, batchOutcomes);
                         totalUpdated += batchOutcomes.Count(o => o.WasUpdated);
                     }
-                    catch (Exception ex2) { Logger.Error($"[历史扫描] 批次重试仍失败(起始索引 {i})，放弃该批继续: {ex2.Message}"); }
+                    catch (Exception ex2)
+                    {
+                        // B7/A3：不再「放弃该批继续」——整批路径入重试队列（BatchUpsert 按 xml_path 幂等，
+                        // 重试不会重复入库；队列落盘，重启也不丢）。VACUUM 持写锁数分钟时这是唯一的兜底。
+                        Logger.Error($"[历史扫描] 批次重试仍失败(起始索引 {i})，{records.Count} 条全部转入重试队列: {ex2.Message}");
+                        foreach (var rec in records)
+                            if (!string.IsNullOrEmpty(rec.XmlPath)) EnqueueRetry(rec.XmlPath, 0);
+                        records.Clear();
+                    }
                 }
                 for (int ri = 0; ri < records.Count && ri < batchOutcomes.Count; ri++)
                 {

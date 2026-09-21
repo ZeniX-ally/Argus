@@ -182,12 +182,16 @@ public static class UpdateChecker
 
         Directory.CreateDirectory(backupDir);
         var baseDir = AppConfig.BaseDir;
+        // E11：备份的是运行中 SQLite 库。先 checkpoint 把 WAL 截断进主库再拷，
+        // 否则回滚面可能缺近期提交（裸拷 .db 不含 -wal 里的事务）。
+        var d = db ?? EngineDb();
+        try { d.CheckpointTruncateForBackup(); }
+        catch (Exception ex) { Logger.Warning($"[更新器] 备份前 WAL checkpoint 失败（继续备份，回滚面可能不含近期提交）: {ex.Message}"); }
         if (Directory.Exists(Path.Combine(baseDir, "data")))
             CopyDir(Path.Combine(baseDir, "data"), Path.Combine(backupDir, "data"));
         var cfg = Path.Combine(baseDir, "config.json");
         if (File.Exists(cfg)) File.Copy(cfg, Path.Combine(backupDir, "config.json"), true);
 
-        var d = db ?? EngineDb();
         d.SetMeta(PendingKey, info.ZipPath);
 
         Logger.Info($"[更新器] 更新 {verStr} 已暂存（{stagingDir}），备份在 {backupDir}，等待重启提交");
