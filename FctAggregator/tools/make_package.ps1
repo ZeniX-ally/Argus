@@ -22,7 +22,11 @@ $rootFiles = @('启动.bat', 'app_icon.ico')
 $docs = @('版本更新说明.md', '更新日志.md')
 
 function Write-PackageConfig([string]$destPath) {
-    $cfg = Get-Content (Join-Path $root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    # 模板必须取 config.example.json（全量 78 键）：热升级交集合并只保留「模板内键」的现场值，
+    # 拿本地 config.json（十几个键）当模板会把现场 feishu_*/learn_*/analyze_* 调参全部丢弃。
+    $src = Join-Path $root 'config.example.json'
+    if (-not (Test-Path $src)) { $src = Join-Path $root 'config.json' }
+    $cfg = Get-Content $src -Raw -Encoding UTF8 | ConvertFrom-Json
     $cfg.webhook_url = ''
     $cfg | ConvertTo-Json -Depth 6 | Set-Content $destPath -Encoding UTF8
 }

@@ -136,7 +136,9 @@ public sealed partial class Database
     {
         var report = new CompactReport();
         try { if (File.Exists(_dbPath)) report.BytesBefore = new FileInfo(_dbPath).Length; } catch { }
-        retentionDays = Math.Clamp(retentionDays, 7, 180);
+        // 钳制与 LearnPipeline.EffectiveMeasureRetentionDays 同源：下限 7、上限 365。
+        // 曾硬钳 180：现场把保留期配到 365 时，深度优化会用 180 口径多删 180~365 天测量/失败明细。
+        retentionDays = Math.Clamp(retentionDays, LearnPipeline.MeasureRetentionMin, LearnPipeline.MeasureRetentionMax);
 
         PurgeOldMeasurements(retentionDays);
         PurgeOldFailItems(retentionDays);

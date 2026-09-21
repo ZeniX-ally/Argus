@@ -202,18 +202,32 @@ public static class UpdateChecker
 
     public static void ScheduleRestart(int delaySeconds = 3)
     {
-        var exe = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(exe)) throw new InvalidOperationException("无法定位当前程序路径");
+        var (fileName, args) = RestartCommand("--post-update");
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "cmd.exe",
-            Arguments = $"/c ping -n {delaySeconds + 1} 127.0.0.1 > nul & start \"\" \"{exe}\" --post-update",
+            Arguments = $"/c ping -n {delaySeconds + 1} 127.0.0.1 > nul & start \"\" \"{fileName}\" {args}",
             WorkingDirectory = AppConfig.BaseDir,
             CreateNoWindow = true,
             UseShellExecute = false,
         };
         System.Diagnostics.Process.Start(psi);
         Logger.Info($"[更新器] 已排定 {delaySeconds}s 后自动重启并完成升级提交");
+    }
+
+    /// <summary>解析「重启自己」的启动目标。随包 启动.bat 以 `dotnet Argus.dll` 启动时
+    /// Environment.ProcessPath 是 dotnet.exe——直接 `dotnet.exe --post-update` 起不来新实例
+    /// （dotnet 把参数当自己的命令），换装已成功但程序静默消失。此时必须补上 DLL 路径。
+    /// 纯函数（processPath 可注入），供自检断言。</summary>
+    public static (string FileName, string Args) RestartCommand(string extraArgs, string? processPath = null)
+    {
+        var exe = processPath ?? Environment.ProcessPath ?? "";
+        if (exe.EndsWith("dotnet.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            var dll = Path.Combine(AppConfig.BaseDir, "Argus.dll");
+            return (exe, $"\"{dll}\" {extraArgs}".TrimEnd());
+        }
+        return (exe, extraArgs);
     }
 
     /// <summary>版本号安全文本化：两段版本（1.2）没有 Build，ToString(3) 会抛 ArgumentException。</summary>

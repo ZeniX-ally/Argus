@@ -762,7 +762,8 @@ public sealed partial class Database
             UPDATE test_records SET
                 station_id=@station, model=@model, category=@cat, test_date=@date, sn=@sn,
                 result=@result, fail_reason=@reason, tester=@tester, panel_status=@panel,
-                batch_timestamp=@ts, has_fail_items=@hasfail, file_size=@size, fixture_id=@fixture
+                batch_timestamp=@ts, has_fail_items=@hasfail, file_size=@size, fixture_id=@fixture,
+                fail_alerted = CASE WHEN @result <> 'FAIL' THEN 0 ELSE fail_alerted END
             WHERE id=@id";
         BindRecordParams(upd);
         var pUpdId = upd.Parameters.Add("@id", SqliteType.Integer);
@@ -3057,7 +3058,7 @@ public sealed partial class Database
                 while (r.Read())
                 {
                     string key;
-                    try { key = TodoGrouping.KeyOf(r.IsDBNull(0) ? "" : r.GetString(0)); }
+                    try { key = TodoGrouping.MergeKeyOf(r.IsDBNull(0) ? "" : r.GetString(0)); }
                     catch (Exception ex) { Logger.Warning($"[待办] 区间统计合并键计算失败，跳过该项: {ex.Message}"); continue; }
                     if (key.Length == 0) continue;
                     var station = r.IsDBNull(1) ? "" : r.GetString(1);

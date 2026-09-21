@@ -1274,6 +1274,9 @@ class SelfTest
         Console.WriteLine("\n【v3.48.2 日期格式 / 运行时】dash 日期不再从待办·KPI·补推消失；热升级保留现场调参；重试占坑");
         RunDateFormatAndRuntimeTests(work);
 
+        Console.WriteLine("\n【v3.48.3 审计修复批一】待办区间合并键 / 复发FAIL告警 / dotnet宿主重启 / 压缩保留期");
+        RunAuditFixBatch1Tests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -5339,6 +5342,112 @@ Argus 统一发布包  v{newer}
             Check(typeof(AppConfig).GetMethod("Validate") == null
                   && typeof(AppConfig).Assembly.GetType("FctAggregator.ConfigValidator") == null,
                 "精简：从未接线的 ConfigValidator / AppConfig.Validate 已剔除");
+        }
+    }
+
+    /// <summary>v3.48.3 审计修复批一（静默失效类）：先写断言再改生产代码。</summary>
+    static void RunAuditFixBatch1Tests(string work)
+    {
+        var todayB1 = DateTime.Today.ToString("yyyyMMdd");
+
+        // B1：待办区间视图与入库同源合并键（MergeKeyOf）——G49 spec 合并项不再被区间筛选整体丢弃
+        {
+            var dir = Path.Combine(work, "b1_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "t.db"));
+            const string St = "FCT7";
+            void AddFail(string item, string sn)
+            {
+                db.InsertOne(new TestRecord
+                {
+                    StationId = St, Model = "E3002781", Category = "Offline", TestDate = todayB1,
+                    Sn = sn, Result = "FAIL", XmlPath = $@"X:\{sn}_{Math.Abs(item.GetHashCode()):x}.xml",
+                    FailReason = item, BatchTimestamp = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss"),
+                    HasFailItems = true,
+                });
+            }
+
+            AddFail("6.1.1.1 BSW_v_Kl30_HS", "SNB1"); // spec 命中 -> g49:6.1:PowerRail:KL30_FILT_1
+            AddFail("Plain_Item_XYZ", "SNB2");
+            db.SyncTodoItems(30);
+            var specKey = TodoGrouping.MergeKeyOf("6.1.1.1 BSW_v_Kl30_HS");
+            Check(specKey.StartsWith("g49:"), $"spec 项合并键为 G49 族键（{specKey}）");
+            Check(db.ListTodoView().Any(x => x.GroupKey == specKey), "不限区间：spec 待办在列");
+            var viewToday = db.ListTodoView(DateTime.Today, DateTime.Today);
+            Check(viewToday.Any(x => x.GroupKey == specKey),
+                  "区间筛选：spec 合并待办不再被整体丢弃（原缺陷区间统计用 KeyOf、入库用 MergeKeyOf，键不一致）");
+            Check(viewToday.Any(x => x.Title.Contains("Plain_Item_XYZ")), "区间筛选：普通 token 键待办仍在");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // B6：FAIL→PASS→FAIL 复发必须重新告警（fail_alerted 离开 FAIL 时复位）
+        {
+            var dir = Path.Combine(work, "b6_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "f.db"));
+            string p = Path.Combine(dir, "recur.xml");
+            TestRecord Rec(string result) => new TestRecord
+            {
+                StationId = "FCT1", Model = "E300", Category = "Offline", TestDate = todayB1,
+                Sn = "SN-RECUR", Result = result, XmlPath = p,
+                FailReason = result == "FAIL" ? "Some_Fail" : null,
+                BatchTimestamp = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss"),
+                HasFailItems = result == "FAIL",
+            };
+            db.InsertOne(Rec("FAIL"));
+            Check(!db.IsFailAlerted(p) && db.ListTodayFailsNeedingAlert(todayB1, "").Count == 1,
+                  "B6 前置：新 FAIL 未标记、进入补推列表");
+            db.MarkFailAlerted(p);
+            Check(db.IsFailAlerted(p) && db.ListTodayFailsNeedingAlert(todayB1, "").Count == 0,
+                  "B6 前置：标记已推送后补推列表为空");
+            db.UpsertTestRecord(Rec("PASS"));
+            Check(!db.IsFailAlerted(p), "B6：离开 FAIL（复测 PASS）时 fail_alerted 复位");
+            db.UpsertTestRecord(Rec("FAIL"));
+            Check(!db.IsFailAlerted(p) && db.ListTodayFailsNeedingAlert(todayB1, "").Count == 1,
+                  "B6：FAIL→PASS→FAIL 复发重新进入补推列表（原缺陷永不再告警）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // E1：dotnet 宿主启动（随包 启动.bat）时重启命令必须带上 Argus.dll
+        {
+            var (exeFile, exeArgs) = UpdateChecker.RestartCommand("--post-update", @"C:\Argus\Argus.exe");
+            Check(exeFile == @"C:\Argus\Argus.exe" && exeArgs == "--post-update",
+                  "E1：exe 直接启动时重启参数不变");
+            var (dotFile, dotArgs) = UpdateChecker.RestartCommand("--post-update", @"C:\Program Files\dotnet\dotnet.exe");
+            Check(dotFile.EndsWith("dotnet.exe") && dotArgs.Contains("Argus.dll") && dotArgs.Contains("--post-update"),
+                  $"E1：dotnet 宿主启动时重启命令补上 Argus.dll（{dotArgs}）");
+        }
+
+        // B2：CompactStorage 保留期钳制与配置上限对齐（365），不再按 180 口径多删
+        {
+            var dir = Path.Combine(work, "b2_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string dbPath = Path.Combine(dir, "c.db");
+            var db = new Database(dbPath);
+            long RowCountB2(string p, string table)
+            {
+                using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={p}");
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = $"SELECT COUNT(*) FROM {table}";
+                return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
+            }
+            var old200 = DateTime.Now.Date.AddDays(-200);
+            db.BatchInsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "E300", Result = "PASS",
+                    TestDate = old200.ToString("yyyyMMdd"),
+                    BatchTimestamp = old200.ToString("yyyy-MM-dd HH:mm:ss"), XmlPath = @"C:\t\b2_0.xml",
+                    Measurements = new[] { new MeasurementRow { TestName = "T_B2", Value = 1.0 } }.ToList(),
+                },
+            });
+            Check(RowCountB2(dbPath, "test_measurements") == 1, "B2 前置：200 天前测量行已入库");
+            db.CompactStorage(365, vacuum: false);
+            Check(RowCountB2(dbPath, "test_measurements") == 1,
+                  "B2：保留期 365 时 200 天前的测量不被压缩清掉（原缺陷硬钳 180 多删 180~365 天明细）");
+            try { Directory.Delete(dir, true); } catch { }
         }
     }
 }

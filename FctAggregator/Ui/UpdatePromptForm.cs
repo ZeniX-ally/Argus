@@ -141,9 +141,9 @@ public sealed class UpdatePromptForm : AppForm
     {
         try
         {
-            var exe = Environment.ProcessPath;
-            if (string.IsNullOrEmpty(exe)) return;
-            Process.Start(new ProcessStartInfo(exe, "--post-update")
+            var (fileName, args) = UpdateChecker.RestartCommand("--post-update");
+            if (string.IsNullOrEmpty(fileName)) return;
+            Process.Start(new ProcessStartInfo(fileName, args)
             {
                 WorkingDirectory = AppConfig.BaseDir,
                 UseShellExecute = true,

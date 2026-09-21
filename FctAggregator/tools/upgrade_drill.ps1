@@ -186,7 +186,7 @@ foreach ($t in 'todo_items', 'app_meta') {
     Assert ($null -ne $after.$t) "表 $t 已就位（$note）"
 }
 $verAfter = (Get-Item $newExe).VersionInfo.FileVersion
-Assert ($verAfter -eq '3.2.2.0' -and $verAfter -ne $verBefore) "程序已真的被更新（$verBefore -> $verAfter）"
+Assert ($verAfter -like "$ver.*" -and $verAfter -ne $verBefore) "程序已真的被更新（$verBefore -> $verAfter，期望 $ver.*）"
 # 跨 v3.0.1（exe 改名）升级时的已知残留：更新包只添加/覆盖同名文件，不会删旧 exe。
 # 旧 exe 留在原地 + 互斥体名不同（FCT_Aggregator_SingleInstance vs Argus_SingleInstance）
 # -> 新旧两个程序可同时运行并同写一个库。现场必须手动清理。
