@@ -64,7 +64,7 @@ public class FailItemPickerForm : AppForm
 		base.Height = 620;
 		MinimumSize = new Size(680, 460);
 		base.StartPosition = FormStartPosition.CenterParent;
-		Font = new Font("Microsoft YaHei UI", 9f);
+		Font = Theme.CachedFont("Microsoft YaHei UI", 9F);
 		base.ShowInTaskbar = false;
 		base.MinimizeBox = false;
 		BuildUi();
@@ -208,7 +208,7 @@ public class FailItemPickerForm : AppForm
 		_btnOk.Height = 30;
 		_btnOk.Text = "确定";
 		_btnOk.DialogResult = DialogResult.OK;
-		_btnOk.Font = new Font(Font, FontStyle.Bold);
+		_btnOk.Font = Theme.BoldOf(Font);
 		_btnOk.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
 		_btnOk.Click += delegate
 		{

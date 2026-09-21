@@ -44,6 +44,7 @@ public sealed class UpdatePromptForm : AppForm
 
     private bool _choseUpdate;
     private Label? _noteLabel;
+    private Button? _btnUpdate;
 
     private void BuildUi()
     {
@@ -99,6 +100,7 @@ public sealed class UpdatePromptForm : AppForm
         };
 
         var btnUpdate = Theme.MakeButton("立即更新", 110, primary: true);
+        _btnUpdate = btnUpdate;
         btnUpdate.Location = new Point(ClientSize.Width - pad * 2 - 228, ClientSize.Height - 60);
         btnUpdate.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
         btnUpdate.Click += (_, _) => OnUpdateNow();
@@ -118,23 +120,35 @@ public sealed class UpdatePromptForm : AppForm
 
     private void OnUpdateNow()
     {
-        try
+        // D3：StageUpdate 内含 ZipFile.ExtractToDirectory + checkpoint + 整个 data/ 目录备份，
+        // 大包/大库时 UI 线程同步跑会白屏数分钟。改后台执行（MainForm 自动更新路径早已如此，手动路径漏改）。
+        Cursor = Cursors.WaitCursor;
+        if (_btnUpdate != null) _btnUpdate.Enabled = false;
+        Task.Run(() =>
         {
-            var msg = UpdateChecker.StageUpdate(_info, _db);
-            UpdateChecker.MarkPrompted(_info.Version, _db);
-            _choseUpdate = true;
-
-            var restart = MessageBox.Show(
-                msg + "\n\n是否立即重启程序以完成更新？",
-                "更新已准备", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-            Close();
-            if (restart == DialogResult.Yes) RestartApp();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"更新失败：{ex.Message}\n\n可稍后重试。", "更新失败",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
+            string? msg = null;
+            string? err = null;
+            try { msg = UpdateChecker.StageUpdate(_info, _db); }
+            catch (Exception ex) { err = ex.Message; }
+            UiAsync.Post(this, () =>
+            {
+                Cursor = Cursors.Default;
+                if (_btnUpdate != null) _btnUpdate.Enabled = true;
+                if (err != null)
+                {
+                    MessageBox.Show($"更新失败：{err}\n\n可稍后重试。", "更新失败",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                UpdateChecker.MarkPrompted(_info.Version, _db);
+                _choseUpdate = true;
+                var restart = MessageBox.Show(
+                    msg + "\n\n是否立即重启程序以完成更新？",
+                    "更新已准备", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                Close();
+                if (restart == DialogResult.Yes) RestartApp();
+            });
+        });
     }
 
     private void RestartApp()

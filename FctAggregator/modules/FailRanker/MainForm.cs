@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -498,7 +498,7 @@ public class MainForm : AppForm
 			TreeNode treeNode = new(root)
 			{
 				Tag = new FsTag { IsDir = true, Path = root },
-				NodeFont = new Font(_tvSurvey.Font, FontStyle.Bold),
+				NodeFont = Theme.BoldOf(_tvSurvey.Font),
 				ForeColor = Theme.ToolNodeDir,
 			};
 			_tvSurvey.Nodes.Add(treeNode);

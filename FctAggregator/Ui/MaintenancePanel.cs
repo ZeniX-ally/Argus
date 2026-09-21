@@ -463,23 +463,39 @@ public class MaintenancePanel : Panel
             FileName = xlsx ? $"维修记录_{ts}.xlsx" : $"维修记录_{ts}.csv",
         };
         if (dlg.ShowDialog() != DialogResult.OK) return;
-        try
+        // D9：xlsx 走 zip 写盘/CSV 长文本，500 条记录时 UI 线程同步写明显卡顿——改后台（FAIL 页导出早已如此）
+        var target = dlg.FileName;
+        Cursor = Cursors.WaitCursor;
+        Task.Run(() =>
         {
-            if (xlsx) MaintenanceExporter.ExportXlsx(dlg.FileName, records);
-            else MaintenanceExporter.ExportCsv(dlg.FileName, records);
-            Logger.Info($"维修记录已导出: {dlg.FileName} ({records.Count} 条)");
-            if (MessageBox.Show($"已导出 {records.Count} 条维修记录！\n是否打开文件?", "完成",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+            string? err = null;
+            try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                { FileName = dlg.FileName, UseShellExecute = true });
+                if (xlsx) MaintenanceExporter.ExportXlsx(target, records);
+                else MaintenanceExporter.ExportCsv(target, records);
+                Logger.Info($"维修记录已导出: {target} ({records.Count} 条)");
             }
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show("导出失败: " + ex.Message);
-            Logger.Error($"维修记录导出失败: {ex.Message}");
-        }
+            catch (Exception ex)
+            {
+                err = ex.Message;
+                Logger.Error($"维修记录导出失败: {ex.Message}");
+            }
+            UiAsync.Post(this, () =>
+            {
+                Cursor = Cursors.Default;
+                if (err != null) { MessageBox.Show("导出失败: " + err); return; }
+                if (MessageBox.Show($"已导出 {records.Count} 条维修记录！\n是否打开文件?", "完成",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                {
+                    try
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        { FileName = target, UseShellExecute = true });
+                    }
+                    catch (Exception ex) { Logger.Warning($"[维修] 打开导出文件失败: {ex.Message}"); }
+                }
+            });
+        });
     }
 }
 
@@ -528,7 +544,7 @@ public class MaintenancePanel : Panel
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false;
         ShowInTaskbar = false;
-        Font = new Font("Microsoft YaHei UI", 9F);
+        Font = Theme.CachedFont("Microsoft YaHei UI", 9F);
         BuildUi();
         LoadValues();
     }

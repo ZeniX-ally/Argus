@@ -195,7 +195,13 @@ public class LearningPanel : Panel
             catch (Exception ex)
             {
                 Logger.Warning($"[正常态] 刷新失败: {ex.Message}");
-                UiAsync.Post(this, () => _refreshBusy = false);
+                UiAsync.Post(this, () =>
+                {
+                    _refreshBusy = false;
+                    // D5：失败必须可见——原实现只打日志，界面静默保留上一次的数据
+                    if (!IsDisposed)
+                        _summary.Text = $"学习状态刷新失败：{ex.Message}（下方可能是上一次的数据）";
+                });
             }
         });
     }
@@ -309,8 +315,13 @@ public class LearningPanel : Panel
         {
             LearnPipeline.FullBackfillResult? result = null;
             string? err = null;
+            string? heartbeat = null;
             try { result = LearnPipeline.RunFullBackfill(_engine, WindowIndex, progress); }
             catch (Exception ex) { err = ex.Message; Logger.Warning($"[正常态] UI 回填失败: {ex.Message}"); }
+            // D2：Capture 是多次全表 COUNT/查询，大库要秒级——放进后台线程算完再回填，
+            // 原实现在 UI 回调里同步跑，回填完成瞬间整窗卡顿。
+            try { heartbeat = LearningSnapshot.Capture(_engine.Db, AppConfig.Instance).HeartbeatSummary(); }
+            catch (Exception ex) { Logger.Warning($"[正常态] 回填后快照失败: {ex.Message}"); }
             UiAsync.Post(this, () =>
             {
                 SetBusy(false);
@@ -318,8 +329,8 @@ public class LearningPanel : Panel
                 if (err != null)
                     MessageBox.Show($"回填失败：{err}", "自学习", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 else if (result != null)
-                    _summary.Text = "回填完成：" + result.FormatSummary() + "  ·  " +
-                                    LearningSnapshot.Capture(_engine.Db, AppConfig.Instance).HeartbeatSummary();
+                    _summary.Text = "回填完成：" + result.FormatSummary() +
+                                    (heartbeat != null ? "  ·  " + heartbeat : "");
             });
         });
     }

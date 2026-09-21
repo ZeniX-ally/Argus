@@ -339,6 +339,8 @@ internal sealed class DeviceCard : Control
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        try
+        {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         Theme.DrawCard(g, ClientRectangle, null);
@@ -376,5 +378,11 @@ internal sealed class DeviceCard : Control
         TextRenderer.DrawText(g, st, stFont,
             new Rectangle(pad, y, Width - pad * 2, stH), lamp,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
+        }
     }
 }

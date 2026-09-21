@@ -76,7 +76,7 @@ public class ResolverManagerForm : AppForm
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false;
         ShowInTaskbar = false;
-        Font = new Font("Microsoft YaHei UI", 9F);
+        Font = Theme.CachedFont("Microsoft YaHei UI", 9F);
 
         BuildUi();
         _name.Text = (preset ?? "").Trim();
@@ -261,7 +261,7 @@ public class RenameResolverForm : AppForm
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false;
         ShowInTaskbar = false;
-        Font = new Font("Microsoft YaHei UI", 9F);
+        Font = Theme.CachedFont("Microsoft YaHei UI", 9F);
 
         var lbl = new Label { Left = 14, Top = 16, Width = 80, Text = "新名字:", TextAlign = ContentAlignment.MiddleLeft };
         _name.Left = 96; _name.Top = 13; _name.Width = 270; _name.Text = oldName;
@@ -309,7 +309,7 @@ public class ResolverPickerForm : AppForm
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false;
         ShowInTaskbar = false;
-        Font = new Font("Microsoft YaHei UI", 9F);
+        Font = Theme.CachedFont("Microsoft YaHei UI", 9F);
 
         BuildUi();
         Reload();
@@ -371,7 +371,7 @@ public class ResolverPickerForm : AppForm
         var ok = new Button
         {
             Left = 244, Top = 400, Width = 80, Height = 30, Text = "确定",
-            DialogResult = DialogResult.OK, Font = new Font(Font, FontStyle.Bold),
+            DialogResult = DialogResult.OK, Font = Theme.BoldOf(Font),
         };
         ok.Click += (_, _) =>
         {

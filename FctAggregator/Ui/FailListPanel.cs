@@ -312,8 +312,25 @@ public sealed class FailListPanel : Panel
         return t;
     }
 
-    private List<string> FilterKeys => _search.Text.Trim()
-        .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();    private bool Hit(string s) => FilterKeys.All(k => s.Contains(k, StringComparison.OrdinalIgnoreCase));
+    // D17：FilterKeys 原为「每次访问重新 Split」——Hit() 每行调 3 次，2000 行渲染时重复分割搜索串。改按源文本缓存。
+    private string _filterKeysSrc = "\0";
+    private List<string> _filterKeysCache = new();
+    private List<string> FilterKeys
+    {
+        get
+        {
+            var src = _search.Text;
+            if (!string.Equals(_filterKeysSrc, src, StringComparison.Ordinal))
+            {
+                _filterKeysSrc = src;
+                _filterKeysCache = src.Trim()
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            }
+            return _filterKeysCache;
+        }
+    }
+
+    private bool Hit(string s) => FilterKeys.All(k => s.Contains(k, StringComparison.OrdinalIgnoreCase));
 
     private void RebuildActiveView()
     {

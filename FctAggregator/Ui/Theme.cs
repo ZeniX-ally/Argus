@@ -276,4 +276,26 @@ public static class Theme
         c == SystemColors.Window || c == SystemColors.WindowText ||
         c == Color.Empty || c == Color.Transparent ||
         c == Color.Black || c == Color.White;
+
+    // ── D11：Font 单一缓存入口 ──
+    // Control.Font 不释放被赋值的 Font：构造路径每次 new Font(...) 都泄漏一个 HFONT
+    // （卡片预览每次打开 8 个、 RichTextBox 每次追加 1 个，长期不重启的机台会耗尽 GDI 句柄）。
+    // 所有「赋给控件/窗体」的 Font 一律走 CachedFont/BoldOf，按 (family,size,style) 去重共享；
+    // Paint 路径内 using 的临时 Font 不在此列（保持即用即弃）。
+    private static readonly Dictionary<(string Family, float Size, FontStyle Style), Font> _fontCache = new();
+
+    public static Font CachedFont(string family, float size, FontStyle style = FontStyle.Regular)
+    {
+        lock (_fontCache)
+        {
+            var key = (family, size, style);
+            if (!_fontCache.TryGetValue(key, out var f))
+                _fontCache[key] = f = new Font(family, size, style);
+            return f;
+        }
+    }
+
+    /// <summary>派生加粗字体（等价 new Font(baseFont, FontStyle.Bold)），同样走缓存不泄漏。</summary>
+    public static Font BoldOf(Font baseFont) =>
+        CachedFont(baseFont.FontFamily.Name, baseFont.Size, FontStyle.Bold);
 }

@@ -77,6 +77,8 @@ public class MaintenanceBoard : Panel
         public List<TodoItem> Todos = new();
         public Dictionary<string, int> Counts = new();
         public Dictionary<string, List<MaintenanceRecord>> Columns = new();
+        /// <summary>D5：待办查询失败标记——为 true 时待办列显示「加载失败」而非误导性的空列表。</summary>
+        public bool TodoLoadFailed;
     }
 
     public BoardSnapshot LoadSnapshot()
@@ -87,7 +89,15 @@ public class MaintenanceBoard : Panel
             _todoTo = DateTime.Today;
         }
         var snap = new BoardSnapshot();
-        snap.Todos = LoadTodos();
+        // D5：待办加载失败时不能再静默返回空列表——空待办列会被现场误读成「没有待办」。
+        // 失败标记随快照传到列头，画成可见的「加载失败」。
+        try { snap.Todos = LoadTodos(); }
+        catch (Exception ex)
+        {
+            Logger.Error($"[待办] 待办列表加载失败(标记为加载失败，不再显示为空): {ex}");
+            snap.Todos = new List<TodoItem>();
+            snap.TodoLoadFailed = true;
+        }
         var counts = _engine.Db.CountMaintenanceByStatus();
         foreach (var kv in counts)
         {
@@ -120,6 +130,8 @@ public class MaintenanceBoard : Panel
             var rows = snap.Columns.GetValueOrDefault(def.Key) ?? new List<MaintenanceRecord>();
             var mine = def.Key == MaintenanceMeta.DefaultStatus ? snap.Todos : new List<TodoItem>();
             col.SetCards(rows, mine, snap.Counts.GetValueOrDefault(def.Key));
+            // D5：只有待办列会因待办查询失败而空——把失败画在列头上
+            col.SetLoadFailed(snap.TodoLoadFailed && def.Key == MaintenanceMeta.DefaultStatus);
         }
     }
 
@@ -131,19 +143,12 @@ public class MaintenanceBoard : Panel
 
     private List<TodoItem> LoadTodos()
     {
-        try
-        {
-            _engine.Db.SyncTodoItems(AppConfig.Instance.TodoScanDays);
-            var from = _customRange ? _todoFrom : (DateTime?)null;
-            var to = _customRange ? _todoTo : (DateTime?)null;
-            var list = _engine.Db.ListTodoView(from, to);
-            return list.Count > PerColumnLimit ? list.Take(PerColumnLimit).ToList() : list;
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"[待办] 待办列表加载失败(待办列将为空): {ex}");
-            return new List<TodoItem>();
-        }
+        // D5：不再吞异常返空——空列表会被误读为「没有待办」；抛给 LoadSnapshot 标记「加载失败」
+        _engine.Db.SyncTodoItems(AppConfig.Instance.TodoScanDays);
+        var from = _customRange ? _todoFrom : (DateTime?)null;
+        var to = _customRange ? _todoTo : (DateTime?)null;
+        var list = _engine.Db.ListTodoView(from, to);
+        return list.Count > PerColumnLimit ? list.Take(PerColumnLimit).ToList() : list;
     }
 
     private void RefreshCounts()
@@ -368,6 +373,7 @@ public class MaintenanceBoard : Panel
         private readonly Label _more;
         private int _total;
         private int _todoCount;
+        private bool _loadFailed;
         private bool _highlight;
 
         private static readonly Font HeadFont = new("Microsoft YaHei UI", 9.5F, FontStyle.Bold);
@@ -427,6 +433,14 @@ public class MaintenanceBoard : Panel
             _total = total;
             _head.Invalidate();
             UpdateMoreHint();
+        }
+
+        /// <summary>D5：数据源加载失败时列头显示「加载失败」，不再显示成漂亮的空列。</summary>
+        public void SetLoadFailed(bool failed)
+        {
+            if (_loadFailed == failed) return;
+            _loadFailed = failed;
+            _head.Invalidate();
         }
 
         public void SetCards(List<MaintenanceRecord> rows, List<TodoItem> todos, int total)
@@ -556,6 +570,9 @@ public class MaintenanceBoard : Panel
 
         private void PaintHead(object? sender, PaintEventArgs e)
         {
+            // D8：Paint 事件处理器同样需要兜底——异常直冒 Application 线程级崩溃
+            try
+            {
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var r = _head.ClientRectangle;
@@ -567,6 +584,20 @@ public class MaintenanceBoard : Panel
 
             TextRenderer.DrawText(g, _def.Zh, HeadFont, new Rectangle(8, 0, r.Width - 54, r.Height - 3),
                 Theme.TextSub, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+            // D5：加载失败时把「加载失败」画在列头上（危险色），避免空列被误读为「没有待办」
+            if (_loadFailed)
+            {
+                var fail = "加载失败";
+                var fw = Math.Max(48, TextRenderer.MeasureText(fail, BadgeFont).Width + 12);
+                var fr = new Rectangle(r.Width - fw - 8, (r.Height - 3 - 18) / 2, fw, 18);
+                using (var path = MaintenanceDraw.Rounded(fr, 9))
+                using (var b = new SolidBrush(Theme.Danger))
+                    g.FillPath(b, path);
+                TextRenderer.DrawText(g, fail, BadgeFont, fr, Color.White,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                return;
+            }
 
             var badge = _total.ToString();
             var bw = Math.Max(24, TextRenderer.MeasureText(badge, BadgeFont).Width + 12);
@@ -587,6 +618,11 @@ public class MaintenanceBoard : Panel
                     g.FillPath(b, path);
                 TextRenderer.DrawText(g, t, BadgeFont, tr, Color.White,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"[自绘] PaintHead 异常已兜底: {ex.Message}");
             }
         }
 
@@ -655,6 +691,9 @@ public sealed class MaintenanceCard : BoardCardBase
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        // D8：自绘 OnPaint 统一兜底——Paint 异常直冒 Application 线程级崩溃（一崩全崩）
+        try
+        {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var r = new Rectangle(0, 0, Width - 1, Height - 1);
@@ -703,6 +742,12 @@ public sealed class MaintenanceCard : BoardCardBase
             TextRenderer.DrawText(g, text, MetaFont,
                 new Rectangle(left, 70, Math.Max(20, Width - left - 8), 16),
                 Theme.TextFaint, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
         }
     }
 

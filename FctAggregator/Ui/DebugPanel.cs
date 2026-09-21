@@ -400,9 +400,14 @@ public class DebugPanel : Panel
             OverwritePrompt = true,
         };
         if (dlg.ShowDialog() != DialogResult.OK) return;
-        var path = Logger.ExportZip(dlg.FileName);
-        Print($"已导出: {path}");
-        Logger.Info($"[日志] 已导出诊断包 {path}");
+        var target = dlg.FileName;
+        // D10：ExportZip 复制+压缩全部 app.log*，大日志时 UI 线程同步跑会卡住——改 RunBusy 后台
+        RunBusy("正在导出日志包…", () =>
+        {
+            var path = Logger.ExportZip(target);
+            Print($"已导出: {path}");
+            Logger.Info($"[日志] 已导出诊断包 {path}");
+        });
     }
 
     private void OpenLogDir()

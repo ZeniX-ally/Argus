@@ -61,9 +61,11 @@ public static class FailExporter
 
             var cells = new string[Headers.Length];
             for (int c = 0; c < cells.Length; c++) cells[c] = "";
-            cells[0] = $"小计：{name}";
-            cells[1] = numeric > 0 ? FailItemDetail.Num(sum / numeric) : "—";
-            cells[2] = $"失败 {n} 次";
+            // D4：小计行进「项目/值/限值」列（3/4/5），与文件头文档注释一致。
+            // 原实现写进 0/1/2（型号/SN/时间列）——Excel 按列筛选会把均值当 SN、把失败次数当测试时间。
+            cells[3] = $"小计：{name}";
+            cells[4] = numeric > 0 ? FailItemDetail.Num(sum / numeric) : "—";
+            cells[5] = $"失败 {n} 次";
             outRows.Add(new FailRow(FailRowKind.Subtotal, cells));
 
             if (j < src.Count) outRows.Add(new FailRow(FailRowKind.Blank, new string[Headers.Length]));

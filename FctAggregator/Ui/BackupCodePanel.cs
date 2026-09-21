@@ -137,7 +137,13 @@ public sealed class BackupCodePanel : Panel
             catch (Exception ex)
             {
                 Logger.Warning($"[备份页] 刷新失败: {ex.Message}");
-                UiAsync.Post(this, () => _refreshBusy = false);
+                UiAsync.Post(this, () =>
+                {
+                    _refreshBusy = false;
+                    // D5：失败必须可见——原实现只打日志，_status 永驻「正在加载备份记录…」
+                    if (_status != null && !IsDisposed)
+                        _status.Text = $"备份记录加载失败：{ex.Message}\n（下方可能是上一次的数据，点「刷新」重试）";
+                });
             }
         });
     }

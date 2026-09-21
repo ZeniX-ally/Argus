@@ -176,8 +176,16 @@ public class CardPreviewForm : AppForm
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        try
+        {
         base.OnPaint(e);
         using var pen = new Pen(_accent);
         e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
+        }
     }
 }

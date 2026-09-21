@@ -33,7 +33,7 @@ public partial class UpgradeWizard : AppForm
         lblTitle = new Label
         {
             Text = "Argus 升级向导",
-            Font = new Font("Segoe UI", 14F, FontStyle.Bold),
+            Font = Theme.CachedFont("Segoe UI", 14F, FontStyle.Bold),
             ForeColor = Color.FromArgb(0, 76, 158),
             Location = new Point(20, 15),
             Size = new Size(700, 40),
@@ -41,7 +41,7 @@ public partial class UpgradeWizard : AppForm
         lblStep = new Label
         {
             Text = "步骤 1：选择升级包（Argus-v*-update.zip）",
-            Font = new Font("Segoe UI", 10F),
+            Font = Theme.CachedFont("Segoe UI", 10F),
             Location = new Point(20, 60),
             Size = new Size(700, 25),
         };
@@ -54,7 +54,7 @@ public partial class UpgradeWizard : AppForm
             Size = new Size(700, 320),
             BackColor = Color.Black,
             ForeColor = Color.Lime,
-            Font = new Font("Consolas", 9F),
+            Font = Theme.CachedFont("Consolas", 9F),
         };
         btnNext = new Button
         {

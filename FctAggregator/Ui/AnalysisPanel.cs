@@ -148,7 +148,7 @@ public class AnalysisPanel : Panel
         host.Controls.Add(new Label
         {
             Text = title, Dock = DockStyle.Top, Height = 30,
-            Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
+            Font = Theme.CachedFont("Microsoft YaHei UI", 11F, FontStyle.Bold),
             ForeColor = Theme.Primary,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(2, 0, 0, 0),
         });

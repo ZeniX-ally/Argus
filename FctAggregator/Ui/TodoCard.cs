@@ -51,6 +51,8 @@ public sealed class TodoCard : BoardCardBase
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        try
+        {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var r = new Rectangle(0, 0, Width - 1, Height - 1);
@@ -124,6 +126,12 @@ public sealed class TodoCard : BoardCardBase
         TextRenderer.DrawText(g, Hover ? "单击预览" : "必须确认", MetaFont,
             new Rectangle(Width - 92, y + 2, 86, 16),
             Color.FromArgb(200, 16, 46), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
+        }
     }
 
     public (string title, string subtitle, List<(string, string)> rows, string footer) BuildPreview()

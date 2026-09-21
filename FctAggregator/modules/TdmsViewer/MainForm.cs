@@ -186,7 +186,7 @@ public sealed class MainForm : AppForm
 		_grid.ColumnHeadersDefaultCellStyle.ForeColor = Theme.ToolDarkFg;
 		_grid.ColumnHeadersDefaultCellStyle.Font = Theme.BodyBold;
 		_grid.AlternatingRowsDefaultCellStyle.BackColor = Theme.ToolAltRow;
-		_grid.DefaultCellStyle.Font = new Font("Consolas", 9f);
+		_grid.DefaultCellStyle.Font = Theme.CachedFont("Consolas", 9F);
 		tabPage.Controls.Add(_grid);
 		_tabs.TabPages.Add(tabPage);
 		TabPage tabPage2 = new TabPage("属性");

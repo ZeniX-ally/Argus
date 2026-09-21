@@ -73,7 +73,7 @@ public class XmlViewerForm : AppForm
         var lblSn = new Label
         {
             Text = string.IsNullOrEmpty(_data.Sn) ? Path.GetFileName(_path) : _data.Sn,
-            Font = new Font(Theme.Body.FontFamily, 16F, FontStyle.Bold),
+            Font = Theme.CachedFont(Theme.Body.FontFamily.Name, 16F, FontStyle.Bold),
             ForeColor = CText, Left = 28, Top = 44, AutoSize = false,
             Height = 30, AutoEllipsis = true,
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
@@ -267,7 +267,7 @@ public class XmlViewerForm : AppForm
             Dock = DockStyle.Fill,
             ReadOnly = true, BorderStyle = BorderStyle.None,
             BackColor = CCard, ForeColor = CText,
-            Font = new Font(Theme.Mono.FontFamily, 10.5F),
+            Font = Theme.CachedFont(Theme.Mono.FontFamily.Name, 10.5F),
             WordWrap = false, ScrollBars = RichTextBoxScrollBars.Both,
             DetectUrls = false, HideSelection = false,
             Cursor = Cursors.IBeam,
@@ -443,7 +443,7 @@ public class XmlViewerForm : AppForm
         var tb = new TextBox
         {
             Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
-            ScrollBars = ScrollBars.Both, WordWrap = false,             Font = new Font(Theme.Mono.FontFamily, 9.5F),
+            ScrollBars = ScrollBars.Both, WordWrap = false,             Font = Theme.CachedFont(Theme.Mono.FontFamily.Name, 9.5F),
             BackColor = Color.White, ForeColor = Color.FromArgb(20, 20, 20),
             BorderStyle = BorderStyle.None,
         };

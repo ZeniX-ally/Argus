@@ -78,6 +78,8 @@ public sealed class HourlyTrendChart : Control
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        try
+        {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
@@ -221,6 +223,12 @@ public sealed class HourlyTrendChart : Control
         if (_hoverHour >= 0 && _hoverHour < 24)
         {
             DrawHoverTooltip(g, _stats[_hoverHour], chartLeft + (_hoverHour * slotW) + (slotW / 2f), chartTop, chartH);
+        }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
         }
     }
 
@@ -462,8 +470,16 @@ public sealed class DeviceOnlinePanel : Panel
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        try
+        {
         Theme.DrawCard(e.Graphics, ClientRectangle, null);
         base.OnPaint(e);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
+        }
     }
 }
 
@@ -526,6 +542,8 @@ public sealed class TopFailRankPanel : Control
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        try
+        {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
@@ -597,6 +615,12 @@ public sealed class TopFailRankPanel : Control
             g.FillRectangle(barFill, barX, barY, fillW, barH);
             y += rowH;
         }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
+        }
     }
 
     private static void DrawBadge(Graphics g, int x, int y, int rank)
@@ -648,6 +672,8 @@ public sealed class LearnAlertStrip : Control
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        try
+        {
         if (_lines.Count == 0) return;
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -663,6 +689,12 @@ public sealed class LearnAlertStrip : Control
                 new Rectangle(rect.X + 10, y, rect.Width - 20, 20), Theme.TextMain,
                 TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
             y += 22;
+        }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
         }
     }
 }
@@ -742,6 +774,8 @@ public sealed class LiveAlertPanel : Control
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        try
+        {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
@@ -792,7 +826,9 @@ public sealed class LiveAlertPanel : Control
             if (!string.IsNullOrEmpty(a.StationId))
             {
                 var stRect = new Rectangle(85, y + 4, 75, rowH - 12);
-                using var stB = new SolidBrush(Color.FromArgb(50, Theme.TextFaint));
+                // D6：原为 Color.FromArgb(50, TextFaint) 半透明底 + 白字——近白底白字对比 ≈1.1:1，机台号实际不可见。
+                // 改实色 TextFaint 底 + 白字（≈4.7:1）。
+                using var stB = new SolidBrush(Theme.TextFaint);
                 g.FillRectangle(stB, stRect);
                 TextRenderer.DrawText(g, a.StationId, Theme.Tiny, stRect, Color.White,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
@@ -808,6 +844,12 @@ public sealed class LiveAlertPanel : Control
             TextRenderer.DrawText(g, a.Tester, Theme.Tiny,
                 new Rectangle(Width - 85, y, 70, rowH - 4), Theme.TextFaint,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning($"[自绘] OnPaint 异常已兜底: {ex.Message}");
+            try { TextRenderer.DrawText(e.Graphics, "（自绘异常，详见日志）", Theme.Small, ClientRectangle, Theme.TextFaint); } catch { }
         }
     }
 }

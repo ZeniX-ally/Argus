@@ -1280,6 +1280,9 @@ class SelfTest
         Console.WriteLine("\n【v3.48.4 审计修复批二】瘦表DDL事务 / checkpoint返回值 / 备份保留glob / 状态机常量 / 区间时间归一");
         RunAuditFixBatch2Tests(work);
 
+        Console.WriteLine("\n【v3.48.5 审计修复批三】UI 线程重活 / Font 泄漏 / OnPaint 兜底 / 导出行错位 / 失败可见");
+        RunAuditFixBatch3Tests();
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -4587,11 +4590,11 @@ Argus 统一发布包  v{newer}
         Check(kinds == "DSBDSBDS", $"导出行序：三组各「明细+小计+空行」、末组不带空行（实得 {kinds}）");
         Check(expRows.Count(r => r.Kind == FailExporter.FailRowKind.Subtotal) == 3,
             "导出行序：每组恰好一个小计行");
-        var subVk = expRows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal && r.Cells[0].Contains("V_KL30"));
-        Check(subVk.Cells[0] == "小计：V_KL30" && subVk.Cells[2] == "失败 1 次",
-            $"小计行：项目名与失败次数（实得 '{subVk.Cells[0]}' / '{subVk.Cells[2]}'）");
-        var subCont = expRows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal && r.Cells[0].Contains("CONT"));
-        Check(subCont.Cells[1] == "—", $"小计行：整组无数值 → 均值写 —（实得 '{subCont.Cells[1]}'）");
+        var subVk = expRows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal && r.Cells[3].Contains("V_KL30"));
+        Check(subVk.Cells[3] == "小计：V_KL30" && subVk.Cells[5] == "失败 1 次",
+            $"小计行：项目名与失败次数进项目/限值列（实得 '{subVk.Cells[3]}' / '{subVk.Cells[5]}'）");
+        var subCont = expRows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal && r.Cells[3].Contains("CONT"));
+        Check(subCont.Cells[4] == "—", $"小计行：整组无数值 → 均值写 —（实得 '{subCont.Cells[4]}'）");
         Check(text.Contains("小计："), "CSV：分组小计行已写出");
 
         var memRows = FailExporter.BuildRows(new[]
@@ -4601,8 +4604,8 @@ Argus 统一发布包  v{newer}
             new FailItemDetail { TestName = "T_X", ValueText = "Open", Ts = "t3" },
         });
         var subX = memRows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal);
-        Check(subX.Cells[1] == "3.32" && subX.Cells[2] == "失败 3 次",
-            $"小计均值：只统计数值项（(3.29+3.35)/2=3.32，实得 {subX.Cells[1]} / {subX.Cells[2]}）");
+        Check(subX.Cells[4] == "3.32" && subX.Cells[5] == "失败 3 次",
+            $"小计均值：只统计数值项（(3.29+3.35)/2=3.32，实得 {subX.Cells[4]} / {subX.Cells[5]}）");
         var singleGroup = FailExporter.BuildRows(new[]
         {
             new FailItemDetail { TestName = "ONLY", Value = 1.5, Ts = "t" },
@@ -5615,5 +5618,31 @@ Argus 统一发布包  v{newer}
             Check(events == 1, "B14：无变更时不重复发通知");
             try { Directory.Delete(dir, true); } catch { }
         }
+    }
+
+    /// <summary>v3.48.5 审计修复批三（UI 批）：先写断言再改生产代码。</summary>
+    static void RunAuditFixBatch3Tests()
+    {
+        // D11：Theme.CachedFont 是 Font 单一缓存入口——同键必须返回同一实例（共享 HFONT，不再每次 new 泄漏）
+        var f1 = Theme.CachedFont("Microsoft YaHei UI", 9F);
+        var f2 = Theme.CachedFont("Microsoft YaHei UI", 9F);
+        Check(ReferenceEquals(f1, f2), "D11：CachedFont 同 (family,size,style) 返回同一实例（共享不泄漏）");
+        Check(!ReferenceEquals(f1, Theme.CachedFont("Microsoft YaHei UI", 9F, FontStyle.Bold)),
+              "D11：CachedFont 按样式区分缓存（Bold 是另一份）");
+        var b1 = Theme.BoldOf(Theme.Body);
+        var b2 = Theme.BoldOf(Theme.Body);
+        Check(ReferenceEquals(b1, b2), "D11：BoldOf 派生加粗同样走缓存");
+
+        // D4：FAIL 导出小计行进「项目/值/限值」列（3/4/5），不得再写进型号/SN/时间列（0/1/2）
+        var rows = FailExporter.BuildRows(new[]
+        {
+            new FailItemDetail { TestName = "T_UI", Value = 3.29, Ts = "t1" },
+            new FailItemDetail { TestName = "T_UI", Value = 3.35, Ts = "t2" },
+        });
+        var sub = rows.First(r => r.Kind == FailExporter.FailRowKind.Subtotal);
+        Check(sub.Cells[3] == "小计：T_UI" && sub.Cells[4] == "3.32" && sub.Cells[5] == "失败 2 次",
+              $"D4：小计行进项目/值/限值列（实得 [{sub.Cells[3]}] [{sub.Cells[4]}] [{sub.Cells[5]}]）");
+        Check(sub.Cells[0] == "" && sub.Cells[1] == "" && sub.Cells[2] == "",
+              "D4：小计行的型号/SN/时间列保持空白（Excel 按列筛选不再把均值当 SN）");
     }
 }

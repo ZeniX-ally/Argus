@@ -507,11 +507,27 @@ public class MainForm : AppForm
         SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
     }
 
+    private volatile bool _deviceOnlineBusy = false;
+
     private void RefreshDeviceOnline()
     {
-        if (_deviceOnline == null) return;
-        try { _deviceOnline.SetData(FctIni.Snapshot(_cfg.FctIniPath)); }
-        catch (Exception ex) { Logger.Warning($"[总览] 设备在线刷新失败: {ex.Message}"); }
+        // D1：FctIni.Snapshot 内含注册表+串口枚举，FCT.ini 缺失时每 15s 走 LocateIni——
+        // 原实现直接在 1s Tick 的 UI 线程跑，窗口周期性卡死。改后台线程 + UiAsync.Post 回填
+        //（同 DeviceStatusPanel.Kick 范式，MainForm 是当年唯一漏改处）。
+        if (_deviceOnline == null || _deviceOnlineBusy) return;
+        _deviceOnlineBusy = true;
+        var cfgPath = _cfg.FctIniPath;
+        Task.Run(() =>
+        {
+            FctIniData? data = null;
+            try { data = FctIni.Snapshot(cfgPath); }
+            catch (Exception ex) { Logger.Warning($"[总览] 设备在线刷新失败: {ex.Message}"); }
+            UiAsync.Post(this, () =>
+            {
+                _deviceOnlineBusy = false;
+                if (data != null && !IsDisposed) _deviceOnline.SetData(data);
+            });
+        });
     }
 
     private volatile bool _dashUpdating = false;
