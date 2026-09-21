@@ -40,8 +40,16 @@ public static class LearnBackfill
 
     private static int BackfillMeasurements(Database db, AppConfig cfg, string from, CancellationToken ct)
     {
-        var rows = db.ListPassMeasurementsAfter(ReadWm(db, MetaMeas), from);
-        if (rows.Count == 0) return 0;
+        var wm = ReadWm(db, MetaMeas);
+        var rows = db.ListPassMeasurementsAfter(wm, from);
+        if (rows.Count == 0)
+        {
+            // C2：水位按 record_id、窗口按天——二次回填（换窗口/重建模型）时旧记录恒被水位跳过。
+            // 不静默返回 0：明示原因，避免现场以为「回填没用」。
+            if (wm > 0)
+                Logger.Info($"[正常态] 测量回填 0 条：水位 {wm} 已覆盖窗口起点 {from}（重建模型需先清 normal_models）");
+            return 0;
+        }
         int n = 0, sinceSleep = 0;
         foreach (var grp in rows.GroupBy(r => r.RecordId))
         {
@@ -53,7 +61,9 @@ public static class LearnBackfill
                 Measurements = grp.Select(g => new MeasurementRow { TestName = g.TestName, Value = g.Value }).ToList(),
             };
             NormalLearners.ObserveMeasurement(db, cfg, rec);
-            db.SetMeta(MetaMeas, grp.Key.ToString());
+            // C1：必须走 AdvanceWatermark（单调）——实时路径 Engine.AfterIngest 也推进同一水位，
+            // 直接 SetMeta 会在回填与实时并发时把水位写回更小值 → 重复入模、n 双计、偏离误报。
+            AdvanceWatermark(db, MetaMeas, grp.Key);
             n++;
             if (++sinceSleep >= 200) { Thread.Sleep(100); sinceSleep = 0; }
         }
@@ -91,7 +101,8 @@ public static class LearnBackfill
         {
             ct.ThrowIfCancellationRequested();
             NormalLearners.ObserveDeviceSample(db, cfg, row.Cpu, row.Mem, row.Disk, row.Ts);
-            db.SetMeta(MetaDev, row.Id.ToString());
+            // C1：同测量水位，单调推进（原直接 SetMeta 会写回更小值）
+            AdvanceWatermark(db, MetaDev, row.Id);
             n++;
             if (++sinceSleep >= 200) { Thread.Sleep(100); sinceSleep = 0; }
         }

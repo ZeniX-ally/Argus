@@ -175,7 +175,7 @@ public static class SelfBaseline
         var stats = new List<SlotInterruptStat>();
         foreach (var grp in baselineRecs.GroupBy(r => TimeSlot.SlotOfHour(r.Hour)))
         {
-            var dayRates = grp.GroupBy(r => r.TestDate)
+            var dayRates = grp.GroupBy(r => ParseYmd(r.TestDate)?.ToString("yyyy-MM-dd") ?? r.TestDate) // 审计 C3：日期归一（同 DedupBySn/BuildBuckets）
                 .Select(dg =>
                 {
                     int total = dg.Count();
@@ -284,10 +284,12 @@ public static class SelfBaseline
 
     private static double Mean(List<double> xs) => xs.Count == 0 ? 0 : xs.Average();
 
+    /// <summary>审计 C4：样本 σ（n−1）——与 Welford(StreamingStats) 和 SQL 聚合口径一致。
+    /// 原实现用总体 σ（/n），基线 σ 系统性偏小 → yield_drop/中断热区阈值偏紧 → 误报。</summary>
     private static double Std(List<double> xs)
     {
         if (xs.Count <= 1) return 0;
         var m = xs.Average();
-        return Math.Sqrt(xs.Sum(x => (x - m) * (x - m)) / xs.Count);
+        return Math.Sqrt(xs.Sum(x => (x - m) * (x - m)) / (xs.Count - 1));
     }
 }

@@ -1283,6 +1283,9 @@ class SelfTest
         Console.WriteLine("\n【v3.48.5 审计修复批三】UI 线程重活 / Font 泄漏 / OnPaint 兜底 / 导出行错位 / 失败可见");
         RunAuditFixBatch3Tests();
 
+        Console.WriteLine("\n【v3.48.6 审计修复批四】回填水位单调 / 基线日期归一 / 样本σ / 近常量闸门");
+        RunAuditFixBatch4Tests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -5644,5 +5647,79 @@ Argus 统一发布包  v{newer}
               $"D4：小计行进项目/值/限值列（实得 [{sub.Cells[3]}] [{sub.Cells[4]}] [{sub.Cells[5]}]）");
         Check(sub.Cells[0] == "" && sub.Cells[1] == "" && sub.Cells[2] == "",
               "D4：小计行的型号/SN/时间列保持空白（Excel 按列筛选不再把均值当 SN）");
+    }
+
+    /// <summary>v3.48.6 审计修复批四（自学习口径）：先写断言再改生产代码。</summary>
+    static void RunAuditFixBatch4Tests(string work)
+    {
+        // C1：回填水位单调（并发小值不回拨）+ 二次回填 0 增量（不双计）
+        {
+            var dir = Path.Combine(work, "c1_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "l.db"));
+            db.BatchInsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", Result = "PASS",
+                    TestDate = DateTime.Today.ToString("yyyyMMdd"),
+                    BatchTimestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), XmlPath = @"C:\t\c1_0.xml",
+                    Measurements = new[] { new MeasurementRow { TestName = "T_C1", Value = 5.0 } }.ToList(),
+                },
+            });
+            var cfg = new AppConfig { LearnNormalEnabled = true };
+            var n1 = LearnBackfill.Run(db, cfg, 30);
+            Check(n1 >= 1, $"C1 前置：回填入模 {n1} 条");
+            var wm = db.GetMeta(LearnBackfill.MetaMeas);
+            Check(!string.IsNullOrEmpty(wm), "C1 前置：水位已写入");
+            LearnBackfill.AdvanceWatermark(db, LearnBackfill.MetaMeas, 1); // 模拟实时路径传进更小 id
+            Check(db.GetMeta(LearnBackfill.MetaMeas) == wm, "C1：水位单调不回拨（小值写入被忽略）");
+            var row1 = db.GetNormalModel(NormalModelStore.SourceMeasurement, "G49", "T_C1");
+            var n2 = LearnBackfill.Run(db, cfg, 30);
+            Check(n2 == 0, "C1：二次回填 0 增量（水位幂等）");
+            var row2 = db.GetNormalModel(NormalModelStore.SourceMeasurement, "G49", "T_C1");
+            Check(row1 != null && row2 != null && row2.N == row1.N,
+                  $"C1：重复回填不双计 n（{row1?.N} → {row2?.N}）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // C3：中断基线按天分组归一 dash/8 位混存
+        {
+            var mixRecs = new List<BaselineSourceRecord>
+            {
+                new(1, "20260901", 8, "M1", "S1", "PASS"),
+                new(2, "2026-09-01", 8, "M1", "S2", "INTERRUPTED"),
+                new(3, "20260902", 8, "M1", "S3", "PASS"),
+            };
+            var slots = SelfBaseline.BuildSlotInterruptBaseline(mixRecs);
+            Check(slots.Count == 1 && slots[0].DayCount == 2,
+                  $"C3：dash/8位混存同日只算一天（DayCount={slots.FirstOrDefault()?.DayCount}，期望 2；原缺陷裂成 3 天）");
+        }
+
+        // C4：基线 σ 用样本 σ（n−1），与 Welford/SQL 口径一致
+        {
+            var recs = new List<BaselineSourceRecord>();
+            long id = 0;
+            for (int i = 0; i < 9; i++) recs.Add(new BaselineSourceRecord(++id, "20260901", 8, "M1", $"A{i}", "PASS"));
+            recs.Add(new BaselineSourceRecord(++id, "20260901", 8, "M1", "AF", "FAIL"));   // 当日良率 90
+            for (int i = 0; i < 10; i++) recs.Add(new BaselineSourceRecord(++id, "20260902", 8, "M1", $"B{i}", "PASS")); // 当日良率 100
+            var buckets = SelfBaseline.BuildBuckets(recs);
+            var b = buckets.FirstOrDefault();
+            Check(b != null && Math.Abs(b!.YieldMean - 95.0) < 1e-9, $"C4 前置：良率均值 95（实得 {b?.YieldMean}）");
+            Check(b != null && Math.Abs(b.YieldSigma - Math.Sqrt(50)) < 1e-9,
+                  $"C4：样本 σ=√50≈7.071（实得 {b?.YieldSigma:F4}；原缺陷总体 σ=5 偏小导致阈值偏紧误报）");
+        }
+
+        // C5：近常量信号不参与偏离评分（纯函数锁定）
+        {
+            Check(DeviationScorer.IsNearConstant(new NormalModelRow { Mean = 100, Sigma = 1e-9, N = 10 }),
+                  "C5：σ=1e-9 判近常量（不评分）");
+            Check(DeviationScorer.IsNearConstant(new NormalModelRow { Mean = 100, Sigma = 0, N = 10 }),
+                  "C5：σ=0 判近常量");
+            Check(!DeviationScorer.IsNearConstant(new NormalModelRow { Mean = 100, Sigma = 1.0, N = 10 }),
+                  "C5：σ=1（相对 1%）正常参与评分");
+            Check(!DeviationScorer.IsNearConstant(new NormalModelRow { Mean = 0.001, Sigma = 1.0, N = 10 }),
+                  "C5：小量程大波动不误判为近常量");
+        }
     }
 }

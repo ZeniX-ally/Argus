@@ -21,6 +21,18 @@ public static class DeviationScorer
 {
     public const double SigmaFloor = 1e-6;
 
+    /// <summary>审计 C5：近常量信号判定——σ 相对量级低于 1ppm 或低于绝对地板×1000 时视为近常量，
+    /// 不参与偏离评分（否则 SigmaFloor 会把噪声放大成 100 分事件）。纯函数，供自检断言。</summary>
+    public static bool IsNearConstant(NormalModelRow row)
+    {
+        if (row == null) return true;
+        var sigma = row.Sigma;
+        if (!double.IsFinite(sigma) || sigma <= 0) return true;
+        if (sigma <= SigmaFloor * 1000) return true;
+        var scale = Math.Max(Math.Abs(row.Mean), 1e-9);
+        return sigma / scale < 1e-6;
+    }
+
     public static double? ScoreOne(NormalModelRow row, double x, DateTime now, int staleDays)
     {
         if (row == null || !double.IsFinite(x)) return null;
@@ -51,6 +63,12 @@ public static class DeviationScorer
                     {
                         TestName = key, Mean = row.Mean, Sigma = row.Sigma, N = (int)Math.Min(int.MaxValue, row.N),
                     }))
+                    continue;
+                // 审计 C5：waveform/device 源原本没有过程量闸门——近常量信号 σ≈0 时 1e-6 地板
+                // 把微小波动放大成满分(100)事件并经 MaybeNotifyDeviation 推卡（日封顶 5 条误报）。
+                // measurement 源有 ShouldTreatAsProcess，另两个源补一道近常量判定。
+                if (!string.Equals(source, NormalModelStore.SourceMeasurement, StringComparison.Ordinal)
+                    && IsNearConstant(row))
                     continue;
                 var score = ScoreOne(row, value, now, cfg.LearnNormalStaleDays);
                 if (score is not { } s || s < cfg.LearnNormalEventScore) continue;
