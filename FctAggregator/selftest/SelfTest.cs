@@ -1271,6 +1271,9 @@ class SelfTest
         Console.WriteLine("\n【v3.48.1 审计修复】热升级参数/换装白名单 + 飞书业务码 + 机台号边界 + 冷归档日期口径 + 告警回队 + CLI 兜底");
         RunAuditFixTests(work);
 
+        Console.WriteLine("\n【v3.48.2 日期格式 / 运行时】dash 日期不再从待办·KPI·补推消失；热升级保留现场调参；重试占坑");
+        RunDateFormatAndRuntimeTests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -5182,6 +5185,160 @@ Argus 统一发布包  v{newer}
             catch { rc = -1; }
             Check(rc == 2, $"Fetcher CLI：--out 目录不存在返回 2 而不是未处理异常（实得 {rc}）");
             try { File.Delete(xml); } catch { }
+        }
+    }
+
+    /// <summary>v3.48.2：test_date 双格式与热升级/重试占坑。先写断言再改生产代码。</summary>
+    static void RunDateFormatAndRuntimeTests(string work)
+    {
+        var today8 = DateTime.Today.ToString("yyyyMMdd");
+        var todayDash = DateTime.Today.ToString("yyyy-MM-dd");
+        var monthYm = DateTime.Today.ToString("yyyyMM");
+        var recentDash = DateTime.Today.AddDays(-3).ToString("yyyy-MM-dd");
+        var old8 = DateTime.Today.AddDays(-200).ToString("yyyyMMdd");
+
+        {
+            var dir = Path.Combine(work, "datefmt_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var dbPath = Path.Combine(dir, "d.db");
+            var db = new Database(dbPath);
+
+            db.InsertOne(new TestRecord
+            {
+                StationId = "FCT1", Model = "E300", Category = "FCT", TestDate = today8,
+                Sn = "SN-YMD", Result = "PASS", XmlPath = Path.Combine(dir, "ymd.xml"),
+                BatchTimestamp = DateTime.Today.ToString("yyyy-MM-dd") + " 10:00:00",
+            });
+            db.InsertOne(new TestRecord
+            {
+                StationId = "FCT1", Model = "E300", Category = "Offline", TestDate = todayDash,
+                Sn = "SN-DASH", Result = "FAIL", XmlPath = Path.Combine(dir, "dash.xml"),
+                FailReason = "Dash_Rail", BatchTimestamp = todayDash + " 11:00:00", HasFailItems = true,
+            });
+            db.InsertOne(new TestRecord
+            {
+                StationId = "FCT1", Model = "E300", Category = "Offline", TestDate = recentDash,
+                Sn = "SN-RECENT-DASH", Result = "FAIL", XmlPath = Path.Combine(dir, "recent-dash.xml"),
+                FailReason = "Recent_Dash_Item", BatchTimestamp = recentDash + " 08:00:00", HasFailItems = true,
+            });
+            db.InsertOne(new TestRecord
+            {
+                StationId = "FCT1", Model = "E300", Category = "Offline", TestDate = old8,
+                Sn = "SN-OLD", Result = "FAIL", XmlPath = Path.Combine(dir, "old.xml"),
+                FailReason = "Ancient_Dash_Compat", BatchTimestamp = "2020-01-01T00:00:00", HasFailItems = true,
+            });
+
+            var daily = db.FetchDailyStats("", today8);
+            Check(Database.TestDateEqDay.Contains("@d8") && Database.TestDateEqDay.Contains("@dDash"),
+                "日期口径：KPI/补推共用 TestDateEqDay 双格式等值");
+            Check(daily.Pass == 1 && daily.Fail == 1,
+                $"今日 KPI：8 位 PASS + dash FAIL 各计 1（实得 P={daily.Pass} F={daily.Fail}，原缺陷 dash 行静默漏计）");
+
+            var needing = db.ListTodayFailsNeedingAlert(today8, "");
+            Check(needing.Count == 1 && needing[0].Sn == "SN-DASH",
+                $"启动补推：dash 今日 FAIL 进入 ListTodayFailsNeedingAlert（实得 {needing.Count} 条）");
+
+            var month = db.FetchMonthlyStats("", monthYm);
+            Check(month.Pass >= 1 && month.Fail >= 2,
+                $"当月统计：含 dash 今日 FAIL 与 3 天前 dash FAIL（实得 P={month.Pass} F={month.Fail}）");
+
+            var created = db.SyncTodoItems(30);
+            var todos = db.ListTodoView();
+            Check(todos.Any(t => t.Title.Contains("Dash_Rail") || t.Title.Contains("Recent_Dash")),
+                $"待办扫描：近窗 dash FAIL 能入待办（新增 {created}，条数 {todos.Count}；原 CompareOrdinal 把 dash 全当过期）");
+            Check(!todos.Any(t => t.Title.Contains("Ancient_Dash_Compat")),
+                "待办扫描：200 天前 8 位 FAIL 仍不入待办（收口不放宽扫描窗）");
+
+            var sources = db.FailItemSources("", days: 7);
+            Check(sources.Any(s => s.XmlPath.EndsWith("recent-dash.xml", StringComparison.OrdinalIgnoreCase)),
+                $"故障来源：3 天前 dash FAIL 落在 7 天窗内（实得 {sources.Count} 条）");
+
+            var details = db.QueryFailItemDetails("", today8, today8);
+            Check(details.Any(d => d.XmlPath.EndsWith("dash.xml", StringComparison.OrdinalIgnoreCase)),
+                $"FAIL 导出：闭区间 {today8} 含 dash 今日行（实得 {details.Count}）");
+
+            db.MarkFailAlertedMany(new[] { Path.Combine(dir, "dash.xml") });
+            var afterMark = db.ListTodayFailsNeedingAlert(today8, "");
+            Check(afterMark.Count == 0, "批量标记已推送：一条路径一次调用后补推列表为空");
+
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        {
+            var dir = Path.Combine(work, "hourly_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var dbPath = Path.Combine(dir, "h.db");
+            var db = new Database(dbPath);
+            using (var c = new SqliteConnection($"Data Source={dbPath}"))
+            {
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = @"
+                    INSERT INTO test_records
+                        (station_id, model, category, test_date, sn, result, xml_path,
+                         fail_reason, batch_timestamp, created_at)
+                    VALUES ('FCT1','E300','FCT',@d,'SN-BADTS','PASS',@p,'','','not-a-timestamp')";
+                cmd.Parameters.AddWithValue("@d", today8);
+                cmd.Parameters.AddWithValue("@p", Path.Combine(dir, "no-time.xml"));
+                cmd.ExecuteNonQuery();
+            }
+            var hourNow = DateTime.Now.Hour;
+            var hourly = db.FetchDailyHourlyStats("", today8);
+            var dumped = hourly[hourNow].Pass + hourly[hourNow].Fail;
+            var totalH = hourly.Sum(x => x.Pass + x.Fail);
+            Check(totalH == 0 && dumped == 0,
+                $"小时柱：时间戳无法解析时不灌进当前小时 {hourNow:00}（柱合计 {totalH}，当前小时 {dumped}）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        {
+            var pkg = """{"station_id":"X","auto_update":true,"webhook_url":"","feishu_fail_merge_enabled":true,"learn_normal_enabled":true}""";
+            var site = """{"station_id":"FCT4","auto_update":false,"webhook_url":"https://example/hook","feishu_fail_merge_enabled":false,"learn_normal_enabled":false,"agg_token":"legacy"}""";
+            var merged = UpdateChecker.MergeConfigJson(pkg, site);
+            using var doc = JsonDocument.Parse(merged);
+            var root = doc.RootElement;
+            Check(root.GetProperty("station_id").GetString() == "FCT4", "热升级合并：station_id 保留现场");
+            Check(root.GetProperty("auto_update").ValueKind == JsonValueKind.False,
+                "热升级合并：auto_update=false 不被模板改回 true");
+            Check(root.GetProperty("feishu_fail_merge_enabled").ValueKind == JsonValueKind.False,
+                "热升级合并：feishu 现场调参保留");
+            Check(root.GetProperty("learn_normal_enabled").ValueKind == JsonValueKind.False,
+                "热升级合并：learn 现场调参保留");
+            Check(root.GetProperty("webhook_url").GetString() == "https://example/hook",
+                "热升级合并：webhook_url 保留现场");
+            Check(!root.TryGetProperty("agg_token", out _),
+                "热升级合并：模板已无的聚合遗留键不从现场带回");
+        }
+
+        {
+            var map = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(Engine.InFlightPathComparer);
+            Check(Engine.TryEnterInFlight(map, @"C:\Results\a.xml", 0), "在途占坑：首次 attempt=0 成功");
+            Check(!Engine.TryEnterInFlight(map, @"c:\results\A.XML", 1),
+                "在途占坑：重试 attempt>0 与大小写变体视为同一路径，不得并行");
+            Engine.ExitInFlight(map, @"C:\Results\a.xml");
+            Check(Engine.TryEnterInFlight(map, @"C:\Results\a.xml", 1), "在途占坑：释放后重试可再进入");
+        }
+
+        {
+            const System.Reflection.BindingFlags PubStat =
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
+            Check(typeof(Theme).GetField("NumberMid", PubStat) == null
+                  && typeof(Theme).GetField("ControlLeft", PubStat) == null
+                  && typeof(Theme).GetField("LabelTopOffset", PubStat) == null
+                  && typeof(Theme).GetField("NavWidth", PubStat) == null
+                  && typeof(Theme).GetField("Radius", PubStat) == null
+                  && typeof(Theme).GetMethod("Rounded", PubStat) == null,
+                "精简：Theme 六枚死令牌已剔除（NumberMid/ControlLeft/LabelTopOffset/NavWidth/Radius/Rounded）");
+            Check(typeof(CsvUtil).GetMethod("Write", PubStat) == null
+                  && typeof(CsvUtil).GetMethod("BuildBytes", PubStat) == null
+                  && typeof(CsvUtil).GetMethod("BuildSimpleBytes", PubStat) == null,
+                "精简：CsvUtil 写出三件套已剔除（现场导出走 Esc）");
+            Check(typeof(G49ProductDictionary).GetMethod("LookupSignal", PubStat) == null
+                  && typeof(G49ProductDictionary).GetMethod("LookupBySection", PubStat) == null,
+                "精简：G49 LookupSignal/LookupBySection 别名已剔除");
+            Check(typeof(AppConfig).GetMethod("Validate") == null
+                  && typeof(AppConfig).Assembly.GetType("FctAggregator.ConfigValidator") == null,
+                "精简：从未接线的 ConfigValidator / AppConfig.Validate 已剔除");
         }
     }
 }

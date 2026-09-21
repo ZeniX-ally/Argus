@@ -90,12 +90,16 @@ public sealed partial class Database
         {
             conds.Add("r.result='FAIL'");
             if (byStation) conds.Add("r.station_id=@s");
-            if (!string.IsNullOrWhiteSpace(fromYmd)) conds.Add("r.test_date >= @from");
-            if (!string.IsNullOrWhiteSpace(toYmdInclusive)) conds.Add("r.test_date <= @to");
+            if (!string.IsNullOrWhiteSpace(fromYmd) || !string.IsNullOrWhiteSpace(toYmdInclusive))
+                conds.Add(RTestDateRangeClosed);
         }
         if (byStation) cmd.Parameters.AddWithValue("@s", stationId);
-        if (!string.IsNullOrWhiteSpace(fromYmd)) cmd.Parameters.AddWithValue("@from", fromYmd);
-        if (!string.IsNullOrWhiteSpace(toYmdInclusive)) cmd.Parameters.AddWithValue("@to", toYmdInclusive);
+        if (!string.IsNullOrWhiteSpace(fromYmd) || !string.IsNullOrWhiteSpace(toYmdInclusive))
+        {
+            var a = string.IsNullOrWhiteSpace(fromYmd) ? DateTime.Today.AddYears(-50).ToString("yyyyMMdd") : fromYmd;
+            var b = string.IsNullOrWhiteSpace(toYmdInclusive) ? DateTime.Today.ToString("yyyyMMdd") : toYmdInclusive;
+            BindRangeDual(cmd, a, b);
+        }
 
         cmd.CommandText = $@"
             SELECT r.model, r.sn,

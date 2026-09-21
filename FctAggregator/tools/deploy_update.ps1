@@ -505,29 +505,28 @@ if ($pkgHasConfig) {
             # 聚合时代的 parsers_path/agg_*/mesh_*/peers/health/predict 等遗留键随之复活，
             # parsers_path 会拦截 P_/F_ 解析、skip_historical_scan 等旧值被带回，升级后行为与升级前完全一样。
             # 改为白名单迁移：只保留现场身份/链路值，遗留键一律丢弃并逐条告警。
-            $carryKeys = @(
-                'station_id', 'results_root', 'webhook_url', 'feishu_banner_img_key',
-                'fct_ini_path', 'log_level', 'todo_scan_days', 'db_maintenance_hour',
-                'notify_min_interval_sec', 'desktop_notify', 'auto_start',
-                'learn_resource_sampling_enabled', 'analyze_collect_pass',
-                'update_source'
-            )
+            # v3.48.2：模板有的键一律保留现场值（auto_update / feishu_* / learn_* 等调参）；
+            # 模板没有的键只留 auto_start/fts（updater 消费），agg_*/mesh_* 仍丢弃。
+            $pkgNames = @($pkg.PSObject.Properties.Name)
+            $keepSiteOnly = @('auto_start', 'fts')
             $legacyDropped = @()
             foreach ($prop in $site.PSObject.Properties) {
-                if ($carryKeys -contains $prop.Name) {
-                    if ($null -ne $prop.Value -and "$($prop.Value)" -ne '') {
-                        $pkg.($prop.Name) = $prop.Value
-                    }
-                } else {
+                $inPkg = $pkgNames -contains $prop.Name
+                $keepOnly = $keepSiteOnly -contains $prop.Name
+                if (-not $inPkg -and -not $keepOnly) {
                     $legacyDropped += $prop.Name
+                    continue
                 }
+                if ($null -eq $prop.Value) { continue }
+                if ($prop.Value -is [string] -and $prop.Value -eq '') { continue }
+                $pkg | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
             }
             if ($legacyDropped.Count -gt 0) {
                 Warn2 "现场 config 有 $($legacyDropped.Count) 个键未迁移（模板没有/已废弃）：$($legacyDropped -join ', ')"
                 Write-Host "         其中 parsers_path/agg_*/mesh_* 属聚合时代遗留，保留会导致解析与统计异常，已按新模板丢弃。" -ForegroundColor Yellow
             }
             $pkg | ConvertTo-Json -Depth 6 | Set-Content $siteCfg -Encoding UTF8
-            Ok "config.json 已按白名单合并：station_id/results_root/webhook_url 等保留现场值，模板字段已生效"
+            Ok "config.json 已按交集合并：模板键保留现场值，auto_start/fts 现场独有键保留，其余遗留键丢弃"
         } catch {
             Warn2 "config.json 无法解析（$($_.Exception.Message)），原文件保留未动"
             Write-Host "         请人工把包内模板字段合入 $siteCfg（模板原文已备份在 $backupDir\config.json 旁）" -ForegroundColor Yellow

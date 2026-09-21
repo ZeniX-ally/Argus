@@ -127,25 +127,6 @@ public static class G49ProductDictionary
         _knownSignals[signalName] = info;
     }
 
-    public static SignalFamilyInfo? LookupSignal(string signalName) => FindKnownSignal(signalName);
-
-    public static SignalFamilyInfo? LookupBySection(string section)
-    {
-        if (string.IsNullOrWhiteSpace(section)) return null;
-        var s = section.Trim();
-        if (IsInjectionSection(s))
-        {
-            return new SignalFamilyInfo
-            {
-                Section = s,
-                FamilyName = $"{s} FaultInjection",
-                RootCauseHint = GetSectionRootCause(s),
-                SemanticType = FailSemanticType.Injection
-            };
-        }
-        return null;
-    }
-
     public static SignalFamilyInfo? FindKnownSignal(string signalName)
     {
         if (string.IsNullOrWhiteSpace(signalName)) return null;

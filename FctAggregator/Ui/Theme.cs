@@ -76,8 +76,6 @@ public static class Theme
     public const int ActionBtnHeight= 32;
     public const int InputHeight    = 24;
     public const int InputGap       = 32;
-    public const int ControlLeft    = 112;
-    public const int LabelTopOffset = 3;
 
     private const string Family = "Microsoft YaHei UI";
     public static readonly Font PageTitle = new(Family, 13F, FontStyle.Bold);
@@ -89,16 +87,11 @@ public static class Theme
     public static readonly Font Tiny = new(Family, 8F, FontStyle.Bold);
     public static readonly Font Number = new(Family, 20F, FontStyle.Bold);
     public static readonly Font NumberSmall = new(Family, 15F, FontStyle.Bold);
-    public static readonly Font NumberMid = new(Family, 16F, FontStyle.Bold);
     public static readonly Font Mono = new("Consolas", 9F);
 
-    public const int NavWidth = 0;
     public const int TopBarHeight = 34;
     public const int StatusBarHeight = 26;
-    public const int Radius = 0;
     public const int Gap = 10;
-
-    public static GraphicsPath Rounded(Rectangle r, int radius = Radius) => MaintenanceDraw.Rounded(r, radius);
 
     public static void DrawCard(Graphics g, Rectangle r, Color? accent = null, bool hover = false)
     {

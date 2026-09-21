@@ -169,11 +169,8 @@ public sealed class FeishuFailBatcher : IDisposable
             }
 
             var marked = 0;
-            foreach (var r in batch)
-            {
-                try { _db.MarkFailAlerted(r.XmlPath); marked++; }
-                catch (Exception ex) { Logger.Warning($"[飞书推送] 标记已推送失败: {ex.Message}"); }
-            }
+            try { marked = _db.MarkFailAlertedMany(batch.Select(r => r.XmlPath)); }
+            catch (Exception ex) { Logger.Warning($"[飞书推送] 批量标记已推送失败: {ex.Message}"); }
             Logger.Info($"[飞书推送] FAIL {(batch.Count > 1 ? $"批量 ×{batch.Count}" : batch[0].Sn)} / {batch[0].Model} / 已标记 {marked} 条");
         }
         finally

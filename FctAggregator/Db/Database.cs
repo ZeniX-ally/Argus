@@ -6,6 +6,50 @@ public sealed partial class Database
 {
     private readonly string _connString;
     private readonly string _dbPath;
+    /// <summary>精确匹配一天（yyyyMMdd 或 yyyy-MM-dd）。参数 @d8 / @dDash。</summary>
+    public const string TestDateEqDay = "(test_date = @d8 OR test_date = @dDash)";
+    /// <summary>闭区间双格式（参数 @from8/@to8/@fromDash/@toDash）。</summary>
+    public const string TestDateRangeClosed =
+        "((test_date >= @from8 AND test_date <= @to8) OR (test_date >= @fromDash AND test_date <= @toDash))";
+    /// <summary>开区间下界，必须归一化：裸 >= 在 dash 与 8 位之间会比反。</summary>
+    public const string TestDateGeNorm =
+        "length(replace(test_date,'-',''))=8 AND replace(test_date,'-','') >= @c";
+    public const string RTestDateRangeClosed =
+        "((r.test_date >= @from8 AND r.test_date <= @to8) OR (r.test_date >= @fromDash AND r.test_date <= @toDash))";
+
+    public static (string Ymd8, string Dash) SplitDay(string? dateYmd)
+    {
+        var raw = (dateYmd ?? "").Replace("-", "").Trim();
+        if (raw.Length >= 8 && DateTime.TryParseExact(raw[..8], "yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var d))
+            return (d.ToString("yyyyMMdd"), d.ToString("yyyy-MM-dd"));
+        return (dateYmd ?? "", dateYmd ?? "");
+    }
+
+    public static string NormalizeYmdKey(string? testDate)
+    {
+        var raw = (testDate ?? "").Replace("-", "").Trim();
+        return raw.Length >= 8 ? raw[..8] : raw;
+    }
+
+    private static void BindDayDual(SqliteCommand cmd, string dateYmd)
+    {
+        var (d8, dash) = SplitDay(dateYmd);
+        cmd.Parameters.AddWithValue("@d8", d8);
+        cmd.Parameters.AddWithValue("@dDash", dash);
+    }
+
+    private static void BindRangeDual(SqliteCommand cmd, string fromYmd, string toYmdInclusive)
+    {
+        var (f8, fDash) = SplitDay(fromYmd);
+        var (t8, tDash) = SplitDay(toYmdInclusive);
+        cmd.Parameters.AddWithValue("@from8", f8);
+        cmd.Parameters.AddWithValue("@to8", t8);
+        cmd.Parameters.AddWithValue("@fromDash", fDash);
+        cmd.Parameters.AddWithValue("@toDash", tDash);
+    }
+
     private volatile bool _detailTablesFat;
 
     public event Action<MaintenanceRecord, string, string>? MaintenanceStatusChanged;
@@ -621,11 +665,28 @@ public sealed partial class Database
 
     public void MarkFailAlerted(string xmlPath)
     {
+        MarkFailAlertedMany(new[] { xmlPath });
+    }
+
+    /// <summary>单连接单事务内批量标记已推送。空路径跳过。</summary>
+    public int MarkFailAlertedMany(IEnumerable<string> xmlPaths)
+    {
+        var paths = xmlPaths.Where(p => !string.IsNullOrEmpty(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (paths.Count == 0) return 0;
         using var conn = Open();
+        using var tx = conn.BeginTransaction();
         using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = "UPDATE test_records SET fail_alerted = 1 WHERE xml_path = @p";
-        cmd.Parameters.AddWithValue("@p", xmlPath);
-        cmd.ExecuteNonQuery();
+        var p = cmd.Parameters.Add("@p", SqliteType.Text);
+        var n = 0;
+        foreach (var path in paths)
+        {
+            p.Value = path;
+            n += cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+        return n;
     }
 
     /// <summary>今日 FAIL 且尚未推送告警的记录（补扫后批量补推）。</summary>
@@ -634,13 +695,13 @@ public sealed partial class Database
         var list = new List<TestRecord>();
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        var where = "WHERE test_date = @d AND result = 'FAIL' AND COALESCE(fail_alerted, 0) = 0";
+        var where = "WHERE " + TestDateEqDay + " AND result = 'FAIL' AND COALESCE(fail_alerted, 0) = 0";
         if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
         cmd.CommandText = $@"
             SELECT station_id, model, category, test_date, sn, result, xml_path,
                    fail_reason, tester, panel_status, fixture_id, batch_timestamp, has_fail_items, file_size
             FROM test_records {where} ORDER BY id";
-        cmd.Parameters.AddWithValue("@d", testDateYmd);
+        BindDayDual(cmd, testDateYmd);
         if (!string.IsNullOrEmpty(stationId)) cmd.Parameters.AddWithValue("@s", stationId);
         using var r = cmd.ExecuteReader();
         while (r.Read())
@@ -2105,7 +2166,7 @@ public sealed partial class Database
 
     private static string SnLatestCte(string stationId)
     {
-        var where = "WHERE test_date = @d AND NOT (result = 'PASS' AND COALESCE(category, '') = 'Offline')";
+        var where = "WHERE " + TestDateEqDay + " AND NOT (result = 'PASS' AND COALESCE(category, '') = 'Offline')";
         if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
         return $@"
                 SELECT id, result, model, sn, xml_path, fail_reason, station_id, tester,
@@ -2122,7 +2183,7 @@ public sealed partial class Database
 
     private static void BindDayParams(SqliteCommand cmd, string stationId, string dateYmd)
     {
-        cmd.Parameters.AddWithValue("@d", dateYmd);
+        BindDayDual(cmd, dateYmd);
         if (!string.IsNullOrEmpty(stationId))
             cmd.Parameters.AddWithValue("@s", stationId);
     }
@@ -2144,10 +2205,16 @@ public sealed partial class Database
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        // 8 位日期下闭区间范围匹配（@to 上界取 "31"），可走 idx_date 索引
-        var from = dateYm + "01";
-        var to = dateYm + "31";
-        var where = "WHERE (test_date >= @from AND test_date <= @to)";
+        // 双格式闭区间（@to 上界取 "31" / "-31" 作字符串哨兵），可走 idx_date
+        var from8 = dateYm + "01";
+        var to8 = dateYm + "31";
+        var fromDash = dateYm.Length == 6
+            ? $"{dateYm[..4]}-{dateYm[4..6]}-01"
+            : dateYm + "-01";
+        var toDash = dateYm.Length == 6
+            ? $"{dateYm[..4]}-{dateYm[4..6]}-31"
+            : dateYm + "-31";
+        var where = $"WHERE {TestDateRangeClosed}";
         if (!string.IsNullOrEmpty(stationId)) where += " AND station_id = @s";
         cmd.CommandText = $@"
             SELECT
@@ -2160,8 +2227,10 @@ public sealed partial class Database
                 FROM test_records {where}
                 GROUP BY xml_path
             )";
-        cmd.Parameters.AddWithValue("@from", from);
-        cmd.Parameters.AddWithValue("@to", to);
+        cmd.Parameters.AddWithValue("@from8", from8);
+        cmd.Parameters.AddWithValue("@to8", to8);
+        cmd.Parameters.AddWithValue("@fromDash", fromDash);
+        cmd.Parameters.AddWithValue("@toDash", toDash);
         if (!string.IsNullOrEmpty(stationId))
             cmd.Parameters.AddWithValue("@s", stationId);
         using var r = cmd.ExecuteReader();
@@ -2279,9 +2348,9 @@ public sealed partial class Database
                     if (h < 0 || h > 23)
                     {
                         if (!TryHourFromRaw(created, out h) && !TryHourFromNormalized(created, out h))
-                            h = DateTime.Now.Hour;
+                            continue;
                     }
-                    if (h < 0 || h > 23) h = 0;
+                    if (h < 0 || h > 23) continue;
 
                     if (string.Equals(res, "PASS", StringComparison.OrdinalIgnoreCase))
                         items[h].Pass++;
@@ -2765,7 +2834,7 @@ public sealed partial class Database
             while (r.Read())
             {
                 var testDate = r.IsDBNull(4) ? "" : r.GetString(4);
-                if (string.CompareOrdinal(testDate, cutoff) < 0) continue;
+                if (string.CompareOrdinal(NormalizeYmdKey(testDate), cutoff) < 0) continue;
                 var item = r.IsDBNull(0) ? "" : r.GetString(0);
                 string key;
                 try { key = TodoGrouping.MergeKeyOf(item); }
@@ -2969,8 +3038,7 @@ public sealed partial class Database
             using (var cmd = conn.CreateCommand())
             {
                 var where = "WHERE result='FAIL' AND fail_reason IS NOT NULL AND TRIM(fail_reason) <> ''";
-                if (from != null) { where += " AND test_date >= @a"; }
-                if (to != null) { where += " AND test_date <= @b"; }
+                if (from != null || to != null) where += " AND " + TestDateRangeClosed;
                 cmd.CommandText = $@"
                     SELECT fail_reason, station_id, COUNT(*),
                            MIN(COALESCE(NULLIF(batch_timestamp,''),
@@ -2979,8 +3047,12 @@ public sealed partial class Database
                                         substr(test_date,1,4)||'-'||substr(test_date,5,2)||'-'||substr(test_date,7,2)||' 00:00:00'))
                       FROM test_records {where}
                      GROUP BY fail_reason, station_id";
-                if (from != null) cmd.Parameters.AddWithValue("@a", from.Value.ToString("yyyyMMdd"));
-                if (to != null) cmd.Parameters.AddWithValue("@b", to.Value.ToString("yyyyMMdd"));
+                if (from != null || to != null)
+                {
+                    var a = from ?? DateTime.Today.AddYears(-50);
+                    var b = to ?? DateTime.Today;
+                    BindRangeDual(cmd, a.ToString("yyyyMMdd"), b.ToString("yyyyMMdd"));
+                }
                 using var r = cmd.ExecuteReader();
                 while (r.Read())
                 {
@@ -3469,7 +3541,7 @@ public sealed partial class Database
         var where = "WHERE result='FAIL'";
         if (!string.IsNullOrEmpty(stationId)) where += " AND station_id=@s";
         string? cutoff = null;
-        if (days > 0) { cutoff = DateTime.Today.AddDays(-days).ToString("yyyyMMdd"); where += " AND test_date >= @c"; }
+        if (days > 0) { cutoff = DateTime.Today.AddDays(-days).ToString("yyyyMMdd"); where += " AND " + TestDateGeNorm; }
         cmd.CommandText = $@"
             SELECT COALESCE(fail_reason,''), COALESCE(model,''), COALESCE(station_id,''),
                    COALESCE(batch_timestamp,''), COALESCE(test_date,''), COALESCE(xml_path,'')

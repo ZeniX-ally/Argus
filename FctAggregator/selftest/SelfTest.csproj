@@ -20,8 +20,6 @@
     <Compile Include="..\tools\PerfReport.cs" />
     <Compile Include="..\Core\**\*.cs" />
     <Compile Include="..\Db\**\*.cs" />
-    <Compile Include="..\Mesh\**\*.cs" />
-    <Compile Include="..\Agg\**\*.cs" />
     <Compile Include="..\Intelligence\**\*.cs" />
     <Compile Include="..\Ui\**\*.cs" />
     <Compile Include="..\Infra\**\*.cs" />

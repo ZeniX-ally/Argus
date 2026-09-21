@@ -506,7 +506,6 @@ public class AppConfig
         }
 
     }
-    public List<string> Validate() => ConfigValidator.Validate(this);
 
     public static List<string> ListBackups(int take = 20)
     {

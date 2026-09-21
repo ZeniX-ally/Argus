@@ -335,36 +335,30 @@ public static class UpdateChecker
             Logger.Warning("[更新器] 提交未完成，待更新标记保留，下次启动/检测时重试");
     }
 
-    private static void MergeConfig(string pkgCfg, string siteCfg)
-    {
-        if (!File.Exists(pkgCfg)) return;
-        System.Text.Json.JsonDocument pkg;
-        try { pkg = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pkgCfg)); }
-        catch { return; }
+    /// <summary>模板与现场 config 合并：双方都有的键保留现场值；模板没有的现场键除
+    /// <see cref="ConfigKeepSiteOnlyKeys"/> 外丢弃（聚合时代遗留键）。纯函数，SelfTest 直测。</summary>
+    public static readonly string[] ConfigKeepSiteOnlyKeys = { "auto_start", "fts" };
 
-        var site = new Dictionary<string, System.Text.Json.JsonElement>();
-        if (File.Exists(siteCfg))
+    public static string MergeConfigJson(string pkgJson, string siteJson)
+    {
+        using var pkg = System.Text.Json.JsonDocument.Parse(pkgJson);
+        var site = new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(siteJson))
         {
             try
             {
-                using var s = System.Text.Json.JsonDocument.Parse(File.ReadAllText(siteCfg));
+                using var s = System.Text.Json.JsonDocument.Parse(siteJson);
                 if (s.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object)
                     foreach (var p in s.RootElement.EnumerateObject())
                         site[p.Name] = p.Value.Clone();
             }
-            catch {  }
+            catch { }
         }
 
-        // 与 tools/deploy_update.ps1 的 carryKeys 保持一致（v3.31.1 审计定稿的现场保留键），
-        // 避免自动更新与手工部署行为分叉：agg_token/聚合遗留键不保留，现场调参键（analyze_collect_pass/fct_ini_path 等）不丢失。
-        var keep = new[] {
-            "station_id", "results_root", "webhook_url", "feishu_banner_img_key",
-            "fct_ini_path", "log_level", "todo_scan_days", "db_maintenance_hour",
-            "notify_min_interval_sec", "desktop_notify", "auto_start",
-            "learn_resource_sampling_enabled", "analyze_collect_pass",
-            "update_source",
-        };
-        var used = new HashSet<string>();
+        // 双方都有的键保留现场值（auto_update / feishu_* / learn_* / analyze_* 等调参不被模板盖掉）；
+        // 模板没有的现场键仅保留 auto_start/fts（updater 消费），聚合遗留键丢弃。
+        var keepSiteOnly = new HashSet<string>(ConfigKeepSiteOnlyKeys, StringComparer.Ordinal);
+        var used = new HashSet<string>(StringComparer.Ordinal);
         using var stream = new MemoryStream();
         using (var w = new System.Text.Json.Utf8JsonWriter(stream, new System.Text.Json.JsonWriterOptions { Indented = true }))
         {
@@ -373,26 +367,34 @@ public static class UpdateChecker
             {
                 var name = p.Name;
                 used.Add(name);
-                if (Array.IndexOf(keep, name) >= 0 && site.TryGetValue(name, out var siteVal))
-                {
-                    w.WritePropertyName(name);
+                w.WritePropertyName(name);
+                if (site.TryGetValue(name, out var siteVal))
                     siteVal.WriteTo(w);
-                }
                 else
-                {
-                    w.WritePropertyName(name);
                     w.WriteRawValue(p.Value.GetRawText(), skipInputValidation: true);
-                }
             }
             foreach (var kv in site)
             {
-                if (used.Contains(kv.Key)) continue;
+                if (used.Contains(kv.Key) || !keepSiteOnly.Contains(kv.Key)) continue;
                 w.WritePropertyName(kv.Key);
                 kv.Value.WriteTo(w);
             }
             w.WriteEndObject();
         }
-        File.WriteAllText(siteCfg, Encoding.UTF8.GetString(stream.ToArray()), Encoding.UTF8);
+        return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void MergeConfig(string pkgCfg, string siteCfg)
+    {
+        if (!File.Exists(pkgCfg)) return;
+        string pkgJson;
+        try { pkgJson = File.ReadAllText(pkgCfg); }
+        catch { return; }
+        var siteJson = File.Exists(siteCfg) ? File.ReadAllText(siteCfg) : "{}";
+        string merged;
+        try { merged = MergeConfigJson(pkgJson, siteJson); }
+        catch { return; }
+        File.WriteAllText(siteCfg, merged, Encoding.UTF8);
     }
 
     private static void CopyDir(string src, string dest)

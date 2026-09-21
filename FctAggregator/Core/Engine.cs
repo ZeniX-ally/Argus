@@ -20,7 +20,7 @@ public class Engine
     private volatile bool _initialScanComplete = false;
     private CancellationTokenSource _cts = new();
 
-    private readonly ConcurrentDictionary<string, byte> _inFlight = new(); // 在途路径去重（Changed 高频连发防护）
+    private readonly ConcurrentDictionary<string, byte> _inFlight = new(InFlightPathComparer); // 在途路径去重（Changed 高频连发防护）
     private readonly ConcurrentDictionary<string, byte> _loggedUnknownDirs = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _retryQueueFile; // 重试队列落盘文件（Stop 写 / Start 读回，治退出即丢）
 
@@ -35,6 +35,19 @@ public class Engine
     public AppConfig Config => _cfg;
     /// <summary>重试队列当前积压条数（采集异常告警的触发维度之一）。</summary>
     public int RetryQueueDepth => _retryQueue.Count;
+
+    /// <summary>在途路径比较器：Windows 下同一文件大小写不同视为一条。</summary>
+    public static StringComparer InFlightPathComparer { get; } = StringComparer.OrdinalIgnoreCase;
+
+    /// <summary>占在途坑。attempt 不跳过（重试与实时 Changed 共用），失败表示同路径已在处理。</summary>
+    public static bool TryEnterInFlight(ConcurrentDictionary<string, byte> map, string path, int attempt)
+    {
+        _ = attempt;
+        return map.TryAdd(path, 0);
+    }
+
+    public static void ExitInFlight(ConcurrentDictionary<string, byte> map, string path)
+        => map.TryRemove(path, out _);
 
     public Engine(AppConfig cfg)
     {
@@ -439,12 +452,12 @@ public class Engine
     {
         // Changed 事件高频连发防护：同一路径在途时忽略本次触发；
         // 漏触发由 WaitForStable 未稳定 / 解析暂时失败入重试队列兜底，入库本身 xml_path UNIQUE 幂等
-        if (attempt == 0 && !_inFlight.TryAdd(path, 0)) return;
+        if (!TryEnterInFlight(_inFlight, path, attempt)) return;
         Task.Run(() =>
         {
             try { ProcessRealtime(path, attempt); }
             catch (Exception ex) { Logger.Error($"[错误] 处理异常: {path} | {ex.Message}"); }
-            finally { if (attempt == 0) _inFlight.TryRemove(path, out _); }
+            finally { ExitInFlight(_inFlight, path); }
         });
     }
 
