@@ -1293,6 +1293,9 @@ class SelfTest
         Console.WriteLine("\n【v3.48.7 审计修复批五】工程纪律：脚本失效/文档基线/夹具路径/来源项round-trip");
         RunAuditFixBatch5Tests();
 
+        Console.WriteLine("\n【v3.48.8 审计修复批六】站号回落链 / 时间归一 / 按日统计 / 超期候选 / 回放主库句柄 / 保留期分口径 / 空ts明细 / 两段版本 / 待办重扫");
+        RunAuditFixBatch6Tests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -5731,6 +5734,242 @@ Argus 统一发布包  v{newer}
     }
 
     /// <summary>v3.48.7 审计修复批五（工程纪律）：先写断言再改生产代码。</summary>
+
+    /// <summary>v3.48.8 审计修复批六（静默失效 / 数据错位）：先写断言，再改生产代码。</summary>
+    static void RunAuditFixBatch6Tests(string work)
+    {
+        // A1：解析器站号回落链——注册表注入值（Engine 的 IP 识别结果）必须被采用
+        {
+            var prev = FctAggregator.Parsing.ParserRegistry.DefaultStation;
+            try
+            {
+                FctAggregator.Parsing.ParserRegistry.DefaultStation = "  FCT9  ";
+                Check(FctAggregator.Parsing.ParserRegistry.DefaultStation == "FCT9", "A1：站号注入值 Trim 归一");
+
+                var xmlPath = Path.Combine(work, "Online", "E3001234", "20260908", "P_1.xml");
+                var xml = "<BATCH><FACTORY USER='u' TESTER='OP001'/><DUT ID='SN1'/></BATCH>";
+
+                var viaRegistry = new FctAggregator.Parsing.DefaultResultParser(
+                    FctAggregator.Parsing.ParserRuleSet.Default, null).Parse(xmlPath, xml);
+                Check(viaRegistry?.StationId == "FCT9",
+                      $"A1：未传站号的解析器采用注册表注入值（实得 {viaRegistry?.StationId}；原缺陷落 UNKNOWN）");
+
+                var explicitStation = new FctAggregator.Parsing.DefaultResultParser(
+                    FctAggregator.Parsing.ParserRuleSet.Default, "FCT2").Parse(xmlPath, xml);
+                Check(explicitStation?.StationId == "FCT2", $"A1：实例站号优先于注册表（实得 {explicitStation?.StationId}）");
+
+                FctAggregator.Parsing.ParserRegistry.DefaultStation = null;
+                var noStation = new FctAggregator.Parsing.DefaultResultParser(
+                    FctAggregator.Parsing.ParserRuleSet.Default, null).Parse(xmlPath, xml);
+                Check(noStation?.StationId == "UNKNOWN",
+                      $"A1：两级都无站号且 TESTER 不含 FCTx 才落 UNKNOWN（实得 {noStation?.StationId}）");
+
+                var configurable = new FctAggregator.Parsing.ConfigurableResultParser(
+                    FctAggregator.Parsing.ParserRuleSet.Default, "FCT3").Parse(xmlPath, xml);
+                Check(configurable?.StationId == "FCT3",
+                      $"A1：自定义规则解析器也透传站号（实得 {configurable?.StationId}；原构造直接丢弃 defaultStation）");
+
+                Check(FctAggregator.Parsing.ParserRegistry.DefaultStation == null, "A1：注入空值归一为 null（回落链继续）");
+            }
+            finally { FctAggregator.Parsing.ParserRegistry.DefaultStation = prev; }
+        }
+
+        // A2：文件名/文本时间归一必须校验日期合法性，且 anchor 闸门不可被非法串绕过
+        {
+            Check(TimeUtil.Normalize("20260908103000") == "2026-09-08 10:30:00",
+                  $"A2：合法 14 位仍正常归一（实得 {TimeUtil.Normalize("20260908103000")}）");
+            Check(TimeUtil.Normalize("20260901675353") == "",
+                  $"A2：非法时分秒（67:53:53）不再铸成脏时间戳（实得 '{TimeUtil.Normalize("20260901675353")}'）");
+            Check(TimeUtil.Short("2026-09-01 67:53:53") == "—", "A2：Short 遇脏值返回占位符而不抛 FormatException");
+            Check(TimeUtil.ResolveFileNameTime("x_20260901675353_y", new DateTime(2026, 9, 1)) == "",
+                  "A2：锚点存在时非法文件名时间被拒（原实现绕过 ±30 天闸门原样返回）");
+            Check(TimeUtil.ResolveFileNameTime("x_20260908103000_y", new DateTime(2026, 9, 8)) == "2026-09-08 10:30:00",
+                  "A2：合法文件名时间照常通过");
+        }
+
+        // A3：按日 FAIL 统计必须承认 8 位 test_date（回放异常日推断依赖它）
+        {
+            var dir = Path.Combine(work, "a3_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "a3.db"), setAsCurrent: false);
+            db.BatchUpsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", Result = "FAIL", TestDate = "20260908",
+                    BatchTimestamp = "", XmlPath = Path.Combine(dir, "F_1.xml"),
+                    FailReason = "ItemA", HasFailItems = true,
+                },
+            }, null, null);
+            var d = db.CountDailyFailsBetween("2026-09-01", "2026-09-30");
+            Check(d.TryGetValue("2026-09-08", out var cnt) && cnt == 1,
+                  $"A3：8 位 test_date 的 FAIL 计入按日统计（实得 {(d.TryGetValue("2026-09-08", out var c2) ? c2 : 0)}；原缺陷整行落选）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // A4：超期告警候选必须「未闭环 + 创建时间升序」，不被「最近 N 条」上限挤出
+        {
+            var dir = Path.Combine(work, "a4_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "a4.db"), setAsCurrent: false);
+            var openOld = db.CreateMaintenance(new MaintenanceRecord
+            { StationId = "FCT1", FailItem = "OLD", Status = MaintenanceMeta.DefaultStatus, Severity = "critical", CreatedAt = "2020-01-01 08:00:00" });
+            db.CreateMaintenance(new MaintenanceRecord
+            { StationId = "FCT1", FailItem = "NEW", Status = MaintenanceMeta.DefaultStatus, Severity = "critical", CreatedAt = "2030-01-01 08:00:00" });
+            var doneOld = db.CreateMaintenance(new MaintenanceRecord
+            { StationId = "FCT1", FailItem = "DONE", Status = MaintenanceMeta.DoneStatus, Severity = "critical", CreatedAt = "2019-01-01 08:00:00" });
+            var list = db.ListUnclosedMaintenanceAsc(5000);
+            Check(list.Count == 2 && list[0].Id == openOld,
+                  $"A4：未闭环待办按创建时间升序，最旧的排最前（实得 {list.FirstOrDefault()?.FailItem}）");
+            Check(!list.Any(m => m.Id == doneOld), "A4：已闭环记录不进超期候选");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // A5：现场回放不得改写全局 Database.Current（否则采样/TDMS/水位全写进已删除的临时库）
+        {
+            var dir = Path.Combine(work, "a5_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var src = Path.Combine(dir, "src.db");
+            var sdb = new Database(src, setAsCurrent: false);
+            sdb.BatchUpsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", Result = "PASS",
+                    TestDate = DateTime.Today.ToString("yyyyMMdd"),
+                    BatchTimestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    XmlPath = Path.Combine(dir, "P_1.xml"),
+                    Measurements = new List<MeasurementRow> { new MeasurementRow { TestName = "T_A5", Value = 1.0 } }.ToList(),
+                },
+            }, null, null);
+            var keep = Database.Current;
+            var rcfg = new AppConfig
+            {
+                LearnNormalEnabled = true, LearnNormalMinSamples = 30, LearnNormalStaleDays = 14,
+                LearnNormalVoteSignals = 3, LearnNormalEventScore = 75, LearnNormalMaxEventsPerDay = 10,
+            };
+            var rep = ReplayRunner.RunField(src, rcfg, 7);
+            Check(ReferenceEquals(Database.Current, keep),
+                  "A5：回放后 Database.Current 仍指向原库（原缺陷永久指向已删除的临时库）");
+            Check(rep != null, "A5：回放本身正常返回");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // A6：CompactStorage 必须按各自保留期清三类明细（fail_items 有独立配置键）
+        {
+            var dir = Path.Combine(work, "a6_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "a6.db"), setAsCurrent: false);
+            var oldTs = DateTime.Today.AddDays(-100).ToString("yyyy-MM-dd") + " 10:00:00";
+            db.BatchUpsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", Result = "FAIL",
+                    TestDate = DateTime.Today.AddDays(-100).ToString("yyyyMMdd"), BatchTimestamp = oldTs,
+                    XmlPath = Path.Combine(dir, "F_1.xml"), FailReason = "ItemA", HasFailItems = true,
+                    FailedTests = new List<FailedTest> { new FailedTest { Name = "FT_A6", Value = "1" } }.ToList(),
+                },
+            }, null, null);
+            Check(db.GetStorageInventory().FailItems == 1, "A6 前置：fail_items 1 行");
+            db.CompactStorage(30, vacuum: false, failItemRetentionDays: 180);
+            Check(db.GetStorageInventory().FailItems == 1,
+                  "A6：fail_items 走自身保留期（180 天）→ 100 天前的失败项保留（原缺陷按测量口径 30 天删掉）");
+            db.CompactStorage(30, vacuum: false);
+            Check(db.GetStorageInventory().FailItems == 0, "A6：不传 failitem 口径时沿用测量口径（兼容旧调用）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // A7：ts 为空的明细行也要纳入滚动删除（按父记录自然日判定，不误删当天新记录）
+        {
+            var dir = Path.Combine(work, "a7_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "a7.db"), setAsCurrent: false);
+            db.BatchUpsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", Result = "PASS",
+                    TestDate = DateTime.Today.AddDays(-100).ToString("yyyyMMdd"), BatchTimestamp = "",
+                    XmlPath = Path.Combine(dir, "P_old.xml"),
+                    Measurements = new List<MeasurementRow> { new MeasurementRow { TestName = "M_OLD", Value = 1.0 } }.ToList(),
+                },
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", Result = "PASS",
+                    TestDate = DateTime.Today.ToString("yyyyMMdd"), BatchTimestamp = "",
+                    XmlPath = Path.Combine(dir, "P_new.xml"),
+                    Measurements = new List<MeasurementRow> { new MeasurementRow { TestName = "M_NEW", Value = 1.0 } }.ToList(),
+                },
+            }, null, null);
+            Check(db.GetStorageInventory().Measurements == 2, "A7 前置：2 行测量（ts 均为空）");
+            db.PurgeOldMeasurements(30);
+            Check(db.GetStorageInventory().Measurements == 1,
+                  "A7：空 ts 的老明细按父记录自然日被清，当天新记录保留（原缺陷永不清理）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // A10：有效保留期缓存——首值等于直算值，且只允许单调加宽（绝不比真实值小 → 不会漏删）
+        {
+            var dir = Path.Combine(work, "a10_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "a10.db"), setAsCurrent: false);
+            db.BatchUpsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "G49", Result = "PASS",
+                    TestDate = DateTime.Today.AddDays(-200).ToString("yyyyMMdd"),
+                    BatchTimestamp = DateTime.Today.AddDays(-200).ToString("yyyy-MM-dd") + " 10:00:00",
+                    XmlPath = Path.Combine(dir, "P_old.xml"),
+                    Measurements = new List<MeasurementRow> { new MeasurementRow { TestName = "T_A10", Value = 1.0 } }.ToList(),
+                },
+            }, null, null);
+            var a10cfg = new AppConfig { LearnNormalEnabled = true, AnalyzeMeasureRetentionDays = 90 };
+            var direct = LearnPipeline.EffectiveMeasureRetentionDays(a10cfg, db);
+            var first = LearnPipeline.EffectiveMeasureRetentionDaysCached(a10cfg, db);
+            var second = LearnPipeline.EffectiveMeasureRetentionDaysCached(a10cfg, db);
+            Check(first == direct && first >= 90, $"A10：缓存首值等于直算值（缓存 {first} / 直算 {direct}）");
+            Check(second >= first, $"A10：缓存单调不回退（{first} -> {second}）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
+        // A8：两段版本号不得让版本文本化抛异常（热升级暂存路径依赖它）
+        {
+            Check(UpdateChecker.VersionText(new Version(3, 49)) == "3.49",
+                  "A8：两段版本安全文本化（原 ToString(3) 抛 ArgumentException）");
+            Check(UpdateChecker.ParseZipVersion("Argus-v3.49-update.zip") != null,
+                  "A8：两段版本更新包名可被解析（正是需要守卫的输入）");
+        }
+
+        // A9：就地更新（UPDATE，id 不变）的 FAIL 记录也要进待办
+        {
+            var dir = Path.Combine(work, "a9_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var db = new Database(Path.Combine(dir, "a9.db"), setAsCurrent: false);
+            var xml = Path.Combine(dir, "F_1.xml");
+            var day8 = DateTime.Today.ToString("yyyyMMdd");
+            var nowTs = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            db.BatchUpsert(new[]
+            {
+                new TestRecord { StationId = "FCT1", Model = "G49", Result = "FAIL", TestDate = day8,
+                    BatchTimestamp = nowTs, XmlPath = xml, FailReason = "Check_CAN_Bus", HasFailItems = true, FileSize = 100 },
+            }, null, null);
+            db.SyncTodoItems(30);
+            Check(db.ListTodoView().Any(t => t.Variants.Any(v => v.Contains("Check_CAN_Bus"))),
+                  "A9 前置：首次 FAIL 已登记进待办");
+            db.BatchUpsert(new[]
+            {
+                new TestRecord { StationId = "FCT1", Model = "G49", Result = "FAIL", TestDate = day8,
+                    BatchTimestamp = nowTs, XmlPath = xml, FailReason = "5V_Rail", HasFailItems = true, FileSize = 200 },
+            }, null, null);
+            db.SyncTodoItems(30);
+            Check(db.ListTodoView().Any(t => t.Variants.Any(v => v.Contains("5V_Rail"))),
+                  "A9：就地更新的 FAIL 记录也进待办（原缺陷被「id > 水位」漏掉，告警有、待办无）");
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
     static void RunAuditFixBatch5Tests()
     {
         // F12：待办备注「来源测试项」round-trip——写进去的必须原样读出来

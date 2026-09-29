@@ -251,7 +251,22 @@ public sealed class BackupCodePanel : Panel
         var sid = _engine.ResolvedStationId;
         Task.Run(() =>
         {
-            var rep = FctProgramBackup.Run(db, cfg, sid, FctProgramBackup.TriggerManual);
+            // 审计修复：FctProgramBackup.Run 的入口路径解析（GetFullPath）在内部 try 之外，配置留空/非法会
+            // 直接抛出；这里原本没有 try/catch → 未观察的 Task 异常 + _busy 永久 true、按钮永久变灰、无提示。
+            FctProgramBackupResult rep;
+            try { rep = FctProgramBackup.Run(db, cfg, sid, FctProgramBackup.TriggerManual); }
+            catch (Exception ex)
+            {
+                Logger.Error($"[FTS备份] 立即备份异常: {ex.Message}");
+                UiAsync.Post(this, () =>
+                {
+                    _busy = false;
+                    _btnBackup.Enabled = true;
+                    _status.Text = $"备份失败：{ex.Message}";
+                    MessageBox.Show($"备份失败：{ex.Message}", "备份", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                });
+                return;
+            }
             // 走 UiAsync.Post：它已处理"窗体已销毁 / 句柄未创建"，裸 BeginInvoke 在关窗瞬间会抛 ObjectDisposedException
             UiAsync.Post(this, () =>
             {

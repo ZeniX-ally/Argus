@@ -46,6 +46,9 @@ public sealed class ConfigWatcher : IDisposable
             var json = File.ReadAllText(_path);
             using var doc = JsonDocument.Parse(json);
             _retryCount = 0;
+            // 审计修复：成功后必须还原失败期间放大的 debounce 间隔——否则失败 1~3 次后成功，Interval
+            // 永久停在 2x/3x/4x（只有"连败 4 次"那一支才还原），此后每次热加载都晚 1~3 秒生效。
+            if (_debounce.Interval != _debounceMs) _debounce.Interval = _debounceMs;
             ConfigChanged?.Invoke(this, json);
             Logger.Info("[ConfigWatcher] config.json 变更已通过校验");
         }

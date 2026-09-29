@@ -125,7 +125,10 @@ public static class OpsAlertMonitor
             var dayKey = n.ToString("yyyy-MM-dd");
             if (!DayAllows(db.GetMeta(MetaTodoPush), dayKey)) return;
 
-            var all = db.ListMaintenance("", 5000);
+            // 审计修复：改用「未闭环 + 创建时间升序」专用查询。原实现取 ListMaintenance("", 5000)
+            // （updated_at 倒序的最近 5000 条）再内存筛超期——未处理的老待办排在最末，表一超过 5000 行
+            // 就正好被 LIMIT 截掉，最该告警的超期项静默消失。
+            var all = db.ListUnclosedMaintenanceAsc(5000);
             var minRank = SeverityRank(cfg.FeishuTodoOverdueMinSeverity);
             var (shown, total) = SelectOverdue(all, n, cfg.FeishuTodoOverdueDays, minRank);
             if (total == 0) return;

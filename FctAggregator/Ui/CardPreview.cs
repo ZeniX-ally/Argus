@@ -40,7 +40,7 @@ public class CardPreviewForm : AppForm
         ShowInTaskbar = false;
         MinimizeBox = false; MaximizeBox = false;
         Width = 470;
-        Font = new Font("Microsoft YaHei UI", 9F);
+        Font = Theme.CachedFont("Microsoft YaHei UI", 9F);
         BackColor = Theme.Surface;
         KeyPreview = true;
         Padding = new Padding(1);
@@ -49,7 +49,7 @@ public class CardPreviewForm : AppForm
         var titleLabel = new Label
         {
             Dock = DockStyle.Fill, Text = title, ForeColor = Color.White,
-            Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold),
+            Font = Theme.CachedFont("Microsoft YaHei UI", 10.5F, FontStyle.Bold),
             Padding = new Padding(12, 6, 30, 0), AutoEllipsis = true,
         };
         var subLabel = new Label
@@ -57,13 +57,13 @@ public class CardPreviewForm : AppForm
             Dock = DockStyle.Bottom, Height = 18, Text = subtitle,
             ForeColor = Color.FromArgb(242, 242, 242),
             Padding = new Padding(12, 0, 12, 2), AutoEllipsis = true,
-            Font = new Font("Microsoft YaHei UI", 8.5F),
+            Font = Theme.CachedFont("Microsoft YaHei UI", 8.5F),
         };
         var close = new Label
         {
             Text = "✕", Width = 26, Height = 24, Dock = DockStyle.Right,
             ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter,
-            Cursor = Cursors.Hand, Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+            Cursor = Cursors.Hand, Font = Theme.CachedFont("Microsoft YaHei UI", 9F, FontStyle.Bold),
         };
         close.Click += (_, _) => Close();
         head.Controls.Add(titleLabel);
@@ -74,7 +74,7 @@ public class CardPreviewForm : AppForm
         {
             Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None,
             BackColor = Theme.Surface, Dock = DockStyle.Top, ScrollBars = ScrollBars.Vertical,
-            Font = new Font("Microsoft YaHei UI", 9F), TabStop = false,
+            Font = Theme.CachedFont("Microsoft YaHei UI", 9F), TabStop = false,
             Text = string.Join(Environment.NewLine, rows.Select(r => $"{r.k}  {r.v}")),
         };
         _detail = detail;
@@ -98,14 +98,14 @@ public class CardPreviewForm : AppForm
             {
                 Dock = DockStyle.Top, Height = 24, Padding = new Padding(12, 2, 12, 0),
                 Text = merged.Count > 1 ? $"合并的 fail 项（{merged.Count} 项）" : "来源 fail 项",
-                Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+                Font = Theme.CachedFont("Microsoft YaHei UI", 9F, FontStyle.Bold),
                 ForeColor = Theme.TextSub,
             };
             var list = new ListView
             {
                 Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true,
                 GridLines = false, HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                BorderStyle = BorderStyle.FixedSingle, Font = new Font("Microsoft YaHei UI", 8.5F),
+                BorderStyle = BorderStyle.FixedSingle, Font = Theme.CachedFont("Microsoft YaHei UI", 8.5F),
                 TabStop = false,
             };
             list.Columns.Add("次数", 52, HorizontalAlignment.Center);
@@ -133,7 +133,7 @@ public class CardPreviewForm : AppForm
         {
             Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(12, 4, 12, 4),
             Text = footer, ForeColor = Theme.TextMuted,
-            Font = new Font("Microsoft YaHei UI", 8.5F),
+            Font = Theme.CachedFont("Microsoft YaHei UI", 8.5F),
             BackColor = Theme.Bg, AutoEllipsis = true,
         };
         Controls.Add(foot);

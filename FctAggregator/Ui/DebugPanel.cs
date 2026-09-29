@@ -158,8 +158,15 @@ public class DebugPanel : Panel
         {
             try
             {
-                await FeishuNotifier.SendFailAlert(cfg.WebhookUrl, rec);
-                UiAsync.Post(this, () => Print("测试推送已发送(查看飞书群)"));
+                // 审计修复：PostCard 内部吞掉所有异常并返回三态，原实现丢弃返回值、无条件打印"已发送"，
+                // catch 成了死代码 → 现场误判告警链路正常（群里一条没有）。
+                var outcome = await FeishuNotifier.SendFailAlert(cfg.WebhookUrl, rec);
+                UiAsync.Post(this, () => Print(outcome switch
+                {
+                    FeishuSendOutcome.Sent => "测试推送已送达（查看飞书群）",
+                    FeishuSendOutcome.Skipped => "测试推送被跳过：未配置 webhook，或地址不是 https:// 前缀",
+                    _ => "测试推送失败（重试耗尽），详见日志",
+                }));
             }
             catch (Exception ex)
             {

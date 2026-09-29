@@ -198,7 +198,7 @@ public class TodoRangeForm : AppForm
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false;
         ShowInTaskbar = false;
-        Font = new Font("Microsoft YaHei UI", 9F);
+        Font = Theme.CachedFont("Microsoft YaHei UI", 9F);
 
         var layout = new TableLayoutPanel
         {

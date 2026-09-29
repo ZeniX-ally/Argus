@@ -130,10 +130,25 @@ public sealed class FeishuFailBatcher : IDisposable
         lock (_timerLock)
         {
             if (_armed) return; // 固定窗口：从第一条起算，不因后续入队顺延
-            _timer ??= new System.Threading.Timer(_ => _ = FlushAsync(), null, Timeout.Infinite, Timeout.Infinite);
+            _timer ??= new System.Threading.Timer(_ => OnTimerTick(), null, Timeout.Infinite, Timeout.Infinite);
             _armed = true;
             _timer.Change(TimeSpan.FromSeconds(sec), Timeout.InfiniteTimeSpan);
         }
+    }
+
+    /// <summary>窗口到点：先复位 _armed 再尝试冲刷。
+    /// 审计修复：原实现把 _armed=false 放在 RunFlushAsync 里，而抢不到冲刷权时 FlushAsync 直接返回——
+    /// 一次性定时器已被消耗、_armed 却卡在 true → ArmTimer 从此永久空转，积压 FAIL 再也等不到窗口
+    /// 冲刷（只在攒满 feishu_fail_merge_max 或进程退出时才发）。抢不到锁说明上一轮仍在发送，这里重排窗口。</summary>
+    private void OnTimerTick()
+    {
+        lock (_timerLock)
+        {
+            _armed = false;
+            try { _timer?.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
+        }
+        if (TryBeginFlush()) _ = RunFlushAsync();
+        else ArmTimer();
     }
 
     private async Task RunFlushAsync()

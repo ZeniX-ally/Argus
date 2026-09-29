@@ -145,7 +145,7 @@ public static class StorageOptimizer
 
         if (!before.SlimSchema)
         {
-            var rep = db.CompactStorage(retainM, vacuum: false);
+            var rep = db.CompactStorage(retainM, vacuum: false, failItemRetentionDays: retainFi);
             result.Rebuilt = rep.Rebuilt;
             result.BytesBefore = rep.BytesBefore > 0 ? rep.BytesBefore : result.BytesBefore;
         }

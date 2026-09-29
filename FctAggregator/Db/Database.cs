@@ -279,6 +279,11 @@ public sealed partial class Database
                     updated_at TEXT,
                     PRIMARY KEY (origin_machine, todo_id)
                 );
+                -- 审计修复：就地更新（UPDATE，id 不变）的 FAIL 记录进不了「id > 水位」的待办增量扫描，
+                -- 导致「告警有、待办无」。BatchUpsert 更新 FAIL 行时把 id 记这里，SyncTodoItems 消费后清空。
+                CREATE TABLE IF NOT EXISTS todo_rescan_ids (
+                    id INTEGER PRIMARY KEY
+                );
             ";
             cmd6.ExecuteNonQuery();
 
@@ -421,6 +426,19 @@ public sealed partial class Database
             using var cmdIdxTsDate = conn.CreateCommand();
             cmdIdxTsDate.CommandText = "CREATE INDEX IF NOT EXISTS idx_tr_tsdate ON test_records(batch_ts_date)";
             cmdIdxTsDate.ExecuteNonQuery();
+            // 审计修复：v3.48.4 前每条 DDL 自动提交，瘦表重建中途崩溃会留下「部分表已瘦、部分仍胖」的库。
+            // 原实现只看 test_measurements，于是 fail_items/tdms_features 永久保留冗余列、存储优化被判「已完成」
+            // 而静默失效。这里做幂等自愈：任一张仍是胖表就补齐重建（各表独立单事务）。
+            if (HasColumn(conn, "test_measurements", "xml_path")
+                || HasColumn(conn, "fail_items", "xml_path")
+                || HasColumn(conn, "tdms_features", "xml_path"))
+            {
+                bool healed = false;
+                healed |= RebuildSlimMeasurements(conn);
+                healed |= RebuildSlimFailItems(conn);
+                healed |= RebuildSlimTdms(conn);
+                if (healed) Logger.Info("[存储] 启动自愈：已补齐半成品库的瘦表转换（去路径冗余列）");
+            }
             _detailTablesFat = HasColumn(conn, "test_measurements", "xml_path");
             if (_detailTablesFat)
                 Logger.Warning("[存储] 明细表仍含路径冗余列。请到调试工具「压缩数据库」，或等凌晨维护自动压缩。");
@@ -809,6 +827,13 @@ public sealed partial class Database
         delFail.CommandText = "DELETE FROM fail_items WHERE record_id = @id";
         var pDelFailId = delFail.Parameters.Add("@id", SqliteType.Integer);
 
+        // 审计修复：待办增量扫描只看「id > 水位」，而更新已有行不改 id——就地变 FAIL / 失败项变多的记录
+        // 永远进不了待办。这里把被更新的 FAIL 行登记进重扫集合，由 SyncTodoItems 一并消费。
+        using var rescan = conn.CreateCommand();
+        rescan.Transaction = tx;
+        rescan.CommandText = "INSERT OR IGNORE INTO todo_rescan_ids(id) VALUES(@id)";
+        var pRescanId = rescan.Parameters.Add("@id", SqliteType.Integer);
+
         foreach (var rec in list)
         {
             pSel.Value = rec.XmlPath;
@@ -849,6 +874,8 @@ public sealed partial class Database
                     {
                         pDelFailId.Value = id;
                         delFail.ExecuteNonQuery();
+                        pRescanId.Value = id;
+                        rescan.ExecuteNonQuery();
                     }
                 }
             }
@@ -994,7 +1021,13 @@ public sealed partial class Database
         var cutoff = DateTime.Now.Date.AddDays(-Math.Max(1, retentionDays)).ToString("yyyy-MM-dd");
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM test_measurements WHERE COALESCE(ts,'') <> '' AND substr(COALESCE(ts,''),1,10) < @cutoff";
+        // 审计修复：原条件 COALESCE(ts,'')<>'' 让 ts 为空/NULL 的明细行永不参与滚动删除（无界增长）。
+        // 这里补一条：ts 为空的按「父记录的自然日」判定——既不会误删当天新记录，也不会永久残留。
+        cmd.CommandText = $@"
+            DELETE FROM test_measurements
+             WHERE (COALESCE(ts,'') <> '' AND substr(COALESCE(ts,''),1,10) < @cutoff)
+                OR (COALESCE(ts,'') = '' AND record_id IN (
+                       SELECT id FROM test_records WHERE {NormalizedDayExpr} < @cutoff))";
         cmd.Parameters.AddWithValue("@cutoff", cutoff);
         return cmd.ExecuteNonQuery();
     }
@@ -1004,7 +1037,12 @@ public sealed partial class Database
         var cutoff = DateTime.Now.Date.AddDays(-Math.Max(1, retentionDays)).ToString("yyyy-MM-dd");
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM fail_items WHERE COALESCE(ts,'') <> '' AND substr(COALESCE(ts,''),1,10) < @cutoff";
+        // 审计修复：同 PurgeOldMeasurements——空 ts 行按父记录自然日判定，避免永久残留。
+        cmd.CommandText = $@"
+            DELETE FROM fail_items
+             WHERE (COALESCE(ts,'') <> '' AND substr(COALESCE(ts,''),1,10) < @cutoff)
+                OR (COALESCE(ts,'') = '' AND record_id IN (
+                       SELECT id FROM test_records WHERE {NormalizedDayExpr} < @cutoff))";
         cmd.Parameters.AddWithValue("@cutoff", cutoff);
         return cmd.ExecuteNonQuery();
     }
@@ -1611,13 +1649,24 @@ public sealed partial class Database
         return list;
     }
 
+    /// <summary>审计修复：test_records「自然日」的统一归一表达式（yyyy-MM-dd）。
+    /// test_date 存在 yyyyMMdd / yyyy-MM-dd 双格式混存，batch_timestamp 可能为空——原实现直接 substr 后
+    /// 与 dash 参数做字符串比较：8 位日期第 5 位 '0'(0x30) &gt; '-'(0x2D) 会被判为「大于上界」而整行落选，
+    /// C# 端还有 length&lt;10 过滤会再丢一次。此处统一铸成 dash 形式再比较。</summary>
+    private const string NormalizedDayExpr = @"CASE
+                    WHEN COALESCE(NULLIF(batch_timestamp,''),'') <> '' THEN substr(batch_timestamp,1,10)
+                    WHEN length(replace(COALESCE(test_date,''),'-','')) = 8
+                        THEN substr(replace(test_date,'-',''),1,4)||'-'||substr(replace(test_date,'-',''),5,2)||'-'||substr(replace(test_date,'-',''),7,2)
+                    ELSE substr(COALESCE(created_at,''),1,10)
+                END";
+
     /// <summary>库内最早 PASS 记录日期（yyyy-MM-dd），无 PASS 则 null。</summary>
     public string? GetEarliestPassRecordYmd()
     {
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            SELECT MIN(substr(COALESCE(NULLIF(batch_timestamp,''), test_date, created_at),1,10))
+        cmd.CommandText = $@"
+            SELECT MIN({NormalizedDayExpr})
             FROM test_records WHERE result='PASS'";
         var v = cmd.ExecuteScalar();
         if (v == null || v is DBNull) return null;
@@ -1660,12 +1709,14 @@ public sealed partial class Database
         var dict = new Dictionary<string, int>(StringComparer.Ordinal);
         using var conn = Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            SELECT substr(COALESCE(NULLIF(batch_timestamp,''), test_date, created_at),1,10) AS d, COUNT(*)
+        // 审计修复：与 GetEarliestPassRecordYmd 同一归一表达式——原实现让 8 位 test_date 的行在与
+        // dash 参数比较时被判为超出上界而整行落选（回放异常日推断会少算这些 FAIL）。
+        cmd.CommandText = $@"
+            SELECT {NormalizedDayExpr} AS d, COUNT(*)
             FROM test_records
             WHERE result='FAIL'
-              AND substr(COALESCE(NULLIF(batch_timestamp,''), test_date, created_at),1,10) >= @from
-              AND substr(COALESCE(NULLIF(batch_timestamp,''), test_date, created_at),1,10) <= @to
+              AND {NormalizedDayExpr} >= @from
+              AND {NormalizedDayExpr} <= @to
             GROUP BY d";
         cmd.Parameters.AddWithValue("@from", fromYmd ?? "");
         cmd.Parameters.AddWithValue("@to", toYmdInclusive ?? "");
@@ -2655,6 +2706,47 @@ public sealed partial class Database
         return list;
     }
 
+    /// <summary>审计修复：超期告警专用——按创建时间「升序」取未闭环待办。
+    /// 原实现用 ListMaintenance("", 5000)（按 updated_at 倒序取最近 5000 条）后在内存筛超期：
+    /// 未被处理的老待办 updated_at == created_at，排序落在最末，表一超过 5000 行就正好被 LIMIT 截掉——
+    /// 最该告警的超期项反而静默消失。改为 SQL 侧按状态过滤 + 创建时间升序。</summary>
+    public List<MaintenanceRecord> ListUnclosedMaintenanceAsc(int limit = 5000)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"SELECT id, station_id, equipment_model, equipment_sn, fail_item, fail_reason,
+            severity, status, resolver, resolution, notes, created_at, updated_at
+            FROM maintenance_records
+            WHERE status IN (@open, @doing)
+            ORDER BY COALESCE(NULLIF(created_at,''),'') ASC, id ASC
+            LIMIT @lim";
+        cmd.Parameters.AddWithValue("@open", MaintenanceMeta.DefaultStatus);
+        cmd.Parameters.AddWithValue("@doing", "in_progress");
+        cmd.Parameters.AddWithValue("@lim", limit <= 0 ? 5000 : limit);
+        var list = new List<MaintenanceRecord>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new MaintenanceRecord
+            {
+                Id = r.GetInt32(0),
+                StationId = r.IsDBNull(1) ? "" : r.GetString(1),
+                EquipmentModel = r.IsDBNull(2) ? "" : r.GetString(2),
+                EquipmentSn = r.IsDBNull(3) ? "" : r.GetString(3),
+                FailItem = r.IsDBNull(4) ? "" : r.GetString(4),
+                FailReason = r.IsDBNull(5) ? "" : r.GetString(5),
+                Severity = r.IsDBNull(6) ? "major" : r.GetString(6),
+                Status = r.IsDBNull(7) ? "open" : r.GetString(7),
+                Resolver = r.IsDBNull(8) ? "" : r.GetString(8),
+                Resolution = r.IsDBNull(9) ? "" : r.GetString(9),
+                Notes = r.IsDBNull(10) ? "" : r.GetString(10),
+                CreatedAt = r.IsDBNull(11) ? "" : r.GetString(11),
+                UpdatedAt = r.IsDBNull(12) ? "" : r.GetString(12),
+            });
+        }
+        return list;
+    }
+
     public Dictionary<string, int> CountMaintenanceByStatus()
     {
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -2788,6 +2880,23 @@ public sealed partial class Database
 
         if (affected > 0)
         {
+            // 审计修复：id 游标回退到 MAX(id) 是本产品「已用自检断言锁定」的行为（删掉最大的 id 后新记录
+            // 会复用该 id、不填空号），因此保留不动。但 ReconcileTodoStates 是靠「maintenance_id 不在
+            // maintenance_records 里」判断「记录已删」，id 一旦被复用该判定就失效 → 待办会静默挂到一条
+            // 无关的新记录上。这里在删除的同一事务内「显式解绑」，直接兑现界面「删掉本记录后待办自动
+            // 回到未确认」的承诺，不再依赖上述启发式。
+            using (var detach = conn.CreateCommand())
+            {
+                detach.Transaction = tx;
+                detach.CommandText = @"
+                    UPDATE todo_items
+                       SET state='pending', maintenance_id=NULL, resolved_at=NULL,
+                           updated_at=datetime('now','localtime')
+                     WHERE maintenance_id=@id";
+                detach.Parameters.AddWithValue("@id", id);
+                detach.ExecuteNonQuery();
+            }
+
             using var seq = conn.CreateCommand();
             seq.Transaction = tx;
             seq.CommandText = @"
@@ -2855,8 +2964,15 @@ public sealed partial class Database
             maxId = Convert.ToInt64(c.ExecuteScalar() ?? 0L);
         }
 
+        long rescanPending;
+        using (var rc = conn.CreateCommand())
+        {
+            rc.CommandText = "SELECT COUNT(*) FROM todo_rescan_ids";
+            rescanPending = Convert.ToInt64(rc.ExecuteScalar() ?? 0L);
+        }
+
         var groups = new Dictionary<(string, string), TodoAgg>();
-        if (maxId > watermark)
+        if (maxId > watermark || rescanPending > 0)
         {
             var dismissed = new HashSet<(string, string)>();
             using (var dc = conn.CreateCommand())
@@ -2873,7 +2989,7 @@ public sealed partial class Database
                   FROM test_records
                  WHERE result='FAIL'
                    AND fail_reason IS NOT NULL AND TRIM(fail_reason) <> ''
-                   AND id > @wm AND id <= @max";
+                   AND (id > @wm AND id <= @max OR id IN (SELECT id FROM todo_rescan_ids))";
             c.Parameters.AddWithValue("@wm", watermark);
             c.Parameters.AddWithValue("@max", maxId);
             using var r = c.ExecuteReader();
@@ -2982,6 +3098,14 @@ public sealed partial class Database
                 }
             }
 
+            // 审计修复：重扫集合已消费完毕，同一事务内清空（崩溃则下次重来，幂等）
+            using (var clr = conn.CreateCommand())
+            {
+                clr.Transaction = tx;
+                clr.CommandText = "DELETE FROM todo_rescan_ids";
+                clr.ExecuteNonQuery();
+            }
+
             effectiveWatermark = maxId;
             SetMeta(conn, TodoWatermarkKey, effectiveWatermark.ToString(), tx);
             tx.Commit();
@@ -3004,7 +3128,11 @@ public sealed partial class Database
 
     private static void ReconcileTodoStates(SqliteConnection conn)
     {
+        // 审计修复：四条 UPDATE 属于同一个多语句命令，原本没有事务——第 2~4 条遇 SQLITE_BUSY/中断会让
+        // 待办状态只改一半（最长到次日维护才自愈），期间看板缺卡/错卡且无任何报错。
+        using var tx = conn.BeginTransaction();
         using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         // B8：终态集合收口 MaintenanceMeta（DoneStatus/LegacyClosed），与状态机单一来源同步
         cmd.CommandText = @"
             -- 记录被删 -> 重新变成未确认
@@ -3041,6 +3169,7 @@ public sealed partial class Database
         cmd.Parameters.AddWithValue("@done", MaintenanceMeta.DoneStatus);
         cmd.Parameters.AddWithValue("@legacy", MaintenanceMeta.LegacyClosed);
         cmd.ExecuteNonQuery();
+        tx.Commit();
     }
 
     public List<TodoItem> ListTodoView(DateTime? from = null, DateTime? to = null, int limit = TodoViewLimit)
@@ -3058,7 +3187,10 @@ public sealed partial class Database
                  WHERE state='pending'
                  ORDER BY fail_count DESC, last_seen DESC
                  LIMIT @limit";
-            cmd.Parameters.AddWithValue("@limit", limit);
+            // 审计修复：区间模式必须先取全量候选再按区间过滤。原实现把「累计 fail_count 前 300 条」当候选，
+            // 区间内高发但累计计数低的待办会被整体丢弃（区间视图反而比累计视图还少）。
+            // 非区间仍由 SQL 截断；区间模式传 -1（SQLite LIMIT -1 = 不限制），过滤后再按 limit 截断。
+            cmd.Parameters.AddWithValue("@limit", (from != null || to != null) ? -1 : limit);
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
@@ -3149,6 +3281,8 @@ public sealed partial class Database
             list = list.OrderByDescending(x => x.SortCount)
                        .ThenByDescending(x => x.LastSeen, StringComparer.Ordinal)
                        .ToList();
+            // 区间模式的截断放在过滤之后（SQL 端已传 -1 不限制）
+            if (limit > 0 && list.Count > limit) list = list.Take(limit).ToList();
         }
         return list;
     }

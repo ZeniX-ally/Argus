@@ -111,7 +111,9 @@ public class Processor
             Measurements = outp.Measurements,
             FileSize = outp.FileSize,
         };
-        int keepDays = LearnPipeline.EffectiveMeasureRetentionDays(_cfg, _db);
+        // 审计修复：原为 EffectiveMeasureRetentionDays——每个文件一次全表 MIN 扫描（首次扫描 O(N²)）；
+        // 改走缓存入口（单调加宽，不会误删）。
+        int keepDays = LearnPipeline.EffectiveMeasureRetentionDaysCached(_cfg, _db);
         if (rec.Measurements.Count > 0 && !Database.IsWithinRetention(rec.TestDate, keepDays))
             rec.Measurements = new List<MeasurementRow>();
         return rec;

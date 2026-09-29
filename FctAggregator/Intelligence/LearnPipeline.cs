@@ -25,6 +25,33 @@ public static class LearnPipeline
         return Math.Max(r, window);
     }
 
+    // 审计修复：EffectiveMeasureRetentionDays 内部会跑 GetEarliestPassRecordYmd()——那是一条对表达式求
+    // MIN 的全表扫描（走不了索引），而 Processor.ParseAndClassify 是「每个 XML 文件」都会调它一次。
+    // 实测 20 万行（10 万 PASS）单次 41ms，首次历史扫描因此呈 O(N²)（十万文件量级多花十几分钟）。
+    // 这里按库路径缓存，且**只允许单调加宽**：更宽的保留期意味着「多留」而非「多删」，任何时刻都不会
+    // 误删本应保留的测量值，因此无需精确失效，只需定期重算。
+    private static readonly object _retLock = new();
+    private static string? _retKey;
+    private static int _retValue;
+    private static long _retStamp;
+
+    /// <summary>带缓存的有效保留期（默认 5 分钟重算一次；期间返回值单调不减）。</summary>
+    public static int EffectiveMeasureRetentionDaysCached(AppConfig cfg, Database? db)
+    {
+        if (db == null) return EffectiveMeasureRetentionDays(cfg, db);
+        lock (_retLock)
+        {
+            var now = Environment.TickCount64;
+            if (_retKey == db.DbPath && now - _retStamp < 300_000) return _retValue;
+            var v = EffectiveMeasureRetentionDays(cfg, db);
+            if (_retKey == db.DbPath) v = Math.Max(v, _retValue); // 单调加宽，不回退
+            _retKey = db.DbPath;
+            _retValue = v;
+            _retStamp = now;
+            return v;
+        }
+    }
+
     /// <summary>窗口下拉：0=自动，1=30，2=90，3=180，4=365。</summary>
     public static int ResolveBackfillDays(Database db, int windowIndex)
     {

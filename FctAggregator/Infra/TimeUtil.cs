@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace FctAggregator;
@@ -48,8 +48,13 @@ public static class TimeUtil
         if (string.IsNullOrWhiteSpace(ts)) return "";
         ts = ts.Trim();
         if (ts.Length == 8 && ts.All(char.IsDigit)) return $"{ts[..4]}-{ts[4..6]}-{ts[6..8]} 00:00:00";
-        if (ts.Length == 14 && ts.All(char.IsDigit)) return $"{ts[..4]}-{ts[4..6]}-{ts[6..8]} {ts[8..10]}:{ts[10..12]}:{ts[12..14]}";
-        if (ts.Length == 17 && ts.All(char.IsDigit)) return $"{ts[..4]}-{ts[4..6]}-{ts[6..8]} {ts[8..10]}:{ts[10..12]}:{ts[12..14]}";
+        // 审计修复：14/17 位纯数字原实现只做字符串切片、不校验日期合法性，会把 20260901675353 这类串
+        // 直接铸成 "2026-09-01 67:53:53"（非法时间戳落库、分组键变脏，TimeUtil.Short 对其 ParseExact
+        // 会抛异常并冒到 UI 线程）。改为先校验再格式化，非法则不再走本分支。
+        if (ts.Length is 14 or 17 && ts.All(char.IsDigit)
+            && DateTime.TryParseExact(ts[..14], "yyyyMMddHHmmss", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var d14))
+            return d14.ToString("yyyy-MM-dd HH:mm:ss");
         // 20260910 08:15:30 / 20260910T08:15:30（目录日+空格时间，TryParse 不认）
         if (ts.Length >= 15 && ts[8] is ' ' or 'T' && ts.Take(8).All(char.IsDigit))
             return Normalize($"{ts[..4]}-{ts[4..6]}-{ts[6..8]} {ts[9..]}");
@@ -66,7 +71,10 @@ public static class TimeUtil
     {
         var n = Normalize(ts);
         if (n.Length == 0) return "—";
-        var dt = DateTime.ParseExact(n, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        // 审计修复：原实现 ParseExact 无兜底——历史脏值（非法时间戳）会抛 FormatException 冒到 UI 线程。
+        if (!DateTime.TryParseExact(n, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var dt))
+            return "—";
         return dt.Date == DateTime.Today ? dt.ToString("今天 HH:mm") : dt.ToString("MM-dd HH:mm");
     }
 
@@ -103,10 +111,12 @@ public static class TimeUtil
         if (!m.Success) return "";
         var norm = Normalize(m.Groups[1].Value);
         if (norm.Length == 0) return "";
-        if (anchor.HasValue &&
-            DateTime.TryParseExact(norm, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture,
-                DateTimeStyles.None, out var dt))
+        if (anchor.HasValue)
         {
+            // 审计修复：原实现 TryParseExact 失败时整段 anchor 闸门被跳过、非法串原样返回（闸门形同虚设）。
+            if (!DateTime.TryParseExact(norm, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var dt))
+                return "";
             var diffDays = Math.Abs((anchor.Value.Date - dt.Date).TotalDays);
             if (diffDays > maxDaysDiff) return "";
         }

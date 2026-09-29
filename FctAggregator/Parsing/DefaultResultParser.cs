@@ -38,7 +38,10 @@ public sealed class DefaultResultParser : IResultParser
 
         var modelName = info.ModelFromName ?? info.Model;
         var snFromName = info.Sn;
-        bool isPass = _rules.PrefixResults.TryGetValue(info.Prefix, out var mapped) && mapped == "PASS";
+        // 审计修复：prefix_results 的值来自用户 JSON，原来只做大小写敏感匹配——写成 "pass" 时
+        // PASS 文件会走 FAIL 分支被记成 INTERRUPTED（良率静默归零）。
+        bool isPass = _rules.PrefixResults.TryGetValue(info.Prefix, out var mapped)
+                      && string.Equals(mapped, "PASS", StringComparison.OrdinalIgnoreCase);
 
         string result;
         string? user = null, tester = null, panelStatus = null, batchTs = null, failReason = null, fixtureId = null;
@@ -80,10 +83,14 @@ public sealed class DefaultResultParser : IResultParser
             if (_rules.IsDebug(pr.FactoryUser))
                 return new ParseOutput { Skipped = true, SkipReason = "debug" };
 
-            result = mapped switch
+            // 审计修复：原 switch 只匹配大写，且没有 "INVALID" 分支——parsers.json 里写 "I_":"INVALID"
+            // 会被静默记成 FAIL/INTERRUPTED（下面的 INVALID 保护永远不可达）。这里统一大写归一后再判定。
+            var mappedU = (mapped ?? "").Trim().ToUpperInvariant();
+            result = mappedU switch
             {
                 "PASS" => "PASS",
                 "FAIL" => "FAIL",
+                "INVALID" => "INVALID",
                 "AUTO" => pr.HasFailItems ? "FAIL" : "INTERRUPTED",
                 _ => pr.HasFailItems ? "FAIL" : "INTERRUPTED",
             };
@@ -117,7 +124,11 @@ public sealed class DefaultResultParser : IResultParser
                 : "";
         batchTs = ts;
 
+        // 站号回落链：实例值（Load 传入的 config.station_id）→ 注册表注入值（Engine 的 IP 识别结果）
+        // → TESTER 属性解析 → UNKNOWN。审计修复：中间一环此前缺失——IP 识别出的机台号进不来，
+        // 整库 station_id 落 UNKNOWN，Engine 的 [跳过推送-无机台号] 会把真 FAIL 告警静默吞掉。
         var stationId = _defaultStation;
+        if (string.IsNullOrEmpty(stationId)) stationId = ParserRegistry.DefaultStation;
         if (string.IsNullOrEmpty(stationId))
             stationId = StationDetector.ExtractStationFromTester(tester) ?? "UNKNOWN";
 

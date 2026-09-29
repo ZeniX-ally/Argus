@@ -127,21 +127,31 @@ public sealed partial class Database
         s.Measurements = ScalarCount(conn, "SELECT COUNT(*) FROM test_measurements");
         s.FailItems = ScalarCount(conn, "SELECT COUNT(*) FROM fail_items");
         s.TdmsFeatures = ScalarCount(conn, "SELECT COUNT(*) FROM tdms_features");
-        s.SlimSchema = !HasColumn(conn, "test_measurements", "xml_path");
+        // 审计修复：原实现只查 test_measurements——半成品库（部分表已瘦）会被判为「已是瘦表」，
+        // CompactStorage 永不再执行，冗余列永久保留。
+        s.SlimSchema = !HasColumn(conn, "test_measurements", "xml_path")
+                    && !HasColumn(conn, "fail_items", "xml_path")
+                    && !HasColumn(conn, "tdms_features", "xml_path");
         return s;
     }
 
     /// <summary>清过期明细、去掉每行重复的路径/机台/型号/SN，VACUUM 回收文件空洞。</summary>
-    public CompactReport CompactStorage(int retentionDays, bool vacuum = true)
+    public CompactReport CompactStorage(int retentionDays, bool vacuum = true, int failItemRetentionDays = 0)
     {
         var report = new CompactReport();
         try { if (File.Exists(_dbPath)) report.BytesBefore = new FileInfo(_dbPath).Length; } catch { }
         // 钳制与 LearnPipeline.EffectiveMeasureRetentionDays 同源：下限 7、上限 365。
         // 曾硬钳 180：现场把保留期配到 365 时，深度优化会用 180 口径多删 180~365 天测量/失败明细。
         retentionDays = Math.Clamp(retentionDays, LearnPipeline.MeasureRetentionMin, LearnPipeline.MeasureRetentionMax);
+        // 审计修复：fail_items 有独立保留期键（analyze_failitem_retention_days），不能沿用测量口径。
+        // 原实现三类明细共用 retainM——现场 failitem=180 / measure=30 时会把 30~180 天的失败证据删掉，
+        // 且这次删除量不计入 StorageOptimizeResult，日志少报。
+        int fiRetention = failItemRetentionDays > 0
+            ? Math.Clamp(failItemRetentionDays, LearnPipeline.MeasureRetentionMin, LearnPipeline.MeasureRetentionMax)
+            : retentionDays;
 
         PurgeOldMeasurements(retentionDays);
-        PurgeOldFailItems(retentionDays);
+        PurgeOldFailItems(fiRetention);
         PurgeOldTdmsFeatures(retentionDays);
 
         using (var conn = Open())
@@ -152,6 +162,10 @@ public sealed partial class Database
             rebuilt |= RebuildSlimTdms(conn);
             report.Rebuilt = rebuilt;
         }
+        // 审计修复：瘦表转换事务已提交，必须立刻复位标志。原实现放在方法末尾——vacuum:true 时要等
+        // 数分钟 VACUUM 结束才复位，窗口内并发入库会拼出引用 xml_path 等已删列的胖表 SQL，
+        // 异常被 catch 成一条 Warning（"不影响主记录"）→ 整批测量值/失败项/TDMS 静默丢失。
+        _detailTablesFat = false;
 
         if (vacuum)
         {
@@ -163,7 +177,6 @@ public sealed partial class Database
         SqliteConnection.ClearAllPools();
         try { if (File.Exists(_dbPath)) report.BytesAfter = new FileInfo(_dbPath).Length; } catch { }
             report.Message = $"压缩前 {ByteUtil.MbGb(report.BytesBefore)} → 压缩后 {ByteUtil.MbGb(report.BytesAfter)}";
-        _detailTablesFat = false;
         Logger.Info($"[存储] {report.Message}");
         return report;
     }

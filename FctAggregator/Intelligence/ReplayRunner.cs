@@ -19,7 +19,8 @@ public static class ReplayRunner
 {
     public static ReplayReport RunSynthetic(string dbPath)
     {
-        var db = new Database(dbPath);
+        // 审计修复：回放用的是临时/副本库，绝不能顶掉运行中的主库句柄（同 UpdateChecker 的纪律）。
+        var db = new Database(dbPath, setAsCurrent: false);
         var cfg = new AppConfig
         {
             LearnNormalEnabled = true,
@@ -116,10 +117,13 @@ public static class ReplayRunner
         var tempPath = Path.Combine(Path.GetTempPath(), $"argus-replay-{Guid.NewGuid():N}.db");
         try
         {
-            try { new Database(sourceDbPath).CheckpointForCopy(); }
+            try { new Database(sourceDbPath, setAsCurrent: false).CheckpointForCopy(); }
             catch { /* 只读库或已关闭仍尝试复制 */ }
             File.Copy(sourceDbPath, tempPath, true);
-            var db = new Database(tempPath);
+            // 审计修复：原实现用会写 Database.Current 的构造，回放结束后 Current 永久指向这个临时库
+            // （finally 只删库不恢复）→ 之后的设备采样/TDMS 特征/水位全部写进已删除的临时库，
+            // 主库 device_samples_local 断档到下次重启，且 SQLite 会静默重建临时库而不报错。
+            var db = new Database(tempPath, setAsCurrent: false);
             db.ClearReplayLearningTables();
 
             var range = db.GetPassMeasurementDateRange();

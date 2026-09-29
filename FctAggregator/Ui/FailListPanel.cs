@@ -387,7 +387,11 @@ public sealed class FailListPanel : Panel
             }
             else if (TimeMode)
             {
-                var counts = _groups.ToDictionary(g => g.FailItem, g => g.Count, StringComparer.OrdinalIgnoreCase);
+                // 审计修复：_groups 由默认（大小写敏感）GroupBy 产生，这里却用 OrdinalIgnoreCase 建字典——
+                // 存在仅大小写不同的测项名时 ToDictionary 抛 ArgumentException，整页渲染失败（下拉切换还会
+                // 冒到全局异常弹窗）。改为按同一比较器重新分组，天然无重复键。
+                var counts = _all.GroupBy(f => f.TestName, StringComparer.OrdinalIgnoreCase)
+                                 .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
                 var rows = _all.OrderByDescending(DisplayTime).ToList();
                 int i = 0;
                 foreach (var f in rows)

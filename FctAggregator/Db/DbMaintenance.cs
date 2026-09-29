@@ -102,10 +102,15 @@ public sealed class DbMaintenance
             }
             else
             {
+                // 审计修复：关掉自动优化（现场为规避 VACUUM 卡顿）不等于放弃保留期——原来这里只清三类
+                // 明细，parse_failure_log / db_slow_log / device_samples_local 的滚动策略静默失效、无界增长。
                 var retain = LearnPipeline.EffectiveMeasureRetentionDays(_cfg, _db);
                 _db.PurgeOldMeasurements(retain);
                 _db.PurgeOldFailItems(Math.Clamp(_cfg.AnalyzeFailItemRetentionDays, 7, 180));
                 _db.PurgeOldTdmsFeatures(retain);
+                _db.PurgeOldLocalDeviceSamples(Math.Clamp(_cfg.LearnResourceRetentionDays, 7, 90));
+                _db.PurgeOldParseFailures(_cfg.DbParseFailureRetentionDays);
+                _db.PurgeOldSlowLogs(14);
             }
         }
         catch (Exception ex)

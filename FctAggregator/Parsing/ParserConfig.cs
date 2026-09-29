@@ -95,6 +95,17 @@ public sealed class ParserRegistry
 
     public static ParserRegistry Instance => _instance;
 
+    private static string? _defaultStation;
+
+    /// <summary>解析器默认机台号（config.station_id → IP 识别兜底）。Engine 在 IP 识别完成后注入。
+    /// 站号回落链：实例值 → 本值 → TESTER 属性解析 → UNKNOWN。
+    /// 审计修复：此前 IP 识别结果没有任何入口进解析器，导致整库 station_id 落 UNKNOWN、FAIL 告警被静默跳过。</summary>
+    public static string? DefaultStation
+    {
+        get => _defaultStation;
+        set => _defaultStation = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
     private static ParserRegistry CreateDefault()
     {
         var reg = new ParserRegistry();
@@ -117,7 +128,7 @@ public sealed class ParserRegistry
                     if (doc?.Parsers != null)
                     {
                         foreach (var rule in doc.Parsers)
-                            reg._parsers.Add(new ConfigurableResultParser(rule));
+                            reg._parsers.Add(new ConfigurableResultParser(rule, defaultStation));
                     }
                 }
             }
@@ -127,6 +138,7 @@ public sealed class ParserRegistry
             }
             reg._parsers.Add(new DefaultResultParser(ParserRuleSet.Default, defaultStation));
             reg._parsers.Sort((a, b) => a.Priority.CompareTo(b.Priority));
+            DefaultStation = defaultStation;
             _instance = reg;
             return _instance;
         }

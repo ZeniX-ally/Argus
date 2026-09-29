@@ -111,7 +111,8 @@ public static class UpdateChecker
             if (!File.Exists(rel)) return "";
             var lines = File.ReadAllLines(rel, Encoding.UTF8);
 
-            var target = ver.ToString(ver.Revision > 0 ? 4 : 3);
+            // 审计修复：两段版本（如 3.49）没有 Build，ToString(>=3) 抛 ArgumentException → 发布说明读不出。
+            var target = ver.Build < 0 ? ver.ToString(2) : ver.ToString(ver.Revision > 0 ? 4 : 3);
             var parts = target.Split('.');
             var escaped = string.Join(@"\.", parts.Select(p => System.Text.RegularExpressions.Regex.Escape(p)));
             var optionalTail = new System.Text.StringBuilder();
@@ -171,7 +172,9 @@ public static class UpdateChecker
             throw new FileNotFoundException("更新包不存在（可能已被移走）", info.ZipPath);
 
         var updatesRoot = ResolveUpdateDir();
-        var verStr = info.Version.ToString(3);
+        // 审计修复：与 VersionText/TryCommitPending 同口径——两段版本没有 Build，ToString(3) 抛异常
+        // 会让"发现新版本→暂存"必然失败（热升级永远装不上）。同文件的 VersionText 正是为此而写。
+        var verStr = VersionText(info.Version);
         var stagingDir = Path.Combine(updatesRoot, "staging", verStr);
         var backupDir = Path.Combine(updatesRoot, "backup", verStr + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
 

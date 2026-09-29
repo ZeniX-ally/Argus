@@ -24,7 +24,10 @@ public class Engine
     private readonly ConcurrentDictionary<string, byte> _loggedUnknownDirs = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _retryQueueFile; // 重试队列落盘文件（Stop 写 / Start 读回，治退出即丢）
 
-    private const int MaxStableRetries = 3;
+    // 审计修复：原为 3 次 × 30s ≈ 3.5 分钟，覆盖不了本类注释自己声明的「VACUUM 持写锁数分钟」
+    // （Database.Vacuum 的 CommandTimeout=600s）——超过预算的批次会被判「已达重试上限」直接放弃、
+    // 不再入队，本次进程内静默漏采。提到 20 次 ≈ 10 分钟，与 VACUUM 上限对齐。
+    private const int MaxStableRetries = 20;
     private const int StableRetryDelayMs = 30000;
     private readonly ConcurrentQueue<(string Path, int Attempt, long DueAt)> _retryQueue = new();
     private Thread? _retryThread;
@@ -60,6 +63,11 @@ public class Engine
             if (!string.IsNullOrEmpty(sid)) Logger.Info($"IP 识别机台号: {sid}");
         }
         _stationId = sid;
+
+        // 审计修复：把（可能来自 IP 识别的）机台号注入解析器注册表。Program.cs 初始化注册表时只有
+        // cfg.StationId，IP 识别结果从不回注 → 记录 station_id 落 UNKNOWN → FAIL 告警被跳过、
+        // 机台维度良率/历史查询全部错位。
+        try { Parsing.ParserRegistry.DefaultStation = sid; } catch { }
 
         var dataDir = Path.Combine(AppConfig.BaseDir, "data");
         Directory.CreateDirectory(dataDir);
@@ -111,6 +119,11 @@ public class Engine
 
     public void Start()
     {
+        // 审计修复：LoadRetryQueue 必须在任何早退之前。原实现位于 results_root 存在性检查之后——
+        // 早退时内存队列为空，Stop 的 SaveRetryQueue 会把磁盘上遗留的 retry_queue.json 静默删除
+        // （无任何日志），那批待重试路径就此漏采（skip_historical_scan=true 时永不补回）。
+        LoadRetryQueue();
+
         var root = _cfg.ResultsRoot;
         if (!Directory.Exists(root))
         {
@@ -127,7 +140,6 @@ public class Engine
         AppState.SetStatus("running");
         Logger.Info($"发现型号目录: {string.Join(", ", models)}");
 
-        LoadRetryQueue(); // 先恢复上次停机落盘的未处理重试条目
         _retryThread = new Thread(RetryLoop) { IsBackground = true, Name = "stable-retry" };
         _retryThread.Start();
 
@@ -152,6 +164,14 @@ public class Engine
         {
             RefreshStats();
             Task.Run(() => RunStartupScans(models, root));
+        }
+        else
+        {
+            // 审计修复：型号目录为空时原实现从不置 _initialScanComplete=true。之后 RescanModels 会补挂
+            // watcher 让文件正常入库，但本进程内每条 FAIL 都被 [跳过推送-扫描中] 吞掉——告警通道静默
+            // 死亡直到重启。无可扫即视为扫描完成，放行实时告警。
+            Logger.Warning("[启动扫描] 未发现型号目录，跳过启动扫描（新增目录由 5 分钟周期重扫补挂监控）");
+            FinishHistoricalScan();
         }
     }
 
@@ -209,6 +229,10 @@ public class Engine
         try { DeviceSampleRecorder.Instance.Stop(); } catch { }
         _maintenance.Stop();
         _cts.Cancel();
+        // 审计修复：_cts.Cancel() 不会唤醒 RetryLoop 的 Thread.Sleep(5000)，Join(3000) 必然超时返回，
+        // 于是 SaveRetryQueue 可能在重试线程仍存活时 drain 队列——之后该线程回存的条目只留在内存里、
+        // 随进程消失。显式 Interrupt 让循环立刻退出（其 Sleep 已 catch ThreadInterruptedException 并 break）。
+        try { _retryThread?.Interrupt(); } catch { }
         try { _retryThread?.Join(3000); } catch { }
         try { _modelRescanTimer?.Dispose(); } catch { }
         try { _collectHealthTimer?.Dispose(); } catch { }
@@ -391,12 +415,12 @@ public class Engine
     }
 
     /// <summary>审计 A3：挂接型号目录监控（幂等，已挂目录跳过），供启动与周期重扫共用。</summary>
-    private void AttachWatcherFor(string dir)
+    private bool AttachWatcherFor(string dir)
     {
         lock (_watcherLock)
         {
-            if (_watchersStopped) return; // 已停止：不再新建（否则新 watcher 无人 Dispose，且向死引擎投递事件）
-            if (!_watchedDirs.Add(dir)) return;
+            if (_watchersStopped) return false; // 已停止：不再新建（否则新 watcher 无人 Dispose，且向死引擎投递事件）
+            if (!_watchedDirs.Add(dir)) return false;
             var w = new FileSystemWatcher(dir, "*.xml")
             {
                 IncludeSubdirectories = true,
@@ -409,6 +433,27 @@ public class Engine
             _watchers.Add(w);
         }
         Logger.Info($"监控已启动: {dir}");
+        return true;
+    }
+
+    /// <summary>审计修复：新挂上监控的目录里「挂载前已落盘」的 XML 既没有 Created 事件、又不在启动快照的
+    /// models 里（历史扫描只枚举启动时发现的型号）→ 永久漏采且无任何日志。这里补一次有界补扫：
+    /// 只捞最近 7 天写入的文件，最多 2000 个，避免超大目录一次性灌爆处理队列。</summary>
+    private void BackfillNewlyWatchedDir(string dir)
+    {
+        try
+        {
+            var since = DateTime.Now.AddDays(-7);
+            int n = 0;
+            foreach (var f in Directory.EnumerateFiles(dir, "*.xml", SearchOption.AllDirectories))
+            {
+                try { if (File.GetLastWriteTime(f) < since) continue; } catch { continue; }
+                ScheduleProcess(f);
+                if (++n >= 2000) break;
+            }
+            if (n > 0) Logger.Info($"[监控] 新目录补扫 {n} 个近 7 天文件: {dir}");
+        }
+        catch (Exception ex) { Logger.Warning($"[监控] 新目录补扫失败: {ex.Message}"); }
     }
 
     /// <summary>审计 A3：周期重扫型号目录，为运行期新增型号补挂监控（幂等；不重复挂已监控目录）。</summary>
@@ -425,7 +470,8 @@ public class Engine
                 {
                     var dir = Path.Combine(root, cat, model);
                     if (!Directory.Exists(dir)) continue;
-                    AttachWatcherFor(dir);
+                    // 新挂上的目录要补扫挂载前已存在的文件（启动时挂的目录由历史扫描负责，不重复）
+                    if (AttachWatcherFor(dir)) BackfillNewlyWatchedDir(dir);
                 }
         }
         catch (Exception ex) { Logger.Warning($"[监控] 新型号周期重扫失败: {ex.Message}"); }

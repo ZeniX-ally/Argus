@@ -142,7 +142,9 @@ public class AppConfig
                 if (root.TryGetProperty("station_id", out var v)) cfg.StationId = GetStringSafe(v) ?? "";
                 if (root.TryGetProperty("results_root", out v)) cfg.ResultsRoot = GetStringSafe(v) ?? cfg.ResultsRoot;
                 if (root.TryGetProperty("fct_ini_path", out v)) cfg.FctIniPath = GetStringSafe(v) ?? cfg.FctIniPath;
-                if (root.TryGetProperty("webhook_url", out v)) cfg.WebhookUrl = GetStringSafe(v) ?? "";
+                // 审计修复：URL 型键里唯一没做 Trim 的——前后带空格/换行（复制粘贴）时前缀校验失败，
+                // 被判 Skipped 又算"已推送"，FAIL 告警永久丢失而界面仍显示"已配置"。
+                if (root.TryGetProperty("webhook_url", out v)) cfg.WebhookUrl = (GetStringSafe(v) ?? "").Trim();
                 if (root.TryGetProperty("skip_historical_scan", out v)) cfg.SkipHistoricalScan = v.ValueKind == JsonValueKind.True;
                 if (root.TryGetProperty("log_level", out v)) cfg.LogLevel = GetStringSafe(v) ?? "INFO";
                 if (root.TryGetProperty("desktop_notify", out v)) cfg.DesktopNotify = v.ValueKind != JsonValueKind.False;
