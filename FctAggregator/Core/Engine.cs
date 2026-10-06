@@ -315,9 +315,12 @@ public class Engine
             AppState.SetScanProgress(phase: "parsing", total: allFiles.Count, parsed: 0);
             const int batchSize = 100;
             int processed = 0, totalInserted = 0, totalUpdated = 0;
+            var scanCancelled = false;
+            _db.RunWithDeferredFailMonthCsv(() =>
+            {
             for (int i = 0; i < allFiles.Count; i += batchSize)
             {
-                if (_cts.IsCancellationRequested) return;
+                if (_cts.IsCancellationRequested) { scanCancelled = true; return; }
                 var take = Math.Min(batchSize, allFiles.Count - i);
                 var batch = allFiles.GetRange(i, take).Select(Path.GetFullPath).ToList();
                 HashSet<string>? existing = reparseExisting ? null : _db.GetExistingPaths(batch);
@@ -378,6 +381,8 @@ public class Engine
                 // 每批都全量重算统计会得到 批数 x 6 条聚合 SQL（含整表 COUNT）；改走 10s 节流，收尾由 FinishHistoricalScan 刷终值
                 RefreshStatsThrottled();
             }
+            });
+            if (scanCancelled) return;
             Logger.Info($"[历史扫描] 结束 | xml={allFiles.Count} | 新插入={totalInserted} | 覆盖更新={totalUpdated}");
             SyncTodos("历史扫描后");
         }

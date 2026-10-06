@@ -66,11 +66,11 @@ public sealed partial class Database
     /// ① 屏幕表格：<paramref name="recentRecords"/> &gt; 0 —— 先取最近 N 条 FAIL 记录再展开其失败项（保持"最近"语义）；
     /// ② 导出：传 <paramref name="fromYmd"/> / <paramref name="toYmdInclusive"/> —— 取该 <b>test_date 闭区间</b>的全部 FAIL
     ///    （8 位目录日期，与 FAIL 页 KPI 同口径，保证导出的数字与界面能对上）。
-    /// 结果按「项目（忽略大小写）→ 时间倒序」排序，即默认的"相同项聚合"。
+    /// 默认按「项目（忽略大小写）→ 时间倒序」排序。月表会再按失败次数排，传 <paramref name="orderByItem"/> false 省掉这一次。
     /// </summary>
     public List<FailItemDetail> QueryFailItemDetails(
         string stationId = "", string? fromYmd = null, string? toYmdInclusive = null,
-        int recentRecords = 0, int maxRows = 200000)
+        int recentRecords = 0, int maxRows = 200000, bool orderByItem = true)
     {
         var list = new List<FailItemDetail>();
         using var conn = Open();
@@ -110,7 +110,7 @@ public sealed partial class Database
             FROM test_records r
             LEFT JOIN fail_items fi ON fi.record_id = r.id
             WHERE {string.Join(" AND ", conds)}
-            ORDER BY item COLLATE NOCASE, ts DESC
+            {(orderByItem ? "ORDER BY item COLLATE NOCASE, ts DESC" : "")}
             LIMIT @max";
         cmd.Parameters.AddWithValue("@max", Math.Max(1, maxRows));
 

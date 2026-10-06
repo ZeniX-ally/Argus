@@ -157,49 +157,9 @@ public static class XmlParser
         var d = new ReportData();
         try
         {
-            var settings = new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit,
-                XmlResolver = null,
-                IgnoreComments = true,
-                IgnoreWhitespace = true,
-            };
-            using var reader = XmlReader.Create(path, settings);
-            bool panelSet = false, snSet = false;
-            var ft = ExtractFileTime(path);
-            while (reader.Read())
-            {
-                if (reader.NodeType != XmlNodeType.Element) continue;
-                switch (reader.Name)
-                {
-                    case "FACTORY":
-                        d.FactoryUser = reader.GetAttribute("USER") ?? "";
-                        d.Tester = reader.GetAttribute("TESTER") ?? "";
-                        break;
-                    case "PANEL":
-                        if (!panelSet)
-                        {
-                            d.PanelStatus = reader.GetAttribute("STATUS") ?? "";
-                            panelSet = true;
-                        }
-                        break;
-                    case "DUT":
-                        if (!snSet) { d.Sn = reader.GetAttribute("ID") ?? ""; snSet = true; }
-                        break;
-                    case "TEST":
-                        d.Tests.Add(new ReportTest
-                        {
-                            Name = reader.GetAttribute("NAME") ?? "",
-                            Value = reader.GetAttribute("VALUE") ?? "",
-                            Lolim = reader.GetAttribute("LOLIM") ?? "",
-                            Hilim = reader.GetAttribute("HILIM") ?? "",
-                            Unit = reader.GetAttribute("UNIT") ?? "",
-                            Status = reader.GetAttribute("STATUS") ?? "",
-                        });
-                        break;
-                }
-            }
-            if (ft != null)
+            using var reader = OpenReport(path);
+            FillReport(reader, d);
+            if (d.BatchTimestamp.Length == 0 && ExtractFileTime(path) is { } ft)
                 d.BatchTimestamp = TimeUtil.Normalize(ft);
         }
         catch (Exception ex)
@@ -215,48 +175,10 @@ public static class XmlParser
         var d = new ReportData();
         try
         {
-            var settings = new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit,
-                XmlResolver = null,
-                IgnoreComments = true,
-                IgnoreWhitespace = true,
-            };
-            using var reader = XmlReader.Create(new StringReader(xml), settings);
-            bool panelSet = false, snSet = false;
-            var ft = filePath != null ? ExtractFileTime(filePath) : null;
-            while (reader.Read())
-            {
-                if (reader.NodeType != XmlNodeType.Element) continue;
-                switch (reader.Name)
-                {
-                    case "FACTORY":
-                        d.FactoryUser = reader.GetAttribute("USER") ?? "";
-                        d.Tester = reader.GetAttribute("TESTER") ?? "";
-                        break;
-                    case "PANEL":
-                        if (!panelSet)
-                        {
-                            d.PanelStatus = reader.GetAttribute("STATUS") ?? "";
-                            panelSet = true;
-                        }
-                        break;
-                    case "DUT":
-                        if (!snSet) { d.Sn = reader.GetAttribute("ID") ?? ""; snSet = true; }
-                        break;
-                    case "TEST":
-                        d.Tests.Add(new ReportTest
-                        {
-                            Name = reader.GetAttribute("NAME") ?? "",
-                            Value = reader.GetAttribute("VALUE") ?? "",
-                            Lolim = reader.GetAttribute("LOLIM") ?? "",
-                            Hilim = reader.GetAttribute("HILIM") ?? "",
-                            Unit = reader.GetAttribute("UNIT") ?? "",
-                            Status = reader.GetAttribute("STATUS") ?? "",
-                        });
-                        break;
-                }
-            }
+            using var reader = OpenReport(new StringReader(xml));
+            FillReport(reader, d);
+            if (d.BatchTimestamp.Length == 0 && filePath != null && ExtractFileTime(filePath) is { } ft)
+                d.BatchTimestamp = TimeUtil.Normalize(ft);
         }
         catch (Exception ex)
         {
@@ -264,5 +186,97 @@ public static class XmlParser
             d.Error = true;
         }
         return d;
+    }
+
+    private static readonly HashSet<string> MeasurementGroupTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "NumericLimitTest", "StringValueTest", "FtsStringValueTest", "PassFailTest",
+    };
+
+    private static XmlReader OpenReport(string path) =>
+        XmlReader.Create(path, ReportSettings());
+
+    private static XmlReader OpenReport(TextReader text) =>
+        XmlReader.Create(text, ReportSettings());
+
+    private static XmlReaderSettings ReportSettings() => new()
+    {
+        DtdProcessing = DtdProcessing.Prohibit,
+        XmlResolver = null,
+        IgnoreComments = true,
+        IgnoreWhitespace = true,
+    };
+
+    /// <summary>
+    /// 测项来源有两处：带测量值的 <c>TEST</c>，以及没有子 <c>TEST</c> 的测量 <c>GROUP</c>
+    /// （Skipped 的 NumericLimitTest 等是空元素，原来整项被丢掉）。
+    /// </summary>
+    private static void FillReport(XmlReader reader, ReportData d)
+    {
+        bool panelSet = false, snSet = false;
+        var pending = new Stack<(string Name, string Status, bool GotTest)>();
+        while (reader.Read())
+        {
+            if (reader.NodeType == XmlNodeType.EndElement && reader.Name == "GROUP")
+            {
+                if (pending.Count > 0)
+                {
+                    var top = pending.Pop();
+                    if (!top.GotTest)
+                        d.Tests.Add(new ReportTest { Name = top.Name, Status = top.Status });
+                }
+                continue;
+            }
+            if (reader.NodeType != XmlNodeType.Element) continue;
+            switch (reader.Name)
+            {
+                case "BATCH":
+                    if (d.BatchTimestamp.Length == 0)
+                        d.BatchTimestamp = TimeUtil.Normalize(reader.GetAttribute("TIMESTAMP") ?? "");
+                    break;
+                case "FACTORY":
+                    d.FactoryUser = reader.GetAttribute("USER") ?? "";
+                    d.Tester = reader.GetAttribute("TESTER") ?? "";
+                    break;
+                case "PANEL":
+                    if (!panelSet)
+                    {
+                        d.PanelStatus = reader.GetAttribute("STATUS") ?? "";
+                        var pt = reader.GetAttribute("TIMESTAMP") ?? "";
+                        if (pt.Length > 0) d.BatchTimestamp = TimeUtil.Normalize(pt);
+                        panelSet = true;
+                    }
+                    break;
+                case "DUT":
+                    if (!snSet) { d.Sn = reader.GetAttribute("ID") ?? ""; snSet = true; }
+                    break;
+                case "GROUP":
+                    var type = reader.GetAttribute("TYPE") ?? "";
+                    if (!MeasurementGroupTypes.Contains(type)) break;
+                    var gname = reader.GetAttribute("NAME") ?? "";
+                    var gstatus = reader.GetAttribute("STATUS") ?? "";
+                    if (reader.IsEmptyElement)
+                        d.Tests.Add(new ReportTest { Name = gname, Status = gstatus });
+                    else
+                        pending.Push((gname, gstatus, false));
+                    break;
+                case "TEST":
+                    d.Tests.Add(new ReportTest
+                    {
+                        Name = reader.GetAttribute("NAME") ?? "",
+                        Value = reader.GetAttribute("VALUE") ?? "",
+                        Lolim = reader.GetAttribute("LOLIM") ?? "",
+                        Hilim = reader.GetAttribute("HILIM") ?? "",
+                        Unit = reader.GetAttribute("UNIT") ?? "",
+                        Status = reader.GetAttribute("STATUS") ?? "",
+                    });
+                    if (pending.Count > 0)
+                    {
+                        var top = pending.Pop();
+                        pending.Push((top.Name, top.Status, true));
+                    }
+                    break;
+            }
+        }
     }
 }

@@ -1299,6 +1299,12 @@ class SelfTest
         Console.WriteLine("\n【v3.49.0 维修日志】一条记录一行，改状态覆盖原行");
         RunMaintenanceCsvLogTests(work);
 
+        Console.WriteLine("\n【v3.51.0 FAIL 月表】按失败次数排序，新月新文件");
+        RunFailMonthCsvTests(work);
+
+        Console.WriteLine("\n【v3.51.2 测试报告】TEST 与无测量值的测量 GROUP 都进明细");
+        RunReportMeasurementTests();
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -5936,5 +5942,88 @@ Argus 统一发布包  v{newer}
         Check(!lines.Any(l => l.StartsWith(id2 + ",", StringComparison.Ordinal)), "被删记录不留在日志里");
         Check(lines[1].Split(',')[0] == id.ToString() && lines[1].Split(',')[6] == "已完成",
               "删除其它行后第一条仍在且状态不变");
+    }
+
+    static TestRecord FailMonthRec(string dir, string sn, string ymd, string ts, string item) => new()
+    {
+        StationId = "FCT1", Model = "G49", Result = "FAIL", TestDate = ymd, Sn = sn,
+        FailReason = item, HasFailItems = true, BatchTimestamp = ts,
+        XmlPath = Path.Combine(dir, sn + ".xml"),
+        FailedTests = new List<FailedTest> { new() { Name = item, Value = "1.5", Lolim = "0", Hilim = "1", Unit = "V" } },
+    };
+
+    static void RunFailMonthCsvTests(string work)
+    {
+        var dir = Path.Combine(work, "fail_month_csv");
+        Directory.CreateDirectory(dir);
+        var dbPath = Path.Combine(dir, "m.db");
+        var db = new Database(dbPath, setAsCurrent: false);
+        db.BatchUpsert(new[]
+        {
+            FailMonthRec(dir, "a", "20261001", "2026-10-01 08:00:00", "电源"),
+            FailMonthRec(dir, "b", "20261002", "2026-10-02 12:00:00", "电源"),
+            FailMonthRec(dir, "c", "20261003", "2026-10-03 09:00:00", "通信"),
+        });
+        var oct = FailExporter.MonthLogPath(dbPath, 2026, 10);
+        Check(File.Exists(oct), "10 月 FAIL 表已生成");
+        var lines = File.ReadAllLines(oct);
+        Check(lines.Length == 4, $"10 月 3 条明细加表头（实得 {lines.Length} 行）");
+        Check(lines[0].StartsWith("型号,"), "月表列与 FAIL 明细导出一致");
+        Check(lines[1].Contains("电源") && lines[1].Contains("2026-10-02"),
+              "失败次数多的项目排在前面，同项内时间倒序");
+        Check(lines[2].Contains("电源") && lines[2].Contains("2026-10-01"), "同项目第二条仍排在次数少的项目之前");
+        Check(lines[3].Contains("通信"), "失败 1 次的项目排在后面");
+
+        db.BatchUpsert(new[]
+        {
+            FailMonthRec(dir, "d", "20261101", "2026-11-01 08:00:00", "电源"),
+        });
+        var nov = FailExporter.MonthLogPath(dbPath, 2026, 11);
+        Check(File.Exists(nov) && File.ReadAllLines(nov).Length == 2, "新月份单独一张表");
+        Check(File.ReadAllLines(oct).Length == 4, "写入 11 月不改 10 月的表");
+
+        var deferDir = Path.Combine(work, "fail_month_defer");
+        Directory.CreateDirectory(deferDir);
+        var deferDbPath = Path.Combine(deferDir, "m.db");
+        var deferDb = new Database(deferDbPath, setAsCurrent: false);
+        var deferPath = FailExporter.MonthLogPath(deferDbPath, 2026, 10);
+        var wroteEarly = false;
+        deferDb.RunWithDeferredFailMonthCsv(() =>
+        {
+            deferDb.BatchUpsert(new[] { FailMonthRec(deferDir, "e", "20261004", "2026-10-04 08:00:00", "电源") });
+            wroteEarly = File.Exists(deferPath);
+            deferDb.BatchUpsert(new[] { FailMonthRec(deferDir, "f", "20261005", "2026-10-05 08:00:00", "通信") });
+        });
+        Check(!wroteEarly, "推迟期间不写月表");
+        var deferred = File.ReadAllLines(deferPath);
+        Check(deferred.Length == 3 && deferred[1].Contains("电源") && deferred[2].Contains("通信"),
+              "推迟结束每个月只写一次，两条都在");
+    }
+
+    static void RunReportMeasurementTests()
+    {
+        const string xml = """
+            <BATCH TIMESTAMP="2026-07-24T13:01:00+08:00">
+              <PANEL STATUS="Failed" TIMESTAMP="2026-07-24T13:01:00+08:00">
+                <DUT ID="SN1">
+                  <GROUP NAME="MainSequence Callback" TYPE="SequenceCall" STATUS="Failed">
+                    <GROUP NAME="A_Pass" TYPE="NumericLimitTest" STATUS="Passed"><TEST NAME="A_Pass" VALUE="1" LOLIM="0" HILIM="2" UNIT="V" STATUS="Passed"/></GROUP>
+                    <GROUP NAME="B_Fail" TYPE="NumericLimitTest" STATUS="Failed"><TEST NAME="B_Fail" VALUE="9" LOLIM="0" HILIM="1" UNIT="V" STATUS="Failed"/></GROUP>
+                    <GROUP NAME="C_Skip" TYPE="NumericLimitTest" STATUS="Skipped"/>
+                    <GROUP NAME="If1" TYPE="NI_Flow_If" STATUS="Passed"/>
+                  </GROUP>
+                </DUT>
+              </PANEL>
+            </BATCH>
+            """;
+        var r = XmlParser.ParseReportText(xml);
+        Check(r.Tests.Count == 3, $"报告测项含通过、失败、跳过（实得 {r.Tests.Count}）");
+        Check(r.Tests[0].Name == "A_Pass" && r.Tests[0].Status == "Passed" && r.Tests[0].Value == "1",
+              "有 TEST 子节点的步骤用测量值，不重复记 GROUP");
+        Check(r.Tests[1].Name == "B_Fail" && r.Tests[1].Status == "Failed", "失败测项保留");
+        Check(r.Tests[2].Name == "C_Skip" && r.Tests[2].Status == "Skipped" && r.Tests[2].Value == "",
+              "没有 TEST 子节点的测量步骤（Skipped）也进明细");
+        Check(r.Tests.All(t => t.Name is not ("If1" or "MainSequence Callback")),
+              "流程节点（If / SequenceCall）不进测试项明细");
     }
 }

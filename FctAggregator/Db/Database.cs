@@ -792,6 +792,7 @@ public sealed partial class Database
         var touchedRows = new List<(TestRecord Rec, long Id)>();
         var newRows = new List<(TestRecord Rec, long Id)>();
         var localOutcomes = new List<IngestResult>();
+        var failCsvDates = new List<string>();
 
         using var sel = conn.CreateCommand();
         sel.Transaction = tx;
@@ -889,6 +890,8 @@ public sealed partial class Database
             });
             touchedRows.Add((rec, id));
             if (isNew) newRows.Add((rec, id));
+            if (rec.Result == "FAIL" || string.Equals(prevResult, "FAIL", StringComparison.OrdinalIgnoreCase))
+                failCsvDates.Add(rec.TestDate ?? "");
             insertedIds?.Add(id);
         }
 
@@ -900,7 +903,77 @@ public sealed partial class Database
             InsertMeasurementsFor(touchedRows);
             InsertFailItemsFor(touchedRows.Where(t => t.Rec.Result == "FAIL").ToList());
         }
+        MirrorFailMonthCsv(failCsvDates);
         return newCount;
+    }
+
+    /// <summary>有 FAIL 落库或离开 FAIL 时，按测试日期所在月重写那一张 CSV。写失败不影响入库。</summary>
+    private void MirrorFailMonthCsv(List<string> testDates)
+    {
+        if (testDates.Count == 0) return;
+        try
+        {
+            var months = new HashSet<(int Year, int Month)>();
+            foreach (var raw in testDates)
+            {
+                var ymd = NormalizeYmdKey(raw);
+                if (ymd.Length < 6) continue;
+                if (!int.TryParse(ymd[..4], out var year)) continue;
+                if (!int.TryParse(ymd.Substring(4, 2), out var month) || month is < 1 or > 12) continue;
+                months.Add((year, month));
+            }
+            if (_failCsvDeferDepth > 0)
+            {
+                _deferredFailMonths ??= new HashSet<(int, int)>();
+                foreach (var m in months) _deferredFailMonths.Add(m);
+                return;
+            }
+            foreach (var (year, month) in months) WriteFailMonthCsv(year, month);
+        }
+        catch (Exception ex) { Logger.Warning($"FAIL 月表写入失败: {ex.Message}"); }
+    }
+
+    [ThreadStatic] private static int _failCsvDeferDepth;
+    [ThreadStatic] private static HashSet<(int Year, int Month)>? _deferredFailMonths;
+
+    /// <summary>历史扫描期间先攒受影响的月份，结束后每个月只重写一次。实时入库不走这里。</summary>
+    public void RunWithDeferredFailMonthCsv(Action body)
+    {
+        _failCsvDeferDepth++;
+        try { body(); }
+        finally
+        {
+            _failCsvDeferDepth--;
+            if (_failCsvDeferDepth == 0)
+            {
+                var pending = _deferredFailMonths;
+                _deferredFailMonths = null;
+                if (pending != null)
+                {
+                    foreach (var (year, month) in pending)
+                    {
+                        try { WriteFailMonthCsv(year, month); }
+                        catch (Exception ex) { Logger.Warning($"FAIL 月表写入失败: {ex.Message}"); }
+                    }
+                }
+            }
+        }
+    }
+
+    private const int FailMonthCsvMaxRows = 200000;
+
+    private void WriteFailMonthCsv(int year, int month)
+    {
+        var from = new DateTime(year, month, 1);
+        var to = from.AddMonths(1).AddDays(-1);
+        var rows = QueryFailItemDetails("", from.ToString("yyyyMMdd"), to.ToString("yyyyMMdd"),
+            maxRows: FailMonthCsvMaxRows + 1, orderByItem: false);
+        if (rows.Count > FailMonthCsvMaxRows)
+        {
+            Logger.Warning($"FAIL 月表 {year:0000}-{month:00} 超过 {FailMonthCsvMaxRows} 行，CSV 只保留 {FailMonthCsvMaxRows} 行");
+            rows.RemoveRange(FailMonthCsvMaxRows, rows.Count - FailMonthCsvMaxRows);
+        }
+        FailExporter.RewriteMonth(FailExporter.MonthLogPath(_dbPath, year, month), rows);
     }
 
     private static bool ShouldRefreshRecord(string? prevResult, long oldSize, bool oldHasFail, TestRecord rec)

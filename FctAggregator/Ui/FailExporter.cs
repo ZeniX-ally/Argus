@@ -105,6 +105,51 @@ public static class FailExporter
         return dataCount;
     }
 
+    /// <summary>按自然月一张表：<c>FAIL记录_yyyyMM.csv</c>，与库文件同目录。</summary>
+    public static string MonthLogPath(string dbPath, int year, int month)
+    {
+        var dir = Path.GetDirectoryName(dbPath);
+        if (string.IsNullOrEmpty(dir)) dir = ".";
+        return Path.Combine(dir, $"FAIL记录_{year:0000}{month:00}.csv");
+    }
+
+    /// <summary>
+    /// 重写某月 FAIL 明细。列与手动导出一致，不写小计行。
+    /// 排序：该月同一项目的失败次数从高到低，次数相同再按项目名、时间倒序。
+    /// </summary>
+    public static void RewriteMonth(string path, IReadOnlyList<FailItemDetail> rows)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in rows)
+        {
+            var name = r.TestName ?? "";
+            counts[name] = counts.GetValueOrDefault(name) + 1;
+        }
+        var ordered = rows
+            .OrderByDescending(r => counts.GetValueOrDefault(r.TestName ?? ""))
+            .ThenBy(r => r.TestName ?? "", StringComparer.OrdinalIgnoreCase)
+            .ThenByDescending(r => r.Ts ?? "", StringComparer.Ordinal)
+            .ToList();
+
+        var lines = new List<string> { string.Join(",", Headers.Select(CsvUtil.Esc)) };
+        foreach (var r in ordered)
+            lines.Add(string.Join(",", RowOf(r).Select(FlatCell)));
+
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, string.Join(Environment.NewLine, lines) + Environment.NewLine, new UTF8Encoding(true));
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    private static string FlatCell(string? v)
+    {
+        v ??= "";
+        if (v.IndexOfAny(new[] { '\r', '\n' }) >= 0)
+            v = v.Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ');
+        return CsvUtil.Esc(v);
+    }
+
     /// <summary>导出 CSV（UTF-8 BOM）；返回**明细**行数（不含小计行与空行）。</summary>
     public static int ExportCsv(
         string path, TimeUtil.NaturalPeriod period, DateTime from, DateTime toInclusive,
