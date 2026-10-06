@@ -227,7 +227,7 @@ static class Program
         Console.WriteLine("""
 FCT 工具套件 (Argus.exe)
 
-  Argus.exe                    主程序：采集 / 待办维修 / 本机分析
+  Argus.exe                    主程序：采集 / 待办维修
   Argus.exe rank               FAIL 排行（窗口）
   Argus.exe tdms [文件.tdms]   TDMS 波形查看（窗口）
   Argus.exe tdms --help        TDMS 工具的命令行用法

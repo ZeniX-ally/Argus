@@ -121,12 +121,6 @@ public static class LearnPipeline
             result.LearnProcessed = LearnBackfill.Run(db, cfg, days, ct);
         }
 
-        Task.Run(() =>
-        {
-            try { AnalysisEngine.RunOnce(db, cfg); }
-            catch (Exception ex) { Logger.Warning($"[正常态] 回填后分析刷新失败: {ex.Message}"); }
-        });
-
         return result;
     }
 }

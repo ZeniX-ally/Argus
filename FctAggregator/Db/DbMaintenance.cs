@@ -87,14 +87,6 @@ public sealed class DbMaintenance
         }
         try
         {
-            AnalysisEngine.RunOnce(_db, _cfg);
-        }
-        catch (Exception ex)
-        {
-            Logger.Warning($"[库维护] 分析引擎执行失败（不影响运行）: {ex.Message}");
-        }
-        try
-        {
             if (_cfg.DbStorageAutoOptimize)
             {
                 var rep = StorageOptimizer.Run(_db, _cfg, StorageOptimizeMode.Deep);

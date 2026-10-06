@@ -1846,31 +1846,6 @@ Argus 统一发布包  v{newer}
                 Check(live.PaintGeneration == g1 + 1, "去卡顿: LiveAlertPanel 时间变化后代际 +1");
             }
 
-            var trend = new TrendResult
-            {
-                From = new DateTime(2026, 9, 1),
-                ToExclusive = new DateTime(2026, 9, 2),
-                BucketSeconds = 3600,
-                BucketCount = 1,
-            };
-            var series = new List<TrendSeries>
-            {
-                new()
-                {
-                    TestName = "KL30",
-                    Points = { new TrendPoint { Bucket = 0, MeanValue = 1.2, N = 3, Norm = 0.5 } },
-                },
-            };
-            using (var trendChart = new MeasurementTrendChart())
-            {
-                trendChart.SetData(trend, series, "空", "忙");
-                var g1 = trendChart.PaintGeneration;
-                trendChart.SetData(trend, series, "空", "忙");
-                Check(trendChart.PaintGeneration == g1, "去卡顿: MeasurementTrendChart 相同输入第二次不重绘");
-                trendChart.SetData(trend, series, "空", "其它提示");
-                Check(trendChart.PaintGeneration == g1 + 1, "去卡顿: MeasurementTrendChart 状态提示变化后代际 +1");
-            }
-
             using (var dg = new DataGridView())
             {
                 Theme.Apply(dg, isPageRoot: false);
@@ -4206,45 +4181,6 @@ Argus 统一发布包  v{newer}
             "桶标签：按天桶只到日期");
         Check(MeasurementTrendBuilder.FormatBucketLabel(new DateTime(2026, 9, 1), 3, 3600) == "09-01 03:00",
             "桶标签：按小时桶含时分");
-        Check(MeasurementTrendChart.FormatBucketSpan(300) == "5 分钟"
-              && MeasurementTrendChart.FormatBucketSpan(10800) == "3 小时"
-              && MeasurementTrendChart.FormatBucketSpan(86400) == "1 天",
-            "桶宽文案：分钟 / 小时 / 天");
-
-        // ── 悬停 tooltip 摆放（以鼠标为准，越界翻边 / 兜底夹边） ──
-        var tipSz = new Size(200, 80);
-        var tipMid = MeasurementTrendChart.PlaceTooltip(tipSz, 400, 300, 900, 400);
-        Check(tipMid.X == 410 && tipMid.Y == 210,
-            "tooltip 摆放：空间充足时贴鼠标右上（x+10 / y-高-10）");
-        var tipRight = MeasurementTrendChart.PlaceTooltip(tipSz, 860, 300, 900, 400);
-        Check(tipRight.X == 650 && tipRight.Right <= 900,
-            "tooltip 摆放：右边界不足时翻到鼠标左侧且不溢出");
-        var tipTop = MeasurementTrendChart.PlaceTooltip(tipSz, 400, 60, 900, 400);
-        Check(tipTop.Y == 74,
-            "tooltip 摆放：顶部不足时翻到鼠标下方（y+14）");
-        var tipTiny = MeasurementTrendChart.PlaceTooltip(tipSz, 20, 20, 100, 50);
-        Check(tipTiny.X == 4 && tipTiny.Y == 4,
-            "tooltip 摆放：控件比 tooltip 还小时夹到左上角且不抛异常");
-
-        // ── 纵轴口径：共享规格带时用实际值，多带才退回相对位置 ──
-        var axA = new TrendSeries { TestName = "A", BandLow = 10.8, BandHigh = 11.33 };
-        var axB = new TrendSeries { TestName = "B", BandLow = 10.8, BandHigh = 11.33 };
-        var axC = new TrendSeries { TestName = "C", BandLow = 0, BandHigh = 5 };
-        Check(MeasurementTrendChart.UseActualValueAxis(new List<TrendSeries> { axA }),
-            "纵轴口径：单条曲线 → 实际值");
-        Check(MeasurementTrendChart.UseActualValueAxis(new List<TrendSeries> { axA, axB }),
-            "纵轴口径：多条但共享同一规格带 → 仍用实际值");
-        Check(!MeasurementTrendChart.UseActualValueAxis(new List<TrendSeries> { axA, axC }),
-            "纵轴口径：多条规格带不同 → 退回相对位置");
-        Check(!MeasurementTrendChart.UseActualValueAxis(null)
-              && !MeasurementTrendChart.UseActualValueAxis(new List<TrendSeries>()),
-            "纵轴口径：null / 空集合 → 不用实际值且不抛异常");
-        Check(MeasurementTrendChart.FormatAxisValue(0, axA, true) == "10.8"
-              && MeasurementTrendChart.FormatAxisValue(1, axA, true) == "11.33"
-              && MeasurementTrendChart.FormatAxisValue(2.5, axA, true) == "12.125",
-            "轴标签：0→下限、1→上限、2.5→超限后的实际值");
-        Check(MeasurementTrendChart.FormatAxisValue(0.7, axA, false) == "0.7",
-            "轴标签：多带时输出相对位置本身");
 
         // ── 端到端：入库 → 分桶 → 归一化 ──
         var trDb = new Database(Path.Combine(work, "trend.db"));
@@ -4329,9 +4265,6 @@ Argus 统一发布包  v{newer}
             "FAIL 叠加：失败值按同测项限值归一化（3.5 对 10~13 → 负相对位置）");
         Check(tv5.MinNorm < 0 && tv5.PassMinNorm >= 0,
             $"FAIL 叠加：MinNorm 含掉坑供排序（{tv5.MinNorm:F2}）；PassMinNorm 不被 FAIL 拉低（{tv5.PassMinNorm:F2}）");
-        var axisFail = MeasurementTrendChart.AxisRange(new List<TrendSeries> { tv5 });
-        Check(axisFail.Lo >= -0.2 && axisFail.Hi <= 1.3,
-            $"纵轴：FAIL 掉坑不撑视野（Lo={axisFail.Lo:F2} Hi={axisFail.Hi:F2}）");
         Check(!t5.Series.Any(s => s.TestName == "T_ONLYFAIL"),
             "FAIL 叠加：只有 FAIL 没有 PASS 的测项不建系列（趋势图以正常态为基准）");
         var tone5 = t5.Series.First(s => s.TestName == "T_ONE");
@@ -4345,38 +4278,6 @@ Argus 统一发布包  v{newer}
         var wideWin = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 8, 1), new DateTime(2026, 9, 2), 60);
         Check(wideWin.Series.Count > 0 && (wideWin.Hint ?? "").Contains("测量实际落在"),
             "宽窗口：前段无测量时提示实际有点日期");
-
-        var sparseSer = new TrendSeries
-        {
-            TestName = "S", BandLow = 10, BandHigh = 13,
-            PassMinNorm = 0.3, PassMaxNorm = 0.4,
-            Points = Enumerable.Range(90, 10).Select(b => new TrendPoint { Bucket = b, Norm = 0.35 }).ToList(),
-        };
-        var plotZoom = MeasurementTrendChart.PlotBucketRange(new List<TrendSeries> { sparseSer }, 100);
-        Check(plotZoom.FromBucket >= 88 && plotZoom.ToBucket <= 99 && plotZoom.FromBucket > 0,
-            $"横轴：数据只在窗口尾部时缩到有点区间（实得 {plotZoom.FromBucket}~{plotZoom.ToBucket}）");
-        var plotFull = MeasurementTrendChart.PlotBucketRange(new List<TrendSeries>
-        {
-            new() { Points = new List<TrendPoint> { new() { Bucket = 0 }, new() { Bucket = 99 } } },
-        }, 100);
-        Check(plotFull.FromBucket == 0 && plotFull.ToBucket == 99,
-            "横轴：数据覆盖全窗口时不缩放");
-        var axisPass = MeasurementTrendChart.AxisRange(new List<TrendSeries>
-        {
-            new()
-            {
-                PassMinNorm = 0.2, PassMaxNorm = 0.8, MinNorm = -20, MaxNorm = 8,
-                Points = new List<TrendPoint> { new() { Norm = 0.2 }, new() { Norm = 0.8 } },
-            },
-        });
-        Check(axisPass.Lo > -0.5 && axisPass.Hi < 1.5,
-            $"纵轴：只用 PASS 极值+规格带（实得 {axisPass.Lo:F2}~{axisPass.Hi:F2}）");
-        Check(MeasurementTrendChart.ClampPlotCoord(double.NaN, 0, 100, 50) == 50
-              && MeasurementTrendChart.ClampPlotCoord(double.PositiveInfinity, 0, 100, 50) == 50
-              && MeasurementTrendChart.ClampPlotCoord(-1e12, 0, 100, 50) == 0
-              && MeasurementTrendChart.ClampPlotCoord(1e12, 0, 100, 50) == 100
-              && MeasurementTrendChart.ClampPlotCoord(42, 0, 100, 50) == 42,
-            "绘图坐标：NaN/Inf 回落，超大值钳进绘图区（防 GDI OverflowException）");
 
         var only = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 2), 2,
             new[] { "t_one" });
@@ -4392,18 +4293,6 @@ Argus 统一发布包  v{newer}
             $"趋势取桶：测项清单不受影响（仍为窗口内全部 4 项，实得 {partial.AllItemNames.Count}）");
         Check(partial.Series[0].Points.Count == only.Series[0].Points.Count,
             "趋势取桶：同一测项的桶点与全量构建一致");
-
-        // ── 勾选剪枝（必须按「窗口内全部测项」判定，不能用已取桶的系列） ──
-        var pruned = new HashSet<string>(new[] { "A", "B", "C" }, StringComparer.OrdinalIgnoreCase);
-        AnalysisPanel.PruneSelection(pruned, new[] { "b", "d" });
-        Check(pruned.Count == 1 && pruned.Contains("B"),
-            "勾选剪枝：只保留窗口内仍存在的测项（大小写不敏感）");
-        var prunedEmpty = new HashSet<string>(new[] { "A" }, StringComparer.OrdinalIgnoreCase);
-        AnalysisPanel.PruneSelection(prunedEmpty, Array.Empty<string>());
-        Check(prunedEmpty.Count == 0, "勾选剪枝：窗口内全无 → 清空（随后回落默认 Top8）");
-        var prunedNull = new HashSet<string>(new[] { "A" }, StringComparer.OrdinalIgnoreCase);
-        AnalysisPanel.PruneSelection(prunedNull, null);
-        Check(prunedNull.Count == 0, "勾选剪枝：live 为 null → 清空且不抛异常");
 
         // ── 端到端：模拟 UI 刷新序列（首次全量取桶 → 选中若干 → 改日期只取勾选） ──
         var full3 = MeasurementTrendBuilder.Build(trDb, new DateTime(2026, 9, 1), new DateTime(2026, 9, 3), 3);
