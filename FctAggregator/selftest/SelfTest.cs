@@ -3230,7 +3230,14 @@ Argus 统一发布包  v{newer}
             Check(RowCount(dbA6Path, "test_measurements") == 0, "规格06: test_measurements 表随 Init 创建（v14）");
             Check(RowCount(dbA6Path, "fail_items") == 0, "规格06: fail_items 表预建（期2启用）");
 
-            var m1 = MP("2026-09-04 08:00:00", new[] { ("V_KL30", 13.5, (double?)10.8, (double?)14.4) });
+            // 滚动清理（PurgeOldMeasurements / CompactStorage）的 cutoff 取自 DateTime.Now，所以
+            // 「该留下的新行」夹具必须相对今天造。原来写死 2026-09-04/05：自然日一旦漂出 30 天保留窗，
+            // 这些行就被当成旧数据清掉，清旧留新 / 聚合分组 / 瘦表 JOIN 四条断言会随日期自己变红。
+            var a6Day0 = DateTime.Today.AddDays(-3).ToString("yyyy-MM-dd");
+            var a6Day1 = DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd");
+            var a6Day2 = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd");
+
+            var m1 = MP($"{a6Day0} 08:00:00", new[] { ("V_KL30", 13.5, (double?)10.8, (double?)14.4) });
             dbA6.BatchInsert(new[] { m1 });
             Check(RowCount(dbA6Path, "test_measurements") == 1, "规格06: BatchInsert 后测量值自动挂接入库");
             var ridM1 = IdOfRec(dbA6Path, m1.XmlPath);
@@ -3242,18 +3249,19 @@ Argus 统一发布包  v{newer}
             _ = new Database(dbA6Path);
             Check(RowCount(dbA6Path, "test_measurements") == 1, "规格06: 老库重开 Init 幂等（CREATE IF NOT EXISTS），数据完好");
 
-            var mOld = MP("2026-01-01 00:00:00", new[] { ("T_OLD", 1.0, (double?)null, (double?)null) });
+            var a6DayOld = DateTime.Today.AddDays(-200).ToString("yyyy-MM-dd");
+            var mOld = MP($"{a6DayOld} 00:00:00", new[] { ("T_OLD", 1.0, (double?)null, (double?)null) });
             dbA6.BatchInsert(new[] { mOld });
             Check(RowCount(dbA6Path, "test_measurements") == 2, "规格06: 旧 ts 测量行入库");
             var purgedM = dbA6.PurgeOldMeasurements(30);
             Check(purgedM >= 1 && RowCount(dbA6Path, "test_measurements") == 1,
                   $"规格06: PurgeOldMeasurements 清旧留新（删 {purgedM}）");
 
-            var mS1 = MP("2026-09-04 09:00:00", new[] { ("T_STAT", 9.9, (double?)9.0, (double?)11.0) });
-            var mS2 = MP("2026-09-04 09:05:00", new[] { ("T_STAT", 10.0, (double?)9.0, (double?)11.0) });
-            var mS3 = MP("2026-09-04 09:10:00", new[] { ("T_STAT", 10.1, (double?)9.0, (double?)11.0) });
+            var mS1 = MP($"{a6Day0} 09:00:00", new[] { ("T_STAT", 9.9, (double?)9.0, (double?)11.0) });
+            var mS2 = MP($"{a6Day0} 09:05:00", new[] { ("T_STAT", 10.0, (double?)9.0, (double?)11.0) });
+            var mS3 = MP($"{a6Day0} 09:10:00", new[] { ("T_STAT", 10.1, (double?)9.0, (double?)11.0) });
             dbA6.BatchInsert(new[] { mS1, mS2, mS3 });
-            var stat = dbA6.AggregateMeasurementStats("2026-09-04", "2026-09-05");
+            var stat = dbA6.AggregateMeasurementStats(a6Day0, a6Day1);
             Check(stat.Count == 2, $"规格06: 聚合按 (model,test_name) 分组（实得 {stat.Count} 组）");
             var statT = stat.FirstOrDefault(s => s.TestName == "T_STAT");
             Check(statT != null && statT.N == 3 && Math.Abs(statT.Mean - 10.0) < 1e-9,
@@ -3278,12 +3286,12 @@ Argus 统一发布包  v{newer}
                   "测量有效保留：回填 180 天下限抬高配置");
             var compactDbPath = Path.Combine(dirA6, "compact.db");
             var cdb = new Database(compactDbPath);
-            cdb.BatchInsert(new[] { MP("2026-09-05 10:00:00", new[] { ("T_C", 1.0, (double?)null, (double?)null) }) });
+            cdb.BatchInsert(new[] { MP($"{a6Day1} 10:00:00", new[] { ("T_C", 1.0, (double?)null, (double?)null) }) });
             Check(cdb.GetStorageStats().SlimSchema, "新库测量表为瘦结构（无 xml_path 冗余列）");
             Check(cdb.GetStorageStats().Measurements >= 1, "瘦表仍能写入测量行");
             var crep = cdb.CompactStorage(30, vacuum: true);
             Check(cdb.GetStorageStats().Measurements >= 1, $"压缩后测量行仍在（{crep.Message}）");
-            var cstat = cdb.AggregateMeasurementStats("2026-09-05", "2026-09-06");
+            var cstat = cdb.AggregateMeasurementStats(a6Day1, a6Day2);
             Check(cstat.Any(s => s.TestName == "T_C" && s.N >= 1), "瘦表聚合 JOIN test_records.model 仍可用");
 
             Console.WriteLine("\n【存储优化】StorageOptimizer 监控与分类 …");
@@ -3643,7 +3651,11 @@ Argus 统一发布包  v{newer}
                 };
             }
 
-            var f1 = FR("2026-09-05 08:30:00", "T1", "FX1", "FAIL", "Failed", new[]
+            // 本组末尾的 PurgeOldFailItems(90) cutoff 取自 DateTime.Now，所以「该留下的」三行必须相对今天造。
+            // FR/PR 的 TestDate 被归因组 / 治具组共用（那两组锚在硬编码 fixedNow 上），只改本组的 ts：
+            // 这些行 ts 非空，走 substr(ts) 分支，父记录的 test_date 不参与判定。
+            var e6Day = DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd");
+            var f1 = FR($"{e6Day} 08:30:00", "T1", "FX1", "FAIL", "Failed", new[]
             {
                 ("V_KL30", "3.29", "10.8", "14.4", "V", "LeGe"),
                 ("CONT", "Open", "", "", "", ""),
@@ -3658,14 +3670,14 @@ Argus 统一发布包  v{newer}
                   "期2: 非数值失败项 value 空 + value_text 保留");
             Check(Convert.ToInt64(Scalar(dbE6Path, "SELECT hour FROM fail_items WHERE test_name='V_KL30'")) == 8,
                   "期2: hour 取自 batch_timestamp 空格格式");
-            var fT = FR("2026-09-05T09:30:00", "T1", "FX1", "FAIL", "Failed",
+            var fT = FR($"{e6Day}T09:30:00", "T1", "FX1", "FAIL", "Failed",
                 new[] { ("V_KL30", "3.3", "10.8", "14.4", "V", "LeGe") });
             dbE6.BatchInsert(new[] { fT });
-            Check(Convert.ToInt64(Scalar(dbE6Path, "SELECT hour FROM fail_items WHERE ts='2026-09-05T09:30:00'")) == 9,
+            Check(Convert.ToInt64(Scalar(dbE6Path, $"SELECT hour FROM fail_items WHERE ts='{e6Day}T09:30:00'")) == 9,
                   "期2: hour 兼容 T 分隔格式");
-            var fPass = FR("2026-09-05 10:00:00", "T1", "FX1", "PASS", "Passed",
+            var fPass = FR($"{e6Day} 10:00:00", "T1", "FX1", "PASS", "Passed",
                 new[] { ("GHOST", "1", "", "", "", "") });
-            var fInt = FR("2026-09-05 10:30:00", "T1", "FX1", "INTERRUPTED", "Failed",
+            var fInt = FR($"{e6Day} 10:30:00", "T1", "FX1", "INTERRUPTED", "Failed",
                 new[] { ("GHOST2", "1", "", "", "", "") });
             dbE6.BatchInsert(new[] { fPass, fInt });
             Check(RowCount(dbE6Path, "fail_items") == 3,
@@ -3674,7 +3686,7 @@ Argus 统一发布包  v{newer}
             dbE6.BatchInsert(new[] { f1 });
             dbE6.InsertFailItemsFor(new List<(TestRecord, long)> { (f1, ridF1) });
             Check(RowCount(dbE6Path, "fail_items") == 3, "期2: fail_items UNIQUE(record_id,test_name) 幂等");
-            var fOld = FR("2026-01-01 00:00:00", "T1", "FX1", "FAIL", "Failed",
+            var fOld = FR($"{DateTime.Today.AddDays(-200):yyyy-MM-dd} 00:00:00", "T1", "FX1", "FAIL", "Failed",
                 new[] { ("T_OLD", "1", "", "", "", "") });
             dbE6.BatchInsert(new[] { fOld });
             var purgedFi = dbE6.PurgeOldFailItems(90);
@@ -3883,23 +3895,28 @@ Argus 统一发布包  v{newer}
                   "期3: maxChannels 通道截断");
 
             // 定位器：临时树 {root}/{Category}/{Model}/{yyyyMMdd}/{SN}_*.tdms
+            // 同 PurgeOldMeasurements：PurgeOldTdmsFeatures 的 cutoff 取自 DateTime.Now，特征行夹具
+            // 必须相对今天造，否则「清旧留新」连带后面的落盘快照断言会随自然日漂移而变红。
+            var tdmsDay8 = DateTime.Today.AddDays(-2).ToString("yyyyMMdd");
+            var tdmsTs = DateTime.Today.AddDays(-2).ToString("yyyy-MM-dd") + " 10:00:00";
+            var tdmsDayOld8 = DateTime.Today.AddDays(-200).ToString("yyyyMMdd"); // 该日目录不建，兼作「定位器日期目录不存在」夹具
             var tdmsRootDir = Path.Combine(work, "tdmsroot");
-            var tdmsDayDir = Path.Combine(tdmsRootDir, "Online", "E3002781", "20260905");
+            var tdmsDayDir = Path.Combine(tdmsRootDir, "Online", "E3002781", tdmsDay8);
             Directory.CreateDirectory(tdmsDayDir);
             File.WriteAllText(Path.Combine(tdmsDayDir, "SN001_0001.tdms"), "x");
             File.WriteAllText(Path.Combine(tdmsDayDir, "SN0011_0001.tdms"), "x");
             File.WriteAllText(Path.Combine(tdmsDayDir, "SN001_0002.tdms"), "x");
-            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "20260905", "SN001")
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", tdmsDay8, "SN001")
                   == Path.Combine(tdmsDayDir, "SN001_0002.tdms"),
                   "期3: 定位命中同 SN 文件名降序最新（SN001_0002）");
-            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "20260905", "SN009") == "",
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", tdmsDay8, "SN009") == "",
                   "期3: 无匹配 SN 返回空");
-            Check(TdmsFeatureAnalyzer.LocateTdmsFile("", "Online", "E3002781", "20260905", "SN001") == ""
-                  && TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "20260905", "") == "",
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile("", "Online", "E3002781", tdmsDay8, "SN001") == ""
+                  && TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", tdmsDay8, "") == "",
                   "期3: root 空/SN 空 防呆返回空");
-            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "2026090", "SN001") == "",
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", tdmsDay8[..7], "SN001") == "",
                   "期3: testDate 非 8 位 防呆返回空（前缀不误命中 SN0011）");
-            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", "20260801", "SN001") == "",
+            Check(TdmsFeatureAnalyzer.LocateTdmsFile(tdmsRootDir, "Online", "E3002781", tdmsDayOld8, "SN001") == "",
                   "期3: 日期目录不存在 返回空");
 
             // 落表：Init 预建 / 字段抽查 / UNIQUE 幂等 / Purge + 老库重开
@@ -3909,9 +3926,9 @@ Argus 统一发布包  v{newer}
             Check(dbT.GetTdmsFeatureSummary() == (0L, 0L, ""), "期3: Init 预建 tdms_features 空表");
             var tdmsRec = new TestRecord
             {
-                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905",
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = tdmsDay8,
                 Sn = "SN001", Result = "PASS", XmlPath = Path.Combine(work, "a1.xml"),
-                BatchTimestamp = "2026-09-05 10:00:00",
+                BatchTimestamp = tdmsTs,
             };
             var tdmsFeatureRows = new List<TdmsFeatureAnalyzer.TdmsFeatureRow>
             {
@@ -3927,16 +3944,16 @@ Argus 统一发布包  v{newer}
             var r1 = tdmsRecent.First(x => x.ChannelName == "V1");
             Check(r1.RecordId == tdmsRid && r1.Model == "E3002781" && r1.Sn == "SN001"
                   && r1.GroupName == "03.2 电压" && r1.Section == "3.2" && r1.N == 5
-                  && Math.Abs(r1.Mean!.Value - 3.0) < 1e-9 && r1.Ts == "2026-09-05 10:00:00",
+                  && Math.Abs(r1.Mean!.Value - 3.0) < 1e-9 && r1.Ts == tdmsTs,
                   "期3: 特征行字段抽查（JOIN test_records 取 model/sn）");
             dbT.InsertTdmsFeaturesFor(tdmsRec, tdmsRid, Path.Combine(tdmsDayDir, "SN001_0002.tdms"), tdmsFeatureRows);
-            Check(dbT.GetTdmsFeatureSummary() == (2L, 1L, "2026-09-05 10:00:00"),
+            Check(dbT.GetTdmsFeatureSummary() == (2L, 1L, tdmsTs),
                   "期3: UNIQUE(record_id,group,channel) 幂等重插不变");
             var tdmsRecOld = new TestRecord
             {
-                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260801",
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = tdmsDayOld8,
                 Sn = "SN001", Result = "PASS", XmlPath = Path.Combine(work, "a0.xml"),
-                BatchTimestamp = "2026-08-01 09:00:00",
+                BatchTimestamp = $"{DateTime.Today.AddDays(-200):yyyy-MM-dd} 09:00:00",
             };
             dbT.InsertTdmsFeaturesFor(tdmsRecOld, 100, "old.tdms", new List<TdmsFeatureAnalyzer.TdmsFeatureRow>
             {
@@ -3962,7 +3979,7 @@ Argus 统一发布包  v{newer}
             File.WriteAllBytes(tdmsBigFile, new byte[2048]);
             var tdmsRecBig = new TestRecord
             {
-                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905",
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = tdmsDay8,
                 Sn = "SN900", Result = "PASS", XmlPath = Path.Combine(work, "a2.xml"),
             };
             Check(TdmsFeatureCollector.CaptureOne(dbT, tdmsCfgBig, tdmsRecBig, 102) == 0
@@ -3975,7 +3992,7 @@ Argus 统一发布包  v{newer}
             };
             var tdmsRecBad = new TestRecord
             {
-                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = "20260905",
+                StationId = "FCT1", Model = "E3002781", Category = "Online", TestDate = tdmsDay8,
                 Sn = "SN001", Result = "PASS", XmlPath = Path.Combine(work, "a3.xml"),
             };
             Check(TdmsFeatureCollector.CaptureOne(dbT, tdmsCfgBad, tdmsRecBad, 103) == 0
@@ -4729,18 +4746,22 @@ Argus 统一发布包  v{newer}
         // ── P2: 回填只学 PASS、幂等 ──
         var bfDb = new Database(Path.Combine(work, "bf.db"));
         var bfCfg = new AppConfig { LearnNormalEnabled = true, LearnNormalMinSamples = 2 };
+        // LearnBackfill.Run 的起点是 Now.Date.AddDays(-(days-1))，夹具日期写死就会随自然日漂出
+        // 30 天窗口 → n1 恒为 0，「只学 PASS」「水位幂等」两条断言与代码无关地变红。
+        var bfDay8 = DateTime.Today.AddDays(-3).ToString("yyyyMMdd");
+        var bfDayDash = DateTime.Today.AddDays(-3).ToString("yyyy-MM-dd");
         var passBf = new TestRecord
         {
-            StationId = "FCT1", Model = "G49", Category = "Online", TestDate = "20260901",
+            StationId = "FCT1", Model = "G49", Category = "Online", TestDate = bfDay8,
             Sn = "SNBF1", Result = "PASS", XmlPath = Path.Combine(work, "bf_pass.xml"),
-            BatchTimestamp = "2026-09-01 10:00:00",
+            BatchTimestamp = $"{bfDayDash} 10:00:00",
             Measurements = new List<MeasurementRow> { new() { TestName = "T_BF", Value = 5.0 } },
         };
         var failBf = new TestRecord
         {
-            StationId = "FCT1", Model = "G49", Category = "Online", TestDate = "20260901",
+            StationId = "FCT1", Model = "G49", Category = "Online", TestDate = bfDay8,
             Sn = "SNBF2", Result = "FAIL", XmlPath = Path.Combine(work, "bf_fail.xml"),
-            BatchTimestamp = "2026-09-01 10:01:00",
+            BatchTimestamp = $"{bfDayDash} 10:01:00",
             Measurements = new List<MeasurementRow> { new() { TestName = "T_BF", Value = 99.0 } },
         };
         bfDb.BatchInsert(new[] { passBf, failBf });
