@@ -2,26 +2,15 @@ namespace FctAggregator;
 
 public class MaintenancePanel : Panel
 {
-    private const int ListLimit = 500;
-
     private readonly Engine _engine;
     private MaintenanceBoard _board = null!;
-    private ListView _list = null!;
-    private Panel _listHost = null!;
-    private ComboBox _filter = null!;
-    private Label _filterLabel = null!;
-    private Button _btnBoard = null!;
-    private Button _btnList = null!;
     private ComboBox _range = null!;
-    private Label _rangeLabel = null!;
     private DateTime? _customFrom, _customTo;
-    private List<MaintenanceRecord> _current = new();
 
     public MaintenancePanel(Engine engine)
     {
         _engine = engine;
         BuildUi();
-        ApplyViewMode();
     }
 
     private void BuildUi()
@@ -34,31 +23,12 @@ public class MaintenancePanel : Panel
             Dock = DockStyle.Top, Height = 42, Padding = new Padding(0, 4, 0, 4), BackColor = Theme.Bg,
         };
 
-        _btnBoard = new Button { Text = "看板", Width = 64, Height = 30, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 2, 4, 2) };
-        _btnBoard.Click += (_, _) => SetViewMode("board");
-        _btnList = new Button { Text = "列表", Width = 64, Height = 30, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 2, 4, 2) };
-        _btnList.Click += (_, _) => SetViewMode("list");
-        bar.Controls.Add(_btnBoard);
-        bar.Controls.Add(_btnList);
-
-        _filterLabel = new Label
-        {
-            Text = "筛选:", AutoSize = true, Anchor = AnchorStyles.Left,
-            Margin = new Padding(12, 9, 4, 0),
-        };
-        bar.Controls.Add(_filterLabel);
-        _filter = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 6, 4, 0) };
-        _filter.Items.AddRange(MaintenanceMeta.FilterItems());
-        _filter.SelectedIndex = 0;
-        _filter.SelectedIndexChanged += (_, _) => { if (_viewMode == "list") Refresh2(); };
-        bar.Controls.Add(_filter);
-
-        _rangeLabel = new Label
+        var rangeLabel = new Label
         {
             Text = "待办区间:", AutoSize = true, Anchor = AnchorStyles.Left,
-            Margin = new Padding(12, 9, 4, 0),
+            Margin = new Padding(0, 9, 4, 0),
         };
-        bar.Controls.Add(_rangeLabel);
+        bar.Controls.Add(rangeLabel);
         _range = new ComboBox { Width = 146, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 6, 4, 0) };
         _range.Items.AddRange(TodoRange.Presets(AppConfig.Instance.TodoScanDays).Cast<object>().ToArray());
         _range.SelectedIndex = 1;
@@ -81,111 +51,37 @@ public class MaintenancePanel : Panel
         var btnRefresh = new Button { Text = "刷新", Width = 76, Height = 30, Margin = new Padding(0, 2, 4, 2) };
         btnRefresh.Click += (_, _) => Refresh2();
         bar.Controls.Add(btnRefresh);
-        var btnExport = new Button { Text = "导出", Width = 76, Height = 30, Margin = new Padding(0, 2, 4, 2) };
-        btnExport.Click += (s, _) => ShowExportMenu(btnExport);
-        bar.Controls.Add(btnExport);
 
         _board = new MaintenanceBoard(_engine) { Dock = DockStyle.Fill, Visible = true };
         _board.EditRequested += EditRecord;
         _board.ContextRequested += (m, anchor, at) => BuildRecordMenu(m).Show(anchor, at);
-        _board.Changed += () => { if (_viewMode == "list") Refresh2(); };
-
-        _listHost = new Panel { Dock = DockStyle.Fill, Visible = false };
-        _list = new ListView
-        {
-            Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true,
-        };
-        _list.Columns.Add("ID", 50);
-        _list.Columns.Add("故障项目", 240);
-        _list.Columns.Add("故障描述", 180);
-        _list.Columns.Add("严重度", 66);
-        _list.Columns.Add("状态", 80);
-        _list.Columns.Add("维修人", 76);
-        _list.Columns.Add("记录日期", 132);
-        _list.Columns.Add("最后更新", 132);
-        _list.MouseClick += List_MouseClick;
-        _list.MouseDoubleClick += List_MouseDoubleClick;
-        _listHost.Controls.Add(_list);
 
         Controls.Add(_board);
-        Controls.Add(_listHost);
         Controls.Add(bar);
     }
 
-    private string _viewMode = "board";
     private volatile bool _refreshBusy;
     private int _refreshGen;
-
-    private void SetViewMode(string mode)
-    {
-        if (_viewMode == mode) return;
-        _viewMode = mode;
-        ApplyViewMode();
-        Refresh2();
-    }
-
-    private void ApplyViewMode()
-    {
-        CardPreviewForm.CloseCurrent();
-        _board.Visible = _viewMode == "board";
-        _listHost.Visible = _viewMode == "list";
-        if (_viewMode == "board") _board.BringToFront();
-        else _listHost.BringToFront();
-
-        _filter.Enabled = _viewMode == "list";
-        _filterLabel.Enabled = _viewMode == "list";
-        _range.Enabled = _viewMode == "board";
-        _rangeLabel.Enabled = _viewMode == "board";
-
-        var on = Theme.Primary;
-        var off = Theme.Surface;
-        _btnBoard.BackColor = _viewMode == "board" ? on : off;
-        _btnBoard.ForeColor = _viewMode == "board" ? Color.White : Theme.TextMain;
-        _btnBoard.FlatAppearance.BorderColor = Theme.Border;
-        _btnList.BackColor = _viewMode == "list" ? on : off;
-        _btnList.ForeColor = _viewMode == "list" ? Color.White : Theme.TextMain;
-        _btnList.FlatAppearance.BorderColor = Theme.Border;
-    }
 
     public void Refresh2()
     {
         if (_refreshBusy) return;
         _refreshBusy = true;
         int gen = ++_refreshGen;
-        var view = _viewMode;
-        var filterZh = _filter.SelectedItem?.ToString() ?? "全部";
-        var statusKey = filterZh == "全部" ? "" : MaintenanceMeta.KeyOf(filterZh);
-        var db = _engine.Db;
         Task.Run(() =>
         {
             try
             {
-                if (view == "board")
+                var snap = _board.LoadSnapshot();
+                UiAsync.Post(this, () =>
                 {
-                    var snap = _board.LoadSnapshot();
-                    UiAsync.Post(this, () =>
+                    try
                     {
-                        try
-                        {
-                            if (IsDisposed || gen != _refreshGen) return;
-                            _board.ApplySnapshot(snap);
-                        }
-                        finally { if (gen == _refreshGen) _refreshBusy = false; }
-                    });
-                }
-                else
-                {
-                    var rows = LoadListRows(db, statusKey);
-                    UiAsync.Post(this, () =>
-                    {
-                        try
-                        {
-                            if (IsDisposed || gen != _refreshGen) return;
-                            FillList(rows);
-                        }
-                        finally { if (gen == _refreshGen) _refreshBusy = false; }
-                    });
-                }
+                        if (IsDisposed || gen != _refreshGen) return;
+                        _board.ApplySnapshot(snap);
+                    }
+                    finally { if (gen == _refreshGen) _refreshBusy = false; }
+                });
             }
             catch (Exception ex)
             {
@@ -193,42 +89,6 @@ public class MaintenancePanel : Panel
                 UiAsync.Post(this, () => _refreshBusy = false);
             }
         });
-    }
-
-    private static List<MaintenanceRecord> LoadListRows(Database db, string statusKey)
-    {
-        var rows = db.ListMaintenance(statusKey, ListLimit);
-        if (statusKey == MaintenanceMeta.DoneStatus)
-        {
-            var legacy = db.ListMaintenance(MaintenanceMeta.LegacyClosed, ListLimit);
-            if (legacy.Count > 0)
-                rows = rows.Concat(legacy)
-                           .OrderByDescending(m => string.IsNullOrEmpty(m.UpdatedAt) ? m.CreatedAt : m.UpdatedAt)
-                           .Take(ListLimit).ToList();
-        }
-        return rows;
-    }
-
-    private void FillList(List<MaintenanceRecord> rows)
-    {
-        _list.BeginUpdate();
-        _list.Items.Clear();
-        _current.Clear();
-        foreach (var m in rows)
-        {
-            _current.Add(m);
-            var item = new ListViewItem(m.Id.ToString());
-            item.SubItems.Add(m.FailItem);
-            item.SubItems.Add(m.FailReason);
-            item.SubItems.Add(MaintenanceMeta.SeverityZhOf(m.Severity));
-            item.SubItems.Add(MaintenanceMeta.ZhOf(m.Status));
-            item.SubItems.Add(m.Resolver);
-            item.SubItems.Add(m.CreatedAt);
-            item.SubItems.Add(m.UpdatedAt);
-            item.Tag = m;
-            _list.Items.Add(item);
-        }
-        _list.EndUpdate();
     }
 
     public int PendingTodoCount => _board.PendingTodoCount;
@@ -342,19 +202,6 @@ public class MaintenancePanel : Panel
         }
     }
 
-    private void List_MouseDoubleClick(object? sender, MouseEventArgs e)
-    {
-        if (_list.SelectedItems.Count == 0) return;
-        if (_list.SelectedItems[0].Tag is MaintenanceRecord m) EditRecord(m);
-    }
-
-    private void List_MouseClick(object? sender, MouseEventArgs e)
-    {
-        if (e.Button != MouseButtons.Right || _list.SelectedItems.Count == 0) return;
-        if (_list.SelectedItems[0].Tag is not MaintenanceRecord m) return;
-        BuildRecordMenu(m).Show(_list, e.Location);
-    }
-
     private ContextMenuStrip BuildRecordMenu(MaintenanceRecord m)
     {
         var menu = new ContextMenuStrip { Font = Font };
@@ -440,63 +287,6 @@ public class MaintenancePanel : Panel
         }
     }
 
-    private void ShowExportMenu(Control anchor)
-    {
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("导出为 Excel (.xlsx)", null, (_, _) => DoExport(xlsx: true));
-        menu.Items.Add("导出为 CSV (.csv)", null, (_, _) => DoExport(xlsx: false));
-        menu.Show(anchor, new Point(0, anchor.Height));
-    }
-
-    private void DoExport(bool xlsx)
-    {
-        var records = _viewMode == "board" ? _board.LoadedRecords() : _current;
-        if (records.Count == 0)
-        {
-            MessageBox.Show("当前没有可导出的维修记录。", "提示");
-            return;
-        }
-        var ts = DateTime.Now.ToString("yyyyMMdd_HHmm");
-        using var dlg = new SaveFileDialog
-        {
-            Filter = xlsx ? "Excel 工作簿 (*.xlsx)|*.xlsx" : "CSV 文件 (*.csv)|*.csv",
-            FileName = xlsx ? $"维修记录_{ts}.xlsx" : $"维修记录_{ts}.csv",
-        };
-        if (dlg.ShowDialog() != DialogResult.OK) return;
-        // D9：xlsx 走 zip 写盘/CSV 长文本，500 条记录时 UI 线程同步写明显卡顿——改后台（FAIL 页导出早已如此）
-        var target = dlg.FileName;
-        Cursor = Cursors.WaitCursor;
-        Task.Run(() =>
-        {
-            string? err = null;
-            try
-            {
-                if (xlsx) MaintenanceExporter.ExportXlsx(target, records);
-                else MaintenanceExporter.ExportCsv(target, records);
-                Logger.Info($"维修记录已导出: {target} ({records.Count} 条)");
-            }
-            catch (Exception ex)
-            {
-                err = ex.Message;
-                Logger.Error($"维修记录导出失败: {ex.Message}");
-            }
-            UiAsync.Post(this, () =>
-            {
-                Cursor = Cursors.Default;
-                if (err != null) { MessageBox.Show("导出失败: " + err); return; }
-                if (MessageBox.Show($"已导出 {records.Count} 条维修记录！\n是否打开文件?", "完成",
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
-                {
-                    try
-                    {
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                        { FileName = target, UseShellExecute = true });
-                    }
-                    catch (Exception ex) { Logger.Warning($"[维修] 打开导出文件失败: {ex.Message}"); }
-                }
-            });
-        });
-    }
 }
 
     public class MaintenanceForm : AppForm

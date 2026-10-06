@@ -1296,6 +1296,9 @@ class SelfTest
         Console.WriteLine("\n【v3.48.8 审计修复批六】站号回落链 / 时间归一 / 按日统计 / 超期候选 / 回放主库句柄 / 保留期分口径 / 空ts明细 / 两段版本 / 待办重扫");
         RunAuditFixBatch6Tests(work);
 
+        Console.WriteLine("\n【v3.49.0 维修日志】一条记录一行，改状态覆盖原行");
+        RunMaintenanceCsvLogTests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -5992,5 +5995,57 @@ Argus 统一发布包  v{newer}
                   "F12：todo_spec_merge=false 时合并键退化为 token 键（不锁死 G49）");
         }
         finally { AppConfig.Instance.TodoSpecMerge = prevSpec; }
+    }
+
+    static void RunMaintenanceCsvLogTests(string work)
+    {
+        var dir = Path.Combine(work, "maint_csv");
+        Directory.CreateDirectory(dir);
+        var dbPath = Path.Combine(dir, "m.db");
+        var db = new Database(dbPath, setAsCurrent: false);
+        var path = MaintenanceExporter.LogPathFor(dbPath);
+
+        var id = db.CreateMaintenance(new MaintenanceRecord
+        {
+            FailItem = "电源轨", Status = "open", Severity = "major", StationId = "FCT1",
+        });
+        var lines = File.ReadAllLines(path);
+        Check(lines.Length == 2, $"新建只写一行数据（实得 {lines.Length - 1}）");
+        Check(lines[0].StartsWith("ID,"), "维修日志带表头");
+        var cells = lines[1].Split(',');
+        Check(cells.Length >= 7 && cells[0] == id.ToString() && cells[6] == "待办",
+              $"新建行状态为待办（实得 {(cells.Length > 6 ? cells[6] : "?")}）");
+
+        Check(db.UpdateMaintenanceStatus(id, "resolved"), "改状态写入成功");
+        lines = File.ReadAllLines(path);
+        Check(lines.Length == 2, "改状态不另起一行");
+        cells = lines[1].Split(',');
+        Check(cells[0] == id.ToString() && cells[6] == "已完成",
+              $"原行状态改为已完成（实得 {(cells.Length > 6 ? cells[6] : "?")}）");
+
+        var id2 = db.CreateMaintenance(new MaintenanceRecord
+        {
+            FailItem = "=1+1", Status = "in_progress", Severity = "minor",
+        });
+        lines = File.ReadAllLines(path);
+        Check(lines.Length == 3, "第二条追加在末尾");
+        Check(lines[1].Split(',')[6] == "已完成", "第一条保持改后的状态");
+        Check(lines[2].Contains("'=1+1") && lines[2].Split(',')[6] == "持续跟踪",
+              "公式开头被转义，状态写成持续跟踪");
+
+        var id3 = db.CreateMaintenance(new MaintenanceRecord { FailItem = "A,B", Status = "open" });
+        Check(db.UpdateMaintenanceStatus(id3, "in_progress"), "含逗号的项目改状态");
+        lines = File.ReadAllLines(path);
+        Check(lines.Length == 4, "含逗号的项目仍占一行");
+        Check(lines[3].StartsWith(id3 + ",", StringComparison.Ordinal)
+              && lines[3].Contains("\"A,B\"") && lines[3].Contains("持续跟踪"),
+              "含逗号的项目改的是原行");
+
+        Check(db.DeleteMaintenance(id2), "删除第二条");
+        lines = File.ReadAllLines(path);
+        Check(lines.Length == 3, "删除去掉对应行");
+        Check(!lines.Any(l => l.StartsWith(id2 + ",", StringComparison.Ordinal)), "被删记录不留在日志里");
+        Check(lines[1].Split(',')[0] == id.ToString() && lines[1].Split(',')[6] == "已完成",
+              "删除其它行后第一条仍在且状态不变");
     }
 }

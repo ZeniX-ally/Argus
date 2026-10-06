@@ -2647,27 +2647,44 @@ public sealed partial class Database
 
     public int CreateMaintenance(MaintenanceRecord m)
     {
-        using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
+        int id;
+        using (var conn = Open())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = @"
             INSERT INTO maintenance_records
             (station_id, equipment_model, equipment_sn, fail_item, fail_reason, severity, status, resolver, resolution, notes, created_at, updated_at)
             VALUES (@st,@model,@sn,@item,@reason,@sev,@status,@resolver,@reso,@notes,
                     COALESCE(NULLIF(@created,''), datetime('now','localtime')),
                     COALESCE(NULLIF(@created,''), datetime('now','localtime')));
             SELECT last_insert_rowid();";
-        cmd.Parameters.AddWithValue("@st", (object?)m.StationId ?? "");
-        cmd.Parameters.AddWithValue("@model", (object?)m.EquipmentModel ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sn", (object?)m.EquipmentSn ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@item", m.FailItem);
-        cmd.Parameters.AddWithValue("@reason", (object?)m.FailReason ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sev", m.Severity);
-        cmd.Parameters.AddWithValue("@status", m.Status);
-        cmd.Parameters.AddWithValue("@resolver", (object?)m.Resolver ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@reso", (object?)m.Resolution ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@notes", (object?)m.Notes ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@created", (object?)(m.CreatedAt ?? ""));
-        return Convert.ToInt32(cmd.ExecuteScalar());
+            cmd.Parameters.AddWithValue("@st", (object?)m.StationId ?? "");
+            cmd.Parameters.AddWithValue("@model", (object?)m.EquipmentModel ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@sn", (object?)m.EquipmentSn ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@item", m.FailItem);
+            cmd.Parameters.AddWithValue("@reason", (object?)m.FailReason ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@sev", m.Severity);
+            cmd.Parameters.AddWithValue("@status", m.Status);
+            cmd.Parameters.AddWithValue("@resolver", (object?)m.Resolver ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@reso", (object?)m.Resolution ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@notes", (object?)m.Notes ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@created", (object?)(m.CreatedAt ?? ""));
+            id = Convert.ToInt32(cmd.ExecuteScalar());
+        }
+        MirrorMaintenanceCsv(id);
+        return id;
+    }
+
+    /// <summary>维修日志与库同目录，一条记录一行。写失败不影响入库。</summary>
+    private void MirrorMaintenanceCsv(int id, bool remove = false)
+    {
+        try
+        {
+            if (remove) { MaintenanceExporter.RemoveLogRow(_dbPath, id); return; }
+            var saved = GetMaintenance(id);
+            if (saved != null) MaintenanceExporter.UpsertLogRow(_dbPath, saved);
+        }
+        catch (Exception ex) { Logger.Warning($"维修日志写入失败: {ex.Message}"); }
     }
 
     public List<MaintenanceRecord> ListMaintenance(string statusFilter = "", int limit = 500)
@@ -2786,6 +2803,7 @@ public sealed partial class Database
             if (cmd.ExecuteNonQuery() == 0) return false;
         }
         tx.Commit();
+        MirrorMaintenanceCsv(id);
         var snapshot = GetMaintenance(id);
         if (snapshot != null) NotifyStatusChanged(snapshot, from, status);
         return true;
@@ -2828,6 +2846,7 @@ public sealed partial class Database
             if (cmd.ExecuteNonQuery() == 0) return false;
         }
         tx.Commit();
+        MirrorMaintenanceCsv(m.Id);
         if (!string.Equals(from, m.Status, StringComparison.OrdinalIgnoreCase))
         {
             var snapshot = GetMaintenance(m.Id);
@@ -2907,6 +2926,7 @@ public sealed partial class Database
         }
 
         tx.Commit();
+        if (affected > 0) MirrorMaintenanceCsv(id, remove: true);
         return affected > 0;
     }
 
