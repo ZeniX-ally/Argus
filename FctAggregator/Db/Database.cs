@@ -974,6 +974,8 @@ public sealed partial class Database
             rows.RemoveRange(FailMonthCsvMaxRows, rows.Count - FailMonthCsvMaxRows);
         }
         FailExporter.RewriteMonth(FailExporter.MonthLogPath(_dbPath, year, month), rows);
+        try { EnsureRepeatFailTodos(from.ToString("yyyyMMdd"), to.ToString("yyyyMMdd")); }
+        catch (Exception ex) { Logger.Warning($"重复故障待办补卡失败: {ex.Message}"); }
     }
 
     private static bool ShouldRefreshRecord(string? prevResult, long oldSize, bool oldHasFail, TestRecord rec)
@@ -4005,6 +4007,8 @@ public class TodoItem
     public string RangeFirstSeen = "";
     public string RangeLastSeen = "";
     public string State = "pending";
+    /// <summary>本自然月失败明细次数（看板加载时填入，不入库）。</summary>
+    public int MonthCount;
 
     public string PriorityZh => TodoGrouping.PriorityZhOf(SortCount);
 }

@@ -148,6 +148,12 @@ public class MaintenanceBoard : Panel
         var from = _customRange ? _todoFrom : (DateTime?)null;
         var to = _customRange ? _todoTo : (DateTime?)null;
         var list = _engine.Db.ListTodoView(from, to);
+        try
+        {
+            var (monthFrom, monthTo) = RepeatFailMonth.Range(DateTime.Today);
+            RepeatFailMonth.Apply(list, _engine.Db.CountFailDetailsByName(monthFrom, monthTo));
+        }
+        catch (Exception ex) { Logger.Warning($"[待办] 本月失败次数标注失败: {ex.Message}"); }
         return list.Count > PerColumnLimit ? list.Take(PerColumnLimit).ToList() : list;
     }
 

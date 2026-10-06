@@ -1305,6 +1305,9 @@ class SelfTest
         Console.WriteLine("\n【v3.51.2 测试报告】TEST 与无测量值的测量 GROUP 都进明细");
         RunReportMeasurementTests();
 
+        Console.WriteLine("\n【v3.52.0 重复故障】本月次数 / 满 5 次补待办");
+        RunRepeatFailTests(work);
+
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
     }
@@ -6025,5 +6028,31 @@ Argus 统一发布包  v{newer}
               "没有 TEST 子节点的测量步骤（Skipped）也进明细");
         Check(r.Tests.All(t => t.Name is not ("If1" or "MainSequence Callback")),
               "流程节点（If / SequenceCall）不进测试项明细");
+    }
+
+    static void RunRepeatFailTests(string work)
+    {
+        var dir = Path.Combine(work, "repeat_fail");
+        Directory.CreateDirectory(dir);
+        var db = new Database(Path.Combine(dir, "m.db"), setAsCurrent: false);
+        for (int i = 1; i <= 4; i++)
+            db.BatchUpsert(new[] { FailMonthRec(dir, "r" + i, "2026100" + i, $"2026-10-0{i} 08:00:00", "RepeatItem") });
+        Check(!db.ListTodoView().Any(t => t.Title == "RepeatItem"), "本月 4 次不补待办卡");
+        db.BatchUpsert(new[] { FailMonthRec(dir, "r5", "20261006", "2026-10-06 08:00:00", "RepeatItem") });
+        var todos = db.ListTodoView().Where(t => t.Title == "RepeatItem").ToList();
+        Check(todos.Count == 1, $"本月满 5 次补一张待办（实得 {todos.Count}）");
+        db.BatchUpsert(new[] { FailMonthRec(dir, "r6", "20261006", "2026-10-06 09:00:00", "RepeatItem") });
+        Check(db.ListTodoView().Count(t => t.Title == "RepeatItem") == 1, "再次失败不重复补卡");
+        var oct = db.CountFailDetailsByName("20261001", "20261031");
+        Check(RepeatFailMonth.Lookup(oct, "repeatitem") == 6, $"本月计数忽略大小写（实得 {RepeatFailMonth.Lookup(oct, "repeatitem")}）");
+        db.BatchUpsert(new[] { FailMonthRec(dir, "old", "20260901", "2026-09-01 08:00:00", "RepeatItem") });
+        var sep = db.CountFailDetailsByName("20260901", "20260930");
+        Check(RepeatFailMonth.Lookup(sep, "RepeatItem") == 1, "上月次数不并进本月");
+        var recent = db.ListRecentFailDetails("RepeatItem", "20261001", "20261031", 3);
+        Check(recent.Count == 3 && recent[0].Ts.Contains("2026-10-06 09:00:00"),
+              "最近失败按时间倒序，带 SN 和值");
+        var marked = new TodoItem { Title = "RepeatItem" };
+        RepeatFailMonth.Apply(new[] { marked }, oct);
+        Check(marked.MonthCount == 6, "待办卡能标上本月次数");
     }
 }

@@ -32,6 +32,8 @@ public sealed class TodoCard : BoardCardBase
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"【未确认不良】{Item.Title}");
         sb.AppendLine($"优先级: {Item.PriorityZh}（按 fail 次数）");
+        if (Item.MonthCount >= RepeatFailMonth.Threshold)
+            sb.AppendLine($"本月: {Item.MonthCount} 次（达到重复故障线）");
         sb.AppendLine($"区间内: {Item.RangeCount} 次   累计: {Item.TotalCount} 次");
         if (Item.VariantCount > 1)
         {
@@ -93,9 +95,11 @@ public sealed class TodoCard : BoardCardBase
         TextRenderer.DrawText(g, prio, TagFont, pr, Color.White,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 
-        var counts = Item.RangeCount == Item.TotalCount
-            ? $"{Item.TotalCount} 次不良"
-            : $"区间 {Item.RangeCount} 次 · 累计 {Item.TotalCount} 次";
+        var counts = Item.MonthCount >= RepeatFailMonth.Threshold
+            ? $"本月 {Item.MonthCount} 次"
+            : Item.RangeCount == Item.TotalCount
+                ? $"{Item.TotalCount} 次不良"
+                : $"区间 {Item.RangeCount} 次 · 累计 {Item.TotalCount} 次";
         TextRenderer.DrawText(g, counts, BodyFont,
             new Rectangle(pr.Right + 6, 28, Math.Max(20, Width - pr.Right - 14), 16),
             Color.FromArgb(200, 16, 46), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
@@ -142,6 +146,7 @@ public sealed class TodoCard : BoardCardBase
             ("优 先 级:", $"{Item.PriorityZh}（按 fail 次数：高≥{TodoGrouping.HighThreshold} / 中≥{TodoGrouping.MediumThreshold}）"),
             ("区间内次数:", $"{Item.RangeCount} 次"),
             ("累计次数:", $"{Item.TotalCount} 次"),
+            ("本月次数:", Item.MonthCount > 0 ? $"{Item.MonthCount} 次" : "—"),
             ("合并项数:", Item.VariantCount > 1 ? $"{Item.VariantCount} 个同类测试项" : "未合并（1 项）"),
             ("首次出现:", string.IsNullOrEmpty(Item.FirstSeen) ? "—" : Item.FirstSeen),
             ("最近出现:", string.IsNullOrEmpty(Item.LastSeen) ? "—" : Item.LastSeen),

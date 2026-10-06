@@ -134,4 +134,158 @@ public sealed partial class Database
         }
         return list;
     }
+
+    /// <summary>某自然月内，按失败项目名（忽略大小写）计失败明细条数。口径与 FAIL 页同一条 LEFT JOIN。</summary>
+    public Dictionary<string, int> CountFailDetailsByName(string fromYmd, string toYmdInclusive, string stationId = "")
+    {
+        var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        var conds = new List<string> { "r.result='FAIL'", RTestDateRangeClosed };
+        if (!string.IsNullOrEmpty(stationId))
+        {
+            conds.Add("r.station_id=@s");
+            cmd.Parameters.AddWithValue("@s", stationId);
+        }
+        BindRangeDual(cmd, fromYmd, toYmdInclusive);
+        cmd.CommandText = $@"
+            SELECT COALESCE(NULLIF(fi.test_name,''), r.fail_reason, '') AS item, COUNT(*)
+              FROM test_records r
+              LEFT JOIN fail_items fi ON fi.record_id = r.id
+             WHERE {string.Join(" AND ", conds)}
+             GROUP BY item COLLATE NOCASE";
+        using var rd = cmd.ExecuteReader();
+        while (rd.Read())
+        {
+            var name = rd.IsDBNull(0) ? "" : rd.GetString(0);
+            if (name.Length == 0) continue;
+            dict[name] = rd.GetInt32(1);
+        }
+        return dict;
+    }
+
+    /// <summary>某项目在区间内最近几条失败明细（时间倒序），给测试报告提示用。</summary>
+    public List<FailItemDetail> ListRecentFailDetails(string testName, string fromYmd, string toYmdInclusive, int limit = 5)
+    {
+        var list = new List<FailItemDetail>();
+        if (string.IsNullOrWhiteSpace(testName)) return list;
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT r.model, r.sn,
+                   COALESCE(NULLIF(fi.ts,''), r.batch_timestamp, r.test_date) AS ts,
+                   COALESCE(NULLIF(fi.test_name,''), r.fail_reason, '') AS item,
+                   fi.value_text, fi.value, fi.lolim, fi.hilim, COALESCE(fi.unit,'')
+              FROM test_records r
+              LEFT JOIN fail_items fi ON fi.record_id = r.id
+             WHERE r.result='FAIL' AND {RTestDateRangeClosed}
+               AND COALESCE(NULLIF(fi.test_name,''), r.fail_reason, '') = @name COLLATE NOCASE
+             ORDER BY ts DESC
+             LIMIT @lim";
+        BindRangeDual(cmd, fromYmd, toYmdInclusive);
+        cmd.Parameters.AddWithValue("@name", testName.Trim());
+        cmd.Parameters.AddWithValue("@lim", Math.Max(1, limit));
+        using var rd = cmd.ExecuteReader();
+        while (rd.Read())
+        {
+            list.Add(new FailItemDetail
+            {
+                Model = rd.IsDBNull(0) ? "" : rd.GetString(0),
+                Sn = rd.IsDBNull(1) ? "" : rd.GetString(1),
+                Ts = rd.IsDBNull(2) ? "" : rd.GetString(2),
+                TestName = rd.IsDBNull(3) ? "" : rd.GetString(3),
+                ValueText = rd.IsDBNull(4) ? "" : rd.GetString(4),
+                Value = rd.IsDBNull(5) ? null : rd.GetDouble(5),
+                LoLim = rd.IsDBNull(6) ? null : rd.GetDouble(6),
+                HiLim = rd.IsDBNull(7) ? null : rd.GetDouble(7),
+                Unit = rd.IsDBNull(8) ? "" : rd.GetString(8),
+                HasDetail = true,
+            });
+        }
+        return list;
+    }
+
+    /// <summary>本月同一项目失败次数达到门槛、且还没有待办卡时，补一张待确认卡。已有卡不改累计次数。</summary>
+    public void EnsureRepeatFailTodos(string fromYmd, string toYmdInclusive)
+    {
+        using var conn = Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT COALESCE(NULLIF(fi.test_name,''), r.fail_reason, '') AS item,
+                   COALESCE(r.station_id,''),
+                   COUNT(*),
+                   MAX(COALESCE(r.model,'')),
+                   MAX(COALESCE(NULLIF(fi.ts,''), r.batch_timestamp, r.test_date, ''))
+              FROM test_records r
+              LEFT JOIN fail_items fi ON fi.record_id = r.id
+             WHERE r.result='FAIL' AND {RTestDateRangeClosed}
+             GROUP BY item COLLATE NOCASE, r.station_id
+            HAVING COUNT(*) >= @n AND item <> ''";
+        BindRangeDual(cmd, fromYmd, toYmdInclusive);
+        cmd.Parameters.AddWithValue("@n", RepeatFailMonth.Threshold);
+        var hits = new List<(string Name, string Station, int Count, string Model, string Seen)>();
+        using (var rd = cmd.ExecuteReader())
+        {
+            while (rd.Read())
+                hits.Add((rd.GetString(0), rd.GetString(1), rd.GetInt32(2), rd.IsDBNull(3) ? "" : rd.GetString(3), rd.IsDBNull(4) ? "" : rd.GetString(4)));
+        }
+        foreach (var h in hits)
+        {
+            string key;
+            try { key = TodoGrouping.MergeKeyOf(h.Name); }
+            catch { key = h.Name.Trim(); }
+            if (key.Length == 0) key = h.Name.Trim();
+            using var sel = conn.CreateCommand();
+            sel.CommandText = "SELECT id FROM todo_items WHERE group_key=@k AND station_id=@s";
+            sel.Parameters.AddWithValue("@k", key);
+            sel.Parameters.AddWithValue("@s", h.Station);
+            if (sel.ExecuteScalar() != null) continue;
+            using var ins = conn.CreateCommand();
+            ins.CommandText = @"
+                INSERT INTO todo_items
+                    (group_key, station_id, title, model, variants, variant_count,
+                     fail_count, first_seen, last_seen, state)
+                VALUES (@k, @s, @t, @m, @v, 1, @c, @seen, @seen, 'pending')";
+            ins.Parameters.AddWithValue("@k", key);
+            ins.Parameters.AddWithValue("@s", h.Station);
+            ins.Parameters.AddWithValue("@t", h.Name.Trim());
+            ins.Parameters.AddWithValue("@m", h.Model);
+            ins.Parameters.AddWithValue("@v", h.Name.Trim());
+            ins.Parameters.AddWithValue("@c", h.Count);
+            ins.Parameters.AddWithValue("@seen", h.Seen);
+            ins.ExecuteNonQuery();
+        }
+    }
+}
+
+public static class RepeatFailMonth
+{
+    public const int Threshold = 5;
+
+    public static (string FromYmd, string ToYmd) Range(DateTime day)
+    {
+        var from = new DateTime(day.Year, day.Month, 1);
+        var to = from.AddMonths(1).AddDays(-1);
+        return (from.ToString("yyyyMMdd"), to.ToString("yyyyMMdd"));
+    }
+
+    public static int Lookup(IReadOnlyDictionary<string, int> counts, string? name)
+    {
+        if (counts == null || string.IsNullOrWhiteSpace(name)) return 0;
+        return counts.TryGetValue(name, out var n) ? n : 0;
+    }
+
+    public static void Apply(IEnumerable<TodoItem> todos, IReadOnlyDictionary<string, int> counts)
+    {
+        foreach (var t in todos)
+        {
+            int n = Lookup(counts, t.Title);
+            foreach (var v in t.Variants)
+            {
+                var cv = Lookup(counts, v);
+                if (cv > n) n = cv;
+            }
+            t.MonthCount = n;
+        }
+    }
 }

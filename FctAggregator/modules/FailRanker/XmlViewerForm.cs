@@ -22,21 +22,27 @@ public class XmlViewerForm : AppForm
 
     private readonly string _path;
     private readonly ReportData _data;
-    private RichTextBox _report = null!;
+    private readonly Database? _db;
+    private readonly Dictionary<string, int> _monthCounts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<FailItemDetail>> _recent = new(StringComparer.OrdinalIgnoreCase);
+    private DataGridView _report = null!;
 
     // 审计：这几处字体原先在 Paint / 逐行追加里 new 出来从不释放——每次重绘/每追加一行泄漏一个 HFONT。
     // Paint 路径用静态缓存；富文本路径按需 new 后立即 Dispose（RichTextBox 只复制字符格式，不持有 Font）。
     private static readonly Font BadgeFont = new(Theme.Body.FontFamily, 12F, FontStyle.Bold);
     private static readonly Font BigValueFont = new(Theme.Body.FontFamily, 20F, FontStyle.Bold);
 
-    public XmlViewerForm(string path)
+    public XmlViewerForm(string path, Database? db = null)
     {
         _path = path;
+        _db = db;
         _data = Parse(path);
+        LoadRepeatContext();
 
         Text = "测试报告 - " + Path.GetFileName(path);
-        ClientSize = new Size(940, 780);
-        MinimumSize = new Size(720, 560);
+        var wa = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 800);
+        ClientSize = new Size(Math.Min(1080, Math.Max(860, wa.Width - 80)), Math.Min(860, Math.Max(640, wa.Height - 80)));
+        MinimumSize = new Size(Math.Min(820, wa.Width), Math.Min(560, wa.Height));
         StartPosition = FormStartPosition.CenterParent;
         Font = Theme.Body;
         BackColor = CBg;
@@ -57,67 +63,70 @@ public class XmlViewerForm : AppForm
     private void BuildHeader()
     {
         bool pass = _data.PanelStatus.Equals("Passed", StringComparison.OrdinalIgnoreCase);
-        var header = new Panel { Dock = DockStyle.Top, Height = 104, BackColor = Color.White };
+        var header = new Panel { Dock = DockStyle.Top, Height = 88, BackColor = Color.White };
         header.Paint += (_, e) =>
         {
             using var pen = new Pen(pass ? CGreen : CRed, 3);
             e.Graphics.DrawLine(pen, 0, header.Height - 2, header.Width, header.Height - 2);
         };
 
+        string badgeText = pass ? "PASS" : (_data.PanelStatus == "" ? "UNKNOWN" : _data.PanelStatus.ToUpperInvariant());
+        Color badgeColor = pass ? CGreen : CRed;
+        var statusHost = new Panel
+        {
+            Dock = DockStyle.Right, Width = 148, BackColor = Color.White,
+            Padding = new Padding(8, 22, 24, 22),
+        };
+        var status = new Label
+        {
+            Text = badgeText, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
+            Font = BadgeFont, ForeColor = badgeColor,
+            BackColor = pass ? Color.FromArgb(232, 245, 233) : Color.FromArgb(255, 235, 238),
+        };
+        statusHost.Controls.Add(status);
+
+        var textHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(24, 12, 8, 8) };
         var lblKicker = new Label
         {
-            Text = "FCT 测试报告",
-            Font = Theme.Body,
-            ForeColor = CTextDim, Left = 28, Top = 18, AutoSize = true,
+            Text = "FCT 测试报告", Dock = DockStyle.Top, Height = 22,
+            Font = Theme.Body, ForeColor = CTextDim, TextAlign = ContentAlignment.BottomLeft,
         };
         var lblSn = new Label
         {
             Text = string.IsNullOrEmpty(_data.Sn) ? Path.GetFileName(_path) : _data.Sn,
+            Dock = DockStyle.Fill, AutoEllipsis = true,
             Font = Theme.CachedFont(Theme.Body.FontFamily.Name, 16F, FontStyle.Bold),
-            ForeColor = CText, Left = 28, Top = 44, AutoSize = false,
-            Height = 30, AutoEllipsis = true,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            TextAlign = ContentAlignment.MiddleLeft,
-            Width = ClientSize.Width - 28 - 132 - 40,
+            ForeColor = CText, TextAlign = ContentAlignment.MiddleLeft, Cursor = Cursors.IBeam,
         };
-        header.Controls.Add(lblKicker);
-        header.Controls.Add(lblSn);
-
         var snMenu = new ContextMenuStrip();
         snMenu.Items.Add("复制 SN", null, (_, _) => TrySetClipboard(_data.Sn));
         snMenu.Items.Add("复制文件名", null, (_, _) => TrySetClipboard(Path.GetFileName(_path)));
         snMenu.Items.Add("复制完整路径", null, (_, _) => TrySetClipboard(_path));
         lblSn.ContextMenuStrip = snMenu;
-        lblSn.Cursor = Cursors.IBeam;
+        textHost.Controls.Add(lblSn);
+        textHost.Controls.Add(lblKicker);
 
-        var badge = new Panel
-        {
-            Width = 132, Height = 44, Top = 30,
-            Anchor = AnchorStyles.Top | AnchorStyles.Right, BackColor = Color.Transparent,
-        };
-        string badgeText = pass ? "PASS" : (_data.PanelStatus == "" ? "UNKNOWN" : _data.PanelStatus.ToUpperInvariant());
-        Color badgeColor = pass ? CGreen : CRed;
-        badge.Paint += (_, e) =>
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            var r = new Rectangle(0, 0, badge.Width - 1, badge.Height - 1);
-            using var path = RoundRect(r, 10);
-            using var fill = new SolidBrush(Color.FromArgb(30, badgeColor));
-            using var pen = new Pen(badgeColor, 1.6f);
-            e.Graphics.FillPath(fill, path);
-            e.Graphics.DrawPath(pen, path);
-            using var dot = new SolidBrush(badgeColor);
-            e.Graphics.FillEllipse(dot, 16, badge.Height / 2 - 5, 10, 10);
-            TextRenderer.DrawText(e.Graphics, badgeText, BadgeFont,
-                new Rectangle(30, 0, badge.Width - 34, badge.Height), badgeColor,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
-        };
-        header.Controls.Add(badge);
-        void PlaceBadge() => badge.Left = Math.Max(header.ClientSize.Width - badge.Width - 28, lblSn.Right + 12);
-        header.SizeChanged += (_, _) => PlaceBadge();
-
+        header.Controls.Add(textHost);
+        header.Controls.Add(statusHost);
         Controls.Add(header);
-        PlaceBadge();
+    }
+
+    private void LoadRepeatContext()
+    {
+        if (_db == null) return;
+        try
+        {
+            var (from, to) = RepeatFailMonth.Range(DateTime.Today);
+            foreach (var kv in _db.CountFailDetailsByName(from, to))
+                _monthCounts[kv.Key] = kv.Value;
+            foreach (var t in _data.Tests)
+            {
+                if (!t.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.IsNullOrWhiteSpace(t.Name) || _recent.ContainsKey(t.Name)) continue;
+                _recent[t.Name] = _db.ListRecentFailDetails(t.Name, from, to, 5);
+            }
+        }
+        catch (Exception ex) { Logger.Warning($"[报告] 本月重复次数加载失败: {ex.Message}"); }
     }
 
     private Panel _body = null!;
@@ -151,7 +160,7 @@ public class XmlViewerForm : AppForm
         };
         var lblHint = new Label
         {
-            Text = "可直接拖动鼠标选中文字(蓝色选区), Ctrl+C 复制 ・ 右键菜单全选/复制", Dock = DockStyle.Top, Height = 18,
+            Text = "选中单元格后 Ctrl+C 复制", Dock = DockStyle.Top, Height = 18,
             Font = Theme.Small,
             ForeColor = CTextDim, Padding = new Padding(3, 0, 0, 2),
         };
@@ -164,7 +173,7 @@ public class XmlViewerForm : AppForm
         lvHost.Controls.SetChildIndex(_report, 0);
         body.Controls.Add(lvHost);
 
-        var infoHost = new Panel { Dock = DockStyle.Top, Height = 120, BackColor = CBg, Padding = new Padding(0, 10, 0, 6) };
+        var infoHost = new Panel { Dock = DockStyle.Top, Height = 168, BackColor = CBg, Padding = new Padding(0, 10, 0, 6) };
         infoHost.Controls.Add(BuildInfoGrid());
         body.Controls.Add(infoHost);
 
@@ -218,8 +227,8 @@ public class XmlViewerForm : AppForm
             ("操作模式", _data.User),
             ("测试时间", _data.Timestamp),
             ("整体状态", _data.PanelStatus),
-            ("文件名", Path.GetFileName(_path)),
             ("SN", _data.Sn),
+            ("文件名", Path.GetFileName(_path)),
         };
         var card = new Panel { Dock = DockStyle.Fill, BackColor = CCard };
         var infoMenu = new ContextMenuStrip();
@@ -238,132 +247,140 @@ public class XmlViewerForm : AppForm
             using var pen = new Pen(CCardLine, 1);
             e.Graphics.DrawPath(pen, path);
 
-            int cols = 3, rows = 2;
-            int padx = 18, pady = 12;
-            int cw = (p.Width - padx * 2) / cols;
-            int ch = (p.Height - pady * 2) / rows;
-            if (ch < 44) ch = 44;
+            int cols = 3;
+            int padx = 18, pady = 10;
+            int cw = Math.Max(40, (p.Width - padx * 2) / cols);
+            int rowH = 46;
             var fk = Theme.Small;
             var fv = Theme.BodyBold;
-            for (int i = 0; i < info.Length; i++)
+            for (int i = 0; i < info.Length - 1; i++)
             {
                 int c = i % cols, r = i / cols;
-                int x = padx + c * cw, yy = pady + r * ch;
+                int x = padx + c * cw, yy = pady + r * rowH;
                 TextRenderer.DrawText(e.Graphics, info[i].k, fk,
-                    new Rectangle(x, yy, cw - 12, 16), CTextDim, TextFormatFlags.Left);
+                    new Rectangle(x, yy, cw - 12, 16), CTextDim, TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
                 var val = string.IsNullOrEmpty(info[i].v) ? "—" : info[i].v;
+                bool failed = info[i].k == "整体状态" && val.Equals("Failed", StringComparison.OrdinalIgnoreCase);
                 TextRenderer.DrawText(e.Graphics, val, fv,
-                    new Rectangle(x, yy + 18, cw - 12, 22), CText,
+                    new Rectangle(x, yy + 18, cw - 12, 22), failed ? CRed : CText,
                     TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
             }
+            int fileY = pady + 2 * rowH;
+            TextRenderer.DrawText(e.Graphics, info[^1].k, fk,
+                new Rectangle(padx, fileY, p.Width - padx * 2, 16), CTextDim, TextFormatFlags.Left);
+            var fileName = string.IsNullOrEmpty(info[^1].v) ? "—" : info[^1].v;
+            TextRenderer.DrawText(e.Graphics, fileName, fv,
+                new Rectangle(padx, fileY + 18, p.Width - padx * 2, 22), CText,
+                TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
         };
         return card;
     }
 
-    private RichTextBox BuildReport()
+    private DataGridView BuildReport()
     {
-        var rtb = new RichTextBox
+        var grid = new DataGridView
         {
-            Dock = DockStyle.Fill,
-            ReadOnly = true, BorderStyle = BorderStyle.None,
-            BackColor = CCard, ForeColor = CText,
-            Font = Theme.CachedFont(Theme.Mono.FontFamily.Name, 10.5F),
-            WordWrap = false, ScrollBars = RichTextBoxScrollBars.Both,
-            DetectUrls = false, HideSelection = false,
-            Cursor = Cursors.IBeam,
+            Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false,
+            AllowUserToResizeRows = false, RowHeadersVisible = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false, BorderStyle = BorderStyle.None,
+            BackgroundColor = Color.White, GridColor = CCardLine,
+            EnableHeadersVisualStyles = false, Font = Theme.Body,
+            ColumnHeadersHeight = 34, RowTemplate = { Height = 32 },
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText,
+            ShowCellToolTips = true,
         };
+        grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 245, 245);
+        grid.ColumnHeadersDefaultCellStyle.ForeColor = CText;
+        grid.ColumnHeadersDefaultCellStyle.Font = Theme.BodyBold;
+        grid.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(32, 32, 32);
+        grid.DefaultCellStyle.SelectionForeColor = Color.White;
+        grid.DefaultCellStyle.Padding = new Padding(4, 0, 4, 0);
 
-        const int wIdx = 4, wName = 48, wVal = 12, wLo = 10, wHi = 10, wUnit = 6;
-        static int DispW(string s)
+        void Col(string name, string header, float weight, int min, DataGridViewContentAlignment align)
         {
-            int w = 0;
-            foreach (var ch in s) w += IsWide(ch) ? 2 : 1;
-            return w;
-        }
-        static bool IsWide(char c)
-            => (c >= 0x1100 && c <= 0x115F) ||
-               (c >= 0x2E80 && c <= 0xA4CF) ||
-               (c >= 0xAC00 && c <= 0xD7A3) ||
-               (c >= 0xF900 && c <= 0xFAFF) ||
-               (c >= 0xFE30 && c <= 0xFE4F) ||
-               (c >= 0xFF00 && c <= 0xFF60) ||
-               (c >= 0xFFE0 && c <= 0xFFE6);
-        static string Clip(string s, int w)
-        {
-            if (DispW(s) <= w) return s;
-            var sb = new System.Text.StringBuilder();
-            int cur = 0;
-            foreach (var ch in s)
+            var c = new DataGridViewTextBoxColumn
             {
-                int cw = IsWide(ch) ? 2 : 1;
-                if (cur + cw > w - 1) break;
-                sb.Append(ch); cur += cw;
-            }
-            sb.Append('…');
-            return sb.ToString();
+                Name = name, HeaderText = header, FillWeight = weight, MinimumWidth = min,
+                SortMode = DataGridViewColumnSortMode.NotSortable,
+            };
+            c.DefaultCellStyle.Alignment = align;
+            c.HeaderCell.Style.Alignment = align;
+            grid.Columns.Add(c);
         }
-        string Col(string s, int w, bool right = false)
-        {
-            s ??= "";
-            s = Clip(s, w);
-            int pad = w - DispW(s);
-            if (pad < 0) pad = 0;
-            return right ? new string(' ', pad) + s : s + new string(' ', pad);
-        }
-        string Row(string a, string b, string c, string d, string e, string f, string g)
-            => Col(a, wIdx) + Col(b, wName) + Col(c, wVal, true) + Col(d, wLo, true)
-             + Col(e, wHi, true) + Col(f, wUnit, true) + "  " + g;
-
-        AppendColored(rtb, Row("#", "测试项", "测量值", "下限", "上限", "单位", "状态") + "\n", CAccent, false);
-        AppendColored(rtb, new string('─', wIdx + wName + wVal + wLo + wHi + wUnit + 12) + "\n", Color.FromArgb(170, 170, 170), false);
+        Col("idx", "#", 8, 36, DataGridViewContentAlignment.MiddleCenter);
+        Col("name", "测试项", 40, 200, DataGridViewContentAlignment.MiddleLeft);
+        Col("month", "本月", 12, 88, DataGridViewContentAlignment.MiddleCenter);
+        Col("value", "测量值", 14, 88, DataGridViewContentAlignment.MiddleRight);
+        Col("lo", "下限", 12, 72, DataGridViewContentAlignment.MiddleRight);
+        Col("hi", "上限", 12, 72, DataGridViewContentAlignment.MiddleRight);
+        Col("unit", "单位", 8, 52, DataGridViewContentAlignment.MiddleCenter);
+        Col("status", "状态", 12, 88, DataGridViewContentAlignment.MiddleCenter);
 
         int idx = 1;
         foreach (var t in _data.Tests)
         {
             bool isFail = t.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase);
             bool ignored = isFail && IsIgnored(t.Name);
-            string status = isFail ? (ignored ? $"排除·{IgnoredHint}" : "FAILED")
-                                   : (string.IsNullOrEmpty(t.Status) ? "-" : t.Status.ToUpperInvariant());
-            var line = Row(
+            string status = isFail ? (ignored ? "排除" : "FAILED")
+                                   : (string.IsNullOrEmpty(t.Status) ? "—" : t.Status.ToUpperInvariant());
+            int monthN = isFail ? RepeatFailMonth.Lookup(_monthCounts, t.Name) : 0;
+            string monthText = monthN > 0 ? $"本月 {monthN} 次" : "";
+            int rowIndex = grid.Rows.Add(
                 idx.ToString(),
-                t.Name,
-                string.IsNullOrEmpty(t.Value) ? "-" : t.Value,
-                string.IsNullOrEmpty(t.Lolim) ? "-" : t.Lolim,
-                string.IsNullOrEmpty(t.Hilim) ? "-" : t.Hilim,
-                string.IsNullOrEmpty(t.Unit) ? "-" : t.Unit,
-                status) + "\n";
-            Color fg = isFail ? (ignored ? CAmber : CRed) : CText;
-            AppendColored(rtb, line, fg, false);
+                string.IsNullOrEmpty(t.Name) ? "—" : t.Name,
+                monthText,
+                string.IsNullOrEmpty(t.Value) ? "—" : t.Value,
+                string.IsNullOrEmpty(t.Lolim) ? "—" : t.Lolim,
+                string.IsNullOrEmpty(t.Hilim) ? "—" : t.Hilim,
+                string.IsNullOrEmpty(t.Unit) ? "—" : t.Unit,
+                ignored ? $"{status}·{IgnoredHint}" : status);
+            var row = grid.Rows[rowIndex];
+            if (isFail && !ignored)
+            {
+                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 241, 242);
+                row.DefaultCellStyle.ForeColor = CRed;
+                row.DefaultCellStyle.Font = Theme.BodyBold;
+            }
+            else if (ignored)
+            {
+                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 248, 235);
+                row.DefaultCellStyle.ForeColor = CAmber;
+            }
+            else
+            {
+                row.DefaultCellStyle.BackColor = idx % 2 == 0 ? Color.FromArgb(250, 250, 250) : Color.White;
+                row.DefaultCellStyle.ForeColor = CText;
+            }
+            row.Cells["status"].ToolTipText = ignored ? IgnoredHint : status;
+            row.Cells["name"].ToolTipText = t.Name;
+            if (monthN > 0 && _recent.TryGetValue(t.Name, out var recent) && recent.Count > 0)
+            {
+                row.Cells["month"].ToolTipText = string.Join("\n", recent.Select(r =>
+                    $"{r.Ts}   {r.Sn}   {r.ValueDisplay}"));
+            }
             idx++;
         }
 
-        rtb.SelectionStart = 0;
-        rtb.SelectionLength = 0;
-
         var menu = new ContextMenuStrip();
-        menu.Items.Add("复制选中", null, (_, _) =>
+        menu.Items.Add("复制选中行", null, (_, _) =>
         {
-            if (rtb.SelectionLength > 0) TrySetClipboard(rtb.SelectedText);
-            else TrySetClipboard(rtb.Text);
+            if (grid.CurrentRow == null) return;
+            var parts = grid.CurrentRow.Cells.Cast<DataGridViewCell>().Select(c => c.Value?.ToString() ?? "");
+            TrySetClipboard(string.Join("\t", parts));
         });
-        menu.Items.Add("全选", null, (_, _) => rtb.SelectAll());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("复制全部", null, (_, _) => TrySetClipboard(rtb.Text));
-        rtb.ContextMenuStrip = menu;
-
-        return rtb;
-    }
-
-    private static void AppendColored(RichTextBox rtb, string text, Color color, bool bold)
-    {
-        int start = rtb.TextLength;
-        rtb.AppendText(text);
-        rtb.Select(start, text.Length);
-        rtb.SelectionColor = color;
-        var baseFont = rtb.Font;
-        using var sel = new Font(baseFont, bold ? FontStyle.Bold : FontStyle.Regular);
-        rtb.SelectionFont = sel;
-        rtb.SelectionLength = 0;
+        menu.Items.Add("复制全部", null, (_, _) =>
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("#\t测试项\t本月\t测量值\t下限\t上限\t单位\t状态");
+            foreach (DataGridViewRow row in grid.Rows)
+                sb.AppendLine(string.Join("\t", row.Cells.Cast<DataGridViewCell>().Select(c => c.Value?.ToString() ?? "")));
+            TrySetClipboard(sb.ToString());
+        });
+        grid.ContextMenuStrip = menu;
+        return grid;
     }
 
     private static void TrySetClipboard(string text)
@@ -483,55 +500,23 @@ public class XmlViewerForm : AppForm
 
     private static ReportData Parse(string path)
     {
-        var d = new ReportData();
-        var settings = new XmlReaderSettings
+        var src = XmlParser.ParseReport(path);
+        var d = new ReportData
         {
-            DtdProcessing = DtdProcessing.Prohibit,
-            XmlResolver = null,
-            IgnoreComments = true,
-            IgnoreWhitespace = true,
+            Timestamp = src.BatchTimestamp,
+            User = src.FactoryUser,
+            Tester = src.Tester,
+            PanelStatus = src.PanelStatus,
+            Sn = src.Sn,
         };
-        using var reader = XmlReader.Create(path, settings);
-        bool panelSet = false, snSet = false;
-        while (reader.Read())
+        foreach (var t in src.Tests)
         {
-            if (reader.NodeType != XmlNodeType.Element) continue;
-            switch (reader.Name)
+            d.Tests.Add(new TestItem
             {
-                case "BATCH":
-                    d.Timestamp = TimeUtil.Normalize(reader.GetAttribute("TIMESTAMP") ?? "");
-                    break;
-                case "FACTORY":
-                    d.User = reader.GetAttribute("USER") ?? "";
-                    d.Tester = reader.GetAttribute("TESTER") ?? "";
-                    break;
-                case "PANEL":
-                    if (!panelSet)
-                    {
-                        d.PanelStatus = reader.GetAttribute("STATUS") ?? "";
-                        var pt = reader.GetAttribute("TIMESTAMP") ?? "";
-                        if (pt.Length > 0) d.Timestamp = TimeUtil.Normalize(pt);
-                        panelSet = true;
-                    }
-                    break;
-                case "DUT":
-                    if (!snSet) { d.Sn = reader.GetAttribute("ID") ?? ""; snSet = true; }
-                    break;
-                case "TEST":
-                    var t = new TestItem
-                    {
-                        Name = reader.GetAttribute("NAME") ?? "",
-                        Value = reader.GetAttribute("VALUE") ?? "",
-                        Lolim = reader.GetAttribute("LOLIM") ?? "",
-                        Hilim = reader.GetAttribute("HILIM") ?? "",
-                        Unit = reader.GetAttribute("UNIT") ?? "",
-                        Status = reader.GetAttribute("STATUS") ?? "",
-                    };
-                    d.Tests.Add(t);
-                    if (t.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase) && !IsIgnored(t.Name))
-                        d.FailCount++;
-                    break;
-            }
+                Name = t.Name, Value = t.Value, Lolim = t.Lolim, Hilim = t.Hilim, Unit = t.Unit, Status = t.Status,
+            });
+            if (t.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase) && !IsIgnored(t.Name))
+                d.FailCount++;
         }
         return d;
     }
