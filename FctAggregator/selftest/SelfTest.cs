@@ -1869,6 +1869,14 @@ Argus 统一发布包  v{newer}
             Check(line.Contains("缩放=150%") && line.Contains("工作区=1920x1032") && line.Contains("折算后=1280x688"),
                 "DPI 适配: 诊断行含 缩放/工作区/折算后 三项现场关键事实");
 
+            // 100% 缩放的机台只能靠「会话类型 / 字体实际解析结果」区分（RDP 会话与字体回退是两大嫌疑）
+            Check(line.Contains("会话=") && line.Contains("字体=") && line.Contains("Body="),
+                "UI 兼容: 诊断行含 会话类型 与 字体实际解析（100% 机台的 Win10 症状靠这两项定性）");
+            Check(typeof(MainForm).GetProperty("CurrentPageIndex") is { CanRead: true },
+                "UI 兼容: MainForm 暴露 CurrentPageIndex（UI 异常现场记录当前页）");
+            var ctxLine = UiScreenFit.DescribeActiveForm();
+            Check(ctxLine.Length > 0, $"UI 兼容: UI 异常现场上下文可采集（{ctxLine}）");
+
             // 工程纪律（源文件级）：upgrade 入口必须走 ApplicationConfiguration.Initialize()。
             // 非 100% 缩放机台上只有它设置 PerMonitorV2；漏调 → 升级向导被系统位图拉伸。
             var wizardSrc = FindUp(Path.Combine("modules", "Upgrader", "UpgradeWizard.cs"));

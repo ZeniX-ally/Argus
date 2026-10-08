@@ -47,7 +47,7 @@ FctAggregator/
 │   ├── Fetcher/              FctFetcher
 │   ├── TdmsViewer/           FctTdmsViewer
 │   └── Upgrader/             upgrade 子命令升级向导
-├── selftest/                 主自检（1262 项断言，聚合用例已于 v3.31.0 裁剪）
+├── selftest/                 主自检（1265 项断言，聚合用例已于 v3.31.0 裁剪）
 ├── tools/                    打包与冒烟脚本（xlsx 长相新旧对比 xlsx_check/xlsxdump）
 ├── 更新日志.md               面向技术（改了什么、为什么、踩了什么坑）
 ├── 版本更新说明.md           面向使用（怎么点、看什么）
@@ -59,7 +59,7 @@ FctAggregator/
 ```powershell
 dotnet build FctAggregator.csproj -c Release          # 编译（要求 0 警告 0 错误；产物在 bin\Release\net8.0-windows\）
 cd selftest\bin\Release\net8.0-windows
-.\FctAggregator.SelfTest.exe > selftest_run.log 2>&1   # 全量自检（必须全绿；当前 1262 项断言，禁止管道直连）
+.\FctAggregator.SelfTest.exe > selftest_run.log 2>&1   # 全量自检（必须全绿；当前 1265 项断言，禁止管道直连）
 
 .\tools\make_package.ps1                             # build 后跑一次：铺平随包文件 + 自动生成两个 zip（完整+更新包）
 .\tools\smoke_gui.ps1                                # 起窗口、看标题、查日志 ERROR

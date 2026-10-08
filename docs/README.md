@@ -1,6 +1,6 @@
 # Argus 文档索引
 
-> v3.31.0 起产品为**纯单机工具**。当前发版 **v3.57.4**（唯一版本来源：`FctAggregator/FctAggregator.csproj`）。流程规范以仓库根 `CODEBUDDY.md` 为唯一入口。
+> v3.31.0 起产品为**纯单机工具**。当前发版 **v3.57.5**（唯一版本来源：`FctAggregator/FctAggregator.csproj`）。流程规范以仓库根 `CODEBUDDY.md` 为唯一入口。
 
 ## 当前有效
 

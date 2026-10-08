@@ -129,6 +129,8 @@ static class Program
         Application.ThreadException += (_, e) =>
         {
             Logger.Error($"[全局异常] UI 线程: {e.Exception.GetType().FullName}: {e.Exception.Message}\n{e.Exception.StackTrace}");
+            // 现场只报「有时候 UI 错误」时，没有这一行就只能靠猜：记录是哪一页、窗口多大、哪个屏、什么 DPI、是否远端会话
+            try { Logger.Error($"[全局异常] 现场: {UiScreenFit.DescribeActiveForm()}"); } catch { }
             try
             {
                 MessageBox.Show("发生界面异常，详情见日志。", "FCT 工具套件",

@@ -55,6 +55,9 @@ public class MainForm : AppForm
 
     private int _page = 0;
 
+    /// <summary>当前页索引。UI 异常现场诊断用（见 UiScreenFit.DescribeActiveForm）。</summary>
+    public int CurrentPageIndex => _page;
+
     private const int BackupPageIndex = 4;
     private const int DebugPageIndex = 5;
 

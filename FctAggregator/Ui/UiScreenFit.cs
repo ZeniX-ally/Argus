@@ -56,8 +56,12 @@ internal static class UiScreenFit
     }
 
     /// <summary>
-    /// 现场 UI 兼容排查用的一行事实。Windows 10 与 11 的差异大多落在「缩放比例 / 显示器布局 /
-    /// 工作区与窗口谁大」这几项上，出问题时这一行就能判断是不是屏幕适配问题，不必让现场猜。
+    /// 现场 UI 兼容排查用的一行事实。Windows 10 与 11 的差异大多落在「缩放比例 / 会话类型 /
+    /// 字体族实际解析结果 / 工作区与窗口谁大」这几项上，出问题时这一行就能定性，不必让现场猜。
+    ///
+    /// 为什么连字体也算进来：本工程字体族写死 "Microsoft YaHei UI"，若目标机没有该族，
+    /// GDI+ **静默回退**到别的字体，度量随之全变——而大量标签与自绘矩形是按原字体写死宽高的，
+    /// 于是表现为「文字被截断 / 控件重叠」。打印实际族名与像素高即可一眼看出是否回退。
     /// </summary>
     public static string Describe(Size workAreaPx, float scale, Size window, Size minSize, int deviceDpi)
     {
@@ -78,10 +82,42 @@ internal static class UiScreenFit
         try { screens = Screen.AllScreens.Length; }
         catch { screens = 0; }
 
+        // 会话类型：WS_EX_COMPOSITED（BufferedTabControl）在远程/终端服务会话下是最经典的翻车场景
+        string session;
+        try { session = SystemInformation.TerminalServerSession ? "远程(终端服务)" : "本地"; }
+        catch { session = "未知"; }
+
+        // 字体实际解析结果：回退时族名会变、像素高会变，这是 Win10 与 Win11 最容易分叉的一处
+        string fonts;
+        try { fonts = $"{Theme.Body.FontFamily.Name} Body={Theme.Body.Height}px Small={Theme.Small.Height}px"; }
+        catch { fonts = "未知"; }
+
         var logical = LogicalWorkArea(workAreaPx, scale);
-        return $"[UI] OS={os} 高DPI模式={mode} 显示器={screens} 缩放={MathF.Round(scale * 100f)}%"
+        return $"[UI] OS={os} 高DPI模式={mode} 会话={session} 显示器={screens} 缩放={MathF.Round(scale * 100f)}%"
              + $" DeviceDpi={deviceDpi} 主工作区={workAreaPx.Width}x{workAreaPx.Height}(设备像素)"
              + $" 折算后={logical.Width}x{logical.Height}"
-             + $" 窗口={window.Width}x{window.Height} 最小={minSize.Width}x{minSize.Height}";
+             + $" 窗口={window.Width}x{window.Height} 最小={minSize.Width}x{minSize.Height} 字体={fonts}";
+    }
+
+    /// <summary>
+    /// UI 异常现场：出问题的那一刻，是哪个窗体/哪一页、窗口多大、在哪个屏、什么 DPI。
+    /// 现场只报「有时候 UI 错误」时，没有这一行就只能靠猜（C 类渲染问题尤其如此）。
+    /// </summary>
+    public static string DescribeActiveForm()
+    {
+        try
+        {
+            Form? f = null;
+            foreach (Form candidate in Application.OpenForms)
+                if (candidate.Visible) f = candidate;   // 取最后一个可见窗体（栈顶/主窗）
+            if (f is null) return "无可见窗体";
+
+            string page = f is MainForm mf ? $" 页={mf.CurrentPageIndex}" : "";
+            var scr = Screen.FromControl(f);
+            int pct = f.DeviceDpi > 0 ? f.DeviceDpi * 100 / 96 : 100;
+            return $"{f.GetType().Name} {f.Width}x{f.Height}{page} DeviceDpi={f.DeviceDpi} 缩放={pct}%"
+                 + $" 屏={scr.DeviceName} {scr.Bounds.Width}x{scr.Bounds.Height} 远端会话={SystemInformation.TerminalServerSession}";
+        }
+        catch (Exception ex) { return $"上下文采集失败: {ex.Message}"; }
     }
 }
