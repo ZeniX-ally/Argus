@@ -316,12 +316,18 @@ public partial class UpgradeWizard : AppForm
 
 public static class UpgradeEntry
 {
-    public const string WizardVersion = "3.22.1";
+    /// <summary>版本号的唯一来源是 csproj / 程序集（CODEBUDDY §6）——原先硬编码 "3.22.1"，
+    /// 而它直接显示在向导标题上，于是向导长期自称 v3.22.1。改为与 MainForm 同款读程序集写法。</summary>
+    public static string WizardVersion => typeof(UpgradeEntry).Assembly.GetName().Version is { } v
+        ? $"{v.Major}.{v.Minor}.{v.Build}"
+        : "0.0.0";
 
     public static int Run()
     {
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
+        // UI-W10：必须走 ApplicationConfiguration.Initialize()（它才应用 csproj 的 PerMonitorV2）。
+        // 原实现只调 EnableVisualStyles + 文本渲染兼容开关，不设高 DPI 模式，导致
+        // `Argus.exe upgrade` 向导在 125%/150% 机台上不感知 DPI，被系统位图拉伸（发虚、点不准）。
+        ApplicationConfiguration.Initialize();
         Application.Run(new UpgradeWizard());
         return 0;
     }

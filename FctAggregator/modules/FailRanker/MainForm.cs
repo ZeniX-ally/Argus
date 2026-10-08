@@ -347,7 +347,11 @@ public class MainForm : AppForm
 		string msg2 = msg;
 		if (InvokeRequired)
 		{
-			BeginInvoke(delegate { Log(msg2); });
+			// 扫描线程回调：与窗口销毁竞态时 BeginInvoke 会抛 InvalidOperationException，
+			// 线程池线程上的未处理异常会直接结束进程（AppDomain 兜底只记日志）。
+			try { BeginInvoke(delegate { Log(msg2); }); }
+			catch (ObjectDisposedException) { }
+			catch (InvalidOperationException) { }
 			return;
 		}
 		_txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {msg2}\r\n");
@@ -386,11 +390,16 @@ public class MainForm : AppForm
 				{
 					if (InvokeRequired)
 					{
-						BeginInvoke(delegate
+						try
 						{
-							_progress.Maximum = Math.Max(total, 1);
-							_progress.Value = Math.Min(done, _progress.Maximum);
-						});
+							BeginInvoke(delegate
+							{
+								_progress.Maximum = Math.Max(total, 1);
+								_progress.Value = Math.Min(done, _progress.Maximum);
+							});
+						}
+						catch (ObjectDisposedException) { }
+						catch (InvalidOperationException) { }
 					}
 				});
 			});

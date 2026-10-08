@@ -1817,6 +1817,80 @@ Argus 统一发布包  v{newer}
             Check(paintOk, "UI 稳定性: DeviceOnlinePanel 空数据/有设备 OnPaint 离屏绘制无异常");
         }
 
+        // ── v3.57.4 DPI 屏幕适配：非 100% 缩放下窗口/最小尺寸不得超出工作区（Win10 机台现场问题）──
+        {
+            Console.WriteLine("\n【v3.57.4 DPI 屏幕适配】工作区折算 / AutoScale 系数 / 缩放回归…");
+
+            // 100% 缩放必须是恒等变换——老机台（1024×768）行为逐位不变
+            Check(UiScreenFit.ToLogical(1920, 1f) == 1920 && UiScreenFit.ToLogical(1024, 1f) == 1024,
+                "DPI 适配: 100% 缩放折算为恒等（老机台零视觉改动）");
+
+            // 根因锁定：AutoScale 路径（PerformAutoScale → Scale → ScaleControl）确实会把 MinimumSize 乘上系数。
+            // 这条断言在，才说明「工作区必须先按系数折算」是必要的；WinForms 若改行为会在这里变红。
+            float applied;
+            using (var probe = new Form())
+            {
+                probe.AutoScaleDimensions = new SizeF(96f, 96f);
+                probe.AutoScaleMode = AutoScaleMode.Dpi;
+                probe.MinimumSize = new Size(1200, 720);
+                probe.Scale(new SizeF(1.5f, 1.5f));
+                applied = probe.MinimumSize.Width / 1200f;
+            }
+            Check(applied > 1.4f,
+                $"DPI 适配: AutoScale 路径确实放大 MinimumSize（实测 ×{applied:F2}，故设备像素预算必须先折算）");
+
+            // 150% + 1920 宽屏：折算后 1280 逻辑 → 缩放回 1920，恰好不越界（修复前 1408→2112 越界）
+            var l150 = UiScreenFit.LogicalWorkArea(new Size(1920, 1032), 1.5f);
+            int w150 = Math.Max(640, Math.Min(1408, l150.Width));
+            Check(w150 * 1.5f <= 1920,
+                $"DPI 适配: 150% + 1920 宽屏 窗口宽 {w150} 缩放后 {w150 * 1.5f:F0} ≤ 1920");
+
+            // 150% + 1024×768 机台：最小尺寸缩放后不得超出工作区（v3.35.x 只修了 100%，这里锁住非 100% 的回归）
+            var l150b = UiScreenFit.LogicalWorkArea(new Size(1024, 728), 1.5f);
+            var min150 = new Size(Math.Min(1200, l150b.Width), Math.Min(720, l150b.Height));
+            Check(min150.Width * 1.5f <= 1024 && min150.Height * 1.5f <= 728,
+                $"DPI 适配: 150% + 1024×768 机台 最小尺寸 {min150.Width}×{min150.Height} 缩放后"
+                + $" {(int)(min150.Width * 1.5f)}×{(int)(min150.Height * 1.5f)} ≤ 1024×728");
+
+            // 非法/未知系数一律回落 1:1：不抛异常、不把尺寸算成 0
+            Check(UiScreenFit.ToLogical(800, 0f) == 800 && UiScreenFit.ToLogical(800, -2f) == 800
+                  && UiScreenFit.ToLogical(800, float.NaN) == 800 && UiScreenFit.ToLogical(800, float.PositiveInfinity) == 800,
+                "DPI 适配: 非法缩放系数回落 1:1（不抛异常、不把尺寸算成 0）");
+
+            using (var f = new Form())
+            {
+                Theme.ApplyDpi(f);   // AppForm 的构造就是这一句（其构造函数 protected，自检不可直接 new）
+                Check(Math.Abs(UiScreenFit.AutoScaleFactor(f) - 1f) < 0.01f,
+                    "DPI 适配: 100% 缩放下 AutoScaleFactor == 1（与 WinForms 同源，不自造 DPI 口径）");
+            }
+
+            // 诊断行必须能落地（现场 Win10/Win11 排查就靠它，字段缺失即失效）
+            var line = UiScreenFit.Describe(new Size(1920, 1032), 1.5f, new Size(1280, 688), new Size(800, 480), 144);
+            Check(line.Contains("缩放=150%") && line.Contains("工作区=1920x1032") && line.Contains("折算后=1280x688"),
+                "DPI 适配: 诊断行含 缩放/工作区/折算后 三项现场关键事实");
+
+            // 工程纪律（源文件级）：upgrade 入口必须走 ApplicationConfiguration.Initialize()。
+            // 非 100% 缩放机台上只有它设置 PerMonitorV2；漏调 → 升级向导被系统位图拉伸。
+            var wizardSrc = FindUp(Path.Combine("modules", "Upgrader", "UpgradeWizard.cs"));
+            Check(wizardSrc.Length > 0, "UI 兼容: 找到 UpgradeWizard.cs 源文件");
+            if (wizardSrc.Length > 0)
+            {
+                var src = File.ReadAllText(wizardSrc);
+                Check(src.Contains("ApplicationConfiguration.Initialize()"),
+                    "UI 兼容: upgrade 入口走 ApplicationConfiguration.Initialize（不感知 DPI 的旧两行已删）");
+            }
+
+            // 版本号唯一来源是程序集（CODEBUDDY §6）：向导标题曾长期硬编码自称 v3.22.1。
+            // 注意：自检工程自己的程序集是 FctAggregator.SelfTest（版本 1.0.0），拿它跟 WizardVersion
+            // 对拍属于自证（恒真、查不出回归），所以改为锁源文件形态。
+            if (wizardSrc.Length > 0)
+            {
+                var srcVer = File.ReadAllText(wizardSrc);
+                Check(srcVer.Contains("WizardVersion =>") && !srcVer.Contains("WizardVersion = \""),
+                    "UI 兼容: 向导版本号取自程序集（源文件里不得再出现硬编码版本字面量）");
+            }
+        }
+
         // ── v3.44.2 去卡顿：同数据不重绘 / Tab 合成 / 表格双缓冲 / 自绘 OptimizedDoubleBuffer ──
         {
             Console.WriteLine("\n【去卡顿】SetData 签名跳过 / BufferedTabControl / StyleGrid 双缓冲…");

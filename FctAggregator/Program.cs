@@ -112,6 +112,10 @@ static class Program
         }
         UpdateChecker.CleanupOldBinaries(); // 上次热升级换装遗留的 *.old 旧映像（旧进程退出后锁已释放）
 
+        // UI-W10：必须在任何窗口（含下面「已在运行」提示框）之前初始化——它才应用 PerMonitorV2。
+        // 原先放在互斥量之后：非 100% 缩放下那句重复启动提示是不感知 DPI 的，会被系统位图拉伸（发虚）。
+        ApplicationConfiguration.Initialize();
+
         _singleInstanceMutex = new Mutex(true, @"Global\Argus_SingleInstance", out bool isNew);
         if (!isNew)
         {
@@ -119,8 +123,6 @@ static class Program
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
-
-        ApplicationConfiguration.Initialize();
 
         // 全局异常兜底：UI 线程异常记录日志并弹窗提示（不退出），非 UI 线程异常尽量落日志后放行
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

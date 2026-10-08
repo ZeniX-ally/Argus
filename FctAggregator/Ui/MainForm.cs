@@ -63,11 +63,19 @@ public class MainForm : AppForm
         _engine = engine;
         _cfg = AppConfig.Instance;
         Text = $"Argus v{AppVersion}";
-        var wa = Screen.PrimaryScreen!.WorkingArea;
-        Width = Math.Min(1408, wa.Width);
-        Height = Math.Min(768, wa.Height);
+        // UI-W10：AutoScaleMode.Dpi（见 Theme.ApplyDpi）会在 OnLayout 的 PerformAutoScale 里把下面这几个
+        // 尺寸再乘一次缩放系数，所以工作区（**设备像素**）必须先折算回逻辑像素，否则非 100% 缩放下
+        // 窗口与最小尺寸都会超出屏幕：1024×768 机台在 150% 下 MinimumSize 被撑到 1536×1080，工作区只有
+        // 1024×728 —— 正好复发「右侧控件看不到」（更新日志 v3.35.x 修过一次，但当时只覆盖 100% 缩放）。
+        var uiScale = UiScreenFit.AutoScaleFactor(this);
+        var waPx = Screen.PrimaryScreen!.WorkingArea.Size;
+        var wa = UiScreenFit.LogicalWorkArea(waPx, uiScale);
+        Width = Math.Max(640, Math.Min(1408, wa.Width));
+        Height = Math.Max(480, Math.Min(768, wa.Height));
         // 低分屏（1024x768 机台）下 MinimumSize 若大于工作区，会把窗口强制撑出屏幕，右侧控件看不到
         MinimumSize = new Size(Math.Min(1200, wa.Width), Math.Min(720, wa.Height));
+        // 现场排查：把这几个数写进日志，Win10/Win11 的缩放差异一眼可见（见 UiScreenFit.Describe）
+        Logger.Info(UiScreenFit.Describe(waPx, uiScale, new Size(Width, Height), MinimumSize, DeviceDpi));
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
         BackColor = Theme.Bg;

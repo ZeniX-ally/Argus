@@ -297,7 +297,10 @@ public class DeviceStatusPanel : Panel
             void OnIni()
             {
                 FctIni.Invalidate();
-                if (IsHandleCreated && !IsDisposed) BeginInvoke(() => Kick(false));
+                // UI-W10：本回调在 FileSystemWatcher 的线程池线程上跑，裸 BeginInvoke 与窗口销毁竞态时
+                // 会抛 InvalidOperationException——线程池线程上的未处理异常会直接结束进程（AppDomain 兜底只记日志）。
+                // UiAsync.Post 已处理「已销毁 / 句柄未创建」两种情况。
+                UiAsync.Post(this, () => Kick(false));
             }
             _iniWatch.Changed += (_, _) => OnIni();
             _iniWatch.Renamed += (_, _) => OnIni();

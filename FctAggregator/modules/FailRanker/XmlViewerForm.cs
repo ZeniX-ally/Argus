@@ -44,7 +44,10 @@ public class XmlViewerForm : AppForm
         LoadUnitContext();
 
         Text = "测试报告 - " + Path.GetFileName(path);
-        var wa = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 800);
+        // 同 MainForm：工作区是设备像素，AutoScale 会再乘一次缩放系数，必须先折算回逻辑像素
+        var uiScale = UiScreenFit.AutoScaleFactor(this);
+        var wa = UiScreenFit.LogicalWorkArea(
+            (Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 800)).Size, uiScale);
         ClientSize = new Size(Math.Min(1080, Math.Max(860, wa.Width - 80)), Math.Min(860, Math.Max(640, wa.Height - 80)));
         MinimumSize = new Size(Math.Min(820, wa.Width), Math.Min(560, wa.Height));
         StartPosition = FormStartPosition.CenterParent;
