@@ -159,6 +159,15 @@ public sealed partial class Database
                 try { cmdAlert.ExecuteNonQuery(); }
                 catch (SqliteException ex) when (ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase)) { }
             }
+            using (var cmdCycle = conn.CreateCommand())
+            {
+                cmdCycle.CommandText = @"
+                    CREATE TABLE IF NOT EXISTS test_cycle (
+                        xml_path TEXT PRIMARY KEY,
+                        seconds REAL
+                    );";
+                cmdCycle.ExecuteNonQuery();
+            }
 
             using var cmd2 = conn.CreateCommand();
             cmd2.CommandText = @"
@@ -429,15 +438,22 @@ public sealed partial class Database
             // 审计修复：v3.48.4 前每条 DDL 自动提交，瘦表重建中途崩溃会留下「部分表已瘦、部分仍胖」的库。
             // 原实现只看 test_measurements，于是 fail_items/tdms_features 永久保留冗余列、存储优化被判「已完成」
             // 而静默失效。这里做幂等自愈：任一张仍是胖表就补齐重建（各表独立单事务）。
-            if (HasColumn(conn, "test_measurements", "xml_path")
-                || HasColumn(conn, "fail_items", "xml_path")
-                || HasColumn(conn, "tdms_features", "xml_path"))
+            try
             {
-                bool healed = false;
-                healed |= RebuildSlimMeasurements(conn);
-                healed |= RebuildSlimFailItems(conn);
-                healed |= RebuildSlimTdms(conn);
-                if (healed) Logger.Info("[存储] 启动自愈：已补齐半成品库的瘦表转换（去路径冗余列）");
+                if (HasColumn(conn, "test_measurements", "xml_path")
+                    || HasColumn(conn, "fail_items", "xml_path")
+                    || HasColumn(conn, "tdms_features", "xml_path"))
+                {
+                    bool healed = false;
+                    healed |= RebuildSlimMeasurements(conn);
+                    healed |= RebuildSlimFailItems(conn);
+                    healed |= RebuildSlimTdms(conn);
+                    if (healed) Logger.Info("[存储] 启动自愈：已补齐半成品库的瘦表转换（去路径冗余列）");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[存储] 启动自愈瘦表失败，程序继续用现表: {ex.Message}");
             }
             _detailTablesFat = HasColumn(conn, "test_measurements", "xml_path");
             if (_detailTablesFat)
@@ -690,6 +706,7 @@ public sealed partial class Database
         NotifyRecordsInserted(insertedRows);
         InsertMeasurementsFor(insertedRows);
         InsertFailItemsFor(insertedRows);
+        RememberCycles(list);
         return inserted;
     }
 
@@ -904,6 +921,7 @@ public sealed partial class Database
             InsertFailItemsFor(touchedRows.Where(t => t.Rec.Result == "FAIL").ToList());
         }
         MirrorFailMonthCsv(failCsvDates);
+        RememberCycles(list);
         return newCount;
     }
 

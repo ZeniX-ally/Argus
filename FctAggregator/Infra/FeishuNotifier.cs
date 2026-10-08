@@ -124,7 +124,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note($"文件 {Path.GetFileName(r.XmlPath)}"));
 
-        return FeishuCardV2.Root($"{station} · {model} · FAIL 告警", "red", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+        return FeishuCardV2.Root($"{station} · {model} · FAIL 告警", "red", elements, bannerImgKey: AppConfig.Instance.BannerImgKeyFor("red"));
     }
 
     /// <summary>FAIL 合并卡：一个窗口内多条 FAIL 合成一张，按失败项聚合计数 + 明细截断。
@@ -199,7 +199,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Note($"{windowSec}s 窗口内合并 · 共 {recs.Count} 条 FAIL"));
 
         return FeishuCardV2.Root($"{station} · {model} · FAIL 批量告警 ×{recs.Count}", "red", elements,
-            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+            bannerImgKey: AppConfig.Instance.BannerImgKeyFor("red"));
     }
 
     /// <summary>去重保序（卡面「机台/型号」列用）。</summary>
@@ -262,7 +262,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note($"记录 #{r.Id} · 更新时间 {FmtTime(r.UpdatedAt)}"));
 
-        return FeishuCardV2.Root($"{station} · {model} · 待办状态变更", "blue", elements, bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+        return FeishuCardV2.Root($"{station} · {model} · 待办状态变更", "blue", elements, bannerImgKey: AppConfig.Instance.BannerImgKeyFor("blue"));
     }
 
     // ───────────────────────── 采集异常告警（漏采是数据正确性问题，必须主动告知） ─────────────────────────
@@ -319,7 +319,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Note("漏采会让良率偏高且现场无感——请确认结果目录可写、文件未被其他程序占用。"));
 
         return FeishuCardV2.Root($"{p.StationId} · 采集异常告警", "orange", elements,
-            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+            bannerImgKey: AppConfig.Instance.BannerImgKeyFor("orange"));
     }
 
     /// <summary>采集恢复卡：绿色。没有这张卡，运维不知道告警是否还需要继续处理。</summary>
@@ -339,7 +339,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note($"恢复时间 {DateTime.Now:yyyy-MM-dd HH:mm:ss}"));
         return FeishuCardV2.Root($"{station} · 采集异常已恢复", "green", elements,
-            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+            bannerImgKey: AppConfig.Instance.BannerImgKeyFor("green"));
     }
 
     /// <summary>每日运行摘要卡：把当天已经跑完的维护结果汇总成一张例行卡（不产生噪音）。</summary>
@@ -379,7 +379,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Note($"{p.Date} · 每日维护完成后自动汇总"));
 
         return FeishuCardV2.Root($"{p.StationId} · {p.Date} 运行摘要", "blue", elements,
-            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+            bannerImgKey: AppConfig.Instance.BannerImgKeyFor("blue"));
     }
 
     /// <summary>错误码 → 现场可读中文（未知码原样返回，便于新增解析器时不用改这里）。</summary>
@@ -448,35 +448,32 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note("同一章节多个不同信号同时挂，通常指向治具/供电/程序版本等系统性原因，建议优先排查。"));
         return FeishuCardV2.Root($"{station} · 章节群挂告警 ×{alerts.Count}", "orange", elements,
-            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+            bannerImgKey: AppConfig.Instance.BannerImgKeyFor("orange"));
     }
 
-    /// <summary>正常态偏离卡：黄色。PASS 但在偏离 = 比 FAIL 更早的预警。</summary>
+    /// <summary>正常态偏离卡：黄色。只留最高分那一条，其余用个数带过。</summary>
     public static object BuildDeviationAlertCard(DeviationAlertPayload p)
     {
         var model = string.IsNullOrWhiteSpace(p.Model) ? "—" : p.Model;
+        var signal = string.IsNullOrWhiteSpace(p.TopSignal) ? "—" : p.TopSignal;
+        var body = $"**{FeishuCardV2.Escape(signal)}**  分 {p.TopScore:F0}";
+        if (p.Top.Count > 0)
+        {
+            var h = p.Top[0];
+            body += $"\n实测 {FmtNum(h.Value)}，正常 {FmtNum(h.Mean)}±{FmtNum(h.Sigma)}";
+        }
+        var extra = p.SignalCount - 1;
+        if (extra > 0)
+            body += $"\n另有 {extra} 个信号越线";
+
         var elements = new List<object>
         {
             FeishuCardV2.FieldRow(("机台", p.StationId), ("型号", model)),
-            FeishuCardV2.FieldRow(("来源", p.SourceZh), ("最高偏离分", $"{p.TopScore:F0}")),
-            FeishuCardV2.Hr(),
-            FeishuCardV2.Md($"**最高分信号**\n{FeishuCardV2.Escape(p.TopSignal)}（共 {p.SignalCount} 个信号越线）"),
+            FeishuCardV2.Md(body),
+            FeishuCardV2.Note($"{FmtTime(p.Ts)} · PASS，偏离已学正常值"),
         };
-
-        if (p.Top.Count > 0)
-        {
-            elements.Add(FeishuCardV2.Hr());
-            elements.Add(FeishuCardV2.Md($"**偏离明细（前 {p.Top.Count} 项）**", heading: true));
-            var sb = new StringBuilder();
-            foreach (var h in p.Top)
-                sb.AppendLine($"▸ {FeishuCardV2.Escape(h.Key)} 分 {h.Score:F0}（实测 {FmtNum(h.Value)}，正常 {FmtNum(h.Mean)}±{FmtNum(h.Sigma)}）");
-            elements.Add(FeishuCardV2.Md(sb.ToString().TrimEnd()));
-        }
-
-        elements.Add(FeishuCardV2.Hr());
-        elements.Add(FeishuCardV2.Note($"采集时间 {FmtTime(p.Ts)} · 属 PASS 但在偏离正常态，为提前预警"));
         return FeishuCardV2.Root($"{p.StationId} · {model} · 正常态偏离告警", "yellow", elements,
-            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+            bannerImgKey: AppConfig.Instance.BannerImgKeyFor("yellow"));
     }
 
     // ───────────────────────── 运维告警（存储健康 / 待办超期） ─────────────────────────
@@ -514,7 +511,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note("可到「调试工具 → 智能优化」立即处理，或等待每日维护自动执行。"));
         return FeishuCardV2.Root($"{p.StationId} · 存储健康告警（{p.Score}/100）", "orange", elements,
-            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+            bannerImgKey: AppConfig.Instance.BannerImgKeyFor("orange"));
     }
 
     /// <summary>待办超期卡：橙色。一天最多一张（汇总，不是每单一张）。</summary>
@@ -544,7 +541,7 @@ public static class FeishuNotifier
         elements.Add(FeishuCardV2.Hr());
         elements.Add(FeishuCardV2.Note("请到「维修」页处理或调整状态；本卡每天最多推送一次。"));
         return FeishuCardV2.Root($"{p.StationId} · 待办超期未闭环 ×{p.TotalOverdue}", "orange", elements,
-            bannerImgKey: AppConfig.Instance.FeishuBannerImgKey);
+            bannerImgKey: AppConfig.Instance.BannerImgKeyFor("orange"));
     }
 
     /// <summary>创建时间距今天数（不可解析时给「—」，不抛异常）。</summary>

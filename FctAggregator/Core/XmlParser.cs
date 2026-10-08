@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Xml;
 
@@ -139,7 +140,24 @@ public static class XmlParser
         public string PanelStatus = "";
         public string Sn = "";
         public List<ReportTest> Tests = new();
+        /// <summary>最外层 MainSequence Callback 的 TOTALTIME。没有该节点时为 null。</summary>
+        public double? TotalSeconds;
+        /// <summary>名称形如「6.1 Power Test」的 SequenceCall，按耗时从高到低。</summary>
+        public List<ReportChapter> Chapters = new();
         public bool Error;
+    }
+
+    public class ReportChapter
+    {
+        public string Name = "";
+        public double Seconds;
+    }
+
+    /// <summary>章节耗时占整次测试的百分比。总时长缺失或不是正数时返回 null。</summary>
+    public static double? ChapterShare(double seconds, double? total)
+    {
+        if (total is not > 0) return null;
+        return seconds / total.Value * 100.0;
     }
 
     public class ReportTest
@@ -150,6 +168,33 @@ public static class XmlParser
         public string Hilim = "";
         public string Unit = "";
         public string Status = "";
+    }
+
+    /// <summary>最外层 MainSequence Callback 的 TOTALTIME。没有则 null。读到即停。</summary>
+    public static double? ReadCycleSeconds(string rawXml)
+    {
+        using var reader = OpenReport(new StringReader(rawXml));
+        return ReadCycleSeconds(reader);
+    }
+
+    public static double? ReadCycleSecondsFromFile(string path)
+    {
+        using var reader = OpenReport(path);
+        return ReadCycleSeconds(reader);
+    }
+
+    private static double? ReadCycleSeconds(XmlReader reader)
+    {
+        var d = new ReportData();
+        while (reader.Read())
+        {
+            if (reader.NodeType != XmlNodeType.Element || reader.Name != "GROUP") continue;
+            var type = reader.GetAttribute("TYPE") ?? "";
+            if (!type.Equals("SequenceCall", StringComparison.OrdinalIgnoreCase)) continue;
+            NoteSequenceCall(reader, d);
+            if (d.TotalSeconds != null) return d.TotalSeconds;
+        }
+        return null;
     }
 
     public static ReportData ParseReport(string path)
@@ -192,6 +237,9 @@ public static class XmlParser
     {
         "NumericLimitTest", "StringValueTest", "FtsStringValueTest", "PassFailTest",
     };
+
+    /// <summary>章节：一个主步骤号、一个次步骤号，后面是标题。8.1.1.1 这种更深的步骤号不是章节。</summary>
+    private static readonly Regex ChapterNameRe = new(@"^\d+\.\d+\s+\S", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static XmlReader OpenReport(string path) =>
         XmlReader.Create(path, ReportSettings());
@@ -252,6 +300,8 @@ public static class XmlParser
                     break;
                 case "GROUP":
                     var type = reader.GetAttribute("TYPE") ?? "";
+                    if (type.Equals("SequenceCall", StringComparison.OrdinalIgnoreCase))
+                        NoteSequenceCall(reader, d);
                     if (!MeasurementGroupTypes.Contains(type)) break;
                     var gname = reader.GetAttribute("NAME") ?? "";
                     var gstatus = reader.GetAttribute("STATUS") ?? "";
@@ -278,5 +328,24 @@ public static class XmlParser
                     break;
             }
         }
+        if (d.Chapters.Count > 1)
+            d.Chapters = d.Chapters.OrderByDescending(c => c.Seconds).ToList();
+    }
+
+    private static void NoteSequenceCall(XmlReader reader, ReportData d)
+    {
+        var raw = reader.GetAttribute("TOTALTIME");
+        if (string.IsNullOrWhiteSpace(raw)) return;
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var sec)
+            || double.IsNaN(sec) || double.IsInfinity(sec) || sec < 0)
+            return;
+        var name = (reader.GetAttribute("NAME") ?? "").Trim();
+        if (name.Equals("MainSequence Callback", StringComparison.OrdinalIgnoreCase))
+        {
+            if (d.TotalSeconds == null) d.TotalSeconds = sec;
+            return;
+        }
+        if (!ChapterNameRe.IsMatch(name)) return;
+        d.Chapters.Add(new ReportChapter { Name = name, Seconds = sec });
     }
 }

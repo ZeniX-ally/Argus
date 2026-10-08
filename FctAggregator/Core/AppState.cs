@@ -17,6 +17,7 @@ public static class AppState
     public static int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount;
     public static int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
     public static string TodayModelLine = "";
+    public static string TodayTaktLine = "今日节拍  —    没有总时长";
     public static List<HourlyStatItem> Hourly = new();
     public static List<TopFailItem> TopFails = new();
     public static List<LiveFailAlert> Alerts = new();
@@ -71,6 +72,12 @@ public static class AppState
         catch (Exception ex) { Logger.Warning($"[统计] Top5 查询失败: {ex.Message}"); topFails = new(); }
         try { alerts = db.FetchRecentFailAlerts(stationId, 10, today); }
         catch (Exception ex) { Logger.Warning($"[统计] 告警流查询失败: {ex.Message}"); alerts = new(); }
+        string taktLine = TodayTaktLine;
+        try
+        {
+            taktLine = CycleTakt.FormatLine(CycleTakt.Compute(db.ListTodayCycles(stationId, today)));
+        }
+        catch (Exception ex) { Logger.Warning($"[统计] 节拍查询失败: {ex.Message}"); }
         if (hourly.Sum(x => x.Total) == 0 && d.TodayProductCount > 0)
             Logger.Warning($"[统计] KPI 有 {d.TodayProductCount} 台但看板小时图为 0（Top5={topFails.Count} 告警={alerts.Count}）");
         lock (_lock)
@@ -80,6 +87,7 @@ public static class AppState
             TodayPass = d.Pass; TodayFail = d.Fail; TodayInterrupted = d.Interrupted;
             TodayProductCount = d.TodayProductCount;
             TodayModelLine = modelLine;
+            TodayTaktLine = taktLine;
             Hourly = hourly;
             TopFails = topFails;
             Alerts = alerts;
@@ -111,6 +119,7 @@ public static class AppState
                 TodayPass = TodayPass, TodayFail = TodayFail, TodayInterrupted = TodayInterrupted,
                 TodayProductCount = TodayProductCount,
                 TodayModelLine = TodayModelLine,
+                TodayTaktLine = TodayTaktLine,
                 Hourly = new List<HourlyStatItem>(Hourly),
                 TopFails = new List<TopFailItem>(TopFails),
                 Alerts = new List<LiveFailAlert>(Alerts),
@@ -127,6 +136,7 @@ public class StatsSnapshot
     public int Pass, Fail, Interrupted, Invalid, ParseError, ProductCount;
     public int TodayPass, TodayFail, TodayInterrupted, TodayProductCount;
     public string TodayModelLine = "";
+    public string TodayTaktLine = "";
     public List<HourlyStatItem> Hourly = new();
     public List<TopFailItem> TopFails = new();
     public List<LiveFailAlert> Alerts = new();

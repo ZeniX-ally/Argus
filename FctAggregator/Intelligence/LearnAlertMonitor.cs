@@ -191,6 +191,19 @@ public static class LearnAlertMonitor
         return true;
     }
 
+    /// <summary>黄卡机台：这份记录上的号（排除空和 UNKNOWN）→ 进程已识别的号 → config.station_id → 未知机台。</summary>
+    public static string StationLabel(string? recordStation, AppConfig? cfg)
+    {
+        foreach (var raw in new[] { recordStation, AppState.StationId, cfg?.StationId })
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var t = raw.Trim();
+            if (t.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase)) continue;
+            return t;
+        }
+        return "未知机台";
+    }
+
     /// <summary>偏离事件落库后调用：达分数下限且当日未超推送封顶时推卡。</summary>
     public static void MaybeNotifyDeviation(Database db, AppConfig cfg, DeviationEvent ev)
     {
@@ -209,7 +222,7 @@ public static class LearnAlertMonitor
             }
             db.SetMeta(MetaDeviationPush, state.ToJson());
 
-            var station = string.IsNullOrEmpty(cfg.StationId) ? "未知机台" : cfg.StationId;
+            var station = string.IsNullOrWhiteSpace(ev.StationId) ? StationLabel(null, cfg) : ev.StationId;
             var payload = DeviationAlertPayload.FromEvent(ev, station);
             var url = cfg.WebhookUrl;
             Logger.Warning($"[正常态] 偏离告警: {ev.Model} / {ev.TopSignal} 分数 {ev.TopScore:F0}（{ev.SignalCount} 个信号）");

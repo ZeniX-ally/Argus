@@ -25,6 +25,9 @@ public class XmlViewerForm : AppForm
     private readonly Database? _db;
     private readonly Dictionary<string, int> _monthCounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<FailItemDetail>> _recent = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _itemShift = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<XmlParser.ReportChapter> _priorChapters = new();
+    private UnitRetest.Place _place = new();
     private DataGridView _report = null!;
 
     // 审计：这几处字体原先在 Paint / 逐行追加里 new 出来从不释放——每次重绘/每追加一行泄漏一个 HFONT。
@@ -38,6 +41,7 @@ public class XmlViewerForm : AppForm
         _db = db;
         _data = Parse(path);
         LoadRepeatContext();
+        LoadUnitContext();
 
         Text = "测试报告 - " + Path.GetFileName(path);
         var wa = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 800);
@@ -129,6 +133,36 @@ public class XmlViewerForm : AppForm
         catch (Exception ex) { Logger.Warning($"[报告] 本月重复次数加载失败: {ex.Message}"); }
     }
 
+    private void LoadUnitContext()
+    {
+        if (_db == null || string.IsNullOrWhiteSpace(_data.Sn)) return;
+        try
+        {
+            var runs = _db.ListUnitRuns(_data.Sn);
+            _place = UnitRetest.Locate(runs, _path);
+            var order = (_data.Timestamp ?? "").Replace('T', ' ');
+            foreach (var t in _data.Tests)
+            {
+                if (!t.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase) || IsIgnored(t.Name)) continue;
+                if (string.IsNullOrWhiteSpace(t.Name) || _itemShift.ContainsKey(t.Name)) continue;
+                var prior = _db.FindPriorItem(_data.Sn, t.Name, _path, order);
+                if (prior == null) continue;
+                var hasCur = UnitRetest.TryNum(t.Value, out var cur);
+                double? lo = UnitRetest.TryNum(t.Lolim, out var loV) ? loV : prior.Lo;
+                double? hi = UnitRetest.TryNum(t.Hilim, out var hiV) ? hiV : prior.Hi;
+                var move = UnitRetest.Judge(hasCur ? cur : null, prior.Value, lo, hi);
+                var text = UnitRetest.FormatItemShift(prior.ValueText, prior.Value, move);
+                if (text.Length > 0) _itemShift[t.Name] = text;
+            }
+            if (_place.Previous != null && _data.Chapters.Count > 0 && File.Exists(_place.Previous.XmlPath))
+            {
+                var prev = XmlParser.ParseReport(_place.Previous.XmlPath);
+                if (!prev.Error) _priorChapters.AddRange(prev.Chapters);
+            }
+        }
+        catch (Exception ex) { Logger.Warning($"[报告] 同台上次对照加载失败: {ex.Message}"); }
+    }
+
     private Panel _body = null!;
 
     private void BuildBody()
@@ -150,6 +184,8 @@ public class XmlViewerForm : AppForm
         };
         kpi.Controls.Add(BuildKpiRow(cards));
         body.Controls.Add(kpi);
+
+        var timing = BuildTiming();
 
         var lvHost = new Panel { Dock = DockStyle.Fill, BackColor = CBg, Padding = new Padding(0, 10, 0, 0) };
         var lblTable = new Label
@@ -176,9 +212,14 @@ public class XmlViewerForm : AppForm
         var infoHost = new Panel { Dock = DockStyle.Top, Height = 168, BackColor = CBg, Padding = new Padding(0, 10, 0, 6) };
         infoHost.Controls.Add(BuildInfoGrid());
         body.Controls.Add(infoHost);
+        var priorHost = BuildPriorStrip();
+        body.Controls.Add(priorHost);
+        body.Controls.Add(timing);
 
-        body.Controls.SetChildIndex(kpi, 2);
-        body.Controls.SetChildIndex(infoHost, 1);
+        body.Controls.SetChildIndex(kpi, 4);
+        body.Controls.SetChildIndex(infoHost, 3);
+        body.Controls.SetChildIndex(priorHost, 2);
+        body.Controls.SetChildIndex(timing, 1);
         body.Controls.SetChildIndex(lvHost, 0);
 
         Controls.Add(body);
@@ -276,6 +317,125 @@ public class XmlViewerForm : AppForm
         return card;
     }
 
+    private Panel BuildTiming()
+    {
+        var host = new Panel { Dock = DockStyle.Top, BackColor = CBg, Padding = new Padding(0, 8, 0, 0) };
+        string title = _data.TotalSeconds is double total
+            ? $"章节耗时    共 {total:0.0} 秒"
+            : "章节耗时";
+        var lbl = new Label
+        {
+            Text = title, Dock = DockStyle.Top, Height = 30,
+            Font = Theme.SectionTitle, ForeColor = CText, Padding = new Padding(2, 4, 0, 0),
+        };
+        if (_data.Chapters.Count == 0)
+        {
+            var empty = new Label
+            {
+                Text = "这份报告没有章节耗时", Dock = DockStyle.Top, Height = 22,
+                Font = Theme.Body, ForeColor = CTextDim, Padding = new Padding(2, 0, 0, 0),
+            };
+            host.Height = 62;
+            host.Controls.Add(empty);
+            host.Controls.Add(lbl);
+            return host;
+        }
+
+        var grid = new DataGridView
+        {
+            Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false,
+            AllowUserToResizeRows = false, RowHeadersVisible = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = false, BorderStyle = BorderStyle.None,
+            BackgroundColor = Color.White, GridColor = CCardLine,
+            EnableHeadersVisualStyles = false, Font = Theme.Body,
+            ColumnHeadersHeight = 34, RowTemplate = { Height = 32 },
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText,
+            ScrollBars = ScrollBars.Vertical,
+        };
+        grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 245, 245);
+        grid.ColumnHeadersDefaultCellStyle.ForeColor = CText;
+        grid.ColumnHeadersDefaultCellStyle.Font = Theme.BodyBold;
+        void Col(string name, string header, float weight, int min, DataGridViewContentAlignment align)
+        {
+            var c = new DataGridViewTextBoxColumn
+            {
+                Name = name, HeaderText = header, FillWeight = weight, MinimumWidth = min,
+                SortMode = DataGridViewColumnSortMode.NotSortable,
+            };
+            c.DefaultCellStyle.Alignment = align;
+            c.HeaderCell.Style.Alignment = align;
+            grid.Columns.Add(c);
+        }
+        Col("name", "章节", 46, 160, DataGridViewContentAlignment.MiddleLeft);
+        Col("sec", "耗时", 16, 72, DataGridViewContentAlignment.MiddleRight);
+        Col("share", "占比", 12, 60, DataGridViewContentAlignment.MiddleRight);
+        Col("prev", "上次", 16, 72, DataGridViewContentAlignment.MiddleRight);
+        Col("delta", "差值", 16, 72, DataGridViewContentAlignment.MiddleRight);
+        foreach (var c in _data.Chapters)
+        {
+            var share = XmlParser.ChapterShare(c.Seconds, _data.TotalSeconds);
+            var priorSec = UnitRetest.PriorChapterSeconds(_priorChapters, c.Name);
+            grid.Rows.Add(
+                c.Name,
+                $"{c.Seconds:0.0} 秒",
+                share is double p ? $"{p:0.0}%" : "—",
+                priorSec is double ps ? $"{ps:0.0} 秒" : "—",
+                priorSec is double pd ? UnitRetest.FormatDelta(c.Seconds, pd) : "—");
+        }
+        int visible = Math.Min(_data.Chapters.Count, 6);
+        host.Height = 8 + 30 + 34 + visible * 32 + 2;
+        host.Controls.Add(grid);
+        host.Controls.Add(lbl);
+        return host;
+    }
+
+    private Panel BuildPriorStrip()
+    {
+        var host = new Panel { Dock = DockStyle.Top, Height = 32, BackColor = CBg, Padding = new Padding(2, 4, 0, 0) };
+        string text;
+        if (string.IsNullOrWhiteSpace(_data.Sn))
+            text = "没有序列号，不能对照上次";
+        else if (_db == null)
+            text = "未连接记录库，不能对照上次";
+        else if (!_place.Found)
+            text = "库里没有这台的测试记录";
+        else if (_place.Previous == null)
+            text = UnitRetest.FormatOrdinal(_place) + "，没有更早的测试";
+        else
+        {
+            var day = UnitRetest.DayKey(_place.Current?.Timestamp, _place.Current?.TestDate);
+            text = UnitRetest.FormatOrdinal(_place) + "    " + UnitRetest.FormatPrevious(_place.Previous, day);
+        }
+        var lbl = new Label
+        {
+            Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+            Font = Theme.Body, ForeColor = CText, AutoEllipsis = true,
+        };
+        host.Controls.Add(lbl);
+        var prevPath = _place.Previous?.XmlPath;
+        if (!string.IsNullOrEmpty(prevPath) && File.Exists(prevPath))
+        {
+            var link = new LinkLabel
+            {
+                Text = "打开上次报告", Dock = DockStyle.Right, Width = 110, TextAlign = ContentAlignment.MiddleRight,
+                Font = Theme.Body, LinkColor = CAccent, ActiveLinkColor = CAccent, VisitedLinkColor = CAccent,
+            };
+            link.LinkClicked += (_, _) =>
+            {
+                try
+                {
+                    using var dlg = new XmlViewerForm(prevPath, _db);
+                    dlg.ShowDialog(this);
+                }
+                catch (Exception ex) { MessageBox.Show("打开失败: " + ex.Message); }
+            };
+            host.Controls.Add(link);
+        }
+        return host;
+    }
+
     private DataGridView BuildReport()
     {
         var grid = new DataGridView
@@ -317,7 +477,8 @@ public class XmlViewerForm : AppForm
         Col("lo", "下限", 12, 72, DataGridViewContentAlignment.MiddleRight);
         Col("hi", "上限", 12, 72, DataGridViewContentAlignment.MiddleRight);
         Col("unit", "单位", 8, 52, DataGridViewContentAlignment.MiddleCenter);
-        Col("status", "状态", 12, 88, DataGridViewContentAlignment.MiddleCenter);
+        Col("status", "状态", 12, 72, DataGridViewContentAlignment.MiddleCenter);
+        Col("shift", "较上次", 18, 120, DataGridViewContentAlignment.MiddleLeft);
 
         int idx = 1;
         foreach (var t in _data.Tests)
@@ -328,6 +489,7 @@ public class XmlViewerForm : AppForm
                                    : (string.IsNullOrEmpty(t.Status) ? "—" : t.Status.ToUpperInvariant());
             int monthN = isFail ? RepeatFailMonth.Lookup(_monthCounts, t.Name) : 0;
             string monthText = monthN > 0 ? $"本月 {monthN} 次" : "";
+            _itemShift.TryGetValue(t.Name, out var shift);
             int rowIndex = grid.Rows.Add(
                 idx.ToString(),
                 string.IsNullOrEmpty(t.Name) ? "—" : t.Name,
@@ -336,7 +498,8 @@ public class XmlViewerForm : AppForm
                 string.IsNullOrEmpty(t.Lolim) ? "—" : t.Lolim,
                 string.IsNullOrEmpty(t.Hilim) ? "—" : t.Hilim,
                 string.IsNullOrEmpty(t.Unit) ? "—" : t.Unit,
-                ignored ? $"{status}·{IgnoredHint}" : status);
+                ignored ? $"{status}·{IgnoredHint}" : status,
+                string.IsNullOrEmpty(shift) ? "" : shift);
             var row = grid.Rows[rowIndex];
             if (isFail && !ignored)
             {
@@ -356,6 +519,7 @@ public class XmlViewerForm : AppForm
             }
             row.Cells["status"].ToolTipText = ignored ? IgnoredHint : status;
             row.Cells["name"].ToolTipText = t.Name;
+            if (!string.IsNullOrEmpty(shift)) row.Cells["shift"].ToolTipText = shift;
             if (monthN > 0 && _recent.TryGetValue(t.Name, out var recent) && recent.Count > 0)
             {
                 row.Cells["month"].ToolTipText = string.Join("\n", recent.Select(r =>
@@ -491,6 +655,8 @@ public class XmlViewerForm : AppForm
     {
         public string Timestamp = "", User = "", Tester = "", PanelStatus = "", Sn = "";
         public int FailCount;
+        public double? TotalSeconds;
+        public List<XmlParser.ReportChapter> Chapters = new();
         public List<TestItem> Tests = new();
     }
     private class TestItem
@@ -508,6 +674,8 @@ public class XmlViewerForm : AppForm
             Tester = src.Tester,
             PanelStatus = src.PanelStatus,
             Sn = src.Sn,
+            TotalSeconds = src.TotalSeconds,
+            Chapters = src.Chapters,
         };
         foreach (var t in src.Tests)
         {

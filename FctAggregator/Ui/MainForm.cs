@@ -27,6 +27,7 @@ public class MainForm : AppForm
     private TopFailRankPanel _topFailRank = null!;
     private LiveAlertPanel _liveAlert = null!;
     private LearnAlertStrip _learnAlertStrip = null!;
+    private Label _taktStrip = null!;
 
     private Panel _dashboardPage = null!;
     private DeviceStatusPanel _devicePage = null!;
@@ -298,9 +299,17 @@ public class MainForm : AppForm
         lower.Controls.Add(dashPanel);
 
         _learnAlertStrip = new LearnAlertStrip { Dock = DockStyle.Top };
+        _taktStrip = new Label
+        {
+            Dock = DockStyle.Top, Height = 28, Text = AppState.TodayTaktLine,
+            Font = Theme.BodyBold, ForeColor = Theme.TextMain, BackColor = Theme.Surface,
+            TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 8, 0),
+            AutoEllipsis = true,
+        };
 
         page.Controls.Add(lower);
         page.Controls.Add(_learnAlertStrip);
+        page.Controls.Add(_taktStrip);
         page.Controls.Add(kpiRow);
         lower.BringToFront();
         return page;
@@ -438,6 +447,8 @@ public class MainForm : AppForm
         var sid = _engine.ResolvedStationId;
         Task.Run(() =>
         {
+            try { CycleBackfill.Run(db, sid, DateTime.Now.ToString("yyyyMMdd"), 25); }
+            catch (Exception ex) { Logger.Warning($"[节拍] 补读失败: {ex.Message}"); }
             try { AppState.RefreshDbStats(db, sid); }
             catch (Exception ex) { Logger.Warning($"[实时刷新] 统计刷新失败: {ex.Message}"); }
         });
@@ -502,6 +513,8 @@ public class MainForm : AppForm
         SetKpi("today_fail", s.TodayFail.ToString("N0"));
         SetKpi("today_yield", s.TodayPass + s.TodayFail == 0 ? "—" : $"{s.TodayYield:F1}%");
         SetKpi("today_interrupted", s.TodayInterrupted.ToString("N0"));
+        if (_taktStrip != null && _taktStrip.Text != s.TodayTaktLine)
+            _taktStrip.Text = s.TodayTaktLine;
     }
 
     private volatile bool _deviceOnlineBusy = false;

@@ -12,6 +12,8 @@ public sealed class DeviationEvent
     public double TopScore { get; set; }
     public string DetailJson { get; set; } = "";
     public int Seen { get; set; }
+    /// <summary>当次推卡用的机台号。deviation_events 表没有这一列，不入库。</summary>
+    public string StationId { get; set; } = "";
 }
 
 /// <summary>
@@ -46,7 +48,8 @@ public static class DeviationScorer
 
     public static DeviationEvent? EvaluateWindow(
         Database db, AppConfig cfg, string source, string model, string ts,
-        IReadOnlyList<(string SignalKey, double Value)> samples, DateTime now)
+        IReadOnlyList<(string SignalKey, double Value)> samples, DateTime now,
+        string? stationId = null)
     {
         if (cfg == null || !cfg.LearnNormalEnabled || db == null || samples == null || samples.Count == 0)
             return null;
@@ -89,6 +92,7 @@ public static class DeviationScorer
                 SignalCount = hits.Count,
                 TopSignal = top.Key,
                 TopScore = top.Score,
+                StationId = LearnAlertMonitor.StationLabel(stationId, cfg),
                 DetailJson = JsonSerializer.Serialize(hits.Select(h => new
                 {
                     signal_key = h.Key, score = h.Score, value = h.Value, mean = h.Mean, sigma = h.Sigma,
@@ -106,16 +110,16 @@ public static class DeviationScorer
         }
     }
 
-    public static void EvaluateMeasurementRecord(Database db, AppConfig cfg, TestRecord rec)
+    public static DeviationEvent? EvaluateMeasurementRecord(Database db, AppConfig cfg, TestRecord rec)
     {
-        if (cfg == null || !cfg.LearnNormalEnabled || rec == null) return;
-        if (!string.Equals(rec.Result, "PASS", StringComparison.OrdinalIgnoreCase)) return;
+        if (cfg == null || !cfg.LearnNormalEnabled || rec == null) return null;
+        if (!string.Equals(rec.Result, "PASS", StringComparison.OrdinalIgnoreCase)) return null;
         var samples = rec.Measurements
             .Where(m => m.Value is { } v && double.IsFinite(v) && !string.IsNullOrWhiteSpace(m.TestName))
             .Select(m => (m.TestName, m.Value!.Value))
             .ToList();
         var ts = string.IsNullOrWhiteSpace(rec.BatchTimestamp) ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : rec.BatchTimestamp;
-        EvaluateWindow(db, cfg, NormalModelStore.SourceMeasurement, rec.Model ?? "", ts, samples, DateTime.Now);
+        return EvaluateWindow(db, cfg, NormalModelStore.SourceMeasurement, rec.Model ?? "", ts, samples, DateTime.Now, rec.StationId);
     }
 
     public static void EvaluateWaveform(Database db, AppConfig cfg, TestRecord rec, List<TdmsFeatureAnalyzer.TdmsFeatureRow> rows)
@@ -132,7 +136,7 @@ public static class DeviationScorer
             if (f.Max is { } vx && double.IsFinite(vx)) samples.Add((baseKey + "/vmax", vx));
         }
         var ts = string.IsNullOrWhiteSpace(rec.BatchTimestamp) ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : rec.BatchTimestamp;
-        EvaluateWindow(db, cfg, NormalModelStore.SourceWaveform, rec.Model ?? "", ts, samples, DateTime.Now);
+        EvaluateWindow(db, cfg, NormalModelStore.SourceWaveform, rec.Model ?? "", ts, samples, DateTime.Now, rec.StationId);
     }
 
     public static void EvaluateDeviceSample(Database db, AppConfig cfg, double cpu, double memPct, double diskFreeGb, string? ts = null)

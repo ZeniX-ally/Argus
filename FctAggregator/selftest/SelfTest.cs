@@ -1305,8 +1305,22 @@ class SelfTest
         Console.WriteLine("\n【v3.51.2 测试报告】TEST 与无测量值的测量 GROUP 都进明细");
         RunReportMeasurementTests();
 
+        Console.WriteLine("\n【v3.53.0 章节耗时】SequenceCall 的 TOTALTIME，不进测项明细");
+        RunReportChapterTimeTests();
+
+        Console.WriteLine("\n【v3.54.0 启动画面】直接进入主窗口");
+        RunNoSplashTests();
+
+        Console.WriteLine("\n【v3.55.0 同台复测】当日次第、上次结果、章节差、出限方向");
+        RunUnitRetestTests(work);
+
+        Console.WriteLine("\n【v3.56.0 今日节拍】有总时长才进平均，下午和上午比");
+        RunCycleTaktTests(work);
+
         Console.WriteLine("\n【v3.52.0 重复故障】本月次数 / 满 5 次补待办");
         RunRepeatFailTests(work);
+
+        RunBannerColorTests();
 
         Console.WriteLine(_fail == 0 ? "\n==== 全部通过 ====" : $"\n==== {_fail} 项失败 ====");
         return _fail == 0 ? 0 : 1;
@@ -2888,11 +2902,17 @@ Argus 统一发布包  v{newer}
             var dpJson = JsonSerializer.Serialize(FeishuNotifier.BuildDeviationAlertCard(dp), relaxed);
             Check(dpJson.Contains("\"template\":\"yellow\""), "偏离卡：header 黄色（预警而非故障，与 FAIL 红区分）");
             Check(dpJson.Contains("正常态偏离告警"), "偏离卡：标题含「正常态偏离告警」");
-            Check(dpJson.Contains("最高分信号"), "偏离卡：突出最高分信号");
-            Check(dpJson.Contains("KL30_1 分 96"), "偏离卡：明细含信号与分数");
-            Check(dpJson.Contains("实测 3.52，正常 3.3±0.05"), "偏离卡：明细含实测值 / 正常均值 / σ");
-            Check(dpJson.Contains("测量值"), "偏离卡：来源转中文");
-            Check(dpJson.Contains("PASS 但在偏离正常态"), "偏离卡：说明这是提前预警而非失败");
+            Check(dpJson.Contains("KL30_1") && dpJson.Contains("分 96"), "偏离卡：只突出最高分信号和分数");
+            Check(dpJson.Contains("实测 3.52，正常 3.3±0.05"), "偏离卡：最高分那条带实测和正常均值±σ");
+            Check(dpJson.Contains("另有 2 个信号越线"), "偏离卡：其余信号只报个数");
+            Check(!dpJson.Contains("偏离明细") && !dpJson.Contains("V_5V"), "偏离卡：不再逐条列出其余信号");
+            var oneJson = JsonSerializer.Serialize(FeishuNotifier.BuildDeviationAlertCard(new DeviationAlertPayload
+            {
+                StationId = "FCT1", Model = "M", TopSignal = "KL30", TopScore = 90, SignalCount = 1,
+                Ts = "2026-09-14 10:20:30",
+            }), relaxed);
+            Check(!oneJson.Contains("另有") && oneJson.Contains("PASS，偏离已学正常值"),
+                "偏离卡：只有一个信号时不写「另有」，页脚点明仍是 PASS");
 
             // —— 状态序列化 ——
             Check(GroupAlertPushState.FromJson("") == null && GroupAlertPushState.FromJson("{坏") == null,
@@ -4737,6 +4757,48 @@ Argus 统一发布包  v{newer}
             new[] { ("8.19.5 FLTM_DESAT_A(XCP)", 0.9), ("8.20.1 ASC_H(XCP)", 0.9), ("8.21.1 SBC_C(XCP)", 0.9) }, scNow);
         Check(injEv == null, "正常态：注入章测名不参与偏离投票");
 
+        var savedAppStation = AppState.StationId;
+        try
+        {
+            AppState.StationId = "";
+            var emptyCfg = new AppConfig { StationId = "" };
+            Check(LearnAlertMonitor.StationLabel("FCT6", emptyCfg) == "FCT6",
+                "偏离卡机台：用这份记录上的机台，不看空的 station_id");
+            Check(LearnAlertMonitor.StationLabel("UNKNOWN", emptyCfg) == "未知机台",
+                "偏离卡机台：UNKNOWN 不当成机台号");
+            Check(LearnAlertMonitor.StationLabel("  ", new AppConfig { StationId = "FCT1" }) == "FCT1",
+                "偏离卡机台：记录没有时机台用配置");
+            AppState.StationId = "FCT2";
+            Check(LearnAlertMonitor.StationLabel("UNKNOWN", emptyCfg) == "FCT2",
+                "偏离卡机台：记录没有时用进程已识别的机台");
+            Check(LearnAlertMonitor.StationLabel("FCT6", new AppConfig { StationId = "FCT1" }) == "FCT6",
+                "偏离卡机台：这份记录的机台盖过配置和进程识别");
+
+            AppState.StationId = "";
+            var stationCfg = new AppConfig
+            {
+                LearnNormalEnabled = true, LearnNormalVoteSignals = 3, LearnNormalEventScore = 75,
+                LearnNormalMaxEventsPerDay = 10, LearnNormalStaleDays = 3650,
+                StationId = "", FeishuDeviationAlertEnabled = false,
+            };
+            var staRec = new TestRecord
+            {
+                Result = "PASS", Model = "M1", StationId = "FCT6",
+                BatchTimestamp = "2026-09-10 12:00:00",
+                Measurements = new List<MeasurementRow>
+                {
+                    new() { TestName = "A", Value = 16.0 },
+                    new() { TestName = "B", Value = 26.0 },
+                    new() { TestName = "C", Value = 36.0 },
+                    new() { TestName = "D", Value = 40.0 },
+                },
+            };
+            var staEv = DeviationScorer.EvaluateMeasurementRecord(scDb, stationCfg, staRec);
+            Check(staEv?.StationId == "FCT6",
+                $"偏离卡机台：测量值记录的机台进到事件（实得 {staEv?.StationId}）");
+        }
+        finally { AppState.StationId = savedAppStation; }
+
         var live = new AppConfig { LearnNormalEnabled = true, AnalyzeTdmsEnabled = false, LogLevel = "INFO" };
         var incoming = new AppConfig { LearnNormalEnabled = false, AnalyzeTdmsEnabled = true, LogLevel = "DEBUG" };
         live.CopyFrom(incoming);
@@ -5438,6 +5500,50 @@ Argus 统一发布包  v{newer}
             try { Directory.Delete(dir, true); } catch { }
         }
 
+        // 部署现场：上次瘦表重建在 CREATE 之后中断，test_measurements 仍是胖表，
+        // test_measurements_slim 已留下。再次 Init 不能因「table already exists」把进程打死。
+        {
+            var dir = Path.Combine(work, "b3b_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string dbPath = Path.Combine(dir, "leftover.db");
+            var db = new Database(dbPath);
+            db.BatchInsert(new[]
+            {
+                new TestRecord
+                {
+                    StationId = "FCT1", Model = "E300", Result = "PASS",
+                    TestDate = DateTime.Today.ToString("yyyyMMdd"),
+                    BatchTimestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), XmlPath = @"C:\t\b3b_0.xml",
+                    Measurements = new[] { new MeasurementRow { TestName = "T_B3B", Value = 3.0 } }.ToList(),
+                },
+            });
+            using (var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+            {
+                c.Open();
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = @"
+                    ALTER TABLE test_measurements ADD COLUMN xml_path TEXT;
+                    CREATE TABLE test_measurements_slim (id INTEGER PRIMARY KEY);
+                ";
+                cmd.ExecuteNonQuery();
+            }
+            SqliteConnection.ClearAllPools();
+            Exception? boom = null;
+            try { _ = new Database(dbPath); }
+            catch (Exception ex) { boom = ex; }
+            Check(boom == null, $"B3b：残留 test_measurements_slim 时再次打开不崩溃（{boom?.Message}）");
+            if (boom == null)
+            {
+                Check(Count(dbPath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='test_measurements_slim'") == 0,
+                      "B3b：自愈后半成品表已清掉");
+                Check(Count(dbPath, "SELECT COUNT(*) FROM test_measurements") == 1,
+                      "B3b：自愈后测量行仍在（以胖表为准，不采用半成品）");
+                Check(Count(dbPath, "SELECT COUNT(*) FROM pragma_table_info('test_measurements') WHERE name='xml_path'") == 0,
+                      "B3b：自愈后测量表不再带 xml_path");
+            }
+            try { Directory.Delete(dir, true); } catch { }
+        }
+
         // B4：备份清理 glob 排除 .sha256——名义「保留 7 份」必须真的留 7 个 .bak
         {
             var dir = Path.Combine(work, "b4_" + Guid.NewGuid().ToString("N"));
@@ -6049,6 +6155,205 @@ Argus 统一发布包  v{newer}
               "没有 TEST 子节点的测量步骤（Skipped）也进明细");
         Check(r.Tests.All(t => t.Name is not ("If1" or "MainSequence Callback")),
               "流程节点（If / SequenceCall）不进测试项明细");
+        Check(r.Chapters.Count == 0 && r.TotalSeconds == null,
+              "没有 TOTALTIME 时章节耗时为空");
+    }
+
+    static void RunReportChapterTimeTests()
+    {
+        const string xml = """
+            <BATCH TIMESTAMP="2026-07-24T13:01:00+08:00">
+              <PANEL STATUS="Passed" TIMESTAMP="2026-07-24T13:01:00+08:00" TESTTIME="400">
+                <DUT ID="SN1">
+                  <GROUP NAME="MainSequence Callback" TYPE="SequenceCall" TOTALTIME="334.0" STATUS="Passed">
+                    <GROUP NAME="XPT_FCT_4.9_(2609)(2752)(2757)" TYPE="SequenceCall" TOTALTIME="332.6" STATUS="Passed">
+                      <GROUP NAME="8.11 Resolver Test" TYPE="SequenceCall" TOTALTIME="13.7" STATUS="Passed">
+                        <GROUP NAME="8.11.1.1 ResE" TYPE="NumericLimitTest" STATUS="Passed">
+                          <TEST NAME="8.11.1.1 ResE" VALUE="1" LOLIM="0" HILIM="2" UNIT="V" STATUS="Passed"/>
+                        </GROUP>
+                        <GROUP NAME="MainSequence Callback" TYPE="SequenceCall" TOTALTIME="99" STATUS="Passed"/>
+                      </GROUP>
+                      <GROUP NAME="6.1 Power Test" TYPE="SequenceCall" TOTALTIME="93.3" STATUS="Passed"/>
+                      <GROUP NAME="8.1.1.1 KL30" TYPE="SequenceCall" TOTALTIME="2.0" STATUS="Passed"/>
+                      <GROUP NAME="Get SN" TYPE="SequenceCall" TOTALTIME="1.0" STATUS="Passed"/>
+                      <GROUP NAME="6.2 Bad Time" TYPE="SequenceCall" TOTALTIME="abc" STATUS="Passed"/>
+                    </GROUP>
+                  </GROUP>
+                </DUT>
+              </PANEL>
+            </BATCH>
+            """;
+        var r = XmlParser.ParseReportText(xml);
+        Check(r.TotalSeconds == 334.0, $"总时长取最外层 MainSequence Callback（实得 {r.TotalSeconds}）");
+        Check(r.Chapters.Count == 2, $"只保留「步骤号.步骤号 标题」的章节（实得 {r.Chapters.Count}）");
+        Check(r.Chapters[0].Name == "6.1 Power Test" && r.Chapters[0].Seconds == 93.3,
+              "章节按耗时从高到低，6.1 在前");
+        Check(r.Chapters[1].Name == "8.11 Resolver Test" && r.Chapters[1].Seconds == 13.7,
+              "8.11 排在 6.1 之后");
+        Check(r.Chapters.All(c => c.Name is not ("MainSequence Callback" or "XPT_FCT_4.9_(2609)(2752)(2757)" or "8.1.1.1 KL30" or "Get SN" or "6.2 Bad Time")),
+              "总时长包装、产品序列名、更深的步骤号、无步骤号的调用、非法耗时都不进章节");
+        Check(r.Tests.Count == 1 && r.Tests[0].Name == "8.11.1.1 ResE" && r.Tests[0].Value == "1",
+              "收集章节耗时不改变测项明细");
+        var share = XmlParser.ChapterShare(93.3, r.TotalSeconds);
+        Check(share != null && Math.Abs(share.Value - 27.9341317365) < 1e-6,
+              $"占比按总时长计算（实得 {share}）");
+        Check(XmlParser.ChapterShare(93.3, null) == null && XmlParser.ChapterShare(1, 0) == null,
+              "没有总时长或总时长为 0 时不计算占比");
+    }
+
+    static void RunCycleTaktTests(string work)
+    {
+        var samples = new (double Seconds, int? Hour)[]
+        {
+            (300, 9),
+            (360, 10),
+            (420, 14),
+            (480, 15),
+            (100, null),
+            (0, 8),
+            (-5, 16),
+        };
+        var sum = CycleTakt.Compute(samples);
+        Check(sum.Count == 5, $"没有总时长、0 和负数不进平均（实得 {sum.Count}）");
+        Check(sum.Average is double avg && Math.Abs(avg - (300 + 360 + 420 + 480 + 100) / 5.0) < 1e-6,
+              $"全天平均含无钟点的记录（实得 {sum.Average}）");
+        Check(sum.MorningCount == 2 && sum.AfternoonCount == 2, "11 点前是上午，12 点起是下午");
+        Check(sum.DeltaSeconds is double d && Math.Abs(d - ((420 + 480) / 2.0 - (300 + 360) / 2.0)) < 1e-6,
+              $"差值是下午平均减上午平均（实得 {sum.DeltaSeconds}）");
+        Check(CycleTakt.FormatClock(324) == "5:24" && CycleTakt.FormatClock(42) == "42秒", "满一分钟写成钟点");
+        Check(CycleTakt.FormatCompare(sum) == "比上午慢 120 秒", "下午更久写成慢");
+        var faster = CycleTakt.Compute(new[] { (400.0, (int?)9), (300.0, (int?)15) });
+        Check(CycleTakt.FormatCompare(faster) == "比上午快 100 秒", "下午更短写成快");
+        var morningOnly = CycleTakt.Compute(new[] { (300.0, (int?)9) });
+        Check(CycleTakt.FormatCompare(morningOnly) == "" && CycleTakt.FormatLine(morningOnly).Contains("1 台有总时长"),
+              "还没有下午时不比，只写台数");
+        Check(CycleTakt.FormatLine(CycleTakt.Compute(Array.Empty<(double, int?)>())).Contains("没有总时长"),
+              "一台都没有总时长时明示");
+
+        const string withTime = """
+            <BATCH><PANEL><DUT>
+              <GROUP NAME="MainSequence Callback" TYPE="SequenceCall" TOTALTIME="334.5"></GROUP>
+              <GROUP NAME="MainSequence Callback" TYPE="SequenceCall" TOTALTIME="9"></GROUP>
+            </DUT></PANEL></BATCH>
+            """;
+        const string noTime = """<BATCH><PANEL STATUS="Passed"><DUT ID="A"/></PANEL></BATCH>""";
+        Check(XmlParser.ReadCycleSeconds(withTime) == 334.5, "总时长取最外层 MainSequence，不取后面那个");
+        Check(XmlParser.ReadCycleSeconds(noTime) == null, "没有 TOTALTIME 不算节拍");
+
+        var dir = Path.Combine(work, "cycle_takt");
+        Directory.CreateDirectory(dir);
+        var db = new Database(Path.Combine(dir, "m.db"), setAsCurrent: false);
+        var day = DateTime.Today.ToString("yyyyMMdd");
+        var dash = DateTime.Today.ToString("yyyy-MM-dd");
+        string P(string name, string hour) => Path.Combine(dir, name);
+        db.BatchUpsert(new[]
+        {
+            new TestRecord { StationId = "FCT1", Result = "PASS", TestDate = day, Sn = "A", XmlPath = P("a.xml", ""), BatchTimestamp = dash + " 09:00:00", CycleChecked = true, CycleSeconds = 300 },
+            new TestRecord { StationId = "FCT1", Result = "FAIL", TestDate = day, Sn = "B", XmlPath = P("b.xml", ""), BatchTimestamp = dash + " 15:00:00", CycleChecked = true, CycleSeconds = 420 },
+            new TestRecord { StationId = "FCT1", Result = "PASS", TestDate = day, Sn = "C", XmlPath = P("c.xml", ""), BatchTimestamp = dash + " 16:00:00", CycleChecked = true, CycleSeconds = null },
+            new TestRecord { StationId = "FCT1", Result = "PASS", TestDate = "20000101", Sn = "D", XmlPath = P("d.xml", ""), BatchTimestamp = "2000-01-01 10:00:00", CycleChecked = true, CycleSeconds = 999 },
+            new TestRecord { StationId = "FCT1", Result = "PASS", TestDate = day, Sn = "E", XmlPath = P("e.xml", ""), BatchTimestamp = dash + " 11:00:00" },
+        });
+        var got = db.ListTodayCycles("FCT1", day);
+        var line = CycleTakt.FormatLine(CycleTakt.Compute(got));
+        Check(got.Count == 2 && line.Contains("6:00") && line.Contains("比上午慢 120 秒"),
+              $"今天只平均有总时长的两台（实得 {got.Count} 条 / {line}）");
+        var missing = db.ListMissingCyclePaths("FCT1", day, 10);
+        Check(missing.Count == 1 && missing[0].EndsWith("e.xml"), "没记过节拍的路径留给补读，已确认没有总时长的不重复读");
+    }
+
+    static void RunUnitRetestTests(string work)
+    {
+        var runs = new List<UnitRun>
+        {
+            new() { XmlPath = @"C:\a.xml", Result = "PASS", Timestamp = "2026-10-05 18:00:00", TestDate = "20261005" },
+            new() { XmlPath = @"C:\b.xml", Result = "FAIL", FailReason = "电源", Timestamp = "2026-10-06 09:00:00", TestDate = "20261006" },
+            new() { XmlPath = @"C:\c.xml", Result = "FAIL", FailReason = "通信", Timestamp = "2026-10-06T10:00:00", TestDate = "2026-10-06" },
+        };
+        var firstToday = UnitRetest.Locate(runs, @"c:\b.XML");
+        Check(firstToday.Found && firstToday.IndexOnDay == 1 && firstToday.CountOnDay == 2,
+              $"当天第一台是第 1/2 次（实得 {firstToday.IndexOnDay}/{firstToday.CountOnDay}）");
+        Check(firstToday.Previous != null && firstToday.Previous.XmlPath.EndsWith("a.xml"),
+              "当天第一次的上一次是前一天");
+        Check(UnitRetest.FormatPrevious(firstToday.Previous!, "2026-10-06") == "上次 10-05 18:00 PASS",
+              "跨日上次带月日");
+        var second = UnitRetest.Locate(runs, @"C:\c.xml");
+        Check(second.IndexOnDay == 2 && second.Previous?.FailReason == "电源",
+              "当天第二次的上一次是当天第一次");
+        Check(UnitRetest.FormatOrdinal(second) == "当日第 2/2 次", "当日次第写成第 n/m 次");
+        Check(UnitRetest.FormatPrevious(second.Previous!, "2026-10-06") == "上次 09:00 FAIL · 电源",
+              "同一天的上次只写时刻和失败项");
+        Check(!UnitRetest.Locate(runs, @"C:\missing.xml").Found, "库里没有这条路径就不标次第");
+
+        Check(UnitRetest.Judge(1.5, 0.5, 0, 1) == UnitRetest.Move.Out, "上次在限内、这次出限");
+        Check(UnitRetest.Judge(2.5, 1.5, 0, 1) == UnitRetest.Move.Further, "两次都出限且这次更远");
+        Check(UnitRetest.Judge(1.2, 2.0, 0, 1) == UnitRetest.Move.Closer, "两次都出限且这次更近");
+        Check(UnitRetest.Judge(0.5, 1.5, 0, 1) == UnitRetest.Move.BackIn, "上次出限、这次回到限内");
+        Check(UnitRetest.Judge(1.5, 1.5, 0, 1) == UnitRetest.Move.Flat, "出限距离相同算持平");
+        Check(UnitRetest.Judge(0.4, 0.5, 0, 1) == UnitRetest.Move.StillIn, "两次都在限内");
+        Check(UnitRetest.Judge(1.5, 0.5, null, null) == UnitRetest.Move.None, "没有上下限不下结论");
+        Check(UnitRetest.FormatItemShift("0.5", 0.5, UnitRetest.Move.Out) == "上次 0.5 · 出限",
+              "失败项对照写上次值和方向");
+
+        var chapters = new List<XmlParser.ReportChapter> { new() { Name = "6.1 Power Test", Seconds = 80 } };
+        Check(UnitRetest.PriorChapterSeconds(chapters, "6.1 power test") == 80, "章节名忽略大小写对齐");
+        Check(UnitRetest.PriorChapterSeconds(chapters, "8.11 Resolver Test") == null, "上次没有的章节不对齐");
+        Check(UnitRetest.FormatDelta(93.3, 80) == "+13.3 秒", "变慢写正差");
+        Check(UnitRetest.FormatDelta(70, 80) == "-10.0 秒", "变快写负差");
+
+        var dir = Path.Combine(work, "unit_retest");
+        Directory.CreateDirectory(dir);
+        var db = new Database(Path.Combine(dir, "m.db"), setAsCurrent: false);
+        var passPath = Path.Combine(dir, "pass.xml");
+        var failPath = Path.Combine(dir, "fail.xml");
+        var laterPath = Path.Combine(dir, "later.xml");
+        db.BatchUpsert(new[]
+        {
+            new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", Result = "PASS", TestDate = "20261006", Sn = "SN1",
+                BatchTimestamp = "2026-10-06 08:00:00", XmlPath = passPath,
+                Measurements = { new MeasurementRow { TestName = "KL30", Value = 0.5, ValueText = "0.5", Lolim = 0, Hilim = 1, Unit = "V" } },
+            },
+            new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", Result = "FAIL", TestDate = "20261006", Sn = "SN1",
+                FailReason = "KL30", HasFailItems = true, BatchTimestamp = "2026-10-06 09:00:00", XmlPath = failPath,
+                FailedTests = { new FailedTest { Name = "KL30", Value = "1.5", Lolim = "0", Hilim = "1", Unit = "V" } },
+            },
+            new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", Result = "FAIL", TestDate = "20261006", Sn = "OTHER",
+                FailReason = "KL30", HasFailItems = true, BatchTimestamp = "2026-10-06 09:30:00", XmlPath = Path.Combine(dir, "other.xml"),
+                FailedTests = { new FailedTest { Name = "KL30", Value = "9", Lolim = "0", Hilim = "1" } },
+            },
+            new TestRecord
+            {
+                StationId = "FCT1", Model = "G49", Result = "FAIL", TestDate = "20261006", Sn = "SN1",
+                FailReason = "KL30", HasFailItems = true, BatchTimestamp = "2026-10-06 11:00:00", XmlPath = laterPath,
+                FailedTests = { new FailedTest { Name = "KL30", Value = "2.5", Lolim = "0", Hilim = "1", Unit = "V" } },
+            },
+        });
+        var listed = db.ListUnitRuns(" sn1 ");
+        var place = UnitRetest.Locate(listed, failPath);
+        Check(listed.Count == 3 && place.Found && place.IndexOnDay == 2 && place.CountOnDay == 3,
+              $"同一序列号按时间排，失败这次是当日第 2/3 次（实得 {place.IndexOnDay}/{place.CountOnDay}，条数 {listed.Count}）");
+        Check(place.Previous?.Result == "PASS", "上一次是更早的 PASS，不是别的序列号");
+        var prior = db.FindPriorItem("SN1", "kl30", failPath, "2026-10-06 09:00:00");
+        Check(prior?.Value == 0.5, $"这项的上次值来自更早的 PASS 测量（实得 {prior?.Value}）");
+        var laterPrior = db.FindPriorItem("SN1", "KL30", laterPath, "2026-10-06 11:00:00");
+        Check(laterPrior?.Value == 1.5, $"再往后一次对到最近的失败值，不跳回更早的 0.5（实得 {laterPrior?.Value}）");
+        Check(db.FindPriorItem("OTHER", "KL30", failPath, "2026-10-06 09:00:00") == null, "别的序列号不拿来对照");
+        Check(db.ListUnitRuns("").Count == 0 && db.ListUnitRuns("   ").Count == 0, "空白序列号不互相对上");
+    }
+
+    static void RunNoSplashTests()
+    {
+        var asm = typeof(Program).Assembly;
+        Check(asm.GetTypes().All(t => t.Name != "SplashForm"), "程序集里不再有启动画面窗体");
+        var csproj = FindUp("FctAggregator.csproj");
+        var embedded = File.Exists(csproj) && File.ReadAllText(csproj).Contains("argus_splash.png", StringComparison.OrdinalIgnoreCase);
+        Check(!embedded, "主工程不再嵌入启动画面图片");
     }
 
     static void RunRepeatFailTests(string work)
@@ -6075,5 +6380,112 @@ Argus 统一发布包  v{newer}
         var marked = new TodoItem { Title = "RepeatItem" };
         RepeatFailMonth.Apply(new[] { marked }, oct);
         Check(marked.MonthCount == 6, "待办卡能标上本月次数");
+    }
+
+    static void RunBannerColorTests()
+    {
+        Console.WriteLine("\n【v3.57.0 飞书头图分色】红走兜底 NIO，其余四色各用自己的 img_key");
+        var relaxed = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+        var cfg = new AppConfig();
+        Check(cfg.BannerImgKeyFor("red") == "" && cfg.BannerImgKeyFor("blue") == "",
+            "头图：五个颜色键和兜底都空时，不带头图");
+
+        cfg.FeishuBannerImgKey = "img_nio";
+        cfg.FeishuBannerImgKeyOrange = "img_orange";
+        cfg.FeishuBannerImgKeyBlue = "img_blue";
+        cfg.FeishuBannerImgKeyGreen = "img_green";
+        cfg.FeishuBannerImgKeyYellow = "img_yellow";
+        Check(cfg.BannerImgKeyFor("red") == "img_nio", "头图：红未单配时用兜底 NIO");
+        Check(cfg.BannerImgKeyFor("orange") == "img_orange", "头图：橙用现场异常");
+        Check(cfg.BannerImgKeyFor("blue") == "img_blue", "头图：蓝用状态同步");
+        Check(cfg.BannerImgKeyFor("green") == "img_green", "头图：绿用已恢复");
+        Check(cfg.BannerImgKeyFor("yellow") == "img_yellow", "头图：黄用偏离基线");
+        cfg.FeishuBannerImgKeyRed = "  img_red  ";
+        Check(cfg.BannerImgKeyFor("red") == "img_red", "头图：红色单配优先于兜底，并去掉首尾空白");
+        cfg.FeishuBannerImgKeyOrange = "   ";
+        Check(cfg.BannerImgKeyFor("orange") == "img_nio", "头图：颜色键只有空白时回退兜底");
+        Check(cfg.BannerImgKeyFor("purple") == "img_nio", "头图：未知颜色回退兜底");
+
+        var cfgFile = Path.Combine(AppConfig.BaseDir, "config.json");
+        var backup = File.Exists(cfgFile) ? File.ReadAllText(cfgFile) : null;
+        try
+        {
+            File.WriteAllText(cfgFile,
+                "{\"feishu_banner_img_key\":\" img_nio \",\"feishu_banner_img_key_orange\":\" img_o \"}");
+            var loaded = AppConfig.Load();
+            Check(loaded.FeishuBannerImgKey == "img_nio" && loaded.FeishuBannerImgKeyOrange == "img_o"
+                  && loaded.FeishuBannerImgKeyRed == "" && loaded.FeishuBannerImgKeyBlue == ""
+                  && loaded.BannerImgKeyFor("orange") == "img_o" && loaded.BannerImgKeyFor("red") == "img_nio",
+                "头图：Load 读分色键并 Trim，缺的颜色回退兜底");
+        }
+        finally
+        {
+            try
+            {
+                if (backup != null) File.WriteAllText(cfgFile, backup);
+                else if (File.Exists(cfgFile)) File.Delete(cfgFile);
+            }
+            catch { }
+        }
+
+        var inst = AppConfig.Instance;
+        var savedFallback = inst.FeishuBannerImgKey;
+        var savedRed = inst.FeishuBannerImgKeyRed;
+        var savedOrange = inst.FeishuBannerImgKeyOrange;
+        var savedBlue = inst.FeishuBannerImgKeyBlue;
+        var savedGreen = inst.FeishuBannerImgKeyGreen;
+        var savedYellow = inst.FeishuBannerImgKeyYellow;
+        try
+        {
+            inst.FeishuBannerImgKey = "img_nio";
+            inst.FeishuBannerImgKeyRed = "";
+            inst.FeishuBannerImgKeyOrange = "img_orange";
+            inst.FeishuBannerImgKeyBlue = "img_blue";
+            inst.FeishuBannerImgKeyGreen = "img_green";
+            inst.FeishuBannerImgKeyYellow = "img_yellow";
+
+            string JsonOf(object card) => JsonSerializer.Serialize(card, relaxed);
+            void Expect(object card, string key, string what)
+                => Check(JsonOf(card).Contains($"\"img_key\":\"{key}\""), what);
+
+            var fail = new TestRecord
+            {
+                StationId = "FCT1", Model = "M", Sn = "S", Result = "FAIL",
+                XmlPath = @"D:\a.xml", BatchTimestamp = "2026-09-14T10:00:00",
+            };
+            Expect(FeishuNotifier.BuildFailBatchCard(new[] { fail }, 60), "img_nio", "FAIL 批量卡：红未单配走 NIO");
+            var failCard = typeof(FeishuNotifier).GetMethod("BuildFailCard", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+                .Invoke(null, new object[] { fail })!;
+            Expect(failCard, "img_nio", "FAIL 单条卡：红未单配走 NIO");
+            Expect(FeishuNotifier.BuildCollectAlertCard(new CollectAlertPayload { StationId = "FCT1" }), "img_orange", "采集异常卡：用橙图");
+            Expect(FeishuNotifier.BuildGroupAlertCard("FCT1", "2026-09-14", new List<SectionGroupAlertResult>(), 3), "img_orange", "章节群挂卡：用橙图");
+            Expect(FeishuNotifier.BuildStorageAlertCard(new StorageAlertPayload { StationId = "FCT1" }), "img_orange", "存储健康卡：用橙图");
+            Expect(FeishuNotifier.BuildTodoOverdueCard(new TodoOverduePayload { StationId = "FCT1" }), "img_orange", "待办超期卡：用橙图");
+            Expect(FeishuNotifier.BuildCollectRecoverCard("FCT1", "此前", 0), "img_green", "采集恢复卡：用绿图");
+            Expect(FeishuNotifier.BuildDailySummaryCard(new DailySummaryPayload { StationId = "FCT1", Date = "2026-09-14" }), "img_blue", "运行摘要卡：用蓝图");
+            var statusCard = typeof(FeishuNotifier).GetMethod("BuildStatusChangeCard", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+                .Invoke(null, new object[] { new MaintenanceRecord { StationId = "FCT1", FailItem = "KL30" }, "", "open" })!;
+            Expect(statusCard, "img_blue", "待办状态变更卡：用蓝图");
+            Expect(FeishuNotifier.BuildDeviationAlertCard(new DeviationAlertPayload { StationId = "FCT1", TopSignal = "KL30" }), "img_yellow", "偏离卡：用黄图");
+
+            inst.FeishuBannerImgKeyOrange = "";
+            var fallen = JsonOf(FeishuNotifier.BuildCollectAlertCard(new CollectAlertPayload { StationId = "FCT1" }));
+            Check(fallen.Contains("\"img_key\":\"img_nio\"") && !fallen.Contains("img_orange"),
+                "采集异常卡：橙键清空后回退 NIO");
+
+            inst.FeishuBannerImgKey = "";
+            var bare = JsonOf(FeishuNotifier.BuildFailBatchCard(new[] { fail }, 60));
+            Check(!bare.Contains("img_key"), "FAIL 批量卡：兜底和红色都空时不带头图");
+        }
+        finally
+        {
+            inst.FeishuBannerImgKey = savedFallback;
+            inst.FeishuBannerImgKeyRed = savedRed;
+            inst.FeishuBannerImgKeyOrange = savedOrange;
+            inst.FeishuBannerImgKeyBlue = savedBlue;
+            inst.FeishuBannerImgKeyGreen = savedGreen;
+            inst.FeishuBannerImgKeyYellow = savedYellow;
+        }
     }
 }

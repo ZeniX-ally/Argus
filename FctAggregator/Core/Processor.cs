@@ -110,6 +110,8 @@ public class Processor
             FailedTests = outp.FailedTests,
             Measurements = outp.Measurements,
             FileSize = outp.FileSize,
+            CycleChecked = true,
+            CycleSeconds = XmlParser.ReadCycleSeconds(rawXml),
         };
         // 审计修复：原为 EffectiveMeasureRetentionDays——每个文件一次全表 MIN 扫描（首次扫描 O(N²)）；
         // 改走缓存入口（单调加宽，不会误删）。

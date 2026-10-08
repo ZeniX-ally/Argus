@@ -208,6 +208,8 @@ public sealed partial class Database
     {
         if (!HasColumn(conn, "test_measurements", "xml_path")) return false;
         using var tx = conn.BeginTransaction();
+        // 上次重建在 CREATE 之后中断时，半成品表已提交。胖表仍是数据源，先丢掉半成品再重建。
+        Exec(conn, "DROP TABLE IF EXISTS test_measurements_slim", tx);
         Exec(conn, @"
             CREATE TABLE test_measurements_slim (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,6 +243,7 @@ public sealed partial class Database
     {
         if (!HasColumn(conn, "fail_items", "xml_path")) return false;
         using var tx = conn.BeginTransaction();
+        Exec(conn, "DROP TABLE IF EXISTS fail_items_slim", tx);
         Exec(conn, @"
             CREATE TABLE fail_items_slim (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -279,6 +282,7 @@ public sealed partial class Database
     {
         if (!HasColumn(conn, "tdms_features", "xml_path")) return false;
         using var tx = conn.BeginTransaction();
+        Exec(conn, "DROP TABLE IF EXISTS tdms_features_slim", tx);
         Exec(conn, @"
             CREATE TABLE tdms_features_slim (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

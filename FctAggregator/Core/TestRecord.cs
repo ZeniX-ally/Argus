@@ -49,4 +49,7 @@ public class TestRecord
     public List<FailedTest> FailedTests { get; set; } = new();
     public List<MeasurementRow> Measurements { get; set; } = new();
     public long? FileSize { get; set; }
+    /// <summary>本次解析是否看过总时长。没有 TOTALTIME 时 CycleSeconds 为 null，仍然记一笔，避免反复补读。</summary>
+    public bool CycleChecked { get; set; }
+    public double? CycleSeconds { get; set; }
 }

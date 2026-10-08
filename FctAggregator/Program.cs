@@ -181,33 +181,7 @@ static class Program
 
         engine.Start();
 
-        var splashImg = SplashForm.TryLoadEmbedded();
-        SplashForm? splash = null;
-        if (splashImg != null)
-        {
-            splash = new SplashForm(splashImg);
-            splash.Start();
-        }
-
-        var form = new MainForm(engine, debugMode);
-
-        if (splash != null)
-        {
-            form.Shown += (_, _) =>
-            {
-                var t = new System.Windows.Forms.Timer { Interval = 450 };
-                t.Tick += (_, _) =>
-                {
-                    t.Stop();
-                    t.Dispose();
-                    splash!.Hide();
-                    splash.Dispose();
-                };
-                t.Start();
-            };
-        }
-
-        Application.Run(form);
+        Application.Run(new MainForm(engine, debugMode));
 
         engine.Stop();
         GC.KeepAlive(_singleInstanceMutex);

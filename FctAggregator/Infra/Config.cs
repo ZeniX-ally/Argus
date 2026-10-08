@@ -15,6 +15,12 @@ public class AppConfig
     public int NotifyMinIntervalSec { get; set; } = 15;
     public int TodoScanDays { get; set; } = 30;
     public string FeishuBannerImgKey { get; set; } = "";
+    /// <summary>按抬头颜色覆盖头图。留空则回退 <see cref="FeishuBannerImgKey"/>。</summary>
+    public string FeishuBannerImgKeyRed { get; set; } = "";
+    public string FeishuBannerImgKeyOrange { get; set; } = "";
+    public string FeishuBannerImgKeyBlue { get; set; } = "";
+    public string FeishuBannerImgKeyGreen { get; set; } = "";
+    public string FeishuBannerImgKeyYellow { get; set; } = "";
     /// <summary>FAIL 告警合并：窗口内多条 FAIL 合成一张卡（治批量不良刷屏）。关闭则每条立即单独推送。</summary>
     public bool FeishuFailMergeEnabled { get; set; } = true;
     /// <summary>合并窗口（秒）：从第一条 FAIL 入队起算的固定窗口，不因后续入队顺延。范围 10~3600。</summary>
@@ -120,6 +126,22 @@ public class AppConfig
 
     public static AppConfig Instance => _instance ??= Load();
 
+    /// <summary>飞书头图：该颜色有 key 就用它，否则用 <see cref="FeishuBannerImgKey"/>。都空则这张卡不带头图。</summary>
+    public string BannerImgKeyFor(string? template)
+    {
+        var specific = template switch
+        {
+            "red" => FeishuBannerImgKeyRed,
+            "orange" => FeishuBannerImgKeyOrange,
+            "blue" => FeishuBannerImgKeyBlue,
+            "green" => FeishuBannerImgKeyGreen,
+            "yellow" => FeishuBannerImgKeyYellow,
+            _ => null,
+        };
+        if (!string.IsNullOrWhiteSpace(specific)) return specific.Trim();
+        return (FeishuBannerImgKey ?? "").Trim();
+    }
+
     public static string BaseDir =>
         AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
 
@@ -155,6 +177,11 @@ public class AppConfig
                     v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var days) && days >= 1)
                     cfg.TodoScanDays = days;
                 if (root.TryGetProperty("feishu_banner_img_key", out v)) cfg.FeishuBannerImgKey = (GetStringSafe(v) ?? "").Trim();
+                if (root.TryGetProperty("feishu_banner_img_key_red", out v)) cfg.FeishuBannerImgKeyRed = (GetStringSafe(v) ?? "").Trim();
+                if (root.TryGetProperty("feishu_banner_img_key_orange", out v)) cfg.FeishuBannerImgKeyOrange = (GetStringSafe(v) ?? "").Trim();
+                if (root.TryGetProperty("feishu_banner_img_key_blue", out v)) cfg.FeishuBannerImgKeyBlue = (GetStringSafe(v) ?? "").Trim();
+                if (root.TryGetProperty("feishu_banner_img_key_green", out v)) cfg.FeishuBannerImgKeyGreen = (GetStringSafe(v) ?? "").Trim();
+                if (root.TryGetProperty("feishu_banner_img_key_yellow", out v)) cfg.FeishuBannerImgKeyYellow = (GetStringSafe(v) ?? "").Trim();
                 if (root.TryGetProperty("feishu_fail_merge_enabled", out v))
                     cfg.FeishuFailMergeEnabled = v.ValueKind != JsonValueKind.False;
                 if (root.TryGetProperty("feishu_fail_merge_window_sec", out v) &&
@@ -381,7 +408,10 @@ public class AppConfig
                 {
                     "station_id", "results_root", "fct_ini_path", "webhook_url", "skip_historical_scan",
                     "log_level", "desktop_notify", "notify_min_interval_sec", "todo_scan_days",
-                    "feishu_banner_img_key", "parsers_path",
+                    "feishu_banner_img_key",
+                    "feishu_banner_img_key_red", "feishu_banner_img_key_orange", "feishu_banner_img_key_blue",
+                    "feishu_banner_img_key_green", "feishu_banner_img_key_yellow",
+                    "parsers_path",
                     "feishu_fail_merge_enabled", "feishu_fail_merge_window_sec", "feishu_fail_merge_max",
                     "feishu_collect_alert_enabled", "feishu_collect_alert_window_min",
                     "feishu_collect_alert_parse_min", "feishu_collect_alert_retry_min",
@@ -426,6 +456,11 @@ public class AppConfig
                 writer.WriteNumber("notify_min_interval_sec", NotifyMinIntervalSec);
                 writer.WriteNumber("todo_scan_days", TodoScanDays);
                 writer.WriteString("feishu_banner_img_key", FeishuBannerImgKey);
+                writer.WriteString("feishu_banner_img_key_red", FeishuBannerImgKeyRed);
+                writer.WriteString("feishu_banner_img_key_orange", FeishuBannerImgKeyOrange);
+                writer.WriteString("feishu_banner_img_key_blue", FeishuBannerImgKeyBlue);
+                writer.WriteString("feishu_banner_img_key_green", FeishuBannerImgKeyGreen);
+                writer.WriteString("feishu_banner_img_key_yellow", FeishuBannerImgKeyYellow);
                 writer.WriteBoolean("feishu_fail_merge_enabled", FeishuFailMergeEnabled);
                 writer.WriteNumber("feishu_fail_merge_window_sec", FeishuFailMergeWindowSec);
                 writer.WriteNumber("feishu_fail_merge_max", FeishuFailMergeMax);
