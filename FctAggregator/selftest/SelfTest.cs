@@ -1877,6 +1877,24 @@ Argus 统一发布包  v{newer}
             var ctxLine = UiScreenFit.DescribeActiveForm();
             Check(ctxLine.Length > 0, $"UI 兼容: UI 异常现场上下文可采集（{ctxLine}）");
 
+            // LiveAlertPanel 命中测试必须与绘制同源：原先绘制 startY=46、命中 startY=48，
+            // 悬停/点击整体偏 2px——100% 缩放下就错，与 DPI 无关。Y=47 正好落在修前命中不到的那 2px 里。
+            using (var live2 = new LiveAlertPanel { Bounds = new Rectangle(0, 0, 320, 300) })
+            {
+                live2.SetData(new List<LiveFailAlert> { new() { Id = 1, TimeText = "08:00:00", Sn = "S1", FailReason = "F1" } });
+                var onMove = typeof(Control).GetMethod("OnMouseMove",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                onMove!.Invoke(live2, new object[] { new MouseEventArgs(MouseButtons.None, 0, 100, 47, 0) });
+                Check(live2.Cursor == Cursors.Hand,
+                    "UI 兼容: LiveAlertPanel 第 0 行顶端 2px 内可命中（绘制/命中共用 RowsTop；修前偏 2px 命中不到）");
+                onMove!.Invoke(live2, new object[] { new MouseEventArgs(MouseButtons.None, 0, 100, 45, 0) });
+                Check(live2.Cursor == Cursors.Default, "UI 兼容: LiveAlertPanel 行区之上不误命中");
+            }
+            var rowsTop = typeof(LiveAlertPanel).GetField("RowsTop",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            Check(rowsTop is { IsLiteral: true } && (int)rowsTop.GetRawConstantValue()! == 46,
+                "UI 兼容: LiveAlertPanel.RowsTop 是共享常量（绘制与命中只此一处，结构上无法再分叉）");
+
             // 工程纪律（源文件级）：upgrade 入口必须走 ApplicationConfiguration.Initialize()。
             // 非 100% 缩放机台上只有它设置 PerMonitorV2；漏调 → 升级向导被系统位图拉伸。
             var wizardSrc = FindUp(Path.Combine("modules", "Upgrader", "UpgradeWizard.cs"));

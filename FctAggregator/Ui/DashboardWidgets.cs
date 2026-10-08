@@ -709,6 +709,10 @@ public sealed class LiveAlertPanel : Control
     public int PaintGeneration { get; private set; }
     public string LastPaintSig => _paintSig;
 
+    /// <summary>告警行起始 Y。**绘制与命中测试必须共用这一个常量**——原先 OnPaint 写 46、
+    /// OnMouseMove 写 48，悬停/点击整体偏 2px，100% 缩放下就错（与 DPI 无关）。</summary>
+    private const int RowsTop = 46;
+
     public event Action<LiveFailAlert>? AlertClicked;
 
     public LiveAlertPanel()
@@ -743,7 +747,7 @@ public sealed class LiveAlertPanel : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        int startY = 48;
+        int startY = RowsTop;
         int rowH = 34;
         if (e.Y >= startY)
         {
@@ -793,7 +797,7 @@ public sealed class LiveAlertPanel : Control
             new Rectangle(Width - 110, 16, 95, 16), Theme.TextFaint,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
 
-        int startY = 46;
+        int startY = RowsTop;
         if (_alerts.Count == 0)
         {
             TextRenderer.DrawText(g, "暂无未处理异常警报", Theme.Body,
