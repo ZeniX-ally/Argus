@@ -28,7 +28,8 @@ MIT licensed. See README.md.
 
 function Fail([string]$step) { if ($LASTEXITCODE -ne 0) { throw "step failed: $step" } }
 
-if (git show-ref --verify --quiet "refs/heads/$branch") { git branch -D $branch | Out-Null }
+git show-ref --verify --quiet "refs/heads/$branch"
+if ($LASTEXITCODE -eq 0) { git branch -D $branch | Out-Null }
 git checkout --orphan $branch | Out-Null
 Fail 'orphan checkout'
 
