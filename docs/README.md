@@ -12,7 +12,7 @@
 | [`算法优化/05-机台自学习.md`](算法优化/05-机台自学习.md) | 规格 05 机台自学习 |
 | [`../FctAggregator/README.md`](../FctAggregator/README.md) | 工程目录与日常命令 |
 | [`../FctAggregator/更新日志.md`](../FctAggregator/更新日志.md) | 版本历史与踩坑 |
-| [`../FctAggregator/版本更新说明.md`](../FctAggregator/版本更新说明.md) | 面向使用的发版说明（最近一次更新停在 v3.48.7，落后当前发版） |
+| [`../FctAggregator/版本更新说明.md`](../FctAggregator/版本更新说明.md) | 面向使用的发版说明（已随 v3.57.6 刷新，含 v3.48.8～v3.57.6 累积说明） |
 | [`Argus-全面调试报告-20260910.md`](Argus-全面调试报告-20260910.md) | 全面调试报告（性能/算法/UI，含修复进度表） |
 | [`Argus-精简审计报告-20260914.md`](Argus-精简审计报告-20260914.md) | 死代码/配置/口径审计（§5 第 1～10 项已随 v3.44.1 落地） |
 
