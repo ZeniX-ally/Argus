@@ -130,6 +130,6 @@ public static class TodoGrouping
 
     public static Color PriorityColorOf(int failCount) =>
         failCount >= HighThreshold ? Theme.Danger
-      : failCount >= MediumThreshold ? Color.FromArgb(89, 89, 89)
-      : Color.FromArgb(179, 179, 179);
+      : failCount >= MediumThreshold ? Theme.GrayDark
+      : Theme.GrayLight;
 }

@@ -67,6 +67,25 @@ public static class Theme
     public static Color ChartBarYellow  => Color.FromArgb(241, 196, 15);
     public static Color ChartBarGray    => Color.FromArgb(80, 90, 105);
 
+    // ── 状态/待办语义色（原先散落在 MaintenanceBoard/Panel/Status、ResolverManager、TodoCard/TodoGrouping、
+    //    FailItemPicker、CardPreview、DeviceStatusPanel 的硬编码，值原样搬迁；178/179 相差 1 的笔误统一为 178）──
+    /// <summary>品牌主红 #C8102E（FAIL/待办：状态点、优先级标签、主操作按钮、红色文字）。</summary>
+    public static Color BrandRed    => Color.FromArgb(200, 16, 46);
+    /// <summary>深灰（次要文字 / 中等优先级 / 默认严重度）。</summary>
+    public static Color GrayDark    => Color.FromArgb(89, 89, 89);
+    /// <summary>中灰（未知状态 / 兜底状态点）。</summary>
+    public static Color GrayMid     => Color.FromArgb(140, 140, 140);
+    /// <summary>浅灰（轻微严重度 / 低优先级）。</summary>
+    public static Color GrayLight   => Color.FromArgb(178, 178, 178);
+    /// <summary>更浅灰（已完成状态点）。</summary>
+    public static Color GrayPale    => Color.FromArgb(191, 191, 191);
+    /// <summary>近黑（深色按钮 / 持续跟踪状态点）。</summary>
+    public static Color NearBlack   => Color.FromArgb(20, 20, 20);
+    /// <summary>彩色抬头上的副标题灰（深底浅字）。</summary>
+    public static Color GrayOnDark  => Color.FromArgb(242, 242, 242);
+    /// <summary>USB 已登记状态灯蓝。</summary>
+    public static Color LampUsb     => Color.FromArgb(70, 110, 180);
+
     public const int InputLabelWidth = 96;
     public const int InputFieldWidth = 800;
     public const int BrowseWidth    = 40;

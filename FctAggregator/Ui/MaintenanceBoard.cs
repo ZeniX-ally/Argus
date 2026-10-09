@@ -620,7 +620,7 @@ public class MaintenanceBoard : Panel
                 var tw = TextRenderer.MeasureText(t, BadgeFont).Width + 12;
                 var tr = new Rectangle(br.X - tw - 4, br.Y, tw, 18);
                 using (var path = MaintenanceDraw.Rounded(tr, 9))
-                using (var b = new SolidBrush(Color.FromArgb(200, 16, 46)))
+                using (var b = new SolidBrush(Theme.BrandRed))
                     g.FillPath(b, path);
                 TextRenderer.DrawText(g, t, BadgeFont, tr, Color.White,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
@@ -638,7 +638,7 @@ public class MaintenanceBoard : Panel
             var r = _cards.ClientRectangle;
             r.Inflate(-10, -10);
             if (r.Width <= 0 || r.Height <= 0) return;
-            using var pen = new Pen(Color.FromArgb(185, 185, 185)) { DashStyle = DashStyle.Dash };
+            using var pen = new Pen(Theme.CardBorder) { DashStyle = DashStyle.Dash };
             e.Graphics.DrawRectangle(pen, r.X, r.Y, r.Width, Math.Min(r.Height, 64));
             TextRenderer.DrawText(e.Graphics, "拖动卡片到此处", HintFont,
                 new Rectangle(r.X, r.Y, r.Width, Math.Min(r.Height, 64)),

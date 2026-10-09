@@ -1713,6 +1713,50 @@ Argus 统一发布包  v{newer}
             }
         }
 
+        // ── 颜色令牌（2026-10-09）：Ui/ 硬编码 RGB 字面量全收敛为 Theme 令牌（透明度变体除外）──
+        {
+            Console.WriteLine("\n【颜色令牌】Ui/ 字面量收敛 / 178-179 笔误统一…");
+
+            Check(Theme.BrandRed.ToArgb() == Color.FromArgb(200, 16, 46).ToArgb(),
+                "颜色令牌: BrandRed == #C8102E（FAIL/待办主红）");
+            Check(MaintenanceMeta.SeverityColorOf("minor").ToArgb() == Theme.GrayLight.ToArgb()
+                  && TodoGrouping.PriorityColorOf(0).ToArgb() == Theme.GrayLight.ToArgb(),
+                "颜色令牌: 轻微严重度与低优先级共用同一浅灰（原 178/179 相差 1 的笔误已统一）");
+            Check(MaintenanceMeta.AccentOf("resolved").ToArgb() == Theme.GrayPale.ToArgb()
+                  && MaintenanceMeta.AccentOf("unknown").ToArgb() == Theme.GrayMid.ToArgb()
+                  && MaintenanceMeta.AccentOf("in_progress").ToArgb() == Theme.NearBlack.ToArgb(),
+                "颜色令牌: 维修状态点色走 GrayPale / GrayMid / NearBlack");
+
+            var themeSrc = FindUp(Path.Combine("Ui", "Theme.cs"));
+            Check(themeSrc.Length > 0, "颜色令牌: 找到 Theme.cs 源文件");
+            if (themeSrc.Length > 0)
+            {
+                var uiDir = Path.GetDirectoryName(themeSrc)!;
+                var offenders = new List<string>();
+                foreach (var f in Directory.GetFiles(uiDir, "*.cs"))
+                {
+                    if (Path.GetFileName(f) == "Theme.cs") continue;
+                    int no = 0;
+                    foreach (var raw in File.ReadLines(f))
+                    {
+                        no++;
+                        if (raw.TrimStart().StartsWith("//", StringComparison.Ordinal)) continue;
+                        var idx = 0;
+                        while ((idx = raw.IndexOf("Color.FromArgb(", idx, StringComparison.Ordinal)) >= 0)
+                        {
+                            // 3/4 个数字参数才是硬编码 RGB(A)；带 Color 参数的透明度变体是合法派生。
+                            var rest = raw[(idx + "Color.FromArgb(".Length)..];
+                            if (System.Text.RegularExpressions.Regex.IsMatch(rest, @"^\s*\d+\s*,\s*\d+\s*,\s*\d+\s*[,)]"))
+                                offenders.Add($"{Path.GetFileName(f)}:{no}");
+                            idx += "Color.FromArgb(".Length;
+                        }
+                    }
+                }
+                Check(offenders.Count == 0,
+                    $"颜色令牌: Ui/ 除 Theme.cs 外无 RGB 字面量（发现 {offenders.Count} 处: {string.Join(", ", offenders)}）");
+            }
+        }
+
         // ── UI 体验修复（v3.40.5）：primary 上色 / 对比度 / DPI 基准 / 无障碍 / 键盘可达 ──
         {
             using (var f = new Form())

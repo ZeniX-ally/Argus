@@ -102,7 +102,7 @@ public class ResolverManagerForm : AppForm
         var btnAdd = new Button
         {
             Left = 272, Top = 37, Width = 120, Height = 25, Text = "添加",
-            BackColor = Color.FromArgb(200, 16, 46), ForeColor = Color.White,
+            BackColor = Theme.BrandRed, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         btnAdd.Click += (_, _) => Add();
@@ -360,7 +360,7 @@ public class ResolverPickerForm : AppForm
         var btnAdd = new Button
         {
             Left = 272, Top = 363, Width = 138, Height = 25, Text = "添加并勾选",
-            BackColor = Color.FromArgb(200, 16, 46), ForeColor = Color.White,
+            BackColor = Theme.BrandRed, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         btnAdd.Click += (_, _) => AddAndCheck();

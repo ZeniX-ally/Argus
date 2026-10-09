@@ -349,7 +349,7 @@ internal sealed class DeviceCard : Control
         Theme.DrawCard(g, ClientRectangle, null);
 
         bool usb = _dev.Type == "usb";
-        Color lamp = usb ? Color.FromArgb(70, 110, 180) : (_dev.Online ? Theme.Success : Theme.Danger);
+        Color lamp = usb ? Theme.LampUsb : (_dev.Online ? Theme.Success : Theme.Danger);
         string st = usb ? "USB 已登记" : (_dev.Online ? "在线" : "离线");
 
         int pad = Math.Max(16, Math.Min(Width, Height) / 16);

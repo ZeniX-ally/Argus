@@ -39,7 +39,7 @@ public class MaintenancePanel : Panel
         {
             Text = "从FAIL选择故障", Width = 118, Height = 30,
             Margin = new Padding(12, 2, 4, 2),
-            BackColor = Color.FromArgb(20, 20, 20), ForeColor = Color.White,
+            BackColor = Theme.NearBlack, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         btnFromFail.Click += (_, _) => NewFromFailItems();
@@ -387,7 +387,7 @@ public class MaintenancePanel : Panel
         var btnPickWho = new Button
         {
             Dock = DockStyle.Fill, Text = "选择", Margin = new Padding(2, 5, 2, 5),
-            BackColor = Color.FromArgb(200, 16, 46), ForeColor = Color.White,
+            BackColor = Theme.BrandRed, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         btnPickWho.Click += (_, _) => PickResolvers();
@@ -395,7 +395,7 @@ public class MaintenancePanel : Panel
         var btnAddWho = new Button
         {
             Dock = DockStyle.Fill, Text = "+ 人员", Margin = new Padding(0, 5, 3, 5),
-            BackColor = Color.FromArgb(20, 20, 20), ForeColor = Color.White,
+            BackColor = Theme.NearBlack, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         btnAddWho.Click += (_, _) => ManageResolvers();

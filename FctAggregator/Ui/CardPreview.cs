@@ -55,7 +55,7 @@ public class CardPreviewForm : AppForm
         var subLabel = new Label
         {
             Dock = DockStyle.Bottom, Height = 18, Text = subtitle,
-            ForeColor = Color.FromArgb(242, 242, 242),
+            ForeColor = Theme.GrayOnDark,
             Padding = new Padding(12, 0, 12, 2), AutoEllipsis = true,
             Font = Theme.CachedFont("Microsoft YaHei UI", 8.5F),
         };

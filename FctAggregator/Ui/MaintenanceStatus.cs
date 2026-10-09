@@ -6,10 +6,10 @@ public static class MaintenanceMeta
 
     public static readonly StatusDef[] Statuses =
     {
-        new("unknown",       "未知问题", Color.FromArgb(140, 140, 140)),
-        new("open",          "待办",     Color.FromArgb(200, 16, 46)),
-        new("in_progress",   "持续跟踪", Color.FromArgb(20, 20, 20)),
-        new("resolved",      "已完成",   Color.FromArgb(191, 191, 191)),
+        new("unknown",       "未知问题", Theme.GrayMid),
+        new("open",          "待办",     Theme.BrandRed),
+        new("in_progress",   "持续跟踪", Theme.NearBlack),
+        new("resolved",      "已完成",   Theme.GrayPale),
     };
 
     public const string LegacyInvestigating = "investigating";
@@ -52,7 +52,7 @@ public static class MaintenanceMeta
             if (string.Equals(key, LegacyInvestigating, StringComparison.OrdinalIgnoreCase))
                 return ByKey[DefaultStatus].Accent;
         }
-        return Color.FromArgb(140, 140, 140);
+        return Theme.GrayMid;
     }
 
     public static string Normalize(string? key)
@@ -92,7 +92,7 @@ public static class MaintenanceMeta
     public static Color SeverityColorOf(string? key) => key?.ToLowerInvariant() switch
     {
         "critical" => Theme.Danger,
-        "minor" => Color.FromArgb(178, 178, 178),
-        _ => Color.FromArgb(89, 89, 89),
+        "minor" => Theme.GrayLight,
+        _ => Theme.GrayDark,
     };
 }

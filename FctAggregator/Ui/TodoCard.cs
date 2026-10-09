@@ -102,14 +102,14 @@ public sealed class TodoCard : BoardCardBase
                 : $"区间 {Item.RangeCount} 次 · 累计 {Item.TotalCount} 次";
         TextRenderer.DrawText(g, counts, BodyFont,
             new Rectangle(pr.Right + 6, 28, Math.Max(20, Width - pr.Right - 14), 16),
-            Color.FromArgb(200, 16, 46), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Theme.BrandRed, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
         var merged = Item.VariantCount > 1 ? $"已合并 {Item.VariantCount} 个同类项 · " : "";
         var model = string.IsNullOrWhiteSpace(Item.Model) ? "—" : Item.Model;
         var station = string.IsNullOrWhiteSpace(Item.StationId) ? "—" : Item.StationId;
         TextRenderer.DrawText(g, $"{merged}{model} · {station}", MetaFont,
             new Rectangle(left, 48, Math.Max(20, Width - left - 8), 16),
-            Color.FromArgb(89, 89, 89), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            Theme.GrayDark, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
         int y = 64;
         int lines = VariantLineCount;
@@ -120,7 +120,7 @@ public sealed class TodoCard : BoardCardBase
                 text += $"   +{Item.VariantCount - lines} 项";
             TextRenderer.DrawText(g, text, MetaFont,
                 new Rectangle(left + 2, y, Math.Max(20, Width - left - 10), 16),
-                Color.FromArgb(89, 89, 89), TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                Theme.GrayDark, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             y += 16;
         }
 
@@ -129,7 +129,7 @@ public sealed class TodoCard : BoardCardBase
             Theme.TextMuted, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, Hover ? "单击预览" : "必须确认", MetaFont,
             new Rectangle(Width - 92, y + 2, 86, 16),
-            Color.FromArgb(200, 16, 46), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            Theme.BrandRed, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
         }
         catch (Exception ex)
         {

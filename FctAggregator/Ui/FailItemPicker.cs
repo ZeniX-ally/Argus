@@ -87,7 +87,7 @@ public class FailItemPickerForm : AppForm
 			Width = 840,
 			Height = 34,
 			Text = "勾选一个或多个故障项 → 【确定】即可写入维修记录的「故障项目」。\r\n统计范围：近 " + ScanDays + " 天内的 FAIL（每条记录只取第一条失败项，已按故障项去重）；「深扫 XML」从源文件复核一遍。",
-			ForeColor = Color.FromArgb(89, 89, 89),
+			ForeColor = Theme.GrayDark,
 			Anchor = (AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right)
 		};
 		Label label2 = new Label
