@@ -28,6 +28,13 @@ MIT licensed. See README.md.
 
 function Fail([string]$step) { if ($LASTEXITCODE -ne 0) { throw "step failed: $step" } }
 
+# 前置：工作区必须干净。非白名单的 tracked 文件在孤儿分支上会变成 untracked，
+# 切回 main 需要 -f 强切；若带着未提交改动，强切会把它们静默丢掉。
+git diff --quiet
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'working tree has uncommitted changes; commit or stash before exporting' }
+git diff --cached --quiet
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'index has staged changes; commit or reset before exporting' }
+
 git show-ref --verify --quiet "refs/heads/$branch"
 if ($LASTEXITCODE -eq 0) { git branch -D $branch | Out-Null }
 git checkout --orphan $branch | Out-Null
@@ -52,7 +59,9 @@ Write-Host ("export files: " + (git diff --cached --name-only).Count)
 
 git commit -m $msg | Out-Null
 Fail 'commit'
-git checkout main | Out-Null
+# 非白名单 tracked 文件（AGENT_RULES/CODEBUDDY 等）在孤儿分支上是 untracked，
+# 普通 checkout 会以 "would be overwritten" 中止；前置已保证无未提交改动，故强切安全。
+git checkout -f main | Out-Null
 Fail 'back to main'
 git push github "${branch}:main" --force
 Fail 'push'
