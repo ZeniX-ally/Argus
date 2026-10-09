@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Argus</AssemblyName>
+    <RootNamespace>FctAggregator</RootNamespace>
+    <StartupObject>FctAggregator.Program</StartupObject>
+    <!-- UI-3：默认 SystemAware 会让整窗被位图拉伸（高分屏发虚、跨屏错位）；PerMonitorV2 由 SDK 生成到 ApplicationConfiguration.Initialize -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>3.57.6</Version>
+    <AssemblyVersion>3.57.6.0</AssemblyVersion>
+    <FileVersion>3.57.6.0</FileVersion>
+    <Company>Argus</Company>
+    <Product>FCT 工具套件</Product>
+    <ApplicationIcon>app_icon.ico</ApplicationIcon>
+    <SelfContained>false</SelfContained>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="selftest\**" />
+    <None Remove="selftest\**" />
+    <EmbeddedResource Remove="selftest\**" />
+    <Compile Remove="tools\**" />
+    <None Remove="tools\**" />
+    <EmbeddedResource Remove="tools\**" />
+
+    <EmbeddedResource Include="app_icon.ico" />
+
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="TDMSReader" Version="3.1.0" />
+  </ItemGroup>
+
+</Project>
